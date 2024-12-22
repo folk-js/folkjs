@@ -639,6 +639,64 @@ export class FolkDistanceField extends FolkBaseSet {
       gl.deleteProgram(this.#directionProgram);
     }
   }
+
+  /**
+   * Samples the distance field at the given point.
+   */
+  public sampleField(x: number, y: number): { distance: number; direction: Point } {
+    const gl = this.#glContext;
+
+    // Ensure coordinates are in bounds
+    const nx = x / this.clientWidth;
+    const ny = y / this.clientHeight;
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) {
+      return { distance: Infinity, direction: { x: 0, y: 0 } };
+    }
+
+    // Create buffers for reading pixels
+    const distancePixels = new Float32Array(4);
+    const directionPixels = new Float32Array(4);
+
+    // Read distance from the appropriate texture
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.#framebuffer);
+
+    // Find the active texture with minimum distance
+    let minDistance = Infinity;
+    let finalDirection: Point = { x: 0, y: 0 };
+
+    for (const groupName in this.#groups) {
+      const group = this.#groups[groupName];
+      const texture = group.textures[group.isPingTexture ? 0 : 1];
+
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+      gl.readPixels(
+        x,
+        this.clientHeight - y - 1, // Flip Y coordinate
+        1,
+        1,
+        gl.RGBA,
+        gl.FLOAT,
+        distancePixels,
+      );
+
+      if (distancePixels[3] < minDistance) {
+        minDistance = distancePixels[3];
+
+        // Read direction vector
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.#directionFieldTexture, 0);
+        gl.readPixels(x, this.clientHeight - y - 1, 1, 1, gl.RGBA, gl.FLOAT, directionPixels);
+
+        finalDirection = { x: directionPixels[0], y: directionPixels[1] };
+      }
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    return {
+      distance: minDistance,
+      direction: finalDirection,
+    };
+  }
 }
 
 /**
@@ -886,8 +944,11 @@ void main() {
         return;
     }
     
-    // Calculate direction from current position to seed
-    vec2 direction = normalize(seedPos - v_texCoord);
+    // Calculate direction, with x component reversed
+    vec2 direction = normalize(vec2(
+        -(v_texCoord.x - seedPos.x),  // Reverse x component
+        v_texCoord.y - seedPos.y   
+    ));
     
     // Store direction in xy, store original distance in z, w unused
     outColor = vec4(direction, closestTexel.a, 0.0);
