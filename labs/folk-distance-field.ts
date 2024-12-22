@@ -20,6 +20,8 @@ export class FolkDistanceField extends FolkBaseSet {
   #jfaProgram!: WebGLProgram; // Shader program for the Jump Flooding Algorithm
   #renderProgram!: WebGLProgram; // Shader program for final rendering
   #seedProgram!: WebGLProgram; // Shader program for rendering seed points
+  #directionFieldTexture!: WebGLTexture;
+  #directionProgram!: WebGLProgram; // New shader program for direction computation
 
   /**
    * Groups data for handling different sets of shapes.
@@ -96,6 +98,9 @@ export class FolkDistanceField extends FolkBaseSet {
     if (!this.#framebuffer) {
       throw new Error('Failed to create framebuffer.');
     }
+
+    // Create direction field texture
+    this.#directionFieldTexture = this.#createDirectionFieldTexture();
   }
 
   /**
@@ -117,6 +122,7 @@ export class FolkDistanceField extends FolkBaseSet {
     this.#jfaProgram = WebGLUtils.createShaderProgram(this.#glContext, commonVertShader, jfaFragShader);
     this.#renderProgram = WebGLUtils.createShaderProgram(this.#glContext, commonVertShader, renderFragShader);
     this.#seedProgram = WebGLUtils.createShaderProgram(this.#glContext, seedVertShader, seedFragShader);
+    this.#directionProgram = WebGLUtils.createShaderProgram(this.#glContext, commonVertShader, directionFragShader);
   }
 
   /**
@@ -396,6 +402,9 @@ export class FolkDistanceField extends FolkBaseSet {
   #renderToScreen() {
     const gl = this.#glContext;
 
+    // First, compute direction vectors
+    this.#computeDirectionField();
+
     // Unbind framebuffer to render directly to the canvas
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
@@ -413,6 +422,11 @@ export class FolkDistanceField extends FolkBaseSet {
       gl.uniform1i(gl.getUniformLocation(this.#renderProgram, `u_texture_${groupName}`), textureUnit);
       textureUnit++;
     }
+
+    // Add direction texture binding
+    gl.activeTexture(gl.TEXTURE0 + textureUnit);
+    gl.bindTexture(gl.TEXTURE_2D, this.#directionFieldTexture);
+    gl.uniform1i(gl.getUniformLocation(this.#renderProgram, 'u_directionTexture'), textureUnit);
 
     // Draw a fullscreen quad to display the result
     this.#drawFullscreenQuad();
@@ -508,6 +522,67 @@ export class FolkDistanceField extends FolkBaseSet {
   }
 
   /**
+   * Computes the direction field from the final distance field
+   */
+  #computeDirectionField() {
+    const gl = this.#glContext;
+
+    // Bind framebuffer to render to direction texture
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.#framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.#directionFieldTexture, 0);
+
+    // Use direction computation shader
+    gl.useProgram(this.#directionProgram);
+
+    // Bind the final distance field textures
+    let textureUnit = 0;
+    for (const groupName in this.#groups) {
+      const group = this.#groups[groupName];
+      const finalTexture = group.textures[group.isPingTexture ? 0 : 1];
+      gl.activeTexture(gl.TEXTURE0 + textureUnit);
+      gl.bindTexture(gl.TEXTURE_2D, finalTexture);
+      gl.uniform1i(gl.getUniformLocation(this.#directionProgram, `u_texture_${groupName}`), textureUnit);
+      textureUnit++;
+    }
+
+    // Draw fullscreen quad to compute directions
+    this.#drawFullscreenQuad();
+
+    // Unbind framebuffer
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  /**
+   * Creates a texture for storing direction vectors
+   */
+  #createDirectionFieldTexture(): WebGLTexture {
+    const gl = this.#glContext;
+    const texture = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+
+    // Set texture parameters
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    // Initialize texture with empty data
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA16F,
+      this.#canvas.width,
+      this.#canvas.height,
+      0,
+      gl.RGBA,
+      gl.HALF_FLOAT,
+      null,
+    );
+
+    return texture;
+  }
+
+  /**
    * Cleans up WebGL resources to prevent memory leaks.
    * This is called when the element is disconnected from the DOM.
    */
@@ -555,6 +630,14 @@ export class FolkDistanceField extends FolkBaseSet {
     }
 
     this.#groupBuffers = {};
+
+    // Delete direction resources
+    if (this.#directionFieldTexture) {
+      gl.deleteTexture(this.#directionFieldTexture);
+    }
+    if (this.#directionProgram) {
+      gl.deleteProgram(this.#directionProgram);
+    }
   }
 }
 
@@ -628,6 +711,7 @@ precision mediump float;
 #define FALLOFF_FACTOR 10.0
 #define SMOOTHING_FACTOR 0.1
 #define DEBUG_HARD_CUTOFF_DISTANCE 0.2
+#define DEBUG_VECTOR_FIELD true
 
 in vec2 v_texCoord;
 out vec4 outColor;
@@ -635,6 +719,7 @@ out vec4 outColor;
 uniform sampler2D u_texture_mergeA;
 uniform sampler2D u_texture_mergeB;
 uniform sampler2D u_texture_others;
+uniform sampler2D u_directionTexture;
 
 vec3 hsv2rgb(vec3 c) {
   vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
@@ -714,6 +799,14 @@ void main() {
     finalColor *= exp(-finalDistance * FALLOFF_FACTOR);
   }
 
+  // Sample direction vector
+  vec4 directionData = texture(u_directionTexture, v_texCoord);
+  vec2 direction = directionData.xy;
+  
+  if (DEBUG_VECTOR_FIELD) {
+    // Convert direction vector to color (from -1..1 to 0..1 range)
+    finalColor = vec3(direction * 0.5 + 0.5, 0.0);
+  }
 
   outColor = vec4(finalColor, 1.0);
 }`;
@@ -748,4 +841,54 @@ out vec4 outColor;
 void main() {
   vec2 seedCoord = gl_FragCoord.xy / u_canvasSize;
   outColor = vec4(seedCoord, v_shapeID, 0.0);  // Seed coords (x, y), shape ID (z), initial distance (a)
+}`;
+
+/**
+ * Fragment shader for direction computation
+ */
+const directionFragShader = glsl`#version 300 es
+precision mediump float;
+
+in vec2 v_texCoord;
+out vec4 outColor;
+
+uniform sampler2D u_texture_mergeA;
+uniform sampler2D u_texture_mergeB;
+uniform sampler2D u_texture_others;
+
+void main() {
+    // Sample from all distance field textures
+    vec4 texelMergeA = texture(u_texture_mergeA, v_texCoord);
+    vec4 texelMergeB = texture(u_texture_mergeB, v_texCoord);
+    vec4 texelOthers = texture(u_texture_others, v_texCoord);
+
+    // Get distances
+    float distA = texelMergeA.a;
+    float distB = texelMergeB.a;
+    float distOthers = texelOthers.a;
+
+    // Choose the texture with the smallest distance
+    vec4 closestTexel;
+    if (distA <= distB && distA <= distOthers) {
+        closestTexel = texelMergeA;
+    } else if (distB <= distOthers) {
+        closestTexel = texelMergeB;
+    } else {
+        closestTexel = texelOthers;
+    }
+
+    // Get closest seed point position from texel
+    vec2 seedPos = closestTexel.xy;
+    
+    // If we're at zero distance (inside shape), output zero vector
+    if (closestTexel.a < 0.0001) {
+        outColor = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+    
+    // Calculate direction from current position to seed
+    vec2 direction = normalize(seedPos - v_texCoord);
+    
+    // Store direction in xy, store original distance in z, w unused
+    outColor = vec4(direction, closestTexel.a, 0.0);
 }`;
