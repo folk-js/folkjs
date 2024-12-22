@@ -1,11 +1,16 @@
 import { Point } from '@lib';
+import { Gizmos } from '@lib/folk-gizmos';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 
-/**
- * A component that creates a canvas-based brush field behind its children.
- * The field affects child elements based on brush strokes that fade over time.
- */
+interface Alignment {
+  axis: 'horizontal' | 'vertical';
+  start: Point;
+  end: Point;
+  shapes: Set<FolkShape>;
+  // We'll add confidence values later
+}
+
 export class FolkBrushField extends FolkBaseSet {
   static override tagName = 'folk-brush-field';
 
@@ -16,10 +21,17 @@ export class FolkBrushField extends FolkBaseSet {
 
   // Brush settings
   readonly #FADE_RATE = 0.98; // How quickly the brush strokes fade (per frame)
-  readonly #BRUSH_RADIUS = 30;
+  readonly #BRUSH_RADIUS = 60;
   readonly #BRUSH_STRENGTH = 1.0;
   readonly #ALIGNMENT_STRENGTH = 0.1; // How strongly shapes align (0-1)
   readonly #TARGET_PADDING = 20; // Desired padding between shapes
+
+  #currentStroke: {
+    path: Point[]; // Track the actual brush path
+    shapes: Set<FolkShape>;
+  } | null = null;
+
+  #currentAlignment: Alignment | null = null;
 
   connectedCallback() {
     super.connectedCallback();
@@ -39,10 +51,10 @@ export class FolkBrushField extends FolkBaseSet {
     if (!ctx) throw new Error('Could not get canvas context');
     this.#ctx = ctx;
 
-    // Initialize canvas with black (no effect)
+    // Initialize canvas with white (full strength)
     this.renderRoot.prepend(this.#canvas);
     this.#handleResize();
-    this.#ctx.fillStyle = 'black';
+    this.#ctx.fillStyle = 'white';
     this.#ctx.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
 
     // Setup event listeners
@@ -73,36 +85,153 @@ export class FolkBrushField extends FolkBaseSet {
   #handlePointerDown = (event: PointerEvent) => {
     if (event.button !== 0) return;
 
-    this.#isPointerDown = true;
-    // Convert page coordinates to canvas coordinates
     const rect = this.#canvas.getBoundingClientRect();
-    this.#lastPointerPosition = {
+    const point = {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
+
+    // Initialize new stroke with just the start point
+    this.#currentStroke = {
+      path: [point],
+      shapes: new Set(),
+    };
+
+    // Find shapes under initial point
+    this.sourceElements.forEach((element) => {
+      if (element instanceof FolkShape) {
+        const rect = element.getTransformDOMRect();
+        if (
+          point.x >= rect.x &&
+          point.x <= rect.x + rect.width &&
+          point.y >= rect.y &&
+          point.y <= rect.y + rect.height
+        ) {
+          this.#currentStroke?.shapes.add(element);
+        }
+      }
+    });
+
+    this.#lastPointerPosition = point;
+    this.#isPointerDown = true;
   };
 
   #handlePointerMove = (event: PointerEvent) => {
-    if (!this.#isPointerDown) return;
+    if (!this.#isPointerDown || !this.#currentStroke) return;
 
-    // Convert page coordinates to canvas coordinates
     const rect = this.#canvas.getBoundingClientRect();
-    const currentPos = {
+    const point = {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
 
+    // Add point to path
+    this.#currentStroke.path.push(point);
+
+    // Check for shapes under the new line segment
     if (this.#lastPointerPosition) {
-      this.#drawBrushStroke(this.#lastPointerPosition, currentPos);
+      this.sourceElements.forEach((element) => {
+        if (element instanceof FolkShape) {
+          const shapeRect = element.getTransformDOMRect();
+          if (this.#isLineIntersectingRect(this.#lastPointerPosition!, point, shapeRect)) {
+            this.#currentStroke?.shapes.add(element);
+          }
+        }
+      });
+
+      this.#drawBrushStroke(this.#lastPointerPosition, point);
+      this.#visualizeAlignment();
     }
 
-    this.#lastPointerPosition = currentPos;
+    this.#lastPointerPosition = point;
   };
 
   #handlePointerUp = () => {
     this.#isPointerDown = false;
     this.#lastPointerPosition = null;
+    this.#currentStroke = null;
   };
+
+  #isLineIntersectingRect(lineStart: Point, lineEnd: Point, rect: DOMRect): boolean {
+    // Simple AABB check first
+    const minX = Math.min(lineStart.x, lineEnd.x);
+    const maxX = Math.max(lineStart.x, lineEnd.x);
+    const minY = Math.min(lineStart.y, lineEnd.y);
+    const maxY = Math.max(lineStart.y, lineEnd.y);
+
+    if (maxX < rect.left || minX > rect.right || maxY < rect.top || minY > rect.bottom) {
+      return false;
+    }
+
+    // For more precise detection, we could add line-segment intersection tests
+    // but for brush strokes, AABB + proximity might be good enough
+    return true;
+  }
+
+  #createAlignment(shapes: Set<FolkShape>): Alignment | null {
+    if (shapes.size < 2) return null;
+
+    // Get bounds of all shapes
+    const rects = Array.from(shapes).map((shape) => shape.getTransformDOMRect());
+    const centers = rects.map((rect) => ({
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+    }));
+
+    // Calculate spreads
+    const xs = centers.map((p) => p.x);
+    const ys = centers.map((p) => p.y);
+    const xSpread = Math.max(...xs) - Math.min(...xs);
+    const ySpread = Math.max(...ys) - Math.min(...ys);
+
+    const isHorizontal = xSpread > ySpread;
+    const avgOther = isHorizontal
+      ? ys.reduce((sum, y) => sum + y, 0) / ys.length
+      : xs.reduce((sum, x) => sum + x, 0) / xs.length;
+
+    return {
+      axis: isHorizontal ? 'horizontal' : 'vertical',
+      start: isHorizontal ? { x: Math.min(...xs), y: avgOther } : { x: avgOther, y: Math.min(...ys) },
+      end: isHorizontal ? { x: Math.max(...xs), y: avgOther } : { x: avgOther, y: Math.max(...ys) },
+      shapes,
+    };
+  }
+
+  #visualizeAlignment() {
+    Gizmos.clear();
+
+    if (this.#currentStroke) {
+      // Show affected shapes
+      this.#currentStroke.shapes.forEach((shape) => {
+        const rect = shape.getTransformDOMRect();
+        Gizmos.rect(rect, { color: 'lightblue' });
+      });
+
+      // Create and show alignment if we have enough shapes
+      const alignment = this.#createAlignment(this.#currentStroke.shapes);
+      if (alignment) {
+        // Draw the alignment line
+        Gizmos.line(alignment.start, alignment.end, { color: 'blue', width: 2 });
+
+        // Draw points at shape projections onto the line
+        alignment.shapes.forEach((shape) => {
+          const rect = shape.getTransformDOMRect();
+          const center = {
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+          };
+
+          // Project center onto alignment line
+          const projected =
+            alignment.axis === 'horizontal'
+              ? { x: center.x, y: alignment.start.y }
+              : { x: alignment.start.x, y: center.y };
+
+          Gizmos.point(projected, { color: 'blue', size: 4 });
+        });
+      }
+    }
+  }
 
   #drawBrushStroke(from: Point, to: Point) {
     const ctx = this.#ctx;
@@ -110,7 +239,7 @@ export class FolkBrushField extends FolkBaseSet {
     ctx.beginPath();
     ctx.moveTo(from.x, from.y);
     ctx.lineTo(to.x, to.y);
-    ctx.lineWidth = this.#BRUSH_RADIUS * 2;
+    ctx.lineWidth = this.#BRUSH_RADIUS;
     ctx.strokeStyle = `rgba(150, 190, 255, ${this.#BRUSH_STRENGTH})`;
     ctx.lineCap = 'round';
     ctx.stroke();
@@ -127,131 +256,16 @@ export class FolkBrushField extends FolkBaseSet {
     tempCtx.drawImage(this.#canvas, 0, 0);
 
     // Clear main canvas
-    this.#ctx.fillStyle = 'black';
-    this.#ctx.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
+    this.#ctx.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
 
     // Apply fade using globalAlpha
     this.#ctx.globalAlpha = this.#FADE_RATE;
     this.#ctx.drawImage(tempCanvas, 0, 0);
     this.#ctx.globalAlpha = 1;
 
-    // Find all shapes within influence distance of the brush stroke
-    const activeShapes = Array.from(this.sourceElements).filter((element) => {
-      if (!(element instanceof FolkShape)) return false;
-      const rect = element.getTransformDOMRect();
-      const center = {
-        x: rect.x + rect.width / 2,
-        y: rect.y + rect.height / 2,
-      };
-
-      // Check if shape is near any active field area
-      const strength = this.#sampleField(center);
-      return strength > 0.1;
-    }) as FolkShape[];
-
-    // Calculate if arrangement is vertical or horizontal if we have enough shapes
-    if (activeShapes.length > 1) {
-      // Get centers of all shapes
-      const points = activeShapes.map((shape) => {
-        const rect = shape.getTransformDOMRect();
-        return {
-          x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2,
-        };
-      });
-
-      // Calculate the spread in x and y directions
-      const minX = Math.min(...points.map((p) => p.x));
-      const maxX = Math.max(...points.map((p) => p.x));
-      const minY = Math.min(...points.map((p) => p.y));
-      const maxY = Math.max(...points.map((p) => p.y));
-
-      const isMoreHorizontal = maxX - minX > maxY - minY;
-
-      // Align shapes along the dominant axis
-      activeShapes.forEach((shape) => {
-        const rect = shape.getTransformDOMRect();
-        const neighbors = activeShapes.filter((s) => s !== shape);
-
-        let avgX = 0,
-          avgY = 0,
-          avgWidth = 0,
-          avgHeight = 0,
-          avgRotation = 0;
-        let pushX = 0,
-          pushY = 0;
-
-        neighbors.forEach((neighbor) => {
-          const nRect = neighbor.getTransformDOMRect();
-
-          // Calculate centers
-          const centerX = rect.x + rect.width / 2;
-          const centerY = rect.y + rect.height / 2;
-          const nCenterX = nRect.x + nRect.width / 2;
-          const nCenterY = nRect.y + nRect.height / 2;
-
-          // Calculate minimum required distance between centers
-          const minDistX = (rect.width + nRect.width) / 2 + this.#TARGET_PADDING;
-          const minDistY = (rect.height + nRect.height) / 2 + this.#TARGET_PADDING;
-
-          // Calculate actual distance
-          const deltaX = centerX - nCenterX;
-          const deltaY = centerY - nCenterY;
-
-          if (Math.abs(deltaX) < minDistX) {
-            pushX += Math.sign(deltaX) * (minDistX - Math.abs(deltaX));
-          }
-          if (Math.abs(deltaY) < minDistY) {
-            pushY += Math.sign(deltaY) * (minDistY - Math.abs(deltaY));
-          }
-
-          // For horizontal arrangements, align Y positions exactly
-          if (isMoreHorizontal) {
-            avgY += nCenterY;
-          } else {
-            // For vertical arrangements, align X positions exactly
-            avgX += nCenterX;
-          }
-
-          avgWidth += nRect.width;
-          avgHeight += nRect.height;
-          avgRotation += nRect.rotation;
-        });
-
-        if (neighbors.length > 0) {
-          // Only average the non-aligned axis
-          if (isMoreHorizontal) {
-            avgY /= neighbors.length;
-            // Set target Y to be exactly at average Y position
-            const targetY = avgY - rect.height / 2;
-            shape.y += (targetY - rect.y) * this.#ALIGNMENT_STRENGTH;
-            // Allow X movement based on spacing
-            shape.x += pushX * this.#ALIGNMENT_STRENGTH;
-          } else {
-            avgX /= neighbors.length;
-            // Set target X to be exactly at average X position
-            const targetX = avgX - rect.width / 2;
-            shape.x += (targetX - rect.x) * this.#ALIGNMENT_STRENGTH;
-            // Allow Y movement based on spacing
-            shape.y += pushY * this.#ALIGNMENT_STRENGTH;
-          }
-
-          avgWidth /= neighbors.length;
-          avgHeight /= neighbors.length;
-          avgRotation /= neighbors.length;
-
-          const fieldStrength = this.#sampleField({
-            x: rect.x + rect.width / 2,
-            y: rect.y + rect.height / 2,
-          });
-          const strength = this.#ALIGNMENT_STRENGTH * fieldStrength;
-
-          // Apply size and rotation changes
-          shape.width += (avgWidth - rect.width) * strength;
-          shape.height += (avgHeight - rect.height) * strength;
-          shape.rotation += (avgRotation - rect.rotation) * strength;
-        }
-      });
+    // Update alignments here later
+    if (this.#currentStroke) {
+      this.#visualizeAlignment();
     }
 
     requestAnimationFrame(this.#updateCanvas);
