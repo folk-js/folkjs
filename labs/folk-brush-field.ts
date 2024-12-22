@@ -31,7 +31,7 @@ export class FolkBrushField extends FolkBaseSet {
     shapes: Set<FolkShape>;
   } | null = null;
 
-  #currentAlignment: Alignment | null = null;
+  #alignments: Alignment[] = [];
 
   connectedCallback() {
     super.connectedCallback();
@@ -147,9 +147,32 @@ export class FolkBrushField extends FolkBaseSet {
   };
 
   #handlePointerUp = () => {
-    // Create and store alignment if we have a valid stroke
     if (this.#currentStroke && this.#currentStroke.shapes.size >= 2) {
-      this.#currentAlignment = this.#createAlignment(this.#currentStroke.shapes);
+      const alignment = this.#createAlignment(this.#currentStroke.shapes);
+      if (alignment) {
+        // Find alignments that would be completely contained in our new selection
+        const containedAlignments = this.#findContainedAlignments(this.#currentStroke.shapes);
+
+        if (containedAlignments.length > 0) {
+          // Remove all contained alignments
+          this.#alignments = this.#alignments.filter((a) => !containedAlignments.includes(a));
+        }
+
+        // Find remaining alignments we could merge with on the same axis
+        const existingAlignments = this.#findExistingAlignments(this.#currentStroke.shapes, alignment.axis);
+
+        if (existingAlignments.length > 0) {
+          // Merge with remaining alignments
+          this.#mergeAlignments(existingAlignments, this.#currentStroke.shapes);
+        } else {
+          // Check if we can add as new alignment
+          const canAdd = Array.from(alignment.shapes).every((shape) => this.#canAddToAlignment(shape, alignment.axis));
+
+          if (canAdd) {
+            this.#alignments.push(alignment);
+          }
+        }
+      }
     }
 
     this.#isPointerDown = false;
@@ -192,12 +215,27 @@ export class FolkBrushField extends FolkBaseSet {
     const isHorizontal = xSpread > ySpread;
     const direction = isHorizontal ? Vector.right() : Vector.down();
 
-    // Get bounds center using Vector utils
-    const rectPoints = rects.flatMap((rect) => [
-      { x: rect.left, y: rect.top },
-      { x: rect.right, y: rect.bottom },
-    ]);
-    const boundsCenter = Vector.center(rectPoints);
+    // Find any shape that's already aligned on the other axis
+    const fixedShape = Array.from(shapes).find((shape) => {
+      const existing = this.#getShapeAlignments(shape);
+      return existing[isHorizontal ? 'vertical' : 'horizontal'];
+    });
+
+    // Get bounds center or use fixed shape position
+    let boundsCenter: Point;
+    if (fixedShape) {
+      const rect = fixedShape.getTransformDOMRect();
+      boundsCenter = {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+      };
+    } else {
+      const rectPoints = rects.flatMap((rect) => [
+        { x: rect.left, y: rect.top },
+        { x: rect.right, y: rect.bottom },
+      ]);
+      boundsCenter = Vector.center(rectPoints);
+    }
 
     // Order shapes along the primary axis
     const orderedShapes = Array.from(shapes).sort((a, b) => {
@@ -233,7 +271,16 @@ export class FolkBrushField extends FolkBaseSet {
       const offset = Vector.scale(direction, center);
       const target = Vector.add(boundsCenter, offset);
 
-      targetPositions.set(shape, target);
+      // If shape is fixed (has alignment on other axis), keep its current position
+      if (shape === fixedShape) {
+        targetPositions.set(shape, {
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+        });
+      } else {
+        targetPositions.set(shape, target);
+      }
+
       currentPos += size + this.#TARGET_PADDING;
     });
 
@@ -340,66 +387,58 @@ export class FolkBrushField extends FolkBaseSet {
     this.#ctx.drawImage(tempCanvas, 0, 0);
     this.#ctx.globalAlpha = 1;
 
-    // Update alignments
+    // Update all alignments
     if (this.#currentStroke) {
       this.#visualizeAlignment();
-    } else if (this.#currentAlignment) {
-      // Move shapes towards their targets
-      this.#currentAlignment.shapes.forEach((shape) => {
-        const target = this.#currentAlignment!.targetPositions.get(shape);
-        if (!target) return;
+    } else {
+      this.#alignments.forEach((alignment) => {
+        // Move shapes towards their targets
+        alignment.shapes.forEach((shape) => {
+          const target = alignment.targetPositions.get(shape);
+          if (!target) return;
 
-        const rect = shape.getTransformDOMRect();
-        const currentCenter = {
-          x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2,
-        };
+          const rect = shape.getTransformDOMRect();
+          const currentCenter = {
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+          };
 
-        // Calculate new position
-        const newX = currentCenter.x + (target.x - currentCenter.x) * this.#ALIGNMENT_STRENGTH;
-        const newY = currentCenter.y + (target.y - currentCenter.y) * this.#ALIGNMENT_STRENGTH;
+          // Calculate new position
+          const newX = currentCenter.x + (target.x - currentCenter.x) * this.#ALIGNMENT_STRENGTH;
+          const newY = currentCenter.y + (target.y - currentCenter.y) * this.#ALIGNMENT_STRENGTH;
 
-        // Update shape position (accounting for the fact that position is top-left, not center)
-        shape.x = newX - rect.width / 2;
-        shape.y = newY - rect.height / 2;
+          // Update shape position
+          shape.x = newX - rect.width / 2;
+          shape.y = newY - rect.height / 2;
+        });
       });
 
-      // Visualize current state
-      this.#visualizeActiveAlignment();
+      // Visualize all current alignments
+      this.#visualizeActiveAlignments();
     }
 
     requestAnimationFrame(this.#updateCanvas);
   };
 
-  #sampleField(point: Point): number {
-    // Ensure we don't sample outside the canvas
-    const x = Math.max(0, Math.min(Math.round(point.x), this.#canvas.width - 1));
-    const y = Math.max(0, Math.min(Math.round(point.y), this.#canvas.height - 1));
-
-    // Get the field strength at the given point
-    const pixel = this.#ctx.getImageData(x, y, 1, 1).data;
-    return pixel[0] / 255; // Use red channel as strength (0-1)
-  }
-
-  #visualizeActiveAlignment() {
+  #visualizeActiveAlignments() {
     Gizmos.clear();
 
-    if (this.#currentAlignment) {
+    this.#alignments.forEach((alignment) => {
       // Draw the alignment line
-      Gizmos.line(this.#currentAlignment.start, this.#currentAlignment.end, {
-        color: 'rgba(0, 255, 0, 0.8)',
+      Gizmos.line(alignment.start, alignment.end, {
+        color: alignment.axis === 'horizontal' ? 'rgba(0, 255, 0, 0.8)' : 'rgba(0, 0, 255, 0.8)',
         width: 2,
       });
 
-      // Draw connections and targets (same as before)
-      this.#currentAlignment.shapes.forEach((shape) => {
+      // Draw connections and targets
+      alignment.shapes.forEach((shape) => {
         const rect = shape.getTransformDOMRect();
         const center = {
           x: rect.x + rect.width / 2,
           y: rect.y + rect.height / 2,
         };
 
-        const target = this.#currentAlignment!.targetPositions.get(shape);
+        const target = alignment.targetPositions.get(shape);
         if (target) {
           Gizmos.line(center, target, {
             color: 'rgba(0, 0, 255, 0.5)',
@@ -410,28 +449,120 @@ export class FolkBrushField extends FolkBaseSet {
             color: 'blue',
             size: 4,
           });
-
-          // Draw edge points
-          const size = this.#currentAlignment!.axis === 'horizontal' ? rect.width : rect.height;
-          const start =
-            this.#currentAlignment!.axis === 'horizontal'
-              ? { x: target.x - size / 2, y: target.y }
-              : { x: target.x, y: target.y - size / 2 };
-          const end =
-            this.#currentAlignment!.axis === 'horizontal'
-              ? { x: target.x + size / 2, y: target.y }
-              : { x: target.x, y: target.y + size / 2 };
-
-          Gizmos.point(start, {
-            color: 'rgba(0, 0, 255, 0.5)',
-            size: 2,
-          });
-          Gizmos.point(end, {
-            color: 'rgba(0, 0, 255, 0.5)',
-            size: 2,
-          });
         }
       });
-    }
+    });
+  }
+
+  #getShapeAlignments(shape: FolkShape): { horizontal?: Alignment; vertical?: Alignment } {
+    return this.#alignments.reduce(
+      (acc, alignment) => {
+        if (alignment.shapes.has(shape)) {
+          acc[alignment.axis] = alignment;
+        }
+        return acc;
+      },
+      {} as { horizontal?: Alignment; vertical?: Alignment },
+    );
+  }
+
+  #canAddToAlignment(shape: FolkShape, axis: 'horizontal' | 'vertical'): boolean {
+    const existing = this.#getShapeAlignments(shape);
+    return !existing[axis];
+  }
+
+  #findExistingAlignments(shapes: Set<FolkShape>, axis: 'horizontal' | 'vertical'): Alignment[] {
+    // Find all alignments that share shapes with our new set and have the same axis
+    return this.#alignments.filter(
+      (existing) => existing.axis === axis && Array.from(shapes).some((shape) => existing.shapes.has(shape)),
+    );
+  }
+
+  #mergeAlignments(alignments: Alignment[], newShapes: Set<FolkShape>) {
+    if (alignments.length === 0) return null;
+
+    // Use the first alignment as our base
+    const mergedAlignment = alignments[0];
+
+    // Add shapes from other alignments and new shapes
+    const allShapes = new Set<FolkShape>();
+    alignments.forEach((alignment) => {
+      alignment.shapes.forEach((shape) => allShapes.add(shape));
+    });
+    newShapes.forEach((shape) => allShapes.add(shape));
+
+    // Remove other alignments from our list
+    this.#alignments = this.#alignments.filter((a) => !alignments.includes(a) || a === mergedAlignment);
+
+    // Merge all shapes into the remaining alignment
+    this.#mergeIntoAlignment(mergedAlignment, allShapes);
+
+    return mergedAlignment;
+  }
+
+  #mergeIntoAlignment(existing: Alignment, newShapes: Set<FolkShape>) {
+    // Add new shapes to existing alignment
+    newShapes.forEach((shape) => {
+      if (!existing.shapes.has(shape) && this.#canAddToAlignment(shape, existing.axis)) {
+        existing.shapes.add(shape);
+      }
+    });
+
+    // Recalculate ordered shapes and target positions
+    const allRects = Array.from(existing.shapes).map((shape) => ({
+      shape,
+      rect: shape.getTransformDOMRect(),
+    }));
+
+    // Sort shapes along the axis
+    existing.orderedShapes = allRects
+      .sort((a, b) => {
+        const centerA = existing.axis === 'horizontal' ? a.rect.x + a.rect.width / 2 : a.rect.y + a.rect.height / 2;
+        const centerB = existing.axis === 'horizontal' ? b.rect.x + b.rect.width / 2 : b.rect.y + b.rect.height / 2;
+        return centerA - centerB;
+      })
+      .map((item) => item.shape);
+
+    // Recalculate line endpoints and target positions
+    const points = allRects.flatMap(({ rect }) => [
+      { x: rect.left, y: rect.top },
+      { x: rect.right, y: rect.bottom },
+    ]);
+    const boundsCenter = Vector.center(points);
+    const direction = existing.axis === 'horizontal' ? Vector.right() : Vector.down();
+
+    // Calculate total length needed
+    const totalSize = existing.orderedShapes.reduce((sum, shape) => {
+      const rect = shape.getTransformDOMRect();
+      return sum + (existing.axis === 'horizontal' ? rect.width : rect.height);
+    }, 0);
+    const totalPadding = (existing.orderedShapes.length - 1) * this.#TARGET_PADDING;
+    const requiredLength = totalSize + totalPadding;
+    const halfLength = requiredLength / 2;
+
+    // Update line endpoints
+    existing.start = Vector.add(boundsCenter, Vector.scale(direction, -halfLength));
+    existing.end = Vector.add(boundsCenter, Vector.scale(direction, halfLength));
+
+    // Update target positions
+    let currentPos = -halfLength;
+    existing.targetPositions.clear();
+
+    existing.orderedShapes.forEach((shape) => {
+      const rect = shape.getTransformDOMRect();
+      const size = existing.axis === 'horizontal' ? rect.width : rect.height;
+      const center = currentPos + size / 2;
+
+      const offset = Vector.scale(direction, center);
+      const target = Vector.add(boundsCenter, offset);
+
+      existing.targetPositions.set(shape, target);
+      currentPos += size + this.#TARGET_PADDING;
+    });
+  }
+
+  #findContainedAlignments(shapes: Set<FolkShape>): Alignment[] {
+    // Find all alignments where every shape is in our new selection
+    return this.#alignments.filter((existing) => Array.from(existing.shapes).every((shape) => shapes.has(shape)));
   }
 }
