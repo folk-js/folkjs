@@ -8,7 +8,8 @@ interface Alignment {
   start: Point;
   end: Point;
   shapes: Set<FolkShape>;
-  // We'll add confidence values later
+  orderedShapes: FolkShape[]; // Shapes ordered along the line
+  targetPositions: Map<FolkShape, Point>; // Where each shape should go
 }
 
 export class FolkBrushField extends FolkBaseSet {
@@ -147,6 +148,11 @@ export class FolkBrushField extends FolkBaseSet {
   };
 
   #handlePointerUp = () => {
+    // Create and store alignment if we have a valid stroke
+    if (this.#currentStroke && this.#currentStroke.shapes.size >= 2) {
+      this.#currentAlignment = this.#createAlignment(this.#currentStroke.shapes);
+    }
+
     this.#isPointerDown = false;
     this.#lastPointerPosition = null;
     this.#currentStroke = null;
@@ -171,7 +177,7 @@ export class FolkBrushField extends FolkBaseSet {
   #createAlignment(shapes: Set<FolkShape>): Alignment | null {
     if (shapes.size < 2) return null;
 
-    // Get bounds of all shapes
+    // Get bounds and centers
     const rects = Array.from(shapes).map((shape) => shape.getTransformDOMRect());
     const centers = rects.map((rect) => ({
       x: rect.x + rect.width / 2,
@@ -189,11 +195,64 @@ export class FolkBrushField extends FolkBaseSet {
       ? ys.reduce((sum, y) => sum + y, 0) / ys.length
       : xs.reduce((sum, x) => sum + x, 0) / xs.length;
 
+    // Find bounds center
+    const bounds = rects.reduce(
+      (acc, rect) => ({
+        minX: Math.min(acc.minX, rect.left),
+        maxX: Math.max(acc.maxX, rect.right),
+        minY: Math.min(acc.minY, rect.top),
+        maxY: Math.max(acc.maxY, rect.bottom),
+      }),
+      { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
+    );
+
+    const avgMain = isHorizontal ? (bounds.minX + bounds.maxX) / 2 : (bounds.minY + bounds.maxY) / 2;
+
+    // Order shapes along the primary axis
+    const orderedShapes = Array.from(shapes).sort((a, b) => {
+      const rectA = a.getTransformDOMRect();
+      const rectB = b.getTransformDOMRect();
+      const centerA = isHorizontal ? rectA.x + rectA.width / 2 : rectA.y + rectA.height / 2;
+      const centerB = isHorizontal ? rectB.x + rectB.width / 2 : rectB.y + rectB.height / 2;
+      return centerA - centerB;
+    });
+
+    // Calculate required line length
+    const totalShapeSize = orderedShapes.reduce((sum, shape) => {
+      const rect = shape.getTransformDOMRect();
+      return sum + (isHorizontal ? rect.width : rect.height);
+    }, 0);
+    const totalPadding = (orderedShapes.length - 1) * this.#TARGET_PADDING;
+    const requiredLength = totalShapeSize + totalPadding;
+
+    // Create start/end points centered on bounds center
+    const halfLength = requiredLength / 2;
+    const start = isHorizontal ? { x: avgMain - halfLength, y: avgOther } : { x: avgOther, y: avgMain - halfLength };
+    const end = isHorizontal ? { x: avgMain + halfLength, y: avgOther } : { x: avgOther, y: avgMain + halfLength };
+
+    // Calculate target positions
+    const targetPositions = new Map<FolkShape, Point>();
+    let currentPos = -halfLength;
+
+    orderedShapes.forEach((shape) => {
+      const rect = shape.getTransformDOMRect();
+      const size = isHorizontal ? rect.width : rect.height;
+
+      // Position shape centered on its target point
+      const center = currentPos + size / 2;
+      const target = isHorizontal ? { x: avgMain + center, y: start.y } : { x: start.x, y: avgMain + center };
+
+      targetPositions.set(shape, target);
+      currentPos += size + this.#TARGET_PADDING;
+    });
+
     return {
       axis: isHorizontal ? 'horizontal' : 'vertical',
-      start: isHorizontal ? { x: Math.min(...xs), y: avgOther } : { x: avgOther, y: Math.min(...ys) },
-      end: isHorizontal ? { x: Math.max(...xs), y: avgOther } : { x: avgOther, y: Math.max(...ys) },
+      start,
+      end,
       shapes,
+      orderedShapes,
+      targetPositions,
     };
   }
 
@@ -204,16 +263,16 @@ export class FolkBrushField extends FolkBaseSet {
       // Show affected shapes
       this.#currentStroke.shapes.forEach((shape) => {
         const rect = shape.getTransformDOMRect();
-        Gizmos.rect(rect, { color: 'lightblue' });
+        Gizmos.rect(rect, { color: 'rgba(255, 0, 0, 0.5)' });
       });
 
-      // Create and show alignment if we have enough shapes
+      // Create and show alignment
       const alignment = this.#createAlignment(this.#currentStroke.shapes);
       if (alignment) {
         // Draw the alignment line
-        Gizmos.line(alignment.start, alignment.end, { color: 'blue', width: 2 });
+        Gizmos.line(alignment.start, alignment.end, { color: 'rgba(0, 255, 0, 0.8)', width: 2 });
 
-        // Draw points at shape projections onto the line
+        // Draw connections between shapes and their targets
         alignment.shapes.forEach((shape) => {
           const rect = shape.getTransformDOMRect();
           const center = {
@@ -221,13 +280,40 @@ export class FolkBrushField extends FolkBaseSet {
             y: rect.y + rect.height / 2,
           };
 
-          // Project center onto alignment line
-          const projected =
-            alignment.axis === 'horizontal'
-              ? { x: center.x, y: alignment.start.y }
-              : { x: alignment.start.x, y: center.y };
+          const target = alignment.targetPositions.get(shape);
+          if (target) {
+            // Draw line from shape to target
+            Gizmos.line(center, target, {
+              color: 'rgba(0, 0, 255, 0.5)',
+              width: 1,
+            });
 
-          Gizmos.point(projected, { color: 'blue', size: 4 });
+            // Draw target center point
+            Gizmos.point(target, {
+              color: 'blue',
+              size: 4,
+            });
+
+            // Draw edge points
+            const size = alignment.axis === 'horizontal' ? rect.width : rect.height;
+            const start =
+              alignment.axis === 'horizontal'
+                ? { x: target.x - size / 2, y: target.y }
+                : { x: target.x, y: target.y - size / 2 };
+            const end =
+              alignment.axis === 'horizontal'
+                ? { x: target.x + size / 2, y: target.y }
+                : { x: target.x, y: target.y + size / 2 };
+
+            Gizmos.point(start, {
+              color: 'rgba(0, 0, 255, 0.5)',
+              size: 2,
+            });
+            Gizmos.point(end, {
+              color: 'rgba(0, 0, 255, 0.5)',
+              size: 2,
+            });
+          }
         });
       }
     }
@@ -263,9 +349,32 @@ export class FolkBrushField extends FolkBaseSet {
     this.#ctx.drawImage(tempCanvas, 0, 0);
     this.#ctx.globalAlpha = 1;
 
-    // Update alignments here later
+    // Update alignments
     if (this.#currentStroke) {
       this.#visualizeAlignment();
+    } else if (this.#currentAlignment) {
+      // Move shapes towards their targets
+      this.#currentAlignment.shapes.forEach((shape) => {
+        const target = this.#currentAlignment!.targetPositions.get(shape);
+        if (!target) return;
+
+        const rect = shape.getTransformDOMRect();
+        const currentCenter = {
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+        };
+
+        // Calculate new position
+        const newX = currentCenter.x + (target.x - currentCenter.x) * this.#ALIGNMENT_STRENGTH;
+        const newY = currentCenter.y + (target.y - currentCenter.y) * this.#ALIGNMENT_STRENGTH;
+
+        // Update shape position (accounting for the fact that position is top-left, not center)
+        shape.x = newX - rect.width / 2;
+        shape.y = newY - rect.height / 2;
+      });
+
+      // Visualize current state
+      this.#visualizeActiveAlignment();
     }
 
     requestAnimationFrame(this.#updateCanvas);
@@ -279,5 +388,59 @@ export class FolkBrushField extends FolkBaseSet {
     // Get the field strength at the given point
     const pixel = this.#ctx.getImageData(x, y, 1, 1).data;
     return pixel[0] / 255; // Use red channel as strength (0-1)
+  }
+
+  #visualizeActiveAlignment() {
+    Gizmos.clear();
+
+    if (this.#currentAlignment) {
+      // Draw the alignment line
+      Gizmos.line(this.#currentAlignment.start, this.#currentAlignment.end, {
+        color: 'rgba(0, 255, 0, 0.8)',
+        width: 2,
+      });
+
+      // Draw connections and targets (same as before)
+      this.#currentAlignment.shapes.forEach((shape) => {
+        const rect = shape.getTransformDOMRect();
+        const center = {
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+        };
+
+        const target = this.#currentAlignment!.targetPositions.get(shape);
+        if (target) {
+          Gizmos.line(center, target, {
+            color: 'rgba(0, 0, 255, 0.5)',
+            width: 1,
+          });
+
+          Gizmos.point(target, {
+            color: 'blue',
+            size: 4,
+          });
+
+          // Draw edge points
+          const size = this.#currentAlignment!.axis === 'horizontal' ? rect.width : rect.height;
+          const start =
+            this.#currentAlignment!.axis === 'horizontal'
+              ? { x: target.x - size / 2, y: target.y }
+              : { x: target.x, y: target.y - size / 2 };
+          const end =
+            this.#currentAlignment!.axis === 'horizontal'
+              ? { x: target.x + size / 2, y: target.y }
+              : { x: target.x, y: target.y + size / 2 };
+
+          Gizmos.point(start, {
+            color: 'rgba(0, 0, 255, 0.5)',
+            size: 2,
+          });
+          Gizmos.point(end, {
+            color: 'rgba(0, 0, 255, 0.5)',
+            size: 2,
+          });
+        }
+      });
+    }
   }
 }
