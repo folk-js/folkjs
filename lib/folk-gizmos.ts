@@ -240,7 +240,6 @@ export class Gizmos extends FolkElement {
         gizmos.length,
         '\n• Layers:',
         `[${Array.from(Gizmos.#layers.keys()).join(', ')}]`,
-        '\n��� Default layer:',
         Gizmos.#defaultLayer,
       );
       Gizmos.#hasLoggedInitMessage = true;
