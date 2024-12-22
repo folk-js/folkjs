@@ -1,5 +1,4 @@
-import { Point } from '@lib';
-import { Gizmos } from '@lib/folk-gizmos';
+import { Gizmos, Point, Vector } from '@lib';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 
@@ -184,29 +183,21 @@ export class FolkBrushField extends FolkBaseSet {
       y: rect.y + rect.height / 2,
     }));
 
-    // Calculate spreads
-    const xs = centers.map((p) => p.x);
-    const ys = centers.map((p) => p.y);
-    const xSpread = Math.max(...xs) - Math.min(...xs);
-    const ySpread = Math.max(...ys) - Math.min(...ys);
+    // Calculate spreads using Vector.bounds
+    const centerBounds = Vector.bounds(centers);
+    const xSpread = centerBounds.max.x - centerBounds.min.x;
+    const ySpread = centerBounds.max.y - centerBounds.min.y;
 
+    // Determine axis and get direction vectors
     const isHorizontal = xSpread > ySpread;
-    const avgOther = isHorizontal
-      ? ys.reduce((sum, y) => sum + y, 0) / ys.length
-      : xs.reduce((sum, x) => sum + x, 0) / xs.length;
+    const direction = isHorizontal ? Vector.right() : Vector.down();
 
-    // Find bounds center
-    const bounds = rects.reduce(
-      (acc, rect) => ({
-        minX: Math.min(acc.minX, rect.left),
-        maxX: Math.max(acc.maxX, rect.right),
-        minY: Math.min(acc.minY, rect.top),
-        maxY: Math.max(acc.maxY, rect.bottom),
-      }),
-      { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity },
-    );
-
-    const avgMain = isHorizontal ? (bounds.minX + bounds.maxX) / 2 : (bounds.minY + bounds.maxY) / 2;
+    // Get bounds center using Vector utils
+    const rectPoints = rects.flatMap((rect) => [
+      { x: rect.left, y: rect.top },
+      { x: rect.right, y: rect.bottom },
+    ]);
+    const boundsCenter = Vector.center(rectPoints);
 
     // Order shapes along the primary axis
     const orderedShapes = Array.from(shapes).sort((a, b) => {
@@ -224,11 +215,11 @@ export class FolkBrushField extends FolkBaseSet {
     }, 0);
     const totalPadding = (orderedShapes.length - 1) * this.#TARGET_PADDING;
     const requiredLength = totalShapeSize + totalPadding;
-
-    // Create start/end points centered on bounds center
     const halfLength = requiredLength / 2;
-    const start = isHorizontal ? { x: avgMain - halfLength, y: avgOther } : { x: avgOther, y: avgMain - halfLength };
-    const end = isHorizontal ? { x: avgMain + halfLength, y: avgOther } : { x: avgOther, y: avgMain + halfLength };
+
+    // Calculate line endpoints using Vector math
+    const start = Vector.add(boundsCenter, Vector.scale(direction, -halfLength));
+    const end = Vector.add(boundsCenter, Vector.scale(direction, halfLength));
 
     // Calculate target positions
     const targetPositions = new Map<FolkShape, Point>();
@@ -237,10 +228,10 @@ export class FolkBrushField extends FolkBaseSet {
     orderedShapes.forEach((shape) => {
       const rect = shape.getTransformDOMRect();
       const size = isHorizontal ? rect.width : rect.height;
-
-      // Position shape centered on its target point
       const center = currentPos + size / 2;
-      const target = isHorizontal ? { x: avgMain + center, y: start.y } : { x: start.x, y: avgMain + center };
+
+      const offset = Vector.scale(direction, center);
+      const target = Vector.add(boundsCenter, offset);
 
       targetPositions.set(shape, target);
       currentPos += size + this.#TARGET_PADDING;

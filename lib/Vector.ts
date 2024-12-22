@@ -12,6 +12,38 @@ export class Vector {
   }
 
   /**
+   * Unit vector pointing right (1,0)
+   * @returns {Point} A point representing a right vector
+   */
+  static right(): Point {
+    return { x: 1, y: 0 };
+  }
+
+  /**
+   * Unit vector pointing left (-1,0)
+   * @returns {Point} A point representing a left vector
+   */
+  static left(): Point {
+    return { x: -1, y: 0 };
+  }
+
+  /**
+   * Unit vector pointing up (0,-1)
+   * @returns {Point} A point representing an up vector
+   */
+  static up(): Point {
+    return { x: 0, y: -1 };
+  }
+
+  /**
+   * Unit vector pointing down (0,1)
+   * @returns {Point} A point representing a down vector
+   */
+  static down(): Point {
+    return { x: 0, y: 1 };
+  }
+
+  /**
    * Subtracts vector b from vector a
    * @param {Point} a - The first vector
    * @param {Point} b - The vector to subtract
@@ -189,5 +221,45 @@ export class Vector {
    */
   static magSquared(v: Point): number {
     return v.x * v.x + v.y * v.y;
+  }
+
+  /**
+   * Calculates the bounding box of a set of points
+   * @param {Point[]} points - Array of points to find bounds for
+   * @returns {{ min: Point, max: Point }} Object containing min and max points of the bounds
+   */
+  static bounds(points: Point[]): { min: Point; max: Point } {
+    return points.reduce(
+      (acc, p) => ({
+        min: { x: Math.min(acc.min.x, p.x), y: Math.min(acc.min.y, p.y) },
+        max: { x: Math.max(acc.max.x, p.x), y: Math.max(acc.max.y, p.y) },
+      }),
+      { min: { x: Infinity, y: Infinity }, max: { x: -Infinity, y: -Infinity } },
+    );
+  }
+
+  /**
+   * Calculates the center point of a set of points
+   * @param {Point[]} points - Array of points to find center for
+   * @returns {Point} The center point
+   */
+  static center(points: Point[]): Point {
+    const bounds = Vector.bounds(points);
+    return {
+      x: (bounds.min.x + bounds.max.x) / 2,
+      y: (bounds.min.y + bounds.max.y) / 2,
+    };
+  }
+
+  /**
+   * Projects a point onto an axis
+   * @param {Point} point - The point to project
+   * @param {Point} axis - The axis to project onto
+   * @returns {Point} The projected point
+   */
+  static project(point: Point, axis: Point): Point {
+    const normalized = Vector.normalized(axis);
+    const dot = point.x * normalized.x + point.y * normalized.y;
+    return Vector.scale(normalized, dot);
   }
 }
