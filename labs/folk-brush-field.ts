@@ -11,7 +11,6 @@ export class FolkBrushField extends FolkBaseSet {
 
   #canvas!: HTMLCanvasElement;
   #ctx!: CanvasRenderingContext2D;
-  #lastFrameTime = 0;
   #isPointerDown = false;
   #lastPointerPosition: Point | null = null;
 
@@ -19,6 +18,8 @@ export class FolkBrushField extends FolkBaseSet {
   readonly #FADE_RATE = 0.98; // How quickly the brush strokes fade (per frame)
   readonly #BRUSH_RADIUS = 30;
   readonly #BRUSH_STRENGTH = 1.0;
+  readonly #ALIGNMENT_STRENGTH = 0.1; // How strongly shapes align (0-1)
+  readonly #TARGET_PADDING = 20; // Desired padding between shapes
 
   connectedCallback() {
     super.connectedCallback();
@@ -34,7 +35,7 @@ export class FolkBrushField extends FolkBaseSet {
       pointer-events: none;
     `;
 
-    const ctx = this.#canvas.getContext('2d');
+    const ctx = this.#canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) throw new Error('Could not get canvas context');
     this.#ctx = ctx;
 
@@ -115,9 +116,7 @@ export class FolkBrushField extends FolkBaseSet {
     ctx.stroke();
   }
 
-  #updateCanvas = (timestamp = 0) => {
-    this.#lastFrameTime = timestamp;
-
+  #updateCanvas = () => {
     // Create a temporary canvas for the fade operation
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = this.#canvas.width;
@@ -136,36 +135,124 @@ export class FolkBrushField extends FolkBaseSet {
     this.#ctx.drawImage(tempCanvas, 0, 0);
     this.#ctx.globalAlpha = 1;
 
-    // Update child elements based on field strength
-    this.sourceElements.forEach((element) => {
-      if (element instanceof FolkShape) {
-        const rect = element.getTransformDOMRect();
+    // Find all shapes within influence distance of the brush stroke
+    const activeShapes = Array.from(this.sourceElements).filter((element) => {
+      if (!(element instanceof FolkShape)) return false;
+      const rect = element.getTransformDOMRect();
+      const center = {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+      };
 
-        // Sample field strength across a grid
-        const SAMPLE_COUNT = 3; // 3x3 grid
-        let totalStrength = 0;
-        let samples = 0;
+      // Check if shape is near any active field area
+      const strength = this.#sampleField(center);
+      return strength > 0.1;
+    }) as FolkShape[];
 
-        // Sample in a grid pattern across the shape
-        for (let i = 0; i < SAMPLE_COUNT; i++) {
-          for (let j = 0; j < SAMPLE_COUNT; j++) {
-            const samplePoint = {
-              x: rect.x + (rect.width * (i + 0.5)) / SAMPLE_COUNT,
-              y: rect.y + (rect.height * (j + 0.5)) / SAMPLE_COUNT,
-            };
+    // Calculate if arrangement is vertical or horizontal if we have enough shapes
+    if (activeShapes.length > 1) {
+      // Get centers of all shapes
+      const points = activeShapes.map((shape) => {
+        const rect = shape.getTransformDOMRect();
+        return {
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+        };
+      });
 
-            totalStrength += this.#sampleField(samplePoint);
-            samples++;
+      // Calculate the spread in x and y directions
+      const minX = Math.min(...points.map((p) => p.x));
+      const maxX = Math.max(...points.map((p) => p.x));
+      const minY = Math.min(...points.map((p) => p.y));
+      const maxY = Math.max(...points.map((p) => p.y));
+
+      const isMoreHorizontal = maxX - minX > maxY - minY;
+
+      // Align shapes along the dominant axis
+      activeShapes.forEach((shape) => {
+        const rect = shape.getTransformDOMRect();
+        const neighbors = activeShapes.filter((s) => s !== shape);
+
+        let avgX = 0,
+          avgY = 0,
+          avgWidth = 0,
+          avgHeight = 0,
+          avgRotation = 0;
+        let pushX = 0,
+          pushY = 0;
+
+        neighbors.forEach((neighbor) => {
+          const nRect = neighbor.getTransformDOMRect();
+
+          // Calculate centers
+          const centerX = rect.x + rect.width / 2;
+          const centerY = rect.y + rect.height / 2;
+          const nCenterX = nRect.x + nRect.width / 2;
+          const nCenterY = nRect.y + nRect.height / 2;
+
+          // Calculate minimum required distance between centers
+          const minDistX = (rect.width + nRect.width) / 2 + this.#TARGET_PADDING;
+          const minDistY = (rect.height + nRect.height) / 2 + this.#TARGET_PADDING;
+
+          // Calculate actual distance
+          const deltaX = centerX - nCenterX;
+          const deltaY = centerY - nCenterY;
+
+          if (Math.abs(deltaX) < minDistX) {
+            pushX += Math.sign(deltaX) * (minDistX - Math.abs(deltaX));
           }
-        }
+          if (Math.abs(deltaY) < minDistY) {
+            pushY += Math.sign(deltaY) * (minDistY - Math.abs(deltaY));
+          }
 
-        // Use average strength to affect the shape
-        const avgStrength = totalStrength / samples;
-        if (avgStrength > 0) {
-          element.x += avgStrength * 5; // Move 5px right at full strength
+          // For horizontal arrangements, align Y positions exactly
+          if (isMoreHorizontal) {
+            avgY += nCenterY;
+          } else {
+            // For vertical arrangements, align X positions exactly
+            avgX += nCenterX;
+          }
+
+          avgWidth += nRect.width;
+          avgHeight += nRect.height;
+          avgRotation += nRect.rotation;
+        });
+
+        if (neighbors.length > 0) {
+          // Only average the non-aligned axis
+          if (isMoreHorizontal) {
+            avgY /= neighbors.length;
+            // Set target Y to be exactly at average Y position
+            const targetY = avgY - rect.height / 2;
+            shape.y += (targetY - rect.y) * this.#ALIGNMENT_STRENGTH;
+            // Allow X movement based on spacing
+            shape.x += pushX * this.#ALIGNMENT_STRENGTH;
+          } else {
+            avgX /= neighbors.length;
+            // Set target X to be exactly at average X position
+            const targetX = avgX - rect.width / 2;
+            shape.x += (targetX - rect.x) * this.#ALIGNMENT_STRENGTH;
+            // Allow Y movement based on spacing
+            shape.y += pushY * this.#ALIGNMENT_STRENGTH;
+          }
+
+          avgWidth /= neighbors.length;
+          avgHeight /= neighbors.length;
+          avgRotation /= neighbors.length;
+
+          const fieldStrength = this.#sampleField({
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+          });
+          const strength = this.#ALIGNMENT_STRENGTH * fieldStrength;
+
+          // Apply size and rotation changes
+          shape.width += (avgWidth - rect.width) * strength;
+          shape.height += (avgHeight - rect.height) * strength;
+          shape.rotation += (avgRotation - rect.rotation) * strength;
         }
-      }
-    });
+      });
+    }
 
     requestAnimationFrame(this.#updateCanvas);
   };
