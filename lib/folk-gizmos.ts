@@ -1,5 +1,6 @@
 import { DOMRectTransform, FolkElement, type Point } from '@lib';
 import { html } from '@lib/tags';
+import { Vector } from '@lib/Vector';
 import { css } from '@lit/reactive-element';
 
 interface GizmoOptions {
@@ -155,37 +156,47 @@ export class Gizmos extends FolkElement {
     ctx.stroke();
   }
 
-  /** Draws a vector with an arrow head */
+  /**
+   * Draws a vector with an arrow head starting from `origin`.
+   * @param origin The starting point
+   * @param vector The vector endpoint in local coordinates relative to origin
+   */
   static vector(
     origin: Point,
-    vector: Point,
+    localEndpoint: Point,
     { color = 'blue', width = 2, size = 10, layer = Gizmos.#defaultLayer }: VectorOptions = {},
   ) {
     const ctx = Gizmos.#getContext(layer);
     if (!ctx) return;
 
-    // Calculate angle and length
-    const angle = Math.atan2(vector.y - origin.y, vector.x - origin.x);
-    const arrowAngle = Math.PI / 6; // 30 degrees
+    // Convert local endpoint to global coordinates
+    const globalEndpoint = Vector.add(origin, localEndpoint);
+
+    // Calculate angle and normalized direction
+    const angle = Vector.angle(localEndpoint);
+    const length = Vector.mag(localEndpoint);
 
     // Calculate where the line should end (where arrow head begins)
-    const lineEndX = vector.x - size * Math.cos(angle);
-    const lineEndY = vector.y - size * Math.sin(angle);
+    const lineEnd = Vector.add(origin, Vector.scale(Vector.normalized(localEndpoint), length - size));
 
     // Draw the main line
     ctx.beginPath();
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.moveTo(origin.x, origin.y);
-    ctx.lineTo(lineEndX, lineEndY);
+    ctx.lineTo(lineEnd.x, lineEnd.y);
     ctx.stroke();
 
     // Draw arrow head as a connected triangle
+    const arrowAngle = Math.PI / 6; // 30 degrees
+    const leftPoint = Vector.add(globalEndpoint, Vector.rotate({ x: -size, y: 0 }, angle - arrowAngle));
+    const rightPoint = Vector.add(globalEndpoint, Vector.rotate({ x: -size, y: 0 }, angle + arrowAngle));
+
     ctx.beginPath();
-    ctx.moveTo(vector.x, vector.y); // Tip of the arrow
-    ctx.lineTo(vector.x - size * Math.cos(angle - arrowAngle), vector.y - size * Math.sin(angle - arrowAngle));
-    ctx.lineTo(vector.x - size * Math.cos(angle + arrowAngle), vector.y - size * Math.sin(angle + arrowAngle));
-    ctx.lineTo(vector.x, vector.y); // Back to the tip
+    ctx.moveTo(globalEndpoint.x, globalEndpoint.y);
+    ctx.lineTo(leftPoint.x, leftPoint.y);
+    ctx.lineTo(rightPoint.x, rightPoint.y);
+    ctx.lineTo(globalEndpoint.x, globalEndpoint.y);
     ctx.fillStyle = color;
     ctx.fill();
   }
@@ -229,7 +240,7 @@ export class Gizmos extends FolkElement {
         gizmos.length,
         '\n• Layers:',
         `[${Array.from(Gizmos.#layers.keys()).join(', ')}]`,
-        '\n• Default layer:',
+        '\n��� Default layer:',
         Gizmos.#defaultLayer,
       );
       Gizmos.#hasLoggedInitMessage = true;

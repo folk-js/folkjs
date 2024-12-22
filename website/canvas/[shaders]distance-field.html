@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -43,10 +43,30 @@
       <folk-shape x="200" y="400" width="100" height="100"></folk-shape>
       <folk-shape x="500" y="100" width="30" height="70"></folk-shape>
     </folk-distance-field>
+    <folk-gizmos></folk-gizmos>
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-distance-field.ts';
+      import { Gizmos } from '@lib/folk-gizmos.ts';
+
+      const distanceField = document.querySelector('folk-distance-field');
+
+      document.addEventListener('pointermove', (event) => {
+        Gizmos.clear();
+
+        const sample = distanceField.sampleField(event.clientX, event.clientY);
+        if (sample.direction.x !== 0 || sample.direction.y !== 0) {
+          // Scale the direction vector for better visibility
+          const scale = 50;
+          const vector = {
+            x: sample.direction.x * scale,
+            y: sample.direction.y * scale,
+          };
+
+          Gizmos.vector({ x: event.clientX, y: event.clientY }, vector, { color: 'red', width: 2 });
+        }
+      });
     </script>
   </body>
 </html>
