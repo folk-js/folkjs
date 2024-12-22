@@ -196,46 +196,31 @@ export class FolkBrushField extends FolkBaseSet {
     return true;
   }
 
-  #createAlignment(shapes: Set<FolkShape>): Alignment | null {
-    if (shapes.size < 2) return null;
+  #calculateAlignmentProperties(shapes: Set<FolkShape>, axis: 'horizontal' | 'vertical') {
+    const isHorizontal = axis === 'horizontal';
+    const direction = isHorizontal ? Vector.right() : Vector.down();
 
     // Get bounds and centers
     const rects = Array.from(shapes).map((shape) => shape.getTransformDOMRect());
-    const centers = rects.map((rect) => ({
-      x: rect.x + rect.width / 2,
-      y: rect.y + rect.height / 2,
-    }));
 
-    // Calculate spreads using Vector.bounds
-    const centerBounds = Vector.bounds(centers);
-    const xSpread = centerBounds.max.x - centerBounds.min.x;
-    const ySpread = centerBounds.max.y - centerBounds.min.y;
+    // Find fixed shapes (those with alignments on other axis)
+    const fixedPoints = Array.from(shapes)
+      .map((shape) => {
+        const rect = shape.getTransformDOMRect();
+        const existing = this.#getShapeAlignments(shape);
+        const isFixed = existing[isHorizontal ? 'vertical' : 'horizontal'];
 
-    // Determine axis and get direction vectors
-    const isHorizontal = xSpread > ySpread;
-    const direction = isHorizontal ? Vector.right() : Vector.down();
-
-    // Find any shape that's already aligned on the other axis
-    const fixedShape = Array.from(shapes).find((shape) => {
-      const existing = this.#getShapeAlignments(shape);
-      return existing[isHorizontal ? 'vertical' : 'horizontal'];
-    });
-
-    // Get bounds center or use fixed shape position
-    let boundsCenter: Point;
-    if (fixedShape) {
-      const rect = fixedShape.getTransformDOMRect();
-      boundsCenter = {
-        x: rect.x + rect.width / 2,
-        y: rect.y + rect.height / 2,
-      };
-    } else {
-      const rectPoints = rects.flatMap((rect) => [
-        { x: rect.left, y: rect.top },
-        { x: rect.right, y: rect.bottom },
-      ]);
-      boundsCenter = Vector.center(rectPoints);
-    }
+        return isFixed
+          ? {
+              shape,
+              point: {
+                x: rect.x + rect.width / 2,
+                y: rect.y + rect.height / 2,
+              },
+            }
+          : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
 
     // Order shapes along the primary axis
     const orderedShapes = Array.from(shapes).sort((a, b) => {
@@ -246,18 +231,51 @@ export class FolkBrushField extends FolkBaseSet {
       return centerA - centerB;
     });
 
-    // Calculate required line length
+    // Calculate total size needed
     const totalShapeSize = orderedShapes.reduce((sum, shape) => {
       const rect = shape.getTransformDOMRect();
       return sum + (isHorizontal ? rect.width : rect.height);
     }, 0);
     const totalPadding = (orderedShapes.length - 1) * this.#TARGET_PADDING;
     const requiredLength = totalShapeSize + totalPadding;
-    const halfLength = requiredLength / 2;
 
-    // Calculate line endpoints using Vector math
-    const start = Vector.add(boundsCenter, Vector.scale(direction, -halfLength));
-    const end = Vector.add(boundsCenter, Vector.scale(direction, halfLength));
+    // Determine line position based on fixed points
+    let lineCenter: Point;
+    if (fixedPoints.length > 0) {
+      // Use average position of fixed points for the relevant axis
+      const fixedCoord =
+        fixedPoints.reduce((sum, { point }) => sum + (isHorizontal ? point.y : point.x), 0) / fixedPoints.length;
+
+      // Get the center point along the other axis
+      const bounds = Vector.bounds(
+        rects.map((rect) => ({
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+        })),
+      );
+
+      lineCenter = isHorizontal
+        ? {
+            x: (bounds.min.x + bounds.max.x) / 2,
+            y: fixedCoord,
+          }
+        : {
+            x: fixedCoord,
+            y: (bounds.min.y + bounds.max.y) / 2,
+          };
+    } else {
+      // No fixed points, use bounds center
+      const rectPoints = rects.flatMap((rect) => [
+        { x: rect.left, y: rect.top },
+        { x: rect.right, y: rect.bottom },
+      ]);
+      lineCenter = Vector.center(rectPoints);
+    }
+
+    // Calculate line endpoints
+    const halfLength = requiredLength / 2;
+    const start = Vector.add(lineCenter, Vector.scale(direction, -halfLength));
+    const end = Vector.add(lineCenter, Vector.scale(direction, halfLength));
 
     // Calculate target positions
     const targetPositions = new Map<FolkShape, Point>();
@@ -268,16 +286,13 @@ export class FolkBrushField extends FolkBaseSet {
       const size = isHorizontal ? rect.width : rect.height;
       const center = currentPos + size / 2;
 
-      const offset = Vector.scale(direction, center);
-      const target = Vector.add(boundsCenter, offset);
-
-      // If shape is fixed (has alignment on other axis), keep its current position
-      if (shape === fixedShape) {
-        targetPositions.set(shape, {
-          x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2,
-        });
+      const fixedPoint = fixedPoints.find((fp) => fp.shape === shape);
+      if (fixedPoint) {
+        // Keep fixed shapes at their current position
+        targetPositions.set(shape, fixedPoint.point);
       } else {
+        const offset = Vector.scale(direction, center);
+        const target = Vector.add(lineCenter, offset);
         targetPositions.set(shape, target);
       }
 
@@ -285,13 +300,33 @@ export class FolkBrushField extends FolkBaseSet {
     });
 
     return {
-      axis: isHorizontal ? 'horizontal' : 'vertical',
+      axis,
       start,
       end,
       shapes,
       orderedShapes,
       targetPositions,
     };
+  }
+
+  #createAlignment(shapes: Set<FolkShape>): Alignment | null {
+    if (shapes.size < 2) return null;
+
+    // Calculate spreads to determine axis
+    const centers = Array.from(shapes).map((shape) => {
+      const rect = shape.getTransformDOMRect();
+      return {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+      };
+    });
+    const centerBounds = Vector.bounds(centers);
+    const xSpread = centerBounds.max.x - centerBounds.min.x;
+    const ySpread = centerBounds.max.y - centerBounds.min.y;
+
+    const axis = xSpread > ySpread ? 'horizontal' : 'vertical';
+
+    return this.#calculateAlignmentProperties(shapes, axis);
   }
 
   #visualizeAlignment() {
@@ -308,7 +343,10 @@ export class FolkBrushField extends FolkBaseSet {
       const alignment = this.#createAlignment(this.#currentStroke.shapes);
       if (alignment) {
         // Draw the alignment line
-        Gizmos.line(alignment.start, alignment.end, { color: 'rgba(0, 255, 0, 0.8)', width: 2 });
+        Gizmos.line(alignment.start, alignment.end, {
+          color: 'rgba(0, 255, 0, 0.8)',
+          width: 2,
+        });
 
         // Draw connections between shapes and their targets
         alignment.shapes.forEach((shape) => {
@@ -326,30 +364,13 @@ export class FolkBrushField extends FolkBaseSet {
               width: 1,
             });
 
-            // Draw target center point
+            // Check if shape is fixed (has alignment on other axis)
+            const existing = this.#getShapeAlignments(shape);
+            const isFixed = existing[alignment.axis === 'horizontal' ? 'vertical' : 'horizontal'];
+
+            // Draw target point with different color for fixed shapes
             Gizmos.point(target, {
-              color: 'blue',
-              size: 4,
-            });
-
-            // Draw edge points
-            const size = alignment.axis === 'horizontal' ? rect.width : rect.height;
-            const start =
-              alignment.axis === 'horizontal'
-                ? { x: target.x - size / 2, y: target.y }
-                : { x: target.x, y: target.y - size / 2 };
-            const end =
-              alignment.axis === 'horizontal'
-                ? { x: target.x + size / 2, y: target.y }
-                : { x: target.x, y: target.y + size / 2 };
-
-            Gizmos.point(start, {
-              color: 'rgba(0, 0, 255, 0.5)',
-              size: 2,
-            });
-            Gizmos.point(end, {
-              color: 'rgba(0, 0, 255, 0.5)',
-              size: 2,
+              color: isFixed ? 'red' : 'blue',
             });
           }
         });
@@ -447,7 +468,6 @@ export class FolkBrushField extends FolkBaseSet {
 
           Gizmos.point(target, {
             color: 'blue',
-            size: 4,
           });
         }
       });
@@ -508,57 +528,14 @@ export class FolkBrushField extends FolkBaseSet {
       }
     });
 
-    // Recalculate ordered shapes and target positions
-    const allRects = Array.from(existing.shapes).map((shape) => ({
-      shape,
-      rect: shape.getTransformDOMRect(),
-    }));
+    // Recalculate alignment using shared method
+    const newAlignment = this.#calculateAlignmentProperties(existing.shapes, existing.axis);
 
-    // Sort shapes along the axis
-    existing.orderedShapes = allRects
-      .sort((a, b) => {
-        const centerA = existing.axis === 'horizontal' ? a.rect.x + a.rect.width / 2 : a.rect.y + a.rect.height / 2;
-        const centerB = existing.axis === 'horizontal' ? b.rect.x + b.rect.width / 2 : b.rect.y + b.rect.height / 2;
-        return centerA - centerB;
-      })
-      .map((item) => item.shape);
-
-    // Recalculate line endpoints and target positions
-    const points = allRects.flatMap(({ rect }) => [
-      { x: rect.left, y: rect.top },
-      { x: rect.right, y: rect.bottom },
-    ]);
-    const boundsCenter = Vector.center(points);
-    const direction = existing.axis === 'horizontal' ? Vector.right() : Vector.down();
-
-    // Calculate total length needed
-    const totalSize = existing.orderedShapes.reduce((sum, shape) => {
-      const rect = shape.getTransformDOMRect();
-      return sum + (existing.axis === 'horizontal' ? rect.width : rect.height);
-    }, 0);
-    const totalPadding = (existing.orderedShapes.length - 1) * this.#TARGET_PADDING;
-    const requiredLength = totalSize + totalPadding;
-    const halfLength = requiredLength / 2;
-
-    // Update line endpoints
-    existing.start = Vector.add(boundsCenter, Vector.scale(direction, -halfLength));
-    existing.end = Vector.add(boundsCenter, Vector.scale(direction, halfLength));
-
-    // Update target positions
-    let currentPos = -halfLength;
-    existing.targetPositions.clear();
-
-    existing.orderedShapes.forEach((shape) => {
-      const rect = shape.getTransformDOMRect();
-      const size = existing.axis === 'horizontal' ? rect.width : rect.height;
-      const center = currentPos + size / 2;
-
-      const offset = Vector.scale(direction, center);
-      const target = Vector.add(boundsCenter, offset);
-
-      existing.targetPositions.set(shape, target);
-      currentPos += size + this.#TARGET_PADDING;
-    });
+    // Update existing alignment properties
+    existing.start = newAlignment.start;
+    existing.end = newAlignment.end;
+    existing.orderedShapes = newAlignment.orderedShapes;
+    existing.targetPositions = newAlignment.targetPositions;
   }
 
   #findContainedAlignments(shapes: Set<FolkShape>): Alignment[] {
