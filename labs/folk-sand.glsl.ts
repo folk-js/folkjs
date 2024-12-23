@@ -97,6 +97,7 @@ uniform int materialType;
 uniform float brushRadius;
 uniform sampler2D tex;
 uniform sampler2D u_collisionTex;
+uniform float initialSand;
 
 in vec2 outUv;
 
@@ -196,7 +197,7 @@ void main() {
 	if (frame == 0) {
 		float r = hash12(gl_FragCoord.xy);
 		float id = AIR;
-		if (r < 0.15)
+		if (r < initialSand)
 		{
 			id = SAND;
 		} 

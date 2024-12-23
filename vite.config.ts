@@ -6,7 +6,27 @@ import mkcert from 'vite-plugin-mkcert';
 const canvasWebsiteDir = resolve(__dirname, './website/canvas');
 
 function getCanvasFiles() {
-  return readdirSync(canvasWebsiteDir).filter((file) => file.endsWith('.html'));
+  const files: { path: string; name: string }[] = [];
+
+  // Helper function to read directory recursively
+  const readDir = (dir: string, base = '') => {
+    readdirSync(dir, { withFileTypes: true }).forEach((dirent) => {
+      // Skip directories that start with underscore
+      if (dirent.name.startsWith('_')) return;
+
+      if (dirent.isDirectory()) {
+        readDir(resolve(dir, dirent.name), `${base}${dirent.name}/`);
+      } else if (dirent.name.endsWith('.html')) {
+        files.push({
+          path: `${base}${dirent.name}`,
+          name: dirent.name,
+        });
+      }
+    });
+  };
+
+  readDir(canvasWebsiteDir);
+  return files;
 }
 
 const linkGenerator = (): Plugin => {
@@ -15,46 +35,41 @@ const linkGenerator = (): Plugin => {
     transformIndexHtml(html: string, ctx: IndexHtmlTransformContext) {
       if (!ctx.filename.endsWith('canvas/index.html')) return;
       const files = getCanvasFiles();
-      // First, handle ungrouped files
-      const ungroupedFiles = files.filter(
-        (file) => !file.includes('index') && !file.startsWith('_') && !file.match(/^\[([^\]]+)\]/),
-      );
 
-      // Then handle grouped files
+      // Handle ungrouped files (in root canvas directory)
+      const ungroupedFiles = files.filter((file) => !file.path.includes('/') && !file.name.includes('index'));
+
+      // Handle grouped files (in subdirectories)
       const groups = files
-        .filter((file) => !file.includes('index') && file.match(/^\[([^\]]+)\]/))
+        .filter((file) => file.path.includes('/'))
         .reduce(
           (acc, file) => {
-            const match = file.match(/^\[([^\]]+)\](.+)\.html$/);
-            const group = match![1];
+            const group = file.path.split('/')[0];
             if (!acc[group]) acc[group] = [];
             acc[group].push(file);
             return acc;
           },
-          {} as Record<string, string[]>,
+          {} as Record<string, typeof files>,
         );
 
-      // Generate ungrouped HTML first
+      // Generate ungrouped HTML
       const ungroupedHtml = ungroupedFiles
-        .sort()
-        .map((file) => {
-          const title = file.replace('.html', '').replaceAll('-', ' ');
-          return `<li><a href="${file}">${title}</a></li>`;
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(({ path, name }) => {
+          const title = name.replace('.html', '').replaceAll('-', ' ');
+          return `<li><a href="${path}">${title}</a></li>`;
         })
         .join('\n');
 
-      // Then generate grouped HTML
+      // Generate grouped HTML
       const groupedHtml = Object.entries(groups)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([group, groupFiles]) => {
           const groupHtml = groupFiles
-            .sort()
-            .map((file) => {
-              const title = file
-                .replace(/^\[[^\]]+\]/, '')
-                .replace('.html', '')
-                .replaceAll('-', ' ');
-              return `<li><a href="${file}">${title}</a></li>`;
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(({ path, name }) => {
+              const title = name.replace('.html', '').replaceAll('-', ' ');
+              return `<li><a href="${path}">${title}</a></li>`;
             })
             .join('\n');
 
@@ -84,7 +99,7 @@ export default defineConfig({
         index: resolve(__dirname, './website/index.html'),
         ...getCanvasFiles().reduce(
           (acc, file) => {
-            acc[`canvas/${file.replace('.html', '')}`] = resolve(canvasWebsiteDir, file);
+            acc[`canvas/${file.name.replace('.html', '')}`] = resolve(canvasWebsiteDir, file.name);
             return acc;
           },
           {} as Record<string, string>,

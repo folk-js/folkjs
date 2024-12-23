@@ -25,6 +25,12 @@ export class FolkSand extends FolkBaseSet {
     `,
   ];
 
+  static properties = {
+    initialSand: { type: Number, attribute: 'initial-sand' },
+  };
+
+  initialSand = 0.15;
+
   #canvas = document.createElement('canvas');
   #gl!: WebGL2RenderingContext;
 
@@ -152,7 +158,17 @@ export class FolkSand extends FolkBaseSet {
     // Create collision texture
     this.#collisionTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.#collisionTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.#bufferWidth, this.#bufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA8,
+      this.#bufferWidth,
+      this.#bufferHeight,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      null,
+    );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -425,6 +441,9 @@ export class FolkSand extends FolkBaseSet {
       gl.bindTexture(gl.TEXTURE_2D, this.#collisionTex);
     }
 
+    const initialSandLoc = gl.getUniformLocation(this.#program, 'initialSand');
+    gl.uniform1f(initialSandLoc, this.initialSand);
+
     let mx = (this.#pointer.x / gl.canvas.width) * this.#bufferWidth;
     let my = (1.0 - this.#pointer.y / gl.canvas.height) * this.#bufferHeight;
     let mpx = (this.#pointer.prevX / gl.canvas.width) * this.#bufferWidth;
@@ -543,7 +562,17 @@ export class FolkSand extends FolkBaseSet {
 
     // Update collision texture size
     gl.bindTexture(gl.TEXTURE_2D, this.#collisionTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.#bufferWidth, this.#bufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA8,
+      this.#bufferWidth,
+      this.#bufferHeight,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      null,
+    );
 
     // Re-render collision data after resize
     this.#handleShapeTransform();
@@ -587,13 +616,7 @@ export class FolkSand extends FolkBaseSet {
     }
   }
 
-  #createProgramFromStrings({
-    vertex,
-    fragment,
-  }: {
-    vertex: string;
-    fragment: string;
-  }): WebGLProgram | undefined {
+  #createProgramFromStrings({ vertex, fragment }: { vertex: string; fragment: string }): WebGLProgram | undefined {
     const vertexShader = WebGLUtils.createShader(this.#gl, this.#gl.VERTEX_SHADER, vertex);
     const fragmentShader = WebGLUtils.createShader(this.#gl, this.#gl.FRAGMENT_SHADER, fragment);
 

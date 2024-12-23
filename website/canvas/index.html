@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -6,7 +6,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&family=Pixelify+Sans&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
       rel="stylesheet"
     />
     <title>Folk Canvas</title>
@@ -16,27 +16,50 @@
         background: #f5f5f5;
       }
 
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+
+      folk-sand {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+
       main {
-        font-family: 'Courier Prime', Courier, monospace;
+        position: relative;
+        font-family: 'Recursive', Courier, monospace;
+        font-variation-settings:
+          'slnt' 0,
+          'wght' 400,
+          'CASL' 1,
+          'CRSV' 0,
+          'MONO' 0;
         max-width: 800px;
         margin: 20px auto;
         padding: 20px;
         border-radius: 2px;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-        background: #fff;
+        background: rgba(255, 255, 255, 0.9);
       }
 
       h1 {
-        color: #2c3e50;
         margin: 0;
         margin-bottom: 1em;
         text-align: center;
+        font-variation-settings:
+          'CASL' 0,
+          'MONO' 1;
       }
 
       h2 {
-        color: #2c3e50;
         font-size: 1.2em;
+        font-weight: 800;
         margin: 1em 0 0;
+        font-variation-settings: 'wght' 800;
       }
 
       ul {
@@ -46,14 +69,24 @@
         margin: 0;
       }
 
+      li {
+        display: grid;
+        grid-template-columns: 2em 1fr;
+        padding-left: 0;
+        text-indent: 0;
+      }
+
       li::before {
-        content: '>';
-        color: #666;
-        margin-right: 1em;
+        content: '➔';
+        justify-self: center;
+      }
+
+      #questions li::before {
+        content: attr(data-symbol);
       }
 
       a {
-        color: #34495e;
+        color: #22282f;
         text-decoration: none;
       }
 
@@ -63,12 +96,8 @@
 
       #questions {
         font-size: 0.9rem;
-        font-style: italic;
+        font-variation-settings: 'slnt' 1;
         margin-bottom: 2rem;
-
-        li::before {
-          content: '-';
-        }
       }
 
       #disclaimer {
@@ -76,13 +105,134 @@
         font-style: italic;
       }
     </style>
+    <script type="module">
+      import '@labs/standalone/folk-sand.ts';
+
+      const alchemicalSymbols = [
+        '🜁',
+        '🜂',
+        '🜃',
+        '🜄',
+        '🜅',
+        '🜆',
+        '🜇',
+        '🜈',
+        '🜉',
+        '🜊',
+        '🜋',
+        '🜌',
+        '🜍',
+        '🜎',
+        '🜏',
+        '🜐',
+        '🜑',
+        '🜒',
+        '🜓',
+        '🜔',
+        '🜕',
+        '🜖',
+        '🜗',
+        '🜘',
+        '🜙',
+        '🜚',
+        '🜛',
+        '🜜',
+        '🜝',
+        '🜞',
+        '🜟',
+        '🜠',
+        '🜡',
+        '🜢',
+        '🜣',
+        '🜤',
+        '🜥',
+        '🜦',
+        '🜧',
+        '🜨',
+        '🜩',
+        '🜪',
+        '🜫',
+        '🜬',
+        '🜭',
+        '🜮',
+        '🜯',
+        '🜰',
+        '🜱',
+        '🜲',
+        '🜳',
+        '🜴',
+        '🜵',
+        '🜶',
+        '🜸',
+        '🜹',
+        '🜺',
+        '🜻',
+        '🜼',
+        '🜾',
+        '🜿',
+        '🝀',
+        '🝁',
+        '🝂',
+        '🝃',
+        '🝄',
+        '🝅',
+        '🝆',
+        '🝈',
+        '🝉',
+        '🝊',
+        '🝋',
+        '🝌',
+        '🝍',
+        '🝎',
+        '🝏',
+        '🝐',
+        '🝑',
+        '🝒',
+        '🝓',
+        '🝔',
+        '🝕',
+        '🝖',
+        '🝗',
+        '🝘',
+        '🝙',
+        '🝚',
+        '🝛',
+        '🝜',
+        '🝝',
+        '🝞',
+        '🝟',
+        '🝠',
+        '🝡',
+        '🝢',
+        '🝣',
+        '🝤',
+        '🝥',
+        '🝦',
+        '🝧',
+        '🝩',
+        '🝪',
+        '🝬',
+        '🝭',
+        '🝮',
+        '🝯',
+        '🝰',
+        '🝲',
+        '🝳',
+      ];
+
+      document.addEventListener('DOMContentLoaded', () => {
+        const questionItems = document.querySelectorAll('#questions li');
+        questionItems.forEach((li) => {
+          const randomSymbol = alchemicalSymbols[Math.floor(Math.random() * alchemicalSymbols.length)];
+          li.setAttribute('data-symbol', randomSymbol);
+        });
+      });
+    </script>
   </head>
   <body>
+    <folk-sand initial-sand="0"></folk-sand>
     <main>
-      <h1>
-        Folk Canvas
-        <a href="https://github.com/folk-canvas/folk-canvas">(Github)</a>
-      </h1>
+      <h1> Folk Canvas [<a href="https://github.com/folk-canvas/folk-canvas">Github</a>] </h1>
       <ul id="questions">
         <li>How do we make the web feel more alive and less rigid and closed off?</li>
         <li>How can we more easily compose web pages and their data together?</li>
@@ -99,8 +249,11 @@
         >
       </ul>
 
-      <h2>Demos</h2>
-      <p id="disclaimer">(Make sure to checkout the dev tools, all of the you see are just authored in HTML!)</p>
+      <h2>Experiments from the lab</h2>
+      <p id="disclaimer">
+        These experiments (like this page) are very raw, intended to poke at new primitives and ideas. Make sure to
+        checkout the dev tools, all of the you see are just authored in HTML!
+      </p>
 
       <ul id="links">
         {{ LINKS }}
