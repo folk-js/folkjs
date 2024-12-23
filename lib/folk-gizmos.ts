@@ -1,5 +1,6 @@
 import { DOMRectTransform, FolkElement, type Point } from '@lib';
 import { html } from '@lib/tags';
+import { Vector } from '@lib/Vector';
 import { css } from '@lit/reactive-element';
 
 interface GizmoOptions {
@@ -49,6 +50,7 @@ export class Gizmos extends FolkElement {
     {
       ctx: CanvasRenderingContext2D;
       canvas: HTMLCanvasElement;
+      hidden: boolean;
     }
   >();
   static #defaultLayer = 'default';
@@ -75,10 +77,12 @@ export class Gizmos extends FolkElement {
   `;
 
   readonly #layer: string;
+  #hidden: boolean;
 
   constructor() {
     super();
     this.#layer = this.getAttribute('layer') ?? Gizmos.#defaultLayer;
+    this.#hidden = this.hasAttribute('hidden');
   }
 
   override createRenderRoot() {
@@ -90,7 +94,7 @@ export class Gizmos extends FolkElement {
     const ctx = canvas?.getContext('2d') ?? null;
 
     if (canvas && ctx) {
-      Gizmos.#layers.set(this.#layer, { canvas, ctx });
+      Gizmos.#layers.set(this.#layer, { canvas, ctx, hidden: this.#hidden });
     }
 
     this.#handleResize();
@@ -155,37 +159,47 @@ export class Gizmos extends FolkElement {
     ctx.stroke();
   }
 
-  /** Draws a vector with an arrow head */
+  /**
+   * Draws a vector with an arrow head starting from `origin`.
+   * @param origin The starting point
+   * @param vector The vector endpoint in local coordinates relative to origin
+   */
   static vector(
     origin: Point,
-    vector: Point,
+    localEndpoint: Point,
     { color = 'blue', width = 2, size = 10, layer = Gizmos.#defaultLayer }: VectorOptions = {},
   ) {
     const ctx = Gizmos.#getContext(layer);
     if (!ctx) return;
 
-    // Calculate angle and length
-    const angle = Math.atan2(vector.y - origin.y, vector.x - origin.x);
-    const arrowAngle = Math.PI / 6; // 30 degrees
+    // Convert local endpoint to global coordinates
+    const globalEndpoint = Vector.add(origin, localEndpoint);
+
+    // Calculate angle and normalized direction
+    const angle = Vector.angle(localEndpoint);
+    const length = Vector.mag(localEndpoint);
 
     // Calculate where the line should end (where arrow head begins)
-    const lineEndX = vector.x - size * Math.cos(angle);
-    const lineEndY = vector.y - size * Math.sin(angle);
+    const lineEnd = Vector.add(origin, Vector.scale(Vector.normalized(localEndpoint), length - size));
 
     // Draw the main line
     ctx.beginPath();
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.moveTo(origin.x, origin.y);
-    ctx.lineTo(lineEndX, lineEndY);
+    ctx.lineTo(lineEnd.x, lineEnd.y);
     ctx.stroke();
 
     // Draw arrow head as a connected triangle
+    const arrowAngle = Math.PI / 6; // 30 degrees
+    const leftPoint = Vector.add(globalEndpoint, Vector.rotate({ x: -size, y: 0 }, angle - arrowAngle));
+    const rightPoint = Vector.add(globalEndpoint, Vector.rotate({ x: -size, y: 0 }, angle + arrowAngle));
+
     ctx.beginPath();
-    ctx.moveTo(vector.x, vector.y); // Tip of the arrow
-    ctx.lineTo(vector.x - size * Math.cos(angle - arrowAngle), vector.y - size * Math.sin(angle - arrowAngle));
-    ctx.lineTo(vector.x - size * Math.cos(angle + arrowAngle), vector.y - size * Math.sin(angle + arrowAngle));
-    ctx.lineTo(vector.x, vector.y); // Back to the tip
+    ctx.moveTo(globalEndpoint.x, globalEndpoint.y);
+    ctx.lineTo(leftPoint.x, leftPoint.y);
+    ctx.lineTo(rightPoint.x, rightPoint.y);
+    ctx.lineTo(globalEndpoint.x, globalEndpoint.y);
     ctx.fillStyle = color;
     ctx.fill();
   }
@@ -219,19 +233,47 @@ export class Gizmos extends FolkElement {
     ctx.scale(dpr, dpr);
   }
 
+  static #log() {
+    return {
+      message: '',
+      styles: [] as string[],
+
+      text(str: string) {
+        this.message += str;
+        return this;
+      },
+
+      color(str: string, color: string) {
+        this.message += '%c' + str + '%c';
+        this.styles.push(`font-weight: bold; color: ${color}`, '');
+        return this;
+      },
+
+      print() {
+        console.info(this.message, ...this.styles);
+      },
+    };
+  }
+
   static #getContext(layer = Gizmos.#defaultLayer) {
     if (!Gizmos.#hasLoggedInitMessage) {
       const gizmos = document.querySelectorAll<Gizmos>(Gizmos.tagName);
-      console.info(
-        '%cGizmos',
-        'font-weight: bold; color: #4CAF50;',
-        '\n• Gizmo elements:',
-        gizmos.length,
-        '\n• Layers:',
-        `[${Array.from(Gizmos.#layers.keys()).join(', ')}]`,
-        '\n• Default layer:',
-        Gizmos.#defaultLayer,
-      );
+      const layers = Array.from(Gizmos.#layers.entries());
+
+      const log = Gizmos.#log()
+        .color('Gizmos', '#4CAF50')
+        .text('\n• Gizmo elements: ' + gizmos.length)
+        .text('\n• Layers: [');
+
+      layers.forEach(([key, value], i) => {
+        if (i > 0) log.text(', ');
+        log.text(key);
+        if (value.hidden) {
+          log.color(' (hidden)', '#FFA500');
+        }
+      });
+
+      log.text(']').print();
       Gizmos.#hasLoggedInitMessage = true;
     }
 
@@ -242,7 +284,7 @@ export class Gizmos extends FolkElement {
       return null;
     }
 
-    return layerData?.ctx;
+    return layerData?.hidden ? null : layerData?.ctx;
   }
 }
 
