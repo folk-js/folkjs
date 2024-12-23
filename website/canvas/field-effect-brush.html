@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Brush Field Demo</title>
+    <style>
+      html {
+        height: 100%;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        overscroll-behavior: none;
+      }
+
+      folk-shape {
+        position: absolute;
+        background-color: rgba(255, 255, 255, 0.8);
+        border-radius: 2px;
+        border: 2px solid rgba(0, 0, 0, 0.5);
+      }
+
+      folk-brush-field {
+        pointer-events: all;
+      }
+    </style>
+  </head>
+  <body>
+    <folk-gizmos></folk-gizmos>
+    <folk-brush-field>
+      <folk-shape x="100" y="100" width="50" height="50"></folk-shape>
+      <folk-shape x="100" y="200" width="50" height="50"></folk-shape>
+      <folk-shape x="100" y="300" width="50" height="50"></folk-shape>
+      <folk-shape x="300" y="150" width="80" height="40"></folk-shape>
+      <folk-shape x="400" y="250" width="60" height="90"></folk-shape>
+      <folk-shape x="200" y="400" width="100" height="100"></folk-shape>
+      <folk-shape x="500" y="100" width="30" height="70"></folk-shape>
+      <folk-shape x="600" y="300" width="70" height="70"></folk-shape>
+      <folk-shape x="250" y="50" width="45" height="65"></folk-shape>
+      <folk-shape x="450" y="400" width="90" height="40"></folk-shape>
+      <folk-shape x="550" y="200" width="40" height="120"></folk-shape>
+      <folk-shape x="150" y="500" width="55" height="55"></folk-shape>
+      <folk-shape x="350" y="350" width="75" height="45"></folk-shape>
+    </folk-brush-field>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-brush-field.ts';
+      import { Gizmos } from '@lib/folk-gizmos.ts';
+    </script>
+  </body>
+</html>

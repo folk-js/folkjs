@@ -8,6 +8,7 @@ export * from './folk-observer';
 export * from './resize-manger';
 
 // Core utilities and types
+export * from './folk-gizmos';
 export * from './Matrix';
 export * from './types';
 export * from './Vector';
