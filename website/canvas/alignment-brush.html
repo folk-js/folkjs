@@ -23,14 +23,14 @@
         border: 2px solid rgba(0, 0, 0, 0.5);
       }
 
-      folk-brush-field {
+      folk-alignment-brush {
         pointer-events: all;
       }
     </style>
   </head>
   <body>
     <folk-gizmos></folk-gizmos>
-    <folk-brush-field>
+    <folk-alignment-brush>
       <folk-shape x="100" y="100" width="50" height="50"></folk-shape>
       <folk-shape x="100" y="200" width="50" height="50"></folk-shape>
       <folk-shape x="100" y="300" width="50" height="50"></folk-shape>
@@ -44,11 +44,11 @@
       <folk-shape x="550" y="200" width="40" height="120"></folk-shape>
       <folk-shape x="150" y="500" width="55" height="55"></folk-shape>
       <folk-shape x="350" y="350" width="75" height="45"></folk-shape>
-    </folk-brush-field>
+    </folk-alignment-brush>
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
-      import '@labs/standalone/folk-brush-field.ts';
+      import '@labs/standalone/folk-alignment-brush.ts';
       import { Gizmos } from '@lib/folk-gizmos.ts';
     </script>
   </body>

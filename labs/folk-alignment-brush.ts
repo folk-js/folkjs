@@ -10,8 +10,8 @@ interface AlignmentLine {
   isHorizontal: boolean;
 }
 
-export class FolkBrushField extends FolkBaseSet {
-  static override tagName = 'folk-brush-field';
+export class FolkAlignmentBrush extends FolkBaseSet {
+  static override tagName = 'folk-alignment-brush';
 
   // Core structure
   #alignments = new Set<AlignmentLine>();
