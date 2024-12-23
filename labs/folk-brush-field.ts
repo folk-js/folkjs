@@ -30,6 +30,12 @@ export class FolkBrushField extends FolkBaseSet {
   readonly #BRUSH_RADIUS = 60;
   readonly #TARGET_PADDING = 20;
 
+  // Add new constants for removal threshold
+  readonly #REMOVAL_THRESHOLD_MULTIPLIER = 1.0; // Multiplied by shape size
+
+  // Add property to track dragging state
+  #draggedShape: FolkShape | null = null;
+
   connectedCallback() {
     super.connectedCallback();
     this.#setupCanvas();
@@ -65,6 +71,8 @@ export class FolkBrushField extends FolkBaseSet {
     this.addEventListener('pointerup', this.#handlePointerUp);
     this.addEventListener('pointerleave', this.#handlePointerUp);
     window.addEventListener('resize', this.#handleResize);
+    this.addEventListener('pointerdown', this.#handleShapePointerDown, true);
+    this.addEventListener('pointerup', this.#handleShapePointerUp, true);
   }
 
   #handleResize = () => {
@@ -144,17 +152,22 @@ export class FolkBrushField extends FolkBaseSet {
         }
       }
 
+      // Check if we've selected all shapes from multiple alignments
+      const allShapesSelected = Array.from(overlappingAlignments).every((alignment) =>
+        Array.from(alignment.shapes).every((shape) => this.#selectedShapes.has(shape)),
+      );
+
       if (overlappingAlignments.size === 0) {
         // Case: No overlapping alignments - create new alignment
         this.#createAlignment(this.#selectedShapes);
-      } else if (overlappingAlignments.size === 1) {
-        // Case: One overlapping alignment - merge into it
+      } else if (overlappingAlignments.size === 1 || !allShapesSelected) {
+        // Case: One overlapping alignment or partial selection - merge into it
         const existingAlignment = overlappingAlignments.values().next().value;
         if (existingAlignment) {
           this.#mergeIntoAlignment(existingAlignment, this.#selectedShapes);
         }
       } else {
-        // Case: Multiple overlapping alignments - merge all into new alignment
+        // Case: Multiple complete alignments selected - merge all into new alignment
         const allShapes = new Set<FolkShape>();
         this.#selectedShapes.forEach((shape) => allShapes.add(shape));
         overlappingAlignments.forEach((alignment) => {
@@ -278,6 +291,116 @@ export class FolkBrushField extends FolkBaseSet {
     };
   }
 
+  #updateCanvas = () => {
+    // Clear canvas with fade effect
+    this.#ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+    this.#ctx.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
+
+    // Update shape positions
+    this.#lerpShapesTowardsTargets();
+
+    this.#visualizeAlignments();
+    requestAnimationFrame(this.#updateCanvas);
+  };
+
+  #lerpShapesTowardsTargets() {
+    // Check for dragged shapes that could join existing alignments
+    const activeShape = document.activeElement instanceof FolkShape ? document.activeElement : null;
+    if (activeShape && !this.#shapeToAlignments.has(activeShape)) {
+      const rect = activeShape.getTransformDOMRect();
+
+      // Find closest alignment within threshold
+      for (const alignment of this.#alignments) {
+        const perpDistance = alignment.isHorizontal
+          ? Math.abs(rect.center.y - alignment.lineStart.y)
+          : Math.abs(rect.center.x - alignment.lineStart.x);
+
+        const linePos = alignment.isHorizontal ? rect.center.x : rect.center.y;
+        const lineStart = alignment.isHorizontal ? alignment.lineStart.x : alignment.lineStart.y;
+        const lineEnd = alignment.isHorizontal ? alignment.lineEnd.x : alignment.lineEnd.y;
+
+        const threshold = (alignment.isHorizontal ? rect.height : rect.width) * this.#REMOVAL_THRESHOLD_MULTIPLIER;
+
+        if (perpDistance <= threshold && linePos >= lineStart && linePos <= lineEnd) {
+          this.#mergeIntoAlignment(alignment, new Set([activeShape]));
+          break;
+        }
+      }
+    }
+
+    // Existing alignment handling
+    for (const alignment of this.#alignments) {
+      alignment.shapes.forEach((shape) => {
+        if (shape === this.#draggedShape) {
+          // Handle dragged shape logic
+          const rect = shape.getTransformDOMRect();
+          const current = rect.center;
+
+          // Calculate perpendicular and parallel distances from line
+          const perpDistance = alignment.isHorizontal
+            ? Math.abs(current.y - alignment.lineStart.y)
+            : Math.abs(current.x - alignment.lineStart.x);
+
+          const linePos = alignment.isHorizontal ? current.x : current.y;
+          const lineStart = alignment.isHorizontal ? alignment.lineStart.x : alignment.lineStart.y;
+          const lineEnd = alignment.isHorizontal ? alignment.lineEnd.x : alignment.lineEnd.y;
+
+          // Calculate removal thresholds
+          const perpThreshold =
+            (alignment.isHorizontal ? rect.height : rect.width) * this.#REMOVAL_THRESHOLD_MULTIPLIER;
+
+          // Remove if too far perpendicular to line or beyond line endpoints
+          if (perpDistance > perpThreshold || linePos < lineStart || linePos > lineEnd) {
+            this.#removeShapeFromAlignment(shape, alignment);
+          } else {
+            // Recalculate positions while keeping the line fixed
+            const positions = this.#calculateLinePoints(alignment.shapes, alignment.isHorizontal, {
+              x: alignment.isHorizontal ? (alignment.lineStart.x + alignment.lineEnd.x) / 2 : alignment.lineStart.x,
+              y: alignment.isHorizontal ? alignment.lineStart.y : (alignment.lineStart.y + alignment.lineEnd.y) / 2,
+            });
+            alignment.points = positions.points;
+          }
+          return;
+        } else {
+          // Move non-dragged shapes
+          const target = alignment.points.get(shape)!;
+          const current = shape.getTransformDOMRect().center;
+          shape.x += (target.x - current.x) * 0.25;
+          shape.y += (target.y - current.y) * 0.25;
+        }
+      });
+    }
+  }
+
+  #removeShapeFromAlignment(shape: FolkShape, alignment: AlignmentLine) {
+    alignment.shapes.delete(shape);
+    alignment.points.delete(shape);
+
+    const shapeAlignments = this.#shapeToAlignments.get(shape);
+    if (shapeAlignments) {
+      shapeAlignments.delete(alignment);
+      if (shapeAlignments.size === 0) {
+        this.#shapeToAlignments.delete(shape);
+      }
+    }
+
+    // Remove alignment if less than 2 shapes remain
+    if (alignment.shapes.size < 2) {
+      this.#removeAlignment(alignment);
+    } else {
+      // Recalculate positions while keeping line fixed
+      const center = {
+        x: alignment.isHorizontal ? (alignment.lineStart.x + alignment.lineEnd.x) / 2 : alignment.lineStart.x,
+        y: alignment.isHorizontal ? alignment.lineStart.y : (alignment.lineStart.y + alignment.lineEnd.y) / 2,
+      };
+
+      const positions = this.#calculateLinePoints(alignment.shapes, alignment.isHorizontal, center);
+      alignment.points = positions.points;
+      alignment.lineStart = positions.lineStart;
+      alignment.lineEnd = positions.lineEnd;
+    }
+  }
+
   #visualizeAlignments() {
     Gizmos.clear();
 
@@ -344,32 +467,6 @@ export class FolkBrushField extends FolkBaseSet {
     }
   }
 
-  #updateCanvas = () => {
-    // Clear canvas with fade effect
-    this.#ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-    this.#ctx.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
-
-    // Update shape positions
-    this.#lerpShapesTowardsTargets();
-
-    this.#visualizeAlignments();
-    requestAnimationFrame(this.#updateCanvas);
-  };
-
-  #lerpShapesTowardsTargets() {
-    for (const alignment of this.#alignments) {
-      alignment.shapes.forEach((shape) => {
-        if (document.activeElement === shape) return;
-        const target = alignment.points.get(shape)!;
-        const current = shape.getTransformDOMRect().center;
-
-        // Simple lerp towards target
-        shape.x += (target.x - current.x) * 0.25;
-        shape.y += (target.y - current.y) * 0.25;
-      });
-    }
-  }
-
   // Helper methods to support the new functionality
   #determineAlignment(shapes: Set<FolkShape>): boolean {
     const centers = Array.from(shapes).map((shape) => shape.getTransformDOMRect().center);
@@ -381,11 +478,11 @@ export class FolkBrushField extends FolkBaseSet {
     // Add new shapes to existing alignment
     newShapes.forEach((shape) => alignment.shapes.add(shape));
 
-    // Recalculate alignment positions
-    const center =
-      alignment.lineStart.y === alignment.lineEnd.y
-        ? { x: (alignment.lineStart.x + alignment.lineEnd.x) / 2, y: alignment.lineStart.y }
-        : { x: alignment.lineStart.x, y: (alignment.lineStart.y + alignment.lineEnd.y) / 2 };
+    // Recalculate alignment positions while keeping line fixed
+    const center = {
+      x: alignment.isHorizontal ? (alignment.lineStart.x + alignment.lineEnd.x) / 2 : alignment.lineStart.x,
+      y: alignment.isHorizontal ? alignment.lineStart.y : (alignment.lineStart.y + alignment.lineEnd.y) / 2,
+    };
 
     const positions = this.#calculateLinePoints(alignment.shapes, alignment.isHorizontal, center);
     alignment.points = positions.points;
@@ -416,4 +513,15 @@ export class FolkBrushField extends FolkBaseSet {
       }
     });
   }
+
+  // gross but here it is
+  #handleShapePointerDown = (event: PointerEvent) => {
+    if (event.target instanceof FolkShape) {
+      this.#draggedShape = event.target;
+    }
+  };
+
+  #handleShapePointerUp = () => {
+    this.#draggedShape = null;
+  };
 }

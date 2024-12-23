@@ -50,6 +50,7 @@ export class Gizmos extends FolkElement {
     {
       ctx: CanvasRenderingContext2D;
       canvas: HTMLCanvasElement;
+      hidden: boolean;
     }
   >();
   static #defaultLayer = 'default';
@@ -76,10 +77,12 @@ export class Gizmos extends FolkElement {
   `;
 
   readonly #layer: string;
+  #hidden: boolean;
 
   constructor() {
     super();
     this.#layer = this.getAttribute('layer') ?? Gizmos.#defaultLayer;
+    this.#hidden = this.hasAttribute('hidden');
   }
 
   override createRenderRoot() {
@@ -91,7 +94,7 @@ export class Gizmos extends FolkElement {
     const ctx = canvas?.getContext('2d') ?? null;
 
     if (canvas && ctx) {
-      Gizmos.#layers.set(this.#layer, { canvas, ctx });
+      Gizmos.#layers.set(this.#layer, { canvas, ctx, hidden: this.#hidden });
     }
 
     this.#handleResize();
@@ -230,17 +233,47 @@ export class Gizmos extends FolkElement {
     ctx.scale(dpr, dpr);
   }
 
+  static #log() {
+    return {
+      message: '',
+      styles: [] as string[],
+
+      text(str: string) {
+        this.message += str;
+        return this;
+      },
+
+      color(str: string, color: string) {
+        this.message += '%c' + str + '%c';
+        this.styles.push(`font-weight: bold; color: ${color}`, '');
+        return this;
+      },
+
+      print() {
+        console.info(this.message, ...this.styles);
+      },
+    };
+  }
+
   static #getContext(layer = Gizmos.#defaultLayer) {
     if (!Gizmos.#hasLoggedInitMessage) {
       const gizmos = document.querySelectorAll<Gizmos>(Gizmos.tagName);
-      console.info(
-        '%cGizmos',
-        'font-weight: bold; color: #4CAF50;',
-        '\n• Gizmo elements:',
-        gizmos.length,
-        '\n• Layers:',
-        `[${Array.from(Gizmos.#layers.keys()).join(', ')}]`,
-      );
+      const layers = Array.from(Gizmos.#layers.entries());
+
+      const log = Gizmos.#log()
+        .color('Gizmos', '#4CAF50')
+        .text('\n• Gizmo elements: ' + gizmos.length)
+        .text('\n• Layers: [');
+
+      layers.forEach(([key, value], i) => {
+        if (i > 0) log.text(', ');
+        log.text(key);
+        if (value.hidden) {
+          log.color(' (hidden)', '#FFA500');
+        }
+      });
+
+      log.text(']').print();
       Gizmos.#hasLoggedInitMessage = true;
     }
 
@@ -251,7 +284,7 @@ export class Gizmos extends FolkElement {
       return null;
     }
 
-    return layerData?.ctx;
+    return layerData?.hidden ? null : layerData?.ctx;
   }
 }
 
