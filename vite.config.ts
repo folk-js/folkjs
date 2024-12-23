@@ -19,7 +19,7 @@ function getCanvasFiles() {
       } else if (dirent.name.endsWith('.html')) {
         files.push({
           path: `${base}${dirent.name}`,
-          name: `${base}${dirent.name}`,
+          name: dirent.name,
         });
       }
     });
