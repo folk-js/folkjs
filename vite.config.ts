@@ -19,7 +19,7 @@ function getCanvasFiles() {
       } else if (dirent.name.endsWith('.html')) {
         files.push({
           path: `${base}${dirent.name}`,
-          name: dirent.name,
+          name: `${base}${dirent.name}`,
         });
       }
     });
@@ -68,7 +68,7 @@ const linkGenerator = (): Plugin => {
           const groupHtml = groupFiles
             .sort((a, b) => a.name.localeCompare(b.name))
             .map(({ path, name }) => {
-              const title = name.replace('.html', '').replaceAll('-', ' ');
+              const title = name.split('/').pop()?.replace('.html', '').replaceAll('-', ' ') || '';
               return `<li><a href="${path}">${title}</a></li>`;
             })
             .join('\n');
