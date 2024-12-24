@@ -86,16 +86,6 @@ export class FolkContainmentBrush extends FolkBaseSet {
     this.#selectedShapes.clear();
     this.#isPointerDown = true;
     this.#lastPointerPosition = point;
-
-    // Find shapes under initial point
-    this.sourceElements.forEach((element) => {
-      if (element instanceof FolkShape) {
-        const rect = element.getTransformDOMRect();
-        if (this.#isPointInRect(point, rect)) {
-          this.#selectedShapes.add(element);
-        }
-      }
-    });
   };
 
   #handlePointerMove = (event: PointerEvent) => {
@@ -123,7 +113,33 @@ export class FolkContainmentBrush extends FolkBaseSet {
 
   #handlePointerUp = () => {
     if (this.#selectedShapes.size >= 2) {
-      this.#tryCreateContainment(this.#selectedShapes);
+      const largestShape = this.#findLargestShape(this.#selectedShapes);
+      if (largestShape) {
+        const potentialChildren = new Set<FolkShape>();
+        const containerRect = largestShape.getTransformDOMRect();
+
+        this.#selectedShapes.forEach((shape) => {
+          if (shape !== largestShape) {
+            const childRect = shape.getTransformDOMRect();
+            if (this.#isRectContained(childRect, containerRect)) {
+              potentialChildren.add(shape);
+            }
+          }
+        });
+
+        if (potentialChildren.size > 0) {
+          // Remove any existing containments for these shapes
+          potentialChildren.forEach((child) => {
+            const existingContainment = this.#shapeToContainment.get(child);
+            if (existingContainment) {
+              this.#removeFromContainment(existingContainment, child);
+            }
+          });
+
+          // Create new containment
+          this.#createContainment(largestShape, potentialChildren);
+        }
+      }
     }
 
     this.#isPointerDown = false;
@@ -135,7 +151,7 @@ export class FolkContainmentBrush extends FolkBaseSet {
     if (!(event.target instanceof FolkShape)) return;
     const droppedShape = event.target;
 
-    // Find potential containers
+    // Only handle drops for existing containments
     this.sourceElements.forEach((element) => {
       if (element instanceof FolkShape && element !== droppedShape) {
         const containerRect = element.getTransformDOMRect();
@@ -145,9 +161,8 @@ export class FolkContainmentBrush extends FolkBaseSet {
         if (this.#isRectOverlapping(shapeRect, containerRect, 0.4)) {
           const existingContainment = this.#shapeToContainment.get(element);
           if (existingContainment) {
+            // Only add to existing containments, don't create new ones
             this.#addToContainment(existingContainment, droppedShape);
-          } else {
-            this.#createContainment(element, new Set([droppedShape]));
           }
         }
       }
@@ -155,7 +170,9 @@ export class FolkContainmentBrush extends FolkBaseSet {
   };
 
   #updateCanvas = () => {
-    // this.#ctx.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
+    // Clear canvas with fade effect
+    this.#ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+    this.#ctx.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
 
     // Update containments
     for (const containment of this.#containments) {
@@ -343,13 +360,7 @@ export class FolkContainmentBrush extends FolkBaseSet {
 
       // Draw container bounds
       Gizmos.rect(containerRect, {
-        color: 'rgba(0, 255, 0, 0.2)',
-      });
-
-      // Draw connections to children
-      containment.children.forEach((child) => {
-        const childRect = child.getTransformDOMRect();
-        Gizmos.line(containerRect.center, childRect.center, { color: 'rgba(0, 255, 0, 0.3)', width: 1 });
+        color: 'green',
       });
     });
 
@@ -358,9 +369,59 @@ export class FolkContainmentBrush extends FolkBaseSet {
       const largestShape = this.#findLargestShape(this.#selectedShapes);
       if (largestShape) {
         const containerRect = largestShape.getTransformDOMRect();
-        Gizmos.rect(containerRect, {
-          color: 'rgba(255, 255, 0, 0.2)',
+        const potentialChildren = new Set<FolkShape>();
+
+        // Find potential children
+        this.#selectedShapes.forEach((shape) => {
+          if (shape !== largestShape) {
+            const childRect = shape.getTransformDOMRect();
+            if (this.#isRectContained(childRect, containerRect)) {
+              potentialChildren.add(shape);
+            }
+          }
         });
+
+        if (potentialChildren.size > 0) {
+          // Calculate the would-be layout
+          const { positions, totalWidth, totalHeight } = this.#calculateSimplePositions(
+            Array.from(potentialChildren).map((child) => child.getTransformDOMRect()),
+            containerRect.width - this.#CONTAINER_PADDING * 2,
+            containerRect.height - this.#CONTAINER_PADDING * 2,
+            this.#CONTAINER_PADDING,
+          );
+
+          // Draw would-be container size
+          const targetWidth = totalWidth + this.#CONTAINER_PADDING * 2;
+          const targetHeight = totalHeight + this.#CONTAINER_PADDING * 2;
+          const targetContainerRect = new DOMRect(containerRect.x, containerRect.y, targetWidth, targetHeight);
+
+          Gizmos.rect(targetContainerRect, {
+            color: 'rgba(0, 0, 255, 0.3)',
+          });
+
+          // Draw would-be child positions
+          Array.from(potentialChildren).forEach((child, index) => {
+            const childRect = child.getTransformDOMRect();
+            const targetPos = positions[index];
+            const targetChildRect = new DOMRect(
+              containerRect.x + targetPos.x + this.#CONTAINER_PADDING,
+              containerRect.y + targetPos.y + this.#CONTAINER_PADDING,
+              childRect.width,
+              childRect.height,
+            );
+
+            // Draw target position
+            Gizmos.rect(targetChildRect, {
+              color: 'rgba(0, 255, 0, 0.5)',
+            });
+
+            // Draw line from current to target position
+            Gizmos.line(this.#getRectCenter(childRect), this.#getRectCenter(targetChildRect), {
+              color: 'rgba(0, 255, 0, 0.5)',
+              width: 1,
+            });
+          });
+        }
       }
     }
   }
@@ -447,5 +508,12 @@ export class FolkContainmentBrush extends FolkBaseSet {
     const rect1Area = rect1.width * rect1.height;
 
     return overlapArea / rect1Area >= threshold;
+  }
+
+  #getRectCenter(rect: DOMRect): Point {
+    return {
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+    };
   }
 }
