@@ -27,7 +27,8 @@
         border-radius: 5px;
         color: white;
         padding: 0.5rem;
-        min-width: max-content;
+        min-width: 20px;
+        min-height: 20px;
 
         h2 {
           margin: 0;
@@ -35,14 +36,37 @@
         }
 
         p {
-          font-size: clamp(0rem, calc(1.5rem * (var(--folk-zoom) - 0.35)), 1rem);
+          font-size: clamp(0rem, calc(1.5rem * (var(--folk-zoom) - 0.5)), 1rem);
+          opacity: clamp(0, calc(var(--folk-zoom) + 0.25), 1);
+          max-width: 35ch;
+        }
+      }
+
+      @container style(--folk-discrete-zoom: 0) or style(--folk-discrete-zoom: 0.25) or style(--folk-discrete-zoom: 0.5) {
+        p {
+          display: none;
+        }
+
+        h2 {
+          font-size: calc(3em * (var(--folk-zoom)));
           opacity: clamp(0, calc(var(--folk-zoom) + 0.5), 1);
-          max-width: clamp(20ch, calc(100ch * var(--folk-zoom)), 35ch);
         }
       }
 
       @container style(--folk-discrete-zoom: 0) or style(--folk-discrete-zoom: 0.25) {
-        p {
+        folk-shape {
+          border-radius: clamp(5px, calc((0.25 - var(--folk-zoom)) * 200%), 50%);
+        }
+      }
+
+      @container style(--folk-discrete-zoom: 0) {
+        folk-shape {
+          width: 20px;
+          aspect-ratio: 1;
+          border-radius: 50%;
+        }
+
+        h2 {
           display: none;
         }
       }
@@ -51,7 +75,7 @@
   <body>
     <label>
       Zoom:
-      <input type="range" min="0" max="1" value="0.5" step="0.01" />
+      <input type="range" min="0" max="1" value="1" step="0.01" />
     </label>
 
     <folk-shape id="box1" x="100" y="100">
@@ -65,7 +89,7 @@
       </p>
     </folk-shape>
 
-    <folk-shape id="box2" x="400" y="400">
+    <folk-shape id="box2" x="500" y="400">
       <h2>Dolor sit amet</h2>
       <p>
         Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
@@ -96,12 +120,14 @@
         const currentZoom = range.valueAsNumber;
         let semanticZoom;
 
-        if (currentZoom < 0.25) {
+        if (currentZoom === 0) {
           semanticZoom = 0;
-        } else if (currentZoom < 0.5) {
+        } else if (currentZoom < 0.25) {
           semanticZoom = 0.25;
-        } else if (currentZoom < 0.75) {
+        } else if (currentZoom < 0.5) {
           semanticZoom = 0.5;
+        } else if (currentZoom < 0.75) {
+          semanticZoom = 0.75;
         } else {
           semanticZoom = 1;
         }
