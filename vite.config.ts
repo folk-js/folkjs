@@ -1,8 +1,9 @@
-import { readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { extname, join, resolve } from 'node:path';
 import { defineConfig, IndexHtmlTransformContext, Plugin } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
 
+const websiteDir = resolve(__dirname, './website');
 const canvasWebsiteDir = resolve(__dirname, './website/canvas');
 
 function getCanvasFiles() {
@@ -82,6 +83,19 @@ const linkGenerator = (): Plugin => {
   };
 };
 
+const fallback = (rootDir: string): Plugin => ({
+  name: 'html-index-fallback',
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      const url = req.originalUrl;
+      if (url && !extname(url) && existsSync(join(rootDir, `${url}/index.html`))) {
+        req.url += '/index.html';
+      }
+      next();
+    });
+  },
+});
+
 export default defineConfig({
   root: 'website',
   resolve: {
@@ -91,7 +105,7 @@ export default defineConfig({
       '@propagators': resolve(__dirname, './propagators'),
     },
   },
-  plugins: [linkGenerator(), mkcert()],
+  plugins: [fallback(websiteDir), linkGenerator(), mkcert()],
   build: {
     target: 'esnext',
     rollupOptions: {
