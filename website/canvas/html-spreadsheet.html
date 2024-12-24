@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -122,9 +122,22 @@
       </folk-spreadsheet>
     </folk-shape>
 
+    <folk-shape x="50" y="600" width="200">
+      <ix-object-inspector></ix-object-inspector>
+    </folk-shape>
+
+    <folk-event-propagator
+      source="folk-spreadsheet"
+      target="ix-object-inspector"
+      trigger="propagate"
+      expression="data: from.getValues()"
+    ></folk-event-propagator>
+
     <script type="module">
+      import 'https://esm.sh/inspector-elements@0.1.0';
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-spreadsheet.ts';
+      import '@labs/standalone/folk-event-propagator.ts';
     </script>
   </body>
 </html>

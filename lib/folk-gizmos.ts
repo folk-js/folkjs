@@ -45,6 +45,7 @@ interface VectorOptions extends LineOptions {
  */
 export class Gizmos extends FolkElement {
   static override tagName = 'folk-gizmos';
+
   static #layers = new Map<
     string,
     {
@@ -53,8 +54,11 @@ export class Gizmos extends FolkElement {
       hidden: boolean;
     }
   >();
+
   static #defaultLayer = 'default';
+
   static #hasLoggedDrawWarning = false;
+
   static #hasLoggedInitMessage = false;
 
   static styles = css`
@@ -288,6 +292,4 @@ export class Gizmos extends FolkElement {
   }
 }
 
-if (!customElements.get('folk-gizmos')) {
-  customElements.define('folk-gizmos', Gizmos);
-}
+Gizmos.define();

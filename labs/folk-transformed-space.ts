@@ -1,7 +1,6 @@
 import { FolkElement, type Point } from '@lib';
 import { Gizmos } from '@lib/folk-gizmos';
 import { html } from '@lib/tags';
-import { TransformEvent } from '@lib/TransformEvent';
 import { css } from '@lit/reactive-element';
 
 export class FolkTransformedSpace extends FolkElement {

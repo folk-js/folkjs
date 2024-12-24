@@ -48,7 +48,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
     `,
   ];
 
-  // TODO: stop simulation when energy approaches 0 
+  // TODO: stop simulation when energy approaches 0
   #rAF = new AnimationFrameController(this, 10000);
 
   #svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -107,7 +107,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
     } else {
       source = {
         x: sourceRect.x + sourceRect.width / 2,
-        y: sourceRect.y + sourceRect.height / 2,
+        y: sourceRect.y + sourceRect.height,
       };
     }
 
@@ -116,7 +116,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
     } else {
       target = {
         x: targetRect.x + targetRect.width / 2,
-        y: targetRect.y + targetRect.height / 2,
+        y: targetRect.y + targetRect.height,
       };
     }
 

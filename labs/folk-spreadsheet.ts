@@ -266,6 +266,23 @@ export class FolkSpreadsheet extends HTMLElement {
     return this.querySelector(`folk-cell[column="${column}"][row="${row}"]`);
   }
 
+  getCells() {
+    return Array.from(this.querySelectorAll(`folk-cell`));
+  }
+
+  getValues() {
+    const cells = this.getCells();
+    const data: Record<string, any> = {};
+
+    for (const cell of cells) {
+      if (cell.value !== undefined) {
+        data[cell.name] = cell.value;
+      }
+    }
+
+    return data;
+  }
+
   handleEvent(event: Event) {
     switch (event.type) {
       case 'keydown': {
