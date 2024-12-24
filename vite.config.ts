@@ -58,7 +58,7 @@ const linkGenerator = (): Plugin => {
         .sort((a, b) => a.name.localeCompare(b.name))
         .map(({ path, name }) => {
           const title = name.replace('.html', '').replaceAll('-', ' ');
-          return `<li><a href="${path}">${title}</a></li>`;
+          return `<li><a href="/canvas/${path}">${title}</a></li>`;
         })
         .join('\n');
 
@@ -70,7 +70,7 @@ const linkGenerator = (): Plugin => {
             .sort((a, b) => a.name.localeCompare(b.name))
             .map(({ path, name }) => {
               const title = name.split('/').pop()?.replace('.html', '').replaceAll('-', ' ') || '';
-              return `<li><a href="${path}">${title}</a></li>`;
+              return `<li><a href="/canvas/${path}">${title}</a></li>`;
             })
             .join('\n');
 
@@ -88,8 +88,9 @@ const fallback = (rootDir: string): Plugin => ({
   configureServer(server) {
     server.middlewares.use((req, res, next) => {
       const url = req.originalUrl;
-      if (url && !extname(url) && existsSync(join(rootDir, `${url}/index.html`))) {
+      if (url && url !== '/' && !extname(url) && existsSync(join(rootDir, `${url}/index.html`))) {
         req.url += '/index.html';
+        console.log('redirect', req.url, req.originalUrl);
       }
       next();
     });
