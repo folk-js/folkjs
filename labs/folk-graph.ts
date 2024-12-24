@@ -69,9 +69,7 @@ export class FolkGraph extends FolkBaseSet implements AnimationFrameControllerHo
     const colaNodes = this.#createNodes();
     const colaLinks = this.#createLinks();
 
-    console.log(colaNodes, colaLinks);
-
-    this.#graphSim.nodes(colaNodes).links(colaLinks).linkDistance(250).avoidOverlaps(true).handleDisconnected(true);
+    this.#graphSim.nodes(colaNodes).links(colaLinks).linkDistance(400).avoidOverlaps(true).handleDisconnected(true);
   }
 
   #createNodes() {
@@ -93,7 +91,7 @@ export class FolkGraph extends FolkBaseSet implements AnimationFrameControllerHo
 
   #createLinks() {
     return Array.from(this.sourceElements)
-      .filter((element): element is FolkBaseConnection => element instanceof FolkBaseConnection)
+      .filter((element) => element instanceof FolkBaseConnection)
       .map((arrow) => {
         this.#arrows.add(arrow);
         const source = this.#nodes.get(arrow.sourceElement as FolkShape);
