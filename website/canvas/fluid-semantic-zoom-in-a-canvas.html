@@ -16,6 +16,11 @@
         margin: 0;
       }
 
+      pinch-zoom {
+        position: absolute;
+        inset: 0;
+      }
+
       label {
         display: flex;
         align-items: center;
@@ -36,112 +41,55 @@
         }
 
         p {
-          font-size: clamp(0rem, calc(1.5rem * (var(--folk-zoom) - 0.5)), 1rem);
-          opacity: clamp(0, calc(var(--folk-zoom) + 0.25), 1);
+          font-size: clamp(0rem, calc(1.5rem * (var(--scale) - 0.5)), 1rem);
+          opacity: clamp(0, calc(var(--scale) + 0.25), 1);
           max-width: 35ch;
-        }
-      }
-
-      @container style(--folk-discrete-zoom: 0) or style(--folk-discrete-zoom: 0.25) or style(--folk-discrete-zoom: 0.5) {
-        p {
-          display: none;
-        }
-
-        h2 {
-          font-size: calc(3em * (var(--folk-zoom)));
-          opacity: clamp(0, calc(var(--folk-zoom) + 0.5), 1);
-        }
-      }
-
-      @container style(--folk-discrete-zoom: 0) or style(--folk-discrete-zoom: 0.25) {
-        folk-shape {
-          border-radius: clamp(5px, calc((0.25 - var(--folk-zoom)) * 200%), 50%);
-        }
-      }
-
-      @container style(--folk-discrete-zoom: 0) {
-        folk-shape {
-          width: 20px;
-          aspect-ratio: 1;
-          border-radius: 50%;
-        }
-
-        h2 {
-          display: none;
         }
       }
     </style>
   </head>
   <body>
-    <label>
-      Zoom:
-      <input type="range" min="0" max="1" value="1" step="0.01" />
-    </label>
+    <pinch-zoom>
+      <folk-graph>
+        <folk-shape id="box1" x="100" y="100">
+          <h2>Lorem ispum</h2>
+          <p>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et
+            dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex
+            ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat
+            nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit
+            anim id est laborum.
+          </p>
+        </folk-shape>
 
-    <folk-graph>
-      <folk-shape id="box1" x="100" y="100">
-        <h2>Lorem ispum</h2>
-        <p>
-          Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
-          magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
-          consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
-          pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id
-          est laborum.
-        </p>
-      </folk-shape>
+        <folk-shape id="box2" x="500" y="400">
+          <h2>Dolor sit amet</h2>
+          <p>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et
+            dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex
+            ea commodo consequat.
+          </p>
+        </folk-shape>
 
-      <folk-shape id="box2" x="500" y="400">
-        <h2>Dolor sit amet</h2>
-        <p>
-          Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
-          magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
-          consequat.
-        </p>
-      </folk-shape>
+        <folk-shape id="box3" x="150" y="600">
+          <h2>Consectetur elit</h2>
+          <p>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et
+            dolore magna aliqua.
+          </p>
+        </folk-shape>
 
-      <folk-shape id="box3" x="150" y="600">
-        <h2>Consectetur elit</h2>
-        <p>
-          Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
-          magna aliqua.
-        </p>
-      </folk-shape>
-
-      <folk-arrow source="#box1" target="#box2"></folk-arrow>
-      <folk-arrow source="#box2" target="#box3"></folk-arrow>
-      <folk-arrow source="#box1" target="#box3"></folk-arrow>
-    </folk-graph>
+        <folk-arrow source="#box1" target="#box2"></folk-arrow>
+        <folk-arrow source="#box2" target="#box3"></folk-arrow>
+        <folk-arrow source="#box1" target="#box3"></folk-arrow>
+      </folk-graph>
+    </pinch-zoom>
 
     <script type="module">
+      import 'https://esm.sh/pinch-zoom-element@1.1.1';
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-arrow.ts';
       import '@labs/standalone/folk-graph.ts';
-
-      const range = document.querySelector('input');
-
-      function onZoom() {
-        const currentZoom = range.valueAsNumber;
-        let semanticZoom;
-
-        if (currentZoom === 0) {
-          semanticZoom = 0;
-        } else if (currentZoom < 0.25) {
-          semanticZoom = 0.25;
-        } else if (currentZoom < 0.5) {
-          semanticZoom = 0.5;
-        } else if (currentZoom < 0.75) {
-          semanticZoom = 0.75;
-        } else {
-          semanticZoom = 1;
-        }
-
-        document.body.style.setProperty('--folk-zoom', range.value);
-        document.body.style.setProperty('--folk-discrete-zoom', semanticZoom);
-      }
-
-      range.addEventListener('input', onZoom);
-
-      onZoom();
     </script>
   </body>
 </html>
