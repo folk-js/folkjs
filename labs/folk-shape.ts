@@ -105,7 +105,7 @@ const styles = css`
     border-radius: 2px;
 
     @media (any-pointer: coarse) {
-      width: 13px;
+      width: 15px;
     }
   }
 
@@ -114,7 +114,7 @@ const styles = css`
     width: 16px;
 
     @media (any-pointer: coarse) {
-      width: 20px;
+      width: 25px;
     }
   }
 
@@ -266,6 +266,7 @@ export class FolkShape extends FolkElement {
     const root = super.createRenderRoot();
 
     this.addEventListener('pointerdown', this);
+    this.addEventListener('touchmove', this, { passive: false });
     this.addEventListener('keydown', this);
 
     // Ideally we would creating these lazily on first focus, but the resize handlers need to be around for delegate focus to work.
@@ -313,7 +314,13 @@ export class FolkShape extends FolkElement {
     return this.#readonlyRect;
   }
 
-  handleEvent(event: PointerEvent | KeyboardEvent) {
+  handleEvent(event: PointerEvent | KeyboardEvent | TouchEvent) {
+    // prevent IOS Safari from scrolling when a shape is interacted with.
+    if (event instanceof TouchEvent) {
+      event.preventDefault();
+      return;
+    }
+
     const focusedElement = (this.renderRoot as ShadowRoot).activeElement as HTMLElement | null;
     const target = event.composedPath()[0] as HTMLElement;
     let handle: Handle | null = null;
@@ -442,7 +449,7 @@ export class FolkShape extends FolkElement {
 
   protected override update(changedProperties: PropertyValues): void {
     this.#dispatchTransformEvent();
-    
+
     super.update(changedProperties);
   }
 

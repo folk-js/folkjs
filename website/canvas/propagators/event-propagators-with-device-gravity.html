@@ -73,14 +73,6 @@ rotation: from.x"
       import '@labs/standalone/folk-event-propagator.ts';
       import { Gizmos } from '@lib/folk-gizmos';
 
-      document.addEventListener(
-        'touchmove',
-        (event) => {
-          event.preventDefault();
-        },
-        { passive: false },
-      );
-
       const ropes = Array.from(document.querySelectorAll('folk-event-propagator'));
       let orientationEvent;
 
