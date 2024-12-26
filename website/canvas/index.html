@@ -23,10 +23,9 @@
 
       folk-sand {
         position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
+        inset: 0;
+        cursor: url('data:image/x-icon;base64,AAACAAEAICAQAAAAAADoAgAAFgAAACgAAAAgAAAAQAAAAAEABAAAAAAAAAIAAAAAAAAAAAAAEAAAAAAAAAAAAAAAR0dHAP///wAiIiIAMjIyABYWFgA9PT0AODg4AE9PTwBfX18AKioqAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAiIiIiIiIiIgAAAAAAAAAACgAAAKMAAAIAAAAAAAAAAAAAAAoiMAACAAAAAAAAAAAAAAACIiYAAgAAAAAAAAAAYAAAIiIiMAIAAAAAAAAAADAAAiIiIiACAAAAAAAAAAUFACIiIiIiQgAAAAAAAAADAKIiIiIiIgIAAAAAAAAAAGMiImIiIiECAAAAAAAAAAUAIiApIiJgAgAAAAAAAAAApgIiAiIgAAIAAAAAAAAAAAAKIoIiAAACAAAAAAAAAAAABwICIAAAAgAAAAAAAAAAAAAAAlAAAAIAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAACgAIAAAgAAAAAAAAAAAAAAAKAAAAIAAAAAAAAAD///////////////////////////////////////////////////////////////////////////////+AAH//359//58Pf/8eB3//HAN//xgBf/8QAH//AAB//wABf/8AA3//gAd//8APf//wD3///C9///5vf//+73///x9//w=='),
+          auto;
       }
 
       main {
@@ -43,7 +42,15 @@
         padding: 20px;
         border-radius: 2px;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-        background: rgba(255, 255, 255, 0.9);
+        background: rgba(255, 255, 255, 0.8);
+      }
+
+      main,
+      ul {
+        > * {
+          pointer-events: auto;
+        }
+        pointer-events: none;
       }
 
       h1 {
@@ -53,6 +60,7 @@
         font-variation-settings:
           'CASL' 0,
           'MONO' 1;
+        width: fit-content;
       }
 
       h2 {
@@ -60,6 +68,7 @@
         font-weight: 800;
         margin: 1em 0 0;
         font-variation-settings: 'wght' 800;
+        width: fit-content;
       }
 
       ul {
@@ -67,6 +76,7 @@
         line-height: 1.8;
         padding-left: 0;
         margin: 0;
+        width: fit-content;
       }
 
       li {
@@ -74,6 +84,7 @@
         grid-template-columns: 2em 1fr;
         padding-left: 0;
         text-indent: 0;
+        width: fit-content;
       }
 
       li::before {
