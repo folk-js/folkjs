@@ -1,7 +1,7 @@
 import { css, PropertyValues } from '@lit/reactive-element';
-import { FolkRope } from './folk-rope.ts';
 import { property } from '@lit/reactive-element/decorators.js';
 import { Propagator } from '@propagators';
+import { FolkRope } from './folk-rope.ts';
 
 export class FolkEventPropagator extends FolkRope {
   static override tagName = 'folk-event-propagator';
@@ -30,13 +30,13 @@ export class FolkEventPropagator extends FolkRope {
         box-sizing: content-box;
       }
 
-      .trigger {
+      [part='trigger'] {
         border-radius: 5px 5px 0 0;
         border-bottom: none;
         width: fit-content;
       }
 
-      .expression {
+      [part='expression'] {
         border-radius: 0 5px 5px 5px;
       }
     `,
@@ -55,8 +55,8 @@ export class FolkEventPropagator extends FolkRope {
     const root = super.createRenderRoot();
 
     this.#container.className = 'input-container';
-    this.#triggerTextarea.className = 'trigger';
-    this.#expressionTextarea.className = 'expression';
+    this.#triggerTextarea.part.add('trigger');
+    this.#expressionTextarea.part.add('expression');
 
     this.#triggerTextarea.addEventListener('change', () => {
       this.trigger = this.#triggerTextarea.value;

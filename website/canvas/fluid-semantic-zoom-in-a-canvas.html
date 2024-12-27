@@ -21,12 +21,6 @@
         inset: 0;
       }
 
-      label {
-        display: flex;
-        align-items: center;
-        margin: 1rem;
-      }
-
       folk-shape {
         background: black;
         border-radius: 5px;
@@ -46,6 +40,31 @@
           max-width: 35ch;
         }
       }
+
+      /* @container style(--folk-discrete-zoom: 0) or style(--folk-discrete-zoom: 0.25) or style(--folk-discrete-zoom: 0.5) {
+        p {
+          display: none;
+        }
+        h2 {
+          font-size: calc(3em * (var(--folk-zoom)));
+          opacity: clamp(0, calc(var(--folk-zoom) + 0.5), 1);
+        }
+      }
+      @container style(--folk-discrete-zoom: 0) or style(--folk-discrete-zoom: 0.25) {
+        folk-shape {
+          border-radius: clamp(5px, calc((0.25 - var(--folk-zoom)) * 200%), 50%);
+        }
+      }
+      @container style(--folk-discrete-zoom: 0) {
+        folk-shape {
+          width: 20px;
+          aspect-ratio: 1;
+          border-radius: 50%;
+        }
+        h2 {
+          display: none;
+        }
+      } */
     </style>
   </head>
   <body>

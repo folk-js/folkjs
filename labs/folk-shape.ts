@@ -332,6 +332,7 @@ export class FolkShape extends FolkElement {
 
     // Handle pointer capture setup/cleanup
     if (event instanceof PointerEvent) {
+      event.stopPropagation();
       if (event.type === 'pointerdown') {
         if (target !== this && !handle) return;
 
