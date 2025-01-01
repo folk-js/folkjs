@@ -42,8 +42,9 @@ export class FolkEventPropagator extends FolkRope {
     `,
   ];
 
-  @property({ type: String, reflect: true }) trigger?: string;
-  @property({ type: String, reflect: true }) expression?: string;
+  @property({ reflect: true }) trigger?: string;
+
+  @property({ reflect: true }) expression?: string;
 
   #triggerTextarea = document.createElement('textarea');
   #expressionTextarea = document.createElement('textarea');

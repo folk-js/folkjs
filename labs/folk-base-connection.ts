@@ -15,7 +15,7 @@ export class FolkBaseConnection extends FolkElement {
     }
   `;
 
-  @property({ type: String, reflect: true }) source?: string;
+  @property({ reflect: true }) source?: string;
 
   #sourceIframeSelector: string | undefined = undefined;
 
@@ -23,7 +23,7 @@ export class FolkBaseConnection extends FolkElement {
 
   @state() sourceRect: DOMRectReadOnly | null = null;
 
-  @property({ type: String, reflect: true }) target?: string;
+  @property({ reflect: true }) target?: string;
 
   #targetIframeSelector: string | undefined = undefined;
 

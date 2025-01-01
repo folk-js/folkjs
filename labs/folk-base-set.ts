@@ -1,6 +1,6 @@
-import { property, state } from '@lit/reactive-element/decorators.js';
 import { ClientRectObserverEntry, FolkElement, FolkObserver, parseDeepCSSSelector } from '@lib';
 import { css, CSSResultGroup, PropertyValues } from '@lit/reactive-element';
+import { property, state } from '@lit/reactive-element/decorators.js';
 
 const folkObserver = new FolkObserver();
 
@@ -19,7 +19,7 @@ export class FolkBaseSet extends FolkElement {
     }
   `;
 
-  @property({ type: String, reflect: true }) sources?: string;
+  @property({ reflect: true }) sources?: string;
 
   #sourcesMap = new Map<Element, DOMRectReadOnly>();
   get sourcesMap(): ReadonlyMap<Element, DOMRectReadOnly> {
