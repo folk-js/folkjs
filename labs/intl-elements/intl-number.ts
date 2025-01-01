@@ -20,8 +20,11 @@ export class IntlNumber extends FolkElement {
     }
   `;
 
+  // `lang` is a global attribute, should be navigate up the DOM tree to find it?
+  @property({ reflect: true }) locale: string | undefined;
+
   // Locale options
-  @property({ reflect: true }) localeMatcher: NumberFormatOptions['localeMatcher'] = 'best fit';
+  @property({ reflect: true }) localeMatcher: NumberFormatOptions['localeMatcher'];
 
   @property({ reflect: true }) numberingSystem: NumberFormatOptions['numberingSystem'];
 
@@ -36,11 +39,11 @@ export class IntlNumber extends FolkElement {
 
   @property({ reflect: true, type: Number }) maximumSignificantDigits: NumberFormatOptions['maximumSignificantDigits'];
 
-  @property({ reflect: true }) roundingPriority: NumberFormatOptions['roundingPriority'] = 'auto';
+  @property({ reflect: true }) roundingPriority: NumberFormatOptions['roundingPriority'];
 
   @property({ reflect: true, type: Number }) roundingIncrement: NumberFormatOptions['roundingIncrement'];
 
-  @property({ reflect: true }) roundingMode: NumberFormatOptions['roundingMode'] = 'halfExpand';
+  @property({ reflect: true }) roundingMode: NumberFormatOptions['roundingMode'];
 
   @property({ reflect: true }) trailingZeroDisplay: NumberFormatOptions['trailingZeroDisplay'];
 
@@ -50,24 +53,24 @@ export class IntlNumber extends FolkElement {
 
   @property({ reflect: true }) currency: NumberFormatOptions['currency'];
 
-  @property({ reflect: true }) currencyDisplay: NumberFormatOptions['currencyDisplay'] = 'symbol';
+  @property({ reflect: true }) currencyDisplay: NumberFormatOptions['currencyDisplay'];
 
-  @property({ reflect: true }) currencySign: NumberFormatOptions['currencySign'] = 'standard';
+  @property({ reflect: true }) currencySign: NumberFormatOptions['currencySign'];
 
-  @property({ reflect: true }) unit: string | undefined;
+  @property({ reflect: true }) unit: NumberFormatOptions['unit'];
 
-  @property({ reflect: true }) unitDisplay: 'short' | 'long' = 'short';
+  @property({ reflect: true }) unitDisplay: NumberFormatOptions['unitDisplay'];
 
   // Other options
-  @property({ reflect: true }) notation: NumberFormatOptions['notation'] = 'standard';
+  @property({ reflect: true }) notation: NumberFormatOptions['notation'];
 
-  @property({ reflect: true }) compactDisplay: NumberFormatOptions['compactDisplay'] = 'short';
+  @property({ reflect: true }) compactDisplay: NumberFormatOptions['compactDisplay'];
 
-  @property({ reflect: true }) useGrouping: NumberFormatOptions['useGrouping'] = undefined;
+  @property({ reflect: true }) useGrouping: NumberFormatOptions['useGrouping'];
 
-  @property({ reflect: true }) signDisplay: NumberFormatOptions['signDisplay'] = 'auto';
+  @property({ reflect: true }) signDisplay: NumberFormatOptions['signDisplay'];
 
-  #format!: Intl.NumberFormat;
+  #format: Intl.NumberFormat | undefined;
   #value: number = NaN;
   #slot = document.createElement('slot');
   #span = document.createElement('span');
@@ -85,7 +88,7 @@ export class IntlNumber extends FolkElement {
     return this.#span.textContent;
   }
 
-  protected override createRenderRoot(): HTMLElement | DocumentFragment {
+  override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
 
     this.#span.part.add('number');
@@ -99,9 +102,26 @@ export class IntlNumber extends FolkElement {
     return root;
   }
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+
+    window.addEventListener('languagechange', this.#onLanguageChange);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+
+    window.removeEventListener('languagechange', this.#onLanguageChange);
+  }
+
+  #onLanguageChange = () => this.requestUpdate();
+
   override willUpdate(): void {
     // Any change to properties requires re-creating the formatter.
-    this.#format = new Intl.NumberFormat(undefined, {
+
+    // Default locale to navigator.language since it's the browsers language setting
+    // Passing undefined seems to reflect the OS's language setting.
+    this.#format = new Intl.NumberFormat(this.locale || navigator.language, {
       localeMatcher: this.localeMatcher,
       numberingSystem: this.numberingSystem,
 
@@ -132,11 +152,11 @@ export class IntlNumber extends FolkElement {
     this.#updateValue();
   }
 
-  #updateValue() {
-    if ((this.#value = NaN)) {
+  #updateValue = () => {
+    if (Number.isNaN(this.#value)) {
       this.#span.textContent = '';
-    } else {
+    } else if (this.#format) {
       this.#span.textContent = this.#format.format(this.#value);
     }
-  }
+  };
 }
