@@ -23,6 +23,7 @@
   "devDependencies": {
     "@types/leaflet": "^1.9.14",
     "@types/node": "^22.10.1",
+    "@types/wicg-file-system-access": "^2023.10.5",
     "@webgpu/types": "^0.1.51",
     "bun-types": "^1.1.38",
     "mitata": "^1.0.20",

@@ -29,5 +29,7 @@ export * from './EffectIntegrator';
 // WebGL utilities
 export * from './webgl';
 
+export * from './indexeddb';
+
 // Experimental features
 export * from './Experimental';
