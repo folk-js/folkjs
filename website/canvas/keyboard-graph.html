@@ -4,7 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Virtual Keyboard Shortcuts</title>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
       body {
         display: flex;
@@ -293,11 +292,11 @@
       }
 
       .dag-link.active {
-        background: #6a6a6a;
+        height: 3px;
       }
 
       .dag-link.partially-active {
-        background: #8a8a8a;
+        height: 2.5px;
       }
     </style>
   </head>
@@ -425,16 +424,6 @@
         f11: { modifiers: [], action: 'Toggle Full Screen' },
         f12: { modifiers: [], action: 'Developer Tools' },
         esc: { modifiers: [], action: 'Exit / Cancel' },
-        tab: { modifiers: [], action: 'Next Field' },
-        capslock: { modifiers: [], action: 'Toggle Caps' },
-        return: { modifiers: [], action: 'Submit / Enter' },
-        backspace: { modifiers: [], action: 'Delete Previous' },
-        delete: { modifiers: [], action: 'Delete Forward' },
-        home: { modifiers: [], action: 'Start of Line' },
-        end: { modifiers: [], action: 'End of Line' },
-        pageup: { modifiers: [], action: 'Page Up' },
-        pagedown: { modifiers: [], action: 'Page Down' },
-        space: { modifiers: [], action: 'Insert Space' },
 
         // Command shortcuts
         z: { modifiers: ['cmd'], action: 'Undo' },
@@ -491,12 +480,6 @@
         f5: { modifiers: [], action: 'Refresh' },
         f11: { modifiers: [], action: 'Toggle Full Screen' },
         f12: { modifiers: [], action: 'Open Developer Tools' },
-
-        // Navigation
-        home: { modifiers: [], action: 'Go to Start of Line' },
-        end: { modifiers: [], action: 'Go to End of Line' },
-        pageup: { modifiers: [], action: 'Scroll Page Up' },
-        pagedown: { modifiers: [], action: 'Scroll Page Down' },
 
         // Arrow keys with modifiers
         left: { modifiers: ['ctrl'], action: 'Move Word Left' },
@@ -596,76 +579,64 @@
         return continuations;
       }
 
-      // Update visual state of keyboard
+      // Add this helper function near the top of the script
+      function applyModifierStyles(element, modifiers, isActive = true, isPartiallyActive = false) {
+        // Reset to default state
+        element.style.background = '#3a3a3a';
+
+        if (!isActive && !isPartiallyActive) return;
+
+        if (modifiers.length === 0) {
+          element.style.background = isActive ? '#585e6f' : '#3a3a3a';
+        } else if (modifiers.length === 1) {
+          const color = getModifierColor(modifiers[0]);
+          element.style.background = isPartiallyActive ? color.replace('rgb', 'rgba').replace(')', ', 0.3)') : color;
+        } else if (modifiers.length === 2) {
+          const pattern = `repeating-linear-gradient(45deg,
+            ${getModifierColor(modifiers[0])} 0px,
+            ${getModifierColor(modifiers[0])} 8px,
+            ${getModifierColor(modifiers[1])} 8px,
+            ${getModifierColor(modifiers[1])} 16px
+          )`;
+          element.style.background = isPartiallyActive
+            ? pattern.replace('rgb', 'rgba').replace(/\)/g, ', 0.3)')
+            : pattern;
+        }
+      }
+
+      // Update the keyboard state function
       function updateKeyboardState() {
         const availableShortcuts = getAvailableShortcuts();
         const continuations = getShortcutContinuations();
-        const validCombinations = getValidModifierCombinations();
 
         document.querySelectorAll('kbd').forEach((key) => {
           const keyName = standardizeKeyName(key.textContent);
 
-          // Reset all classes and data attributes
-          key.classList.remove('available', 'modifier-active', 'continuation-available');
-          key.removeAttribute('data-modifier');
-          key.removeAttribute('data-modifier-combo');
+          // Reset state
+          key.style.background = '#3a3a3a';
 
           // Handle modifier keys
           if (['cmd', 'shift', 'alt', 'ctrl'].includes(keyName)) {
-            const activeModifiersList = Object.entries(activeModifiers)
-              .filter(([_, active]) => active)
-              .map(([mod]) => mod);
-
             if (activeModifiers[keyName]) {
-              key.classList.add('modifier-active');
-              key.dataset.modifier = keyName;
-
-              // Check for active multi-modifier combinations
-              activeModifiersList.forEach((otherMod) => {
-                if (otherMod !== keyName) {
-                  const combo = [keyName, otherMod].sort().join('-');
-                  if (validCombinations.has(combo)) {
-                    key.dataset.modifierCombo = combo;
-                    key.classList.add('modifier-active');
-                  }
-                }
-              });
-            }
-
-            // Show continuation possibilities
-            if (continuations.has(keyName)) {
-              key.classList.add('continuation-available');
-              if (activeModifiersList.length === 1) {
-                const combo = [activeModifiersList[0], keyName].sort().join('-');
-                if (validCombinations.has(combo)) {
-                  key.dataset.modifierCombo = combo;
-                }
-              }
+              applyModifierStyles(key, [keyName]);
+            } else if (continuations.has(keyName)) {
+              applyModifierStyles(key, [keyName], false, true);
             }
           }
 
-          // Handle regular keys with their modifiers
+          // Handle regular keys
           if (availableShortcuts.has(keyName)) {
-            key.classList.add('available');
             const activeModifiersList = Object.entries(activeModifiers)
               .filter(([_, active]) => active)
               .map(([mod]) => mod)
               .sort();
 
-            // Find matching shortcut
             const shortcut = Object.entries(shortcuts).find(
               ([k, s]) => k === keyName && JSON.stringify(s.modifiers.sort()) === JSON.stringify(activeModifiersList),
             );
 
             if (shortcut) {
-              const [_, { modifiers }] = shortcut;
-              if (modifiers.length === 2) {
-                key.dataset.modifierCombo = modifiers.sort().join('-');
-                key.classList.add('available');
-              } else if (modifiers.length === 1) {
-                key.dataset.modifier = modifiers[0];
-                key.classList.add('available');
-              }
+              applyModifierStyles(key, shortcut[1].modifiers);
             }
           }
         });
@@ -768,7 +739,7 @@
         node.textContent = label;
 
         if (modifiers.length > 1) {
-          node.setAttribute('data-modifier-combo', modifiers.join('-'));
+          node.setAttribute('data-modifier-combo', modifiers.join(','));
         } else if (modifiers.length === 1) {
           node.setAttribute('data-modifier', modifiers[0]);
         } else if (type === 'context') {
@@ -781,7 +752,15 @@
         }
         node.setAttribute('data-node-type', type);
 
-        const radius = level * 100;
+        // Adjust radius based on node type
+        let radius;
+        if (type === 'context') {
+          radius = 0;
+        } else {
+          // All other nodes are placed at the same radius
+          radius = 150;
+        }
+
         const x = Math.cos(angle) * radius + 400;
         const y = Math.sin(angle) * radius + 400;
 
@@ -825,160 +804,165 @@
         const container = document.querySelector('.dag-view .dag-container');
         container.innerHTML = '';
 
-        // First pass: analyze which modifiers and combos are actually used
-        const usedModifiers = new Set();
-        const usedCombos = new Set();
-
-        Object.values(shortcuts).forEach((data) => {
-          if (data.modifiers.length === 1) {
-            usedModifiers.add(data.modifiers[0]);
-          } else if (data.modifiers.length > 1) {
-            usedModifiers.add(data.modifiers[0]);
-            usedModifiers.add(data.modifiers[1]);
-            usedCombos.add(data.modifiers.join('-'));
-          }
-        });
-
         // Add context node
         const contextNode = createDagNode('context', 'ctx', [], 0, 0);
         container.appendChild(contextNode.node);
 
-        // Add only used modifier nodes
-        const modifiers = Array.from(usedModifiers);
-        const modifierNodes = {};
-        const modifierAngles = {};
+        // First, organize the shortcuts into a tree structure
+        const tree = {
+          modifiers: new Map(), // Map of modifier -> { children: [], leaves: 0 }
+          combos: new Map(), // Map of combo -> { children: [], leaves: 0 }
+          direct: new Set(), // Set of shortcuts with no modifiers
+        };
 
-        modifiers.forEach((mod, i) => {
-          const angle = (i / modifiers.length) * 2 * Math.PI;
-          modifierAngles[mod] = angle;
-          const node = createDagNode('modifier', mod, [mod], angle, 1);
-          container.appendChild(node.node);
-          modifierNodes[mod] = node;
-
-          container.appendChild(createDagLink(400, 400, node.x, node.y, [mod]));
-        });
-
-        // Group actions by their parent (modifier or combo)
-        const actionsByParent = {};
+        // Count leaves and organize nodes
         Object.entries(shortcuts).forEach(([key, data]) => {
-          if (data.modifiers.length > 0) {
-            const parentKey = data.modifiers.join('-');
-            if (!actionsByParent[parentKey]) {
-              actionsByParent[parentKey] = [];
+          if (data.modifiers.length === 0) {
+            tree.direct.add(key);
+          } else if (data.modifiers.length === 1) {
+            if (!tree.modifiers.has(data.modifiers[0])) {
+              tree.modifiers.set(data.modifiers[0], { children: [], leaves: 0 });
             }
-            actionsByParent[parentKey].push({ key, data });
+            tree.modifiers.get(data.modifiers[0]).children.push(key);
+            tree.modifiers.get(data.modifiers[0]).leaves++;
+          } else if (data.modifiers.length > 1) {
+            const comboKey = data.modifiers.sort().join('-');
+            if (!tree.combos.has(comboKey)) {
+              tree.combos.set(comboKey, { children: [], leaves: 0 });
+            }
+            tree.combos.get(comboKey).children.push(key);
+            tree.combos.get(comboKey).leaves++;
           }
         });
 
-        // Add only combos that have actions
-        const comboNodes = {};
-        Array.from(usedCombos).forEach((comboKey) => {
-          const combo = comboKey.split('-');
-          let angle1 = modifierAngles[combo[0]];
-          let angle2 = modifierAngles[combo[1]];
+        // Calculate total leaves for angle distribution
+        const totalLeaves =
+          Array.from(tree.modifiers.values()).reduce((sum, mod) => sum + mod.leaves, 0) +
+          Array.from(tree.combos.values()).reduce((sum, combo) => sum + combo.leaves, 0) +
+          tree.direct.size;
 
-          if (Math.abs(angle1 - angle2) > Math.PI) {
-            if (angle1 > angle2) {
-              angle2 += 2 * Math.PI;
-            } else {
-              angle1 += 2 * Math.PI;
-            }
-          }
+        // Place nodes using radial algorithm
+        let currentAngle = 0;
+        const TWO_PI = 2 * Math.PI;
+        const baseRadius = 200;
+        const actionRadius = 350;
 
-          const avgAngle = (angle1 + angle2) / 2;
-          const node = createDagNode('combo', combo.join('+'), combo, avgAngle, 2);
-          container.appendChild(node.node);
-          comboNodes[comboKey] = node;
-
-          combo.forEach((mod) => {
-            const modNode = modifierNodes[mod];
-            container.appendChild(createDagLink(modNode.x, modNode.y, node.x, node.y, combo));
+        // Helper function to place nodes in an arc
+        function placeNodesInArc(startAngle, angleSize, nodes, radius, parentX = 400, parentY = 400) {
+          const angleStep = angleSize / (nodes.length || 1);
+          return nodes.map((node, index) => {
+            const angle = startAngle + angleStep * (index + 0.5);
+            const x = Math.cos(angle) * radius + 400;
+            const y = Math.sin(angle) * radius + 400;
+            return { node, x, y, angle };
           });
+        }
+
+        // Place direct shortcuts
+        const directAngleSize = (tree.direct.size / totalLeaves) * TWO_PI;
+        placeNodesInArc(currentAngle, directAngleSize, Array.from(tree.direct), baseRadius).forEach(
+          ({ node, x, y }) => {
+            const nodeEl = createDagNode('action', node, [], 0, 1);
+            nodeEl.node.style.left = `${x}px`;
+            nodeEl.node.style.top = `${y}px`;
+            container.appendChild(nodeEl.node);
+            container.appendChild(createDagLink(400, 400, x, y, []));
+          },
+        );
+        currentAngle += directAngleSize;
+
+        // Place modifier nodes and their children
+        tree.modifiers.forEach((data, modifier) => {
+          const modAngleSize = (data.leaves / totalLeaves) * TWO_PI;
+
+          // Place modifier node
+          const modX = Math.cos(currentAngle + modAngleSize / 2) * baseRadius + 400;
+          const modY = Math.sin(currentAngle + modAngleSize / 2) * baseRadius + 400;
+          const modNode = createDagNode('modifier', modifier, [modifier], 0, 1);
+          modNode.node.style.left = `${modX}px`;
+          modNode.node.style.top = `${modY}px`;
+          container.appendChild(modNode.node);
+          container.appendChild(createDagLink(400, 400, modX, modY, [modifier]));
+
+          // Place children
+          placeNodesInArc(currentAngle, modAngleSize, data.children, actionRadius, modX, modY).forEach(
+            ({ node, x, y }) => {
+              const childNode = createDagNode('action', node, [modifier], 0, 2);
+              childNode.node.style.left = `${x}px`;
+              childNode.node.style.top = `${y}px`;
+              container.appendChild(childNode.node);
+              container.appendChild(createDagLink(modX, modY, x, y, [modifier]));
+            },
+          );
+
+          currentAngle += modAngleSize;
         });
 
-        // Add action nodes with even distribution
-        Object.entries(actionsByParent).forEach(([parentKey, actions]) => {
-          const parentNode = parentKey.includes('-') ? comboNodes[parentKey] : modifierNodes[parentKey];
-          if (parentNode) {
-            const baseAngle = Math.atan2(parentNode.y - 400, parentNode.x - 400);
-            const angleStep = Math.PI / 3 / Math.max(actions.length, 1); // 60-degree arc
+        // Place combo nodes and their children
+        tree.combos.forEach((data, combo) => {
+          const comboAngleSize = (data.leaves / totalLeaves) * TWO_PI;
+          const modifiers = combo.split('-');
 
-            actions.forEach(({ key, data }, i) => {
-              const offset = angleStep * (i - (actions.length - 1) / 2);
-              const node = createDagNode('action', key, data.modifiers, baseAngle + offset, data.modifiers.length + 2);
-              container.appendChild(node.node);
-              container.appendChild(createDagLink(parentNode.x, parentNode.y, node.x, node.y, data.modifiers));
-            });
-          }
+          // Place combo node
+          const comboX = Math.cos(currentAngle + comboAngleSize / 2) * baseRadius + 400;
+          const comboY = Math.sin(currentAngle + comboAngleSize / 2) * baseRadius + 400;
+          const comboNode = createDagNode('combo', combo, modifiers, 0, 1);
+          comboNode.node.style.left = `${comboX}px`;
+          comboNode.node.style.top = `${comboY}px`;
+          container.appendChild(comboNode.node);
+          container.appendChild(createDagLink(400, 400, comboX, comboY, modifiers));
+
+          // Place children
+          placeNodesInArc(currentAngle, comboAngleSize, data.children, actionRadius, comboX, comboY).forEach(
+            ({ node, x, y }) => {
+              const childNode = createDagNode('action', node, modifiers, 0, 2);
+              childNode.node.style.left = `${x}px`;
+              childNode.node.style.top = `${y}px`;
+              container.appendChild(childNode.node);
+              container.appendChild(createDagLink(comboX, comboY, x, y, modifiers));
+            },
+          );
+
+          currentAngle += comboAngleSize;
         });
       }
 
       function updateActivation(activeModifiers) {
-        // Reset all nodes and links to inactive state
-        document.querySelectorAll('.dag-view kbd').forEach((el) => {
-          if (el.hasAttribute('data-modifier') || el.hasAttribute('data-modifiers')) {
-            el.style.background = '#3a3a3a';
+        document.querySelectorAll('.dag-view kbd').forEach((node) => {
+          const nodeModifiers = node.hasAttribute('data-modifiers')
+            ? JSON.parse(node.getAttribute('data-modifiers'))
+            : [];
+          const nodeType = node.getAttribute('data-node-type');
+
+          if (nodeType === 'context') return; // Skip context node
+
+          const isFullyActive = nodeModifiers.every((mod) => activeModifiers.includes(mod));
+          const isPartiallyActive = nodeModifiers.some((mod) => activeModifiers.includes(mod));
+
+          // Apply styles based on node type and state
+          if (nodeType === 'action') {
+            // Leaf nodes should only be active when all required modifiers are active
+            applyModifierStyles(node, nodeModifiers, isFullyActive, false);
+          } else {
+            // Modifier and combo nodes can show partial activation
+            applyModifierStyles(node, nodeModifiers, isFullyActive, isPartiallyActive);
           }
         });
+
+        // Update links
         document.querySelectorAll('.dag-link').forEach((link) => {
-          link.classList.remove('active');
-          link.classList.remove('partially-active');
+          const linkModifiers = link.hasAttribute('data-modifiers')
+            ? JSON.parse(link.getAttribute('data-modifiers'))
+            : [];
+
+          const isFullyActive = linkModifiers.every((mod) => activeModifiers.includes(mod));
+          const isPartiallyActive = linkModifiers.some((mod) => activeModifiers.includes(mod));
+
+          link.classList.toggle('active', isFullyActive);
+          link.classList.toggle('partially-active', isPartiallyActive && !isFullyActive);
+
+          applyModifierStyles(link, linkModifiers, isFullyActive, isPartiallyActive);
         });
-
-        if (activeModifiers.length > 0) {
-          // First activate single modifiers
-          activeModifiers.forEach((mod) => {
-            const node = document.querySelector(`.dag-view kbd[data-modifier="${mod}"]`);
-            if (node) {
-              node.style.background = getModifierColor(mod);
-            }
-          });
-
-          // Then handle combinations and their children
-          document.querySelectorAll('.dag-view kbd[data-modifiers]').forEach((node) => {
-            const nodeModifiers = JSON.parse(node.getAttribute('data-modifiers'));
-            const isFullyActive = nodeModifiers.every((mod) => activeModifiers.includes(mod));
-            const isPartiallyActive = nodeModifiers.some((mod) => activeModifiers.includes(mod));
-            const nodeType = node.getAttribute('data-node-type');
-            const isLeafNode = nodeType === 'action';
-
-            if (isFullyActive) {
-              if (nodeModifiers.length > 1) {
-                // For nodes with multiple modifiers, use gradient
-                const pattern = `repeating-linear-gradient(45deg, 
-                  ${getModifierColor(nodeModifiers[0])} 0px, 
-                  ${getModifierColor(nodeModifiers[0])} 8px, 
-                  ${getModifierColor(nodeModifiers[1])} 8px, 
-                  ${getModifierColor(nodeModifiers[1])} 16px)`;
-                node.style.background = pattern;
-              } else {
-                // For single modifier nodes, use solid color
-                node.style.background = getModifierColor(nodeModifiers[0]);
-              }
-            } else if (isPartiallyActive && !isLeafNode) {
-              // Only show dimmed color for non-leaf nodes that are partially active
-              const activeModifier = nodeModifiers.find((mod) => activeModifiers.includes(mod));
-              const color = getModifierColor(activeModifier);
-              // Convert color to RGBA with 0.3 opacity for dimming
-              const dimmedColor = color.replace('rgb', 'rgba').replace(')', ', 0.3)');
-              node.style.background = dimmedColor;
-            } else {
-              node.style.background = '#3a3a3a';
-            }
-          });
-
-          // Activate relevant links
-          document.querySelectorAll('.dag-link[data-modifiers]').forEach((link) => {
-            const linkModifiers = JSON.parse(link.getAttribute('data-modifiers'));
-            const isActive = linkModifiers.every((mod) => activeModifiers.includes(mod));
-            const isPartiallyActive = linkModifiers.some((mod) => activeModifiers.includes(mod));
-            if (isActive) {
-              link.classList.add('active');
-            } else if (isPartiallyActive) {
-              link.classList.add('partially-active');
-            }
-          });
-        }
       }
 
       function getActiveModifiers() {
