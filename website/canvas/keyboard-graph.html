@@ -299,33 +299,6 @@
       .dag-link.partially-active {
         background: #8a8a8a;
       }
-
-      /* Active state styles */
-      .dag-view kbd[data-modifier].active {
-        background: var(--active-color);
-      }
-      .dag-view kbd[data-modifier='cmd'] {
-        --active-color: #00a67e;
-      }
-      .dag-view kbd[data-modifier='shift'] {
-        --active-color: #e63946;
-      }
-      .dag-view kbd[data-modifier='alt'] {
-        --active-color: #4361ee;
-      }
-      .dag-view kbd[data-modifier='ctrl'] {
-        --active-color: #9d4edd;
-      }
-
-      /* Action nodes - inherit color from their modifier */
-      .dag-view kbd[data-modifiers]:not([data-modifier-combo]).active {
-        background: var(--active-color);
-      }
-
-      /* Combo nodes - show gradient when active */
-      .dag-view kbd[data-modifier-combo].active {
-        background: var(--gradient-pattern);
-      }
     </style>
   </head>
   <body>
