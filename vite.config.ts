@@ -89,8 +89,9 @@ const fallback = (rootDir: string): Plugin => ({
     server.middlewares.use((req, res, next) => {
       const url = req.originalUrl;
       if (url && url !== '/' && !extname(url) && existsSync(join(rootDir, `${url}/index.html`))) {
-        req.url += '/index.html';
-        console.log('redirect', req.url, req.originalUrl);
+        res.writeHead(301, { Location: req.url + '/index.html' });
+        res.end();
+        return;
       }
       next();
     });
