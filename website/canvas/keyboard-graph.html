@@ -579,36 +579,77 @@
         return continuations;
       }
 
-      // Add this helper function near the top of the script
-      function applyModifierStyles(element, modifiers, isActive = true, isPartiallyActive = false) {
-        // Reset to default state
+      // Updated applyModifierStyles function
+      function applyModifierStyles(element, modifiers, isActive = true, isPartiallyActive = false, isValid = false) {
+        // Reset to default state - non-colored state for inactive keys
         element.style.background = '#3a3a3a';
 
-        // For modifier keys when not pressed, show dimmed color
+        // For modifier keys when not pressed, show very dimmed color
         if (element.hasAttribute('data-modifier') && !isActive && !isPartiallyActive) {
-          const modifier = element.getAttribute('data-modifier');
-          const color = getModifierColor(modifier);
-          element.style.background = color.replace('rgb', 'rgba').replace(')', ', 0.2)');
+          if (isValid) {
+            const modifier = element.getAttribute('data-modifier');
+            const color = getModifierColor(modifier);
+            element.style.background = color.replace('rgb', 'rgba').replace(')', ', 0.2)');
+          }
           return;
         }
 
-        if (!isActive && !isPartiallyActive) return;
+        // If not active or partially active and not valid, keep default color
+        if (!isActive && !isPartiallyActive && !isValid) {
+          return;
+        }
 
-        if (modifiers.length === 0) {
-          element.style.background = isActive ? '#585e6f' : '#3a3a3a';
-        } else if (modifiers.length === 1) {
-          const color = getModifierColor(modifiers[0]);
-          element.style.background = isPartiallyActive ? color.replace('rgb', 'rgba').replace(')', ', 0.3)') : color;
-        } else if (modifiers.length === 2) {
-          const pattern = `repeating-linear-gradient(45deg,
-            ${getModifierColor(modifiers[0])} 0px,
-            ${getModifierColor(modifiers[0])} 8px,
-            ${getModifierColor(modifiers[1])} 8px,
-            ${getModifierColor(modifiers[1])} 16px
-          )`;
-          element.style.background = isPartiallyActive
-            ? pattern.replace('rgb', 'rgba').replace(/\)/g, ', 0.3)')
-            : pattern;
+        // Apply dimmed style for valid but inactive nodes
+        if (!isActive && !isPartiallyActive && isValid) {
+          if (modifiers.length === 0) {
+            element.style.background = 'rgba(88, 94, 111, 0.3)'; // Dimmed version of #585e6f
+          } else if (modifiers.length === 1) {
+            const color = getModifierColor(modifiers[0]);
+            element.style.background = color.replace('rgb', 'rgba').replace(')', ', 0.2)');
+          } else if (modifiers.length === 2) {
+            const color1 = getModifierColor(modifiers[0]).replace('rgb', 'rgba').replace(')', ', 0.2)');
+            const color2 = getModifierColor(modifiers[1]).replace('rgb', 'rgba').replace(')', ', 0.2)');
+            const pattern = `repeating-linear-gradient(45deg,
+              ${color1} 0px,
+              ${color1} 8px,
+              ${color2} 8px,
+              ${color2} 16px
+            )`;
+            element.style.background = pattern;
+          }
+          return;
+        }
+
+        // Apply full color only for active nodes
+        if (isActive) {
+          if (modifiers.length === 0) {
+            element.style.background = '#585e6f';
+          } else if (modifiers.length === 1) {
+            element.style.background = getModifierColor(modifiers[0]);
+          } else if (modifiers.length === 2) {
+            const pattern = `repeating-linear-gradient(45deg,
+              ${getModifierColor(modifiers[0])} 0px,
+              ${getModifierColor(modifiers[0])} 8px,
+              ${getModifierColor(modifiers[1])} 8px,
+              ${getModifierColor(modifiers[1])} 16px
+            )`;
+            element.style.background = pattern;
+          }
+        }
+        // Apply partially active style
+        else if (isPartiallyActive) {
+          if (modifiers.length === 1) {
+            const color = getModifierColor(modifiers[0]);
+            element.style.background = color.replace('rgb', 'rgba').replace(')', ', 0.3)');
+          } else if (modifiers.length === 2) {
+            const pattern = `repeating-linear-gradient(45deg,
+              ${getModifierColor(modifiers[0]).replace('rgb', 'rgba').replace(')', ', 0.3)')} 0px,
+              ${getModifierColor(modifiers[0]).replace('rgb', 'rgba').replace(')', ', 0.3)')} 8px,
+              ${getModifierColor(modifiers[1]).replace('rgb', 'rgba').replace(')', ', 0.3)')} 8px,
+              ${getModifierColor(modifiers[1]).replace('rgb', 'rgba').replace(')', ', 0.3)')} 16px
+            )`;
+            element.style.background = pattern;
+          }
         }
       }
 
@@ -665,33 +706,39 @@
       });
 
       // Add keyboard event listeners
-      document.addEventListener('keydown', (event) => {
-        const key = event.key.toLowerCase();
-        if (key === 'meta' || key === 'command') {
-          activeModifiers.cmd = true;
-        } else if (key === 'shift') {
-          activeModifiers.shift = true;
-        } else if (key === 'alt') {
-          activeModifiers.alt = true;
-        } else if (key === 'control') {
-          activeModifiers.ctrl = true;
+      document.addEventListener('keydown', (e) => {
+        console.log('Keydown:', e.key);
+        const key = e.key.toLowerCase();
+        // Map common key names to our modifier names
+        const modMap = {
+          control: 'ctrl',
+          meta: 'cmd',
+          alt: 'alt',
+          shift: 'shift',
+        };
+        const mod = modMap[key];
+        console.log('Mapped to modifier:', mod);
+        if (mod) {
+          activeModifiers[mod] = true;
+          updateKeyboardState();
+          updateActivation();
         }
-        updateKeyboardState();
-        event.preventDefault();
       });
 
-      document.addEventListener('keyup', (event) => {
-        const key = event.key.toLowerCase();
-        if (key === 'meta' || key === 'command') {
-          activeModifiers.cmd = false;
-        } else if (key === 'shift') {
-          activeModifiers.shift = false;
-        } else if (key === 'alt') {
-          activeModifiers.alt = false;
-        } else if (key === 'control') {
-          activeModifiers.ctrl = false;
+      document.addEventListener('keyup', (e) => {
+        const key = e.key.toLowerCase();
+        const modMap = {
+          control: 'ctrl',
+          meta: 'cmd',
+          alt: 'alt',
+          shift: 'shift',
+        };
+        const mod = modMap[key];
+        if (mod) {
+          activeModifiers[mod] = false;
+          updateKeyboardState();
+          updateActivation();
         }
-        updateKeyboardState();
       });
 
       // Handle tooltip
@@ -939,14 +986,24 @@
         });
       }
 
-      function updateActivation(activeModifiers) {
+      function updateActivation() {
+        const activeModifiersList = Object.entries(activeModifiers)
+          .filter(([_, active]) => active)
+          .map(([mod]) => mod);
+
+        // Check if we're in a combo state (2 or more modifiers active)
+        const isComboActive = activeModifiersList.length >= 2;
+
         // Handle modifier nodes in DAG view
         document.querySelectorAll('.dag-view kbd[data-modifier]').forEach((node) => {
           const modifier = node.getAttribute('data-modifier');
-          if (activeModifiers.includes(modifier)) {
+          const isActive = activeModifiers[modifier];
+
+          // Only show color when the modifier is active AND we're not in a combo state
+          if (isActive && !isComboActive) {
             applyModifierStyles(node, [modifier], true, false);
           } else {
-            applyModifierStyles(node, [modifier], false, false);
+            node.style.background = '#3a3a3a';
           }
         });
 
@@ -959,25 +1016,56 @@
             : [];
           const nodeType = node.getAttribute('data-node-type');
 
-          const isFullyActive = nodeModifiers.every((mod) => activeModifiers.includes(mod));
-          const isPartiallyActive = nodeModifiers.some((mod) => activeModifiers.includes(mod));
-
-          applyModifierStyles(node, nodeModifiers, isFullyActive, isPartiallyActive);
+          // For combo nodes (nodes with multiple modifiers)
+          if (nodeModifiers.length >= 2) {
+            const isFullyActive = nodeModifiers.every((mod) => activeModifiersList.includes(mod));
+            if (isFullyActive) {
+              applyModifierStyles(node, nodeModifiers, true, false);
+            } else {
+              node.style.background = '#3a3a3a';
+            }
+          }
+          // For single-modifier nodes
+          else if (nodeModifiers.length === 1) {
+            const isActive = nodeModifiers.every((mod) => activeModifiersList.includes(mod));
+            if (isActive && !isComboActive) {
+              applyModifierStyles(node, nodeModifiers, true, false);
+            } else {
+              node.style.background = '#3a3a3a';
+            }
+          }
         });
 
-        // Update links
+        // Update links with similar logic
         document.querySelectorAll('.dag-link').forEach((link) => {
           const linkModifiers = link.hasAttribute('data-modifiers')
             ? JSON.parse(link.getAttribute('data-modifiers'))
             : [];
 
-          const isFullyActive = linkModifiers.every((mod) => activeModifiers.includes(mod));
-          const isPartiallyActive = linkModifiers.some((mod) => activeModifiers.includes(mod));
-
-          link.classList.toggle('active', isFullyActive);
-          link.classList.toggle('partially-active', isPartiallyActive && !isFullyActive);
-
-          applyModifierStyles(link, linkModifiers, isFullyActive, isPartiallyActive);
+          // For combo links (links with multiple modifiers)
+          if (linkModifiers.length >= 2) {
+            const isFullyActive = linkModifiers.every((mod) => activeModifiersList.includes(mod));
+            if (isFullyActive) {
+              applyModifierStyles(link, linkModifiers, true, false);
+              link.classList.add('active');
+              link.classList.remove('partially-active');
+            } else {
+              link.style.background = '#3a3a3a';
+              link.classList.remove('active', 'partially-active');
+            }
+          }
+          // For single-modifier links
+          else if (linkModifiers.length === 1) {
+            const isActive = linkModifiers.every((mod) => activeModifiersList.includes(mod));
+            if (isActive && !isComboActive) {
+              applyModifierStyles(link, linkModifiers, true, false);
+              link.classList.add('active');
+              link.classList.remove('partially-active');
+            } else {
+              link.style.background = '#3a3a3a';
+              link.classList.remove('active', 'partially-active');
+            }
+          }
         });
       }
 
@@ -1000,10 +1088,10 @@
         };
         const mod = modMap[key];
         console.log('Mapped to modifier:', mod);
-        if (mod && !activeModifiers.includes(mod)) {
-          activeModifiers.push(mod);
+        if (mod) {
+          activeModifiers[mod] = true;
           updateKeyboardState();
-          updateActivation(activeModifiers);
+          updateActivation();
         }
       });
 
@@ -1017,12 +1105,9 @@
         };
         const mod = modMap[key];
         if (mod) {
-          const index = activeModifiers.indexOf(mod);
-          if (index > -1) {
-            activeModifiers.splice(index, 1);
-            updateKeyboardState();
-            updateActivation(activeModifiers);
-          }
+          activeModifiers[mod] = false;
+          updateKeyboardState();
+          updateActivation();
         }
       });
 
@@ -1030,14 +1115,9 @@
       document.querySelectorAll('kbd[data-modifier]').forEach((key) => {
         key.addEventListener('click', () => {
           const mod = key.getAttribute('data-modifier');
-          const index = activeModifiers.indexOf(mod);
-          if (index === -1) {
-            activeModifiers.push(mod);
-          } else {
-            activeModifiers.splice(index, 1);
-          }
+          activeModifiers[mod] = !activeModifiers[mod];
           updateKeyboardState();
-          updateActivation(activeModifiers);
+          updateActivation();
         });
       });
 
