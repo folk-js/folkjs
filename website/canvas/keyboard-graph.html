@@ -584,6 +584,14 @@
         // Reset to default state
         element.style.background = '#3a3a3a';
 
+        // For modifier keys when not pressed, show dimmed color
+        if (element.hasAttribute('data-modifier') && !isActive && !isPartiallyActive) {
+          const modifier = element.getAttribute('data-modifier');
+          const color = getModifierColor(modifier);
+          element.style.background = color.replace('rgb', 'rgba').replace(')', ', 0.2)');
+          return;
+        }
+
         if (!isActive && !isPartiallyActive) return;
 
         if (modifiers.length === 0) {
@@ -612,16 +620,15 @@
         document.querySelectorAll('kbd').forEach((key) => {
           const keyName = standardizeKeyName(key.textContent);
 
-          // Reset state
-          key.style.background = '#3a3a3a';
-
           // Handle modifier keys
           if (['cmd', 'shift', 'alt', 'ctrl'].includes(keyName)) {
             if (activeModifiers[keyName]) {
-              applyModifierStyles(key, [keyName]);
-            } else if (continuations.has(keyName)) {
-              applyModifierStyles(key, [keyName], false, true);
+              applyModifierStyles(key, [keyName], true, false);
+            } else {
+              // Always apply dimmed style to modifier keys when not active
+              applyModifierStyles(key, [keyName], false, false);
             }
+            return;
           }
 
           // Handle regular keys
@@ -636,8 +643,12 @@
             );
 
             if (shortcut) {
-              applyModifierStyles(key, shortcut[1].modifiers);
+              applyModifierStyles(key, shortcut[1].modifiers, true, false);
+            } else {
+              key.style.background = '#3a3a3a';
             }
+          } else {
+            key.style.background = '#3a3a3a';
           }
         });
       }
@@ -858,14 +869,15 @@
           });
         }
 
-        // Place direct shortcuts
+        // Place direct shortcuts at the action radius instead of base radius
         const directAngleSize = (tree.direct.size / totalLeaves) * TWO_PI;
-        placeNodesInArc(currentAngle, directAngleSize, Array.from(tree.direct), baseRadius).forEach(
+        placeNodesInArc(currentAngle, directAngleSize, Array.from(tree.direct), actionRadius).forEach(
           ({ node, x, y }) => {
             const nodeEl = createDagNode('action', node, [], 0, 1);
             nodeEl.node.style.left = `${x}px`;
             nodeEl.node.style.top = `${y}px`;
             container.appendChild(nodeEl.node);
+            // Link directly from context node to action
             container.appendChild(createDagLink(400, 400, x, y, []));
           },
         );
@@ -928,25 +940,29 @@
       }
 
       function updateActivation(activeModifiers) {
-        document.querySelectorAll('.dag-view kbd').forEach((node) => {
+        // Handle modifier nodes in DAG view
+        document.querySelectorAll('.dag-view kbd[data-modifier]').forEach((node) => {
+          const modifier = node.getAttribute('data-modifier');
+          if (activeModifiers.includes(modifier)) {
+            applyModifierStyles(node, [modifier], true, false);
+          } else {
+            applyModifierStyles(node, [modifier], false, false);
+          }
+        });
+
+        // Handle other nodes
+        document.querySelectorAll('.dag-view kbd:not([data-modifier])').forEach((node) => {
+          if (node.getAttribute('data-node-type') === 'context') return;
+
           const nodeModifiers = node.hasAttribute('data-modifiers')
             ? JSON.parse(node.getAttribute('data-modifiers'))
             : [];
           const nodeType = node.getAttribute('data-node-type');
 
-          if (nodeType === 'context') return; // Skip context node
-
           const isFullyActive = nodeModifiers.every((mod) => activeModifiers.includes(mod));
           const isPartiallyActive = nodeModifiers.some((mod) => activeModifiers.includes(mod));
 
-          // Apply styles based on node type and state
-          if (nodeType === 'action') {
-            // Leaf nodes should only be active when all required modifiers are active
-            applyModifierStyles(node, nodeModifiers, isFullyActive, false);
-          } else {
-            // Modifier and combo nodes can show partial activation
-            applyModifierStyles(node, nodeModifiers, isFullyActive, isPartiallyActive);
-          }
+          applyModifierStyles(node, nodeModifiers, isFullyActive, isPartiallyActive);
         });
 
         // Update links
@@ -1040,6 +1056,14 @@
 
       // Initial keyboard state update
       updateKeyboardState();
+
+      // Call updateKeyboardState on initial load
+      document.addEventListener('DOMContentLoaded', () => {
+        updateKeyboardState();
+        if (document.querySelector('.dag-view.active')) {
+          updateActivation([]);
+        }
+      });
     </script>
   </body>
 </html>
