@@ -216,6 +216,7 @@
 
       /* View toggle styles */
       .view-toggle {
+        z-index: 1000;
         position: fixed;
         top: 20px;
         right: 20px;
@@ -235,17 +236,24 @@
 
       /* Container styles */
       .container {
+        position: fixed;
+        inset: 0;
         display: flex;
         justify-content: center;
         align-items: center;
-        width: 100%;
-        height: 100vh;
+        perspective: 1000px;
+        transform-style: preserve-3d;
       }
 
       /* View styles */
       .keyboard-view,
       .dag-view {
+        position: absolute;
         display: none;
+        width: 100%;
+        height: 100%;
+        justify-content: center;
+        align-items: center;
       }
 
       .keyboard-view.active,
@@ -257,7 +265,10 @@
       .dag-view {
         width: 800px;
         height: 800px;
-        position: relative;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
       }
 
       .dag-container {
@@ -275,6 +286,8 @@
         z-index: 1;
         background: #3a3a3a;
         transition: all 0.2s ease;
+        width: 40px;
+        height: 40px;
       }
 
       .dag-view kbd.context {
@@ -297,6 +310,112 @@
 
       .dag-link.partially-active {
         height: 2.5px;
+      }
+
+      /* View transition styles */
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes fade-out {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+
+      /* Add specific transition name for the keyboard container */
+      .keyboard {
+        position: relative;
+        transform-origin: center;
+        margin: auto;
+      }
+
+      /* Add specific transition name for shift keys */
+      kbd[data-modifier='shift']:first-of-type,
+      .dag-view kbd[data-modifiers='["shift"]'][data-node-type='modifier'] {
+        view-transition-name: shift-key;
+        transform-origin: center;
+        width: 40px;
+        height: 40px;
+      }
+
+      /* Keyboard shift key specific positioning */
+      kbd[data-modifier='shift']:first-of-type {
+        position: relative;
+      }
+
+      /* DAG shift key specific positioning */
+      .dag-view kbd[data-modifiers='["shift"]'][data-node-type='modifier'] {
+        position: absolute;
+        transform: translate(-50%, -50%);
+      }
+
+      /* Override the general DAG node transform for the shift key during transition */
+      ::view-transition-old(shift-key),
+      ::view-transition-new(shift-key) {
+        animation-duration: 0.3s;
+        animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+        position: absolute;
+        transform-origin: center;
+      }
+
+      /* Add some basic animations for the transition */
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes fade-out {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+
+      /* Ensure the views maintain proper stacking */
+      .keyboard-view,
+      .dag-view {
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+
+      /* Ensure the container preserves 3D and handles transitions properly */
+      .container {
+        perspective: 1000px;
+        transform-style: preserve-3d;
+      }
+
+      /* Give each key a unique transition name */
+      kbd {
+        view-transition-name: var(--key-name, none);
+      }
+
+      /* DAG link transitions */
+      .dag-link {
+        view-transition-name: var(--link-name, none);
+        transition: opacity 0.3s ease;
+      }
+
+      /* Ensure keys maintain their dimensions during transition */
+      kbd {
+        transform-style: preserve-3d;
+        backface-visibility: hidden;
+        will-change: transform;
       }
     </style>
   </head>
@@ -796,6 +915,9 @@
         const node = document.createElement('kbd');
         node.textContent = label;
 
+        // Add data attributes to match keys between views
+        node.setAttribute('data-key-id', `${label}-${modifiers.join('-')}`);
+
         if (modifiers.length > 1) {
           node.setAttribute('data-modifier-combo', modifiers.join(','));
         } else if (modifiers.length === 1) {
@@ -1126,11 +1248,60 @@
       const keyboardView = document.querySelector('.keyboard-view');
       const dagView = document.querySelector('.dag-view');
 
-      toggleButton.addEventListener('click', () => {
-        keyboardView.classList.toggle('active');
-        dagView.classList.toggle('active');
-        if (dagView.classList.contains('active')) {
+      // Add this helper function to generate unique transition names
+      function getKeyTransitionName(key, view) {
+        const keyText = standardizeKeyName(key.textContent);
+        const modifiers = key.getAttribute('data-modifiers') || '';
+        return `key-${keyText}-${modifiers}-${view}`;
+      }
+
+      // Update the toggle view function
+      toggleButton.addEventListener('click', async () => {
+        if (!document.startViewTransition) {
+          keyboardView.classList.toggle('active');
+          dagView.classList.toggle('active');
+          if (dagView.classList.contains('active')) {
+            updateDagView();
+          }
+          return;
+        }
+
+        const isKeyboardActive = keyboardView.classList.contains('active');
+
+        // Debug logging
+        console.log('Shift keys before transition:');
+        document
+          .querySelectorAll('kbd[data-modifier="shift"]')
+          .forEach((el) => console.log('Keyboard view shift:', el, el.computedStyleMap().get('view-transition-name')));
+        document
+          .querySelectorAll('.dag-view kbd[data-modifiers*="shift"]')
+          .forEach((el) => console.log('DAG view shift:', el, el.computedStyleMap().get('view-transition-name')));
+
+        // Pre-create DAG content if needed
+        if (isKeyboardActive) {
           updateDagView();
+        }
+
+        // Start the transition
+        const transition = document.startViewTransition(() => {
+          // Toggle the views
+          keyboardView.classList.toggle('active');
+          dagView.classList.toggle('active');
+        });
+
+        // Debug logging after transition starts
+        console.log('Shift keys during transition:');
+        document
+          .querySelectorAll('kbd[data-modifier="shift"]')
+          .forEach((el) => console.log('Keyboard view shift:', el, el.computedStyleMap().get('view-transition-name')));
+        document
+          .querySelectorAll('.dag-view kbd[data-modifiers*="shift"]')
+          .forEach((el) => console.log('DAG view shift:', el, el.computedStyleMap().get('view-transition-name')));
+
+        try {
+          await transition.finished;
+        } catch (e) {
+          console.error('Transition failed:', e);
         }
       });
 
