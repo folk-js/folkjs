@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Virtual Keyboard Shortcuts</title>
+    <style>
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+        background: #1a1a1a;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      .keyboard {
+        background: #2a2a2a;
+        padding: 24px;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .keyboard-row {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+
+      .keyboard-row:last-child {
+        margin-bottom: 0;
+      }
+
+      .keyboard-main {
+        position: relative;
+      }
+
+      .key {
+        background: #3a3a3a;
+        color: #ffffff;
+        border: none;
+        border-radius: 6px;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.1s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        user-select: none;
+      }
+
+      .key.wide {
+        width: 60px;
+      }
+
+      .key.extra-wide {
+        width: 86px;
+      }
+
+      .key.space {
+        width: 250px;
+      }
+
+      .key.return {
+        width: 90px;
+      }
+
+      .keyboard-arrows {
+        display: grid;
+        grid-template-columns: repeat(3, 40px);
+        grid-template-rows: repeat(2, 20px);
+        margin-left: 6px;
+      }
+
+      .key.half-height {
+        height: 20px;
+      }
+
+      .key:hover {
+        background: #4a4a4a;
+      }
+
+      .key:active,
+      .key.active {
+        background: #007aff;
+      }
+
+      .arrow-up {
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      .arrow-left {
+        grid-column: 1;
+        grid-row: 2;
+      }
+
+      .arrow-down {
+        grid-column: 2;
+        grid-row: 2;
+      }
+
+      .arrow-right {
+        grid-column: 3;
+        grid-row: 2;
+      }
+
+      .key.available {
+        background: #5c6784;
+        color: #ffffff;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+      }
+
+      /* Modifier-specific colors */
+      .key.cmd-available,
+      .key.modifier-active[data-modifier="cmd"] {
+        background: #00a67e;
+      }
+
+      .key.shift-available,
+      .key.modifier-active[data-modifier="shift"] {
+        background: #e63946;
+      }
+
+      .key.alt-available,
+      .key.modifier-active[data-modifier="alt"] {
+        background: #4361ee;
+      }
+
+      .key.ctrl-available,
+      .key.modifier-active[data-modifier="ctrl"] {
+        background: #9d4edd;
+      }
+
+      /* Modifier combinations with stripes */
+      .key.shift-ctrl-available {
+        background: repeating-linear-gradient(
+          45deg,
+          #e63946 0px,
+          #e63946 8px,
+          #9d4edd 8px,
+          #9d4edd 16px
+        );
+      }
+
+      .key.shift-alt-available {
+        background: repeating-linear-gradient(
+          45deg,
+          #e63946 0px,
+          #e63946 8px,
+          #4361ee 8px,
+          #4361ee 16px
+        );
+      }
+
+      .key.ctrl-alt-available {
+        background: repeating-linear-gradient(
+          45deg,
+          #9d4edd 0px,
+          #9d4edd 8px,
+          #4361ee 8px,
+          #4361ee 16px
+        );
+      }
+
+      .key.cmd-shift-available {
+        background: repeating-linear-gradient(
+          45deg,
+          #00a67e 0px,
+          #00a67e 8px,
+          #e63946 8px,
+          #e63946 16px
+        );
+      }
+
+      .action-tooltip {
+        position: absolute;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        pointer-events: none;
+        z-index: 1000;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="keyboard">
+      <div class="keyboard-row">
+        <div class="key wide">esc</div>
+        <div class="key">F1</div>
+        <div class="key">F2</div>
+        <div class="key">F3</div>
+        <div class="key">F4</div>
+        <div class="key">F5</div>
+        <div class="key">F6</div>
+        <div class="key">F7</div>
+        <div class="key">F8</div>
+        <div class="key">F9</div>
+        <div class="key">F10</div>
+        <div class="key">F11</div>
+        <div class="key">F12</div>
+        <div class="key">•</div>
+      </div>
+      <div class="keyboard-row">
+        <div class="key">~</div>
+        <div class="key">1</div>
+        <div class="key">2</div>
+        <div class="key">3</div>
+        <div class="key">4</div>
+        <div class="key">5</div>
+        <div class="key">6</div>
+        <div class="key">7</div>
+        <div class="key">8</div>
+        <div class="key">9</div>
+        <div class="key">0</div>
+        <div class="key">-</div>
+        <div class="key">=</div>
+        <div class="key wide">⌫</div>
+      </div>
+      <div class="keyboard-main">
+        <div class="keyboard-row">
+          <div class="key wide">tab</div>
+          <div class="key">Q</div>
+          <div class="key">W</div>
+          <div class="key">E</div>
+          <div class="key">R</div>
+          <div class="key">T</div>
+          <div class="key">Y</div>
+          <div class="key">U</div>
+          <div class="key">I</div>
+          <div class="key">O</div>
+          <div class="key">P</div>
+          <div class="key">[</div>
+          <div class="key">]</div>
+          <div class="key">\</div>
+        </div>
+        <div class="keyboard-row">
+          <div class="key extra-wide">caps</div>
+          <div class="key">A</div>
+          <div class="key">S</div>
+          <div class="key">D</div>
+          <div class="key">F</div>
+          <div class="key">G</div>
+          <div class="key">H</div>
+          <div class="key">J</div>
+          <div class="key">K</div>
+          <div class="key">L</div>
+          <div class="key">;</div>
+          <div class="key">'</div>
+          <div class="key wide">return</div>
+        </div>
+        <div class="keyboard-row">
+          <div class="key wide">shift</div>
+          <div class="key">`</div>
+          <div class="key">Z</div>
+          <div class="key">X</div>
+          <div class="key">C</div>
+          <div class="key">V</div>
+          <div class="key">B</div>
+          <div class="key">N</div>
+          <div class="key">M</div>
+          <div class="key">,</div>
+          <div class="key">.</div>
+          <div class="key">/</div>
+          <div class="key extra-wide">shift</div>
+        </div>
+        <div class="keyboard-row">
+          <div class="key">fn</div>
+          <div class="key">ctrl</div>
+          <div class="key">⌥</div>
+          <div class="key">⌘</div>
+          <div class="key space"></div>
+          <div class="key">⌘</div>
+          <div class="key">⌥</div>
+          <div class="keyboard-arrows">
+            <div class="key half-height arrow-up">↑</div>
+            <div class="key half-height arrow-left">←</div>
+            <div class="key half-height arrow-down">↓</div>
+            <div class="key half-height arrow-right">→</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Define keyboard shortcuts
+      const shortcuts = {
+        // No modifier shortcuts
+        'f1': { modifiers: [], action: 'Show Help' },
+        'f2': { modifiers: [], action: 'Rename Symbol' },
+        'f3': { modifiers: [], action: 'Find Next' },
+        'f4': { modifiers: [], action: 'Close Tab' },
+        'f5': { modifiers: [], action: 'Refresh' },
+        'f6': { modifiers: [], action: 'Focus Address Bar' },
+        'f7': { modifiers: [], action: 'Caret Browsing' },
+        'f8': { modifiers: [], action: 'Developer Mode' },
+        'f9': { modifiers: [], action: 'Toggle Sidebar' },
+        'f10': { modifiers: [], action: 'Menu Bar' },
+        'f11': { modifiers: [], action: 'Toggle Full Screen' },
+        'f12': { modifiers: [], action: 'Developer Tools' },
+        'esc': { modifiers: [], action: 'Exit / Cancel' },
+        'tab': { modifiers: [], action: 'Next Field' },
+        'capslock': { modifiers: [], action: 'Toggle Caps' },
+        'return': { modifiers: [], action: 'Submit / Enter' },
+        'backspace': { modifiers: [], action: 'Delete Previous' },
+        'delete': { modifiers: [], action: 'Delete Forward' },
+        'home': { modifiers: [], action: 'Start of Line' },
+        'end': { modifiers: [], action: 'End of Line' },
+        'pageup': { modifiers: [], action: 'Page Up' },
+        'pagedown': { modifiers: [], action: 'Page Down' },
+        'space': { modifiers: [], action: 'Insert Space' },
+        
+        // Command shortcuts
+        'z': { modifiers: ['cmd'], action: 'Undo' },
+        'z': { modifiers: ['cmd', 'shift'], action: 'Redo' },
+        'c': { modifiers: ['cmd'], action: 'Copy' },
+        'v': { modifiers: ['cmd'], action: 'Paste' },
+        'x': { modifiers: ['cmd'], action: 'Cut' },
+        'a': { modifiers: ['cmd'], action: 'Select All' },
+        's': { modifiers: ['cmd'], action: 'Save' },
+        'f': { modifiers: ['cmd'], action: 'Find' },
+        'p': { modifiers: ['cmd'], action: 'Print' },
+        'n': { modifiers: ['cmd'], action: 'New' },
+        'w': { modifiers: ['cmd'], action: 'Close' },
+        
+        // Shift combinations
+        'tab': { modifiers: ['shift'], action: 'Focus Previous' },
+        'space': { modifiers: ['shift'], action: 'Select Text' },
+        '1': { modifiers: ['shift'], action: 'Insert Exclamation' },
+        '2': { modifiers: ['shift'], action: 'Insert At Symbol' },
+        '3': { modifiers: ['shift'], action: 'Insert Hash' },
+        '4': { modifiers: ['shift'], action: 'Insert Dollar' },
+        
+        // Ctrl combinations
+        'b': { modifiers: ['ctrl'], action: 'Move Back Word' },
+        'f': { modifiers: ['ctrl'], action: 'Move Forward Word' },
+        'k': { modifiers: ['ctrl'], action: 'Kill Line' },
+        'a': { modifiers: ['ctrl'], action: 'Start of Line' },
+        'e': { modifiers: ['ctrl'], action: 'End of Line' },
+        'u': { modifiers: ['ctrl'], action: 'Clear Line' },
+        
+        // Shift + Ctrl combinations
+        'r': { modifiers: ['shift', 'ctrl'], action: 'Replace All' },
+        't': { modifiers: ['shift', 'ctrl'], action: 'New Terminal' },
+        'f': { modifiers: ['shift', 'ctrl'], action: 'Format Document' },
+        'k': { modifiers: ['shift', 'ctrl'], action: 'Delete Line' },
+        'p': { modifiers: ['shift', 'ctrl'], action: 'Private Browse' },
+        'n': { modifiers: ['shift', 'ctrl'], action: 'New Window' },
+        
+        // Alt combinations
+        'd': { modifiers: ['alt'], action: 'Duplicate Line' },
+        'up': { modifiers: ['alt'], action: 'Move Line Up' },
+        'down': { modifiers: ['alt'], action: 'Move Line Down' },
+        
+        // Ctrl + Alt combinations
+        'b': { modifiers: ['ctrl', 'alt'], action: 'Add Bookmark' },
+        'l': { modifiers: ['ctrl', 'alt'], action: 'Toggle Line Numbers' },
+        't': { modifiers: ['ctrl', 'alt'], action: 'Toggle Theme' },
+        
+        // Function keys
+        'f1': { modifiers: [], action: 'Show Help' },
+        'f2': { modifiers: [], action: 'Rename Symbol' },
+        'f3': { modifiers: [], action: 'Find Next' },
+        'f4': { modifiers: ['alt'], action: 'Close Window' },
+        'f5': { modifiers: [], action: 'Refresh' },
+        'f11': { modifiers: [], action: 'Toggle Full Screen' },
+        'f12': { modifiers: [], action: 'Open Developer Tools' },
+        
+        // Navigation
+        'home': { modifiers: [], action: 'Go to Start of Line' },
+        'end': { modifiers: [], action: 'Go to End of Line' },
+        'pageup': { modifiers: [], action: 'Scroll Page Up' },
+        'pagedown': { modifiers: [], action: 'Scroll Page Down' },
+        
+        // Arrow keys with modifiers
+        'left': { modifiers: ['ctrl'], action: 'Move Word Left' },
+        'right': { modifiers: ['ctrl'], action: 'Move Word Right' },
+        'up': { modifiers: ['cmd'], action: 'Scroll Without Moving Cursor' },
+        'down': { modifiers: ['cmd'], action: 'Scroll Without Moving Cursor' },
+      };
+
+      // Track active modifier keys
+      const activeModifiers = new Set();
+      const modifierKeys = ['cmd', 'shift', 'alt', 'ctrl'];
+
+      // Convert key element text to standardized key name
+      function standardizeKeyName(keyText) {
+        const mapping = {
+          '⌘': 'cmd',
+          'command': 'cmd',
+          '⇧': 'shift',
+          '⌥': 'alt',
+          'option': 'alt',
+          '⌃': 'ctrl',
+          'control': 'ctrl',
+        };
+        return mapping[keyText.toLowerCase()] || keyText.toLowerCase();
+      }
+
+      // Get all available shortcuts for current modifier combination
+      function getAvailableShortcuts() {
+        const activeModifiersArray = Array.from(activeModifiers);
+        const available = new Set();
+        
+        Object.entries(shortcuts).forEach(([key, shortcut]) => {
+          const modifiers = shortcut.modifiers;
+          if (modifiers.length === activeModifiersArray.length &&
+              modifiers.every(mod => activeModifiers.has(mod))) {
+            available.add(key.toLowerCase());
+          }
+        });
+        
+        return available;
+      }
+
+      // Update visual state of keyboard
+      function updateKeyboardState() {
+        const availableKeys = getAvailableShortcuts();
+        
+        document.querySelectorAll('.key').forEach(key => {
+          const keyName = standardizeKeyName(key.textContent);
+          
+          // Reset all classes and data attributes
+          key.classList.remove(
+            'available', 'modifier-active',
+            'cmd-available', 'shift-available', 'alt-available', 'ctrl-available',
+            'shift-ctrl-available', 'shift-alt-available', 'ctrl-alt-available',
+            'cmd-shift-available'
+          );
+          key.removeAttribute('data-modifier');
+          
+          // Highlight active modifiers with their specific colors
+          if (modifierKeys.includes(keyName) && activeModifiers.has(keyName)) {
+            key.classList.add('modifier-active');
+            key.setAttribute('data-modifier', keyName);
+          }
+          
+          // Apply specific combination classes
+          if (availableKeys.has(keyName)) {
+            const shortcut = shortcuts[keyName];
+            if (shortcut) {
+              const mods = shortcut.modifiers;
+              if (mods.length === 0) {
+                key.classList.add('available');
+              } else if (mods.length === 1) {
+                key.classList.add(`${mods[0]}-available`);
+              } else if (mods.length === 2) {
+                key.classList.add(`${mods[0]}-${mods[1]}-available`);
+              }
+            }
+          }
+        });
+      }
+
+      // Handle tooltip
+      let tooltip = null;
+
+      function showTooltip(key, event) {
+        const keyName = standardizeKeyName(key.textContent);
+        const shortcut = shortcuts[keyName];
+        
+        if (shortcut && activeModifiers.size === shortcut.modifiers.length &&
+            shortcut.modifiers.every(mod => activeModifiers.has(mod))) {
+          if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.className = 'action-tooltip';
+            document.body.appendChild(tooltip);
+          }
+          
+          tooltip.textContent = shortcut.action;
+          tooltip.style.left = `${event.pageX + 10}px`;
+          tooltip.style.top = `${event.pageY + 10}px`;
+          tooltip.style.display = 'block';
+        }
+      }
+
+      function hideTooltip() {
+        if (tooltip) {
+          tooltip.style.display = 'none';
+        }
+      }
+
+      // Add event listeners
+      document.querySelectorAll('.key').forEach(key => {
+        key.addEventListener('click', () => {
+          const keyName = standardizeKeyName(key.textContent);
+          if (modifierKeys.includes(keyName)) {
+            if (activeModifiers.has(keyName)) {
+              activeModifiers.delete(keyName);
+            } else {
+              activeModifiers.add(keyName);
+            }
+            updateKeyboardState();
+          }
+        });
+
+        key.addEventListener('mouseover', (e) => showTooltip(key, e));
+        key.addEventListener('mouseout', hideTooltip);
+      });
+    </script>
+  </body>
+</html>
