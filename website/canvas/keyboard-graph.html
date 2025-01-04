@@ -1113,23 +1113,7 @@
           .filter(([_, active]) => active)
           .map(([mod]) => mod);
 
-        // Check if we're in a combo state (2 or more modifiers active)
-        const isComboActive = activeModifiersList.length >= 2;
-
-        // Handle modifier nodes in DAG view
-        document.querySelectorAll('.dag-view kbd[data-modifier]').forEach((node) => {
-          const modifier = node.getAttribute('data-modifier');
-          const isActive = activeModifiers[modifier];
-
-          // Only show color when the modifier is active AND we're not in a combo state
-          if (isActive && !isComboActive) {
-            applyModifierStyles(node, [modifier], true, false);
-          } else {
-            node.style.background = '#3a3a3a';
-          }
-        });
-
-        // Handle other nodes
+        // Handle nodes in DAG view
         document.querySelectorAll('.dag-view kbd:not([data-modifier])').forEach((node) => {
           if (node.getAttribute('data-node-type') === 'context') return;
 
@@ -1140,16 +1124,22 @@
 
           // For combo nodes (nodes with multiple modifiers)
           if (nodeModifiers.length >= 2) {
-            const isFullyActive = nodeModifiers.every((mod) => activeModifiersList.includes(mod));
-            if (isFullyActive) {
+            // Check for exact match of modifiers
+            const isExactMatch =
+              nodeModifiers.length === activeModifiersList.length &&
+              nodeModifiers.every((mod) => activeModifiersList.includes(mod)) &&
+              activeModifiersList.every((mod) => nodeModifiers.includes(mod));
+
+            if (isExactMatch) {
               applyModifierStyles(node, nodeModifiers, true, false);
             } else {
               node.style.background = '#3a3a3a';
             }
           }
-          // For single-modifier nodes
+          // For single-modifier nodes (keep existing logic)
           else if (nodeModifiers.length === 1) {
             const isActive = nodeModifiers.every((mod) => activeModifiersList.includes(mod));
+            const isComboActive = activeModifiersList.length >= 2;
             if (isActive && !isComboActive) {
               applyModifierStyles(node, nodeModifiers, true, false);
             } else {
@@ -1166,8 +1156,13 @@
 
           // For combo links (links with multiple modifiers)
           if (linkModifiers.length >= 2) {
-            const isFullyActive = linkModifiers.every((mod) => activeModifiersList.includes(mod));
-            if (isFullyActive) {
+            // Check for exact match of modifiers
+            const isExactMatch =
+              linkModifiers.length === activeModifiersList.length &&
+              linkModifiers.every((mod) => activeModifiersList.includes(mod)) &&
+              activeModifiersList.every((mod) => linkModifiers.includes(mod));
+
+            if (isExactMatch) {
               applyModifierStyles(link, linkModifiers, true, false);
               link.classList.add('active');
               link.classList.remove('partially-active');
@@ -1176,9 +1171,10 @@
               link.classList.remove('active', 'partially-active');
             }
           }
-          // For single-modifier links
+          // For single-modifier links (keep existing logic)
           else if (linkModifiers.length === 1) {
             const isActive = linkModifiers.every((mod) => activeModifiersList.includes(mod));
+            const isComboActive = activeModifiersList.length >= 2;
             if (isActive && !isComboActive) {
               applyModifierStyles(link, linkModifiers, true, false);
               link.classList.add('active');
