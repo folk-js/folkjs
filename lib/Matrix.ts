@@ -33,7 +33,14 @@ export interface IMatrix extends MatrixInit {
 }
 
 export class Matrix implements IMatrix {
-  constructor(a: number, b: number, c: number, d: number, e: number, f: number) {
+  a;
+  b;
+  c;
+  d;
+  e;
+  f;
+
+  constructor(a = 1, b = 0, c = 0, d = 1, e = 0, f = 0) {
     this.a = a;
     this.b = b;
     this.c = c;
@@ -41,13 +48,6 @@ export class Matrix implements IMatrix {
     this.e = e;
     this.f = f;
   }
-
-  a = 1.0;
-  b = 0.0;
-  c = 0.0;
-  d = 1.0;
-  e = 0.0;
-  f = 0.0;
 
   equals(m: MatrixInit) {
     return this.a === m.a && this.b === m.b && this.c === m.c && this.d === m.d && this.e === m.e && this.f === m.f;
@@ -276,7 +276,7 @@ export class Matrix implements IMatrix {
 
   static ToCssString(m: MatrixInit) {
     return `matrix(${toDOMPrecision(m.a)}, ${toDOMPrecision(m.b)}, ${toDOMPrecision(
-      m.c
+      m.c,
     )}, ${toDOMPrecision(m.d)}, ${toDOMPrecision(m.e)}, ${toDOMPrecision(m.f)})`;
   }
 }

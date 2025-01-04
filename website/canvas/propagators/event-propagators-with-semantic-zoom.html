@@ -15,15 +15,9 @@
         margin: 0;
       }
 
-      pinch-zoom {
+      folk-pinch {
         position: absolute;
         inset: 0;
-
-        > div {
-          display: block;
-          position: absolute;
-          inset: 0px;
-        }
       }
 
       folk-shape {
@@ -37,33 +31,30 @@
       folk-event-propagator {
         &::part(trigger) {
           align-self: center;
-          font-size: clamp(1rem, calc(3rem * (1.05 - var(--scale))), 3rem);
+          font-size: clamp(1rem, calc(3rem * (1.05 - var(--folk-scale))), 3rem);
         }
 
         &::part(expression) {
-          opacity: clamp(0, calc(var(--scale) - 0.3), 1);
+          opacity: clamp(0, calc(var(--folk-scale) - 0.3), 1);
         }
       }
     </style>
   </head>
   <body>
-    <pinch-zoom>
-      <!-- Pinch zoom applies transforms on child elements instead of itself which breaks folk shape -->
-      <div>
-        <folk-shape id="box3" x="350" y="200" width="30" height="30"></folk-shape>
-        <folk-shape id="box4" x="500" y="250" width="30" height="30"></folk-shape>
-        <folk-event-propagator
-          source="#box3"
-          target="#box4"
-          trigger="transform"
-          expression="y: from.x,
+    <folk-pinch>
+      <folk-shape id="box3" x="350" y="200" width="30" height="30"></folk-shape>
+      <folk-shape id="box4" x="500" y="250" width="30" height="30"></folk-shape>
+      <folk-event-propagator
+        source="#box3"
+        target="#box4"
+        trigger="transform"
+        expression="y: from.x,
 rotation: from.x/10"
-        ></folk-event-propagator>
-      </div>
-    </pinch-zoom>
+      ></folk-event-propagator>
+    </folk-pinch>
 
     <script type="module">
-      import 'https://esm.sh/pinch-zoom-element@1.1.1';
+      import '@labs/standalone/folk-pinch.ts';
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-event-propagator.ts';
     </script>

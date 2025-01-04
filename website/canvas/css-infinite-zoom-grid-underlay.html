@@ -15,53 +15,9 @@
         margin: 0;
       }
 
-      pinch-zoom {
+      folk-pinch {
         position: absolute;
         inset: 0;
-
-        &[grid] {
-          --circle-width: 1px;
-          --circle: circle at var(--circle-width) var(--circle-width);
-          /* Map color transparency to --scale for each level of the grid */
-          --bg-color-1: rgba(0, 0, 0, 1);
-          --bg-color-2: rgba(0, 0, 0, clamp(0, var(--scale), 1));
-          --bg-color-3: rgba(0, 0, 0, clamp(0, calc(var(--scale) - 0.1), 1));
-          --bg-color-4: rgba(0, 0, 0, clamp(0, calc(var(--scale) - 1), 1));
-          --bg-color-5: rgba(0, 0, 0, clamp(0, calc(0.5 * var(--scale) - 2), 1));
-
-          /* Draw points for each level of grid as set of a background image. First background is on top.*/
-          background-image: radial-gradient(var(--circle), var(--bg-color-1) var(--circle-width), transparent 0),
-            radial-gradient(var(--circle), var(--bg-color-2) var(--circle-width), transparent 0),
-            radial-gradient(var(--circle), var(--bg-color-3) var(--circle-width), transparent 0),
-            radial-gradient(var(--circle), var(--bg-color-4) var(--circle-width), transparent 0),
-            radial-gradient(var(--circle), var(--bg-color-5) var(--circle-width), transparent 0);
-
-          /* Each level of the grid should be a factor of --size. */
-          --bg-size: calc(var(--size, 100px) / pow(2, 6) * var(--scale));
-
-          /* Divide each part of grid into 4 sections. */
-          --bg-size-1: calc(var(--bg-size) * pow(var(--sections, 4), 5));
-          --bg-size-2: calc(var(--bg-size) * pow(var(--sections, 4), 4));
-          --bg-size-3: calc(var(--bg-size) * pow(var(--sections, 4), 3));
-          --bg-size-4: calc(var(--bg-size) * pow(var(--sections, 4), 2));
-          --bg-size-5: calc(var(--bg-size) * var(--sections, 4));
-
-          background-size:
-            var(--bg-size-1) var(--bg-size-1),
-            var(--bg-size-2) var(--bg-size-2),
-            var(--bg-size-3) var(--bg-size-3),
-            var(--bg-size-4) var(--bg-size-4),
-            var(--bg-size-5) var(--bg-size-5);
-
-          /* Pan each background position to each point in the underlay. */
-          background-position: var(--x) var(--y);
-        }
-
-        > div {
-          display: block;
-          position: absolute;
-          inset: 0px;
-        }
       }
 
       folk-shape {
@@ -71,16 +27,13 @@
     </style>
   </head>
   <body>
-    <pinch-zoom grid>
-      <!-- Pinch zoom applies transforms on child elements instead of itself which breaks folk shape -->
-      <div>
-        <folk-shape id="box3" x="100" y="100" width="30" height="30"></folk-shape>
-        <folk-shape id="box4" x="200" y="300" width="30" height="30"></folk-shape>
-      </div>
-    </pinch-zoom>
+    <folk-pinch grid>
+      <folk-shape id="box3" x="100" y="100" width="30" height="30"></folk-shape>
+      <folk-shape id="box4" x="200" y="300" width="30" height="30"></folk-shape>
+    </folk-pinch>
 
     <script type="module">
-      import 'https://esm.sh/pinch-zoom-element@1.1.1';
+      import '@labs/standalone/folk-pinch.ts';
       import '@labs/standalone/folk-shape.ts';
     </script>
   </body>

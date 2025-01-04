@@ -16,7 +16,7 @@
         margin: 0;
       }
 
-      pinch-zoom {
+      folk-pinch {
         position: absolute;
         inset: 0;
       }
@@ -35,8 +35,8 @@
         }
 
         p {
-          font-size: clamp(0rem, calc(1.5rem * (var(--scale) - 0.5)), 1rem);
-          opacity: clamp(0, calc(var(--scale) + 0.25), 1);
+          font-size: clamp(0rem, calc(1.5rem * (var(--folk-scale) - 0.5)), 1rem);
+          opacity: clamp(0, calc(var(--folk-scale) + 0.25), 1);
           max-width: 35ch;
         }
       }
@@ -68,7 +68,7 @@
     </style>
   </head>
   <body>
-    <pinch-zoom>
+    <folk-pinch>
       <folk-graph>
         <folk-shape id="box1" x="100" y="100">
           <h2>Lorem ispum</h2>
@@ -102,10 +102,10 @@
         <folk-arrow source="#box2" target="#box3"></folk-arrow>
         <folk-arrow source="#box1" target="#box3"></folk-arrow>
       </folk-graph>
-    </pinch-zoom>
+    </folk-pinch>
 
     <script type="module">
-      import 'https://esm.sh/pinch-zoom-element@1.1.1';
+      import '@labs/standalone/folk-pinch.ts';
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-arrow.ts';
       import '@labs/standalone/folk-graph.ts';
