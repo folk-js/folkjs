@@ -7,4 +7,12 @@ export class Experimental {
     }
     return enabled;
   }
+
+  static canViewTransition() {
+    const enabled = !!(document as any).startViewTransition;
+    if (!enabled) {
+      console.warn('View Transition API is not supported in this browser');
+    }
+    return enabled;
+  }
 }
