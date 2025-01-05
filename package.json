@@ -15,6 +15,7 @@
     "@dimforge/rapier2d-compat": "^0.14.0",
     "@lit/reactive-element": "^2.0.4",
     "leaflet": "^1.9.4",
+    "partysocket": "^1.0.3",
     "perfect-arrows": "^0.3.7",
     "perfect-freehand": "^1.2.2",
     "vite-plugin-wasm": "^3.3.0",
