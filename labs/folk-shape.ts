@@ -1,3 +1,4 @@
+import { sync } from '@labs/folk-sync';
 import { getResizeCursorUrl, getRotateCursorUrl } from '@labs/utils/cursors';
 import { DOMRectTransform, DOMRectTransformReadonly, FolkElement, Point, TransformEvent, Vector } from '@lib';
 import { ResizeManager } from '@lib/resize-manger';
@@ -187,6 +188,7 @@ export class FolkShape extends FolkElement {
     return this.#rect.x;
   }
 
+  @sync()
   set x(x) {
     this.#previousRect.x = this.#rect.x;
     this.#rect.x = x;
@@ -197,6 +199,7 @@ export class FolkShape extends FolkElement {
     return this.#rect.y;
   }
 
+  @sync()
   set y(y) {
     this.#previousRect.y = this.#rect.y;
     this.#rect.y = y;
@@ -207,6 +210,7 @@ export class FolkShape extends FolkElement {
     return this.#rect.width;
   }
 
+  @sync()
   set width(width: Dimension) {
     if (width === 'auto') {
       resizeManager.observe(this, this.#onAutoResize);
@@ -225,6 +229,7 @@ export class FolkShape extends FolkElement {
     return this.#rect.height;
   }
 
+  @sync()
   set height(height: Dimension) {
     if (height === 'auto') {
       resizeManager.observe(this, this.#onAutoResize);
@@ -244,6 +249,7 @@ export class FolkShape extends FolkElement {
     return this.#rect.rotation;
   }
 
+  @sync()
   set rotation(rotation: number) {
     this.#previousRect.rotation = this.#rect.rotation;
     this.#rect.rotation = rotation;

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -25,26 +25,29 @@
     </style>
   </head>
   <body>
-    <folk-shape id="box1" x="100" y="100" width="30" height="30"></folk-shape>
-    <folk-shape id="box2" x="200" y="350">Hello World</folk-shape>
-    <folk-event-propagator
-      source="#box1"
-      target="#box2"
-      trigger="click"
-      expression="textContent: to.textContent + '!'"
-    ></folk-event-propagator>
+    <folk-sync room="sync-test">
+      <folk-shape id="box1" x="100" y="100" width="30" height="30"></folk-shape>
+      <folk-shape id="box2" x="200" y="350">Hello World</folk-shape>
+      <folk-event-propagator
+        source="#box1"
+        target="#box2"
+        trigger="click"
+        expression="textContent: to.textContent + '!'"
+      ></folk-event-propagator>
 
-    <folk-shape id="box3" x="350" y="200" width="30" height="30"></folk-shape>
-    <folk-shape id="box4" x="500" y="250" width="30" height="30"></folk-shape>
-    <folk-event-propagator
-      source="#box3"
-      target="#box4"
-      trigger="transform"
-      expression="y: from.x, 
+      <folk-shape id="box3" x="350" y="200" width="30" height="30"></folk-shape>
+      <folk-shape id="box4" x="500" y="250" width="30" height="30"></folk-shape>
+      <folk-event-propagator
+        source="#box3"
+        target="#box4"
+        trigger="transform"
+        expression="y: from.x, 
 rotation: from.x/10"
-    ></folk-event-propagator>
+      ></folk-event-propagator>
+    </folk-sync>
 
     <script type="module">
+      import '@labs/standalone/folk-sync.ts';
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-event-propagator.ts';
     </script>
