@@ -34,6 +34,7 @@ export class FolkDirectory extends FolkBaseSet {
         border: 2px dashed #64595961;
         border-bottom: 0;
         border-radius: 5px;
+        padding: 0.25rem;
       }
     }
   `;

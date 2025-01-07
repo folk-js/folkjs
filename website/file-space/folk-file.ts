@@ -1,6 +1,9 @@
 import { FolkElement } from '@lib';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { state } from '@lit/reactive-element/decorators.js';
+import { FolkMarkdown } from './folk-markdown';
+
+FolkMarkdown.define();
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -8,14 +11,18 @@ declare global {
   }
 }
 
-export type FileCreator = (fileName: string, fileExtension: string, content: File) => Element | DocumentFragment;
+export interface FileCreator<T extends Element = Element> {
+  create(file: File): T | Promise<T>;
+  destroy?(): void;
+  getValue?(element: T): FileSystemWriteChunkType | undefined;
+}
 
 export class FolkFile extends FolkElement {
   static tagName = 'folk-file';
 
-  static #fileCreators = new Map<string, any>();
+  static #fileCreators = new Map<string, FileCreator>();
 
-  static addFileType(fileTypes: string[], fileCreator: FileCreator) {
+  static addFileType<T extends Element>(fileTypes: string[], fileCreator: FileCreator<T>) {
     for (const fileType of fileTypes) {
       this.#fileCreators.set(fileType, fileCreator);
     }
@@ -24,44 +31,44 @@ export class FolkFile extends FolkElement {
   // https://developer.mozilla.org/en-US/docs/Web/HTTP/MIME_types/Common_types
   static {
     // images
-    this.addFileType(
-      ['apng', 'avif', 'gif', 'jpg', 'jpeg', 'png', 'svg', 'webp'],
-      (fileName, fileExtension, content) => {
+    this.addFileType(['apng', 'avif', 'gif', 'jpg', 'jpeg', 'png', 'svg', 'webp'], {
+      create(file) {
         const image = document.createElement('img');
-        image.src = URL.createObjectURL(content);
-        image.alt = `Image of file '${fileName}'`;
-        image.setAttribute('file-name', fileName);
+        image.src = URL.createObjectURL(file);
+        image.alt = `Image of file '${file.name}'`;
         return image;
       },
-    );
+    });
 
-    this.addFileType(['mp3', 'wav', 'mov'], (fileName, fileExtension, content) => {
-      const audio = document.createElement('audio');
-      audio.src = URL.createObjectURL(content);
-      audio.controls = true;
-      audio.volume = 0.25;
-      audio.setAttribute('file-name', fileName);
-      return audio;
+    this.addFileType(['mp3', 'wav', 'mov'], {
+      create(file) {
+        const audio = document.createElement('audio');
+        audio.src = URL.createObjectURL(file);
+        audio.controls = true;
+        audio.volume = 0.25;
+        return audio;
+      },
     });
 
     // videos
-    this.addFileType(['mp4', 'oog', 'webm'], (fileName, fileExtension, content) => {
-      const video = document.createElement('video');
-      video.src = URL.createObjectURL(content);
-      video.controls = true;
-      video.volume = 0.25;
-      video.setAttribute('file-name', fileName);
-      return video;
+    this.addFileType(['mp4', 'oog', 'webm'], {
+      create(file) {
+        const video = document.createElement('video');
+        video.src = URL.createObjectURL(file);
+        video.controls = true;
+        video.volume = 0.25;
+        return video;
+      },
     });
 
-    this.addFileType(['md'], (fileName, fileExtension, content) => {
-      // @ts-ignore
-      import('https://cdn.jsdelivr.net/npm/zero-md@3?register');
-
-      const md = document.createElement('zero-md') as any;
-      md.src = URL.createObjectURL(content);
-      md.setAttribute('file-name', fileName);
-      return md;
+    this.addFileType(['md'], {
+      async create(file) {
+        const md = document.createElement('folk-markdown');
+        md.style.width = '300px';
+        md.value = await file.text();
+        return md;
+      },
+      getValue: (element) => element.value,
     });
 
     // embeds
@@ -83,6 +90,7 @@ export class FolkFile extends FolkElement {
       display: inline-block;
       font-family: monospace;
       border: 2px dashed #64595961;
+      padding: 0.25rem;
     }
   `;
 
@@ -105,6 +113,7 @@ export class FolkFile extends FolkElement {
 
   #displayName = document.createElement('span');
   #display = document.createElement('div');
+  #fileCreator: FileCreator | undefined = undefined;
 
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
@@ -129,17 +138,29 @@ export class FolkFile extends FolkElement {
 
     this.#displayName.textContent = this.path;
 
-    const fileCreator = FolkFile.#fileCreators.get(this.type);
+    this.#fileCreator?.destroy?.();
 
-    if (fileCreator === undefined) {
+    this.#fileCreator = FolkFile.#fileCreators.get(this.type);
+
+    if (this.#fileCreator === undefined) {
       console.warn(`File '${this.name}' has to file creator for extension '${this.type}'.`);
       return;
     }
 
     const file = await this.fileHandle.getFile();
 
-    const element = fileCreator(this.name, this.type, file);
+    const element = await this.#fileCreator.create(file);
 
     this.#display.appendChild(element);
+  }
+
+  async save() {
+    const content = this.#fileCreator?.getValue?.(this.#display.firstElementChild!);
+    console.log(this.name, content);
+    if (!this.fileHandle || content === undefined) return;
+
+    const writer = await this.fileHandle.createWritable();
+    await writer.write(content);
+    await writer.close();
   }
 }

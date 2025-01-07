@@ -24,5 +24,7 @@ document.addEventListener('click', async (event) => {
     pinch.appendChild(directory);
   } else if (event.target.id === 'open-file') {
     console.log('open file');
+  } else if (event.target.id === 'save') {
+    document.querySelectorAll('folk-file').forEach((file) => file.save());
   }
 });

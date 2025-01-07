@@ -391,7 +391,9 @@ export class FolkShape extends FolkElement {
     if (!moveDelta) return;
 
     // Handle shape movement and rotation
-    if (target === this || (!handle && event instanceof KeyboardEvent)) {
+    // target === this || (!handle && event instanceof KeyboardEvent) causes movement when content is inside is focused
+    // so removing for now, not sure why it's
+    if (target === this) {
       if (event instanceof KeyboardEvent && event.altKey) {
         const ROTATION_MUL = event.shiftKey ? Math.PI / 12 : Math.PI / 36;
         const rotationDelta = moveDelta.x !== 0 ? (moveDelta.x > 0 ? ROTATION_MUL : -ROTATION_MUL) : 0;
