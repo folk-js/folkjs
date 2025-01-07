@@ -83,7 +83,8 @@ export class FolkPinch extends FolkElement {
       // We only want to track 2 pointers at most
       if (this.#pointerTracker.currentPointers.length === 2) return false;
 
-      event.preventDefault();
+      // is this needed, when it happens it prevents the blur of other elements
+      // event.preventDefault();
       return true;
     },
     move: (previousPointers) => {

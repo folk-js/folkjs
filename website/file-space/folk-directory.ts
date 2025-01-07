@@ -76,7 +76,7 @@ export class FolkDirectory extends FolkBaseSet {
 
         const file = document.createElement('folk-file');
 
-        file.name = `${this.name}/${fileHandle.name}`;
+        file.directory = this.name;
         file.fileHandle = fileHandle;
 
         const shape = document.createElement('folk-shape');

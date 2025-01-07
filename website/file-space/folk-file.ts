@@ -83,18 +83,19 @@ export class FolkFile extends FolkElement {
       display: inline-block;
       font-family: monospace;
       border: 2px dashed #64595961;
-      border-bottom: 0;
     }
   `;
 
   @state() fileHandle: FileSystemFileHandle | null = null;
 
-  #name = '';
+  directory = '';
+
   get name() {
-    return this.#name || this.fileHandle?.name || '';
+    return this.fileHandle?.name || '';
   }
-  set name(name) {
-    this.#name = name;
+
+  get path() {
+    return `/${this.directory}/${this.name}`;
   }
 
   #type = '';
@@ -126,7 +127,7 @@ export class FolkFile extends FolkElement {
 
     if (this.fileHandle === null) return;
 
-    this.#displayName.textContent = `/${this.name}`;
+    this.#displayName.textContent = this.path;
 
     const fileCreator = FolkFile.#fileCreators.get(this.type);
 
