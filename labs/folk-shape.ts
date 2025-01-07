@@ -293,8 +293,8 @@ export class FolkShape extends FolkElement {
 
     this.#updateCursors();
 
-    this.x = Number(this.getAttribute('x')) || 0;
-    this.y = Number(this.getAttribute('y')) || 0;
+    this.x = Number(this.getAttribute('x')) || this.x;
+    this.y = Number(this.getAttribute('y')) || this.y;
     this.width = Number(this.getAttribute('width')) || 'auto';
     this.height = Number(this.getAttribute('height')) || 'auto';
     this.rotation = (Number(this.getAttribute('rotation')) || 0) * (Math.PI / 180);

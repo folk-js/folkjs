@@ -2,6 +2,12 @@ import { FolkElement, Matrix, Vector } from '@lib';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { property } from '@lit/reactive-element/decorators.js';
 
+declare global {
+  interface HTMLElementTagNameMap {
+    'folk-pinch': FolkPinch;
+  }
+}
+
 export class FolkPinch extends FolkElement {
   static tagName = 'folk-pinch';
 

@@ -16,14 +16,22 @@
         margin: 0;
       }
 
-      folk-file-space {
+      folk-pinch {
         position: absolute;
         inset: 0;
+      }
+
+      button {
+        position: relative;
+        top: 1rem;
+        left: 1rem;
       }
     </style>
   </head>
   <body>
-    <folk-file-space></folk-file-space>
+    <folk-pinch grid></folk-pinch>
+    <button id="open-directory">Open directory</button>
+    <button id="open-file">Open file</button>
 
     <script type="module" src="./main.ts"></script>
   </body>
