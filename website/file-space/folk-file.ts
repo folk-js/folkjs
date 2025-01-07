@@ -74,16 +74,20 @@ export class FolkFile extends FolkElement {
     // this.addFileType(['csv'], () => {});
   }
 
-  static styles = css``;
+  static styles = css`
+    :host {
+      display: block;
+    }
+
+    span {
+      display: inline-block;
+      font-family: monospace;
+      border: 2px dashed #64595961;
+      border-bottom: 0;
+    }
+  `;
 
   @state() fileHandle: FileSystemFileHandle | null = null;
-  // get fileHandle() {
-  //   return this.#fileHandle;
-  // }
-  // set fileHandle(fileHandle) {
-  //   this.#fileHandle = fileHandle;
-  //   this.#updateFile();
-  // }
 
   #name = '';
   get name() {
@@ -98,23 +102,31 @@ export class FolkFile extends FolkElement {
     return this.#type;
   }
 
+  #displayName = document.createElement('span');
+  #display = document.createElement('div');
+
+  override createRenderRoot(): HTMLElement | DocumentFragment {
+    const root = super.createRenderRoot();
+
+    root.append(this.#displayName, this.#display);
+
+    return root;
+  }
+
   override willUpdate(changedProperties: PropertyValues<this>): void {
     if (changedProperties.has('fileHandle')) {
-      if (this.fileHandle === null) {
-        this.#type = '';
-        return;
-      }
-
-      this.#type = /(?:\.([^.]+))?$/.exec(this.name)?.[1] || 'txt';
+      this.#type = this.fileHandle === null ? '' : /(?:\.([^.]+))?$/.exec(this.name)?.[1] || 'txt';
     }
   }
 
   override async update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
 
-    this.renderRoot.textContent = '';
+    this.#display.textContent = '';
 
     if (this.fileHandle === null) return;
+
+    this.#displayName.textContent = `/${this.name}`;
 
     const fileCreator = FolkFile.#fileCreators.get(this.type);
 
@@ -127,6 +139,6 @@ export class FolkFile extends FolkElement {
 
     const element = fileCreator(this.name, this.type, file);
 
-    this.renderRoot.appendChild(element);
+    this.#display.appendChild(element);
   }
 }
