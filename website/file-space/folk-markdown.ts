@@ -49,3 +49,5 @@ export class FolkMarkdown extends FolkElement {
     return root;
   }
 }
+
+FolkMarkdown.define();

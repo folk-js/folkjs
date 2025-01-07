@@ -1,9 +1,6 @@
 import { FolkElement } from '@lib';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { state } from '@lit/reactive-element/decorators.js';
-import { FolkMarkdown } from './folk-markdown';
-
-FolkMarkdown.define();
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -63,6 +60,7 @@ export class FolkFile extends FolkElement {
 
     this.addFileType(['md'], {
       async create(file) {
+        await import('./folk-markdown.ts');
         const md = document.createElement('folk-markdown');
         md.style.width = '300px';
         md.value = await file.text();
