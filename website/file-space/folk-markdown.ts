@@ -16,6 +16,7 @@ export class FolkMarkdown extends FolkElement {
       /* need to specific this for ink-mde */
       color: white;
       background-color: black;
+      width: 75ch;
     }
 
     /* hide the footer */

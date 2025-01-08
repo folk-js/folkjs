@@ -62,7 +62,6 @@ export class FolkFile extends FolkElement {
       async create(file) {
         await import('./folk-markdown.ts');
         const md = document.createElement('folk-markdown');
-        md.style.width = '300px';
         md.value = await file.text();
         return md;
       },
@@ -70,9 +69,17 @@ export class FolkFile extends FolkElement {
     });
 
     // embeds
-    // this.addFileType(['pdf'], () => {
-    //   // <object type="application/pdf" data="/media/examples/In-CC0.pdf" width="250" height="200"></object>
-    // });
+    // <object type="application/pdf" data="/media/examples/In-CC0.pdf" width="250" height="200"></object>
+    this.addFileType(['pdf'], {
+      create(file) {
+        const object = document.createElement('object');
+        object.type = 'application/pdf';
+        object.width = '600';
+        object.height = '700';
+        object.data = URL.createObjectURL(file);
+        return object;
+      },
+    });
 
     // this.addFileType(['json'], () => {});
 
@@ -81,13 +88,16 @@ export class FolkFile extends FolkElement {
 
   static styles = css`
     :host {
-      display: block;
+      display: flex;
+      flex-direction: column;
+      border: 2px dashed #64595961;
+      border-radius: 5px;
+      overflow: hidden;
+      width: min-content;
     }
 
-    span {
-      display: inline-block;
+    :host > span {
       font-family: monospace;
-      border: 2px dashed #64595961;
       padding: 0.25rem;
     }
   `;

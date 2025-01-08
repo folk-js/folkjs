@@ -15,12 +15,8 @@ export class FolkDirectory extends FolkBaseSet {
   static tagName = 'folk-directory';
 
   static styles = css`
-    :host {
-      position: absolute;
-      inset: 0;
-    }
-
     div {
+      pointer-events: none;
       position: absolute;
       border: 2px dashed #64595961;
       border-radius: 5px;
@@ -118,11 +114,11 @@ export class FolkDirectory extends FolkBaseSet {
       rects.map((rect) => rect.left),
     );
 
-    const padding = 10;
+    const padding = 25;
 
     this.#container.style.top = `${top - padding}px`;
     this.#container.style.left = `${left - padding}px`;
-    this.#container.style.height = `${bottom - top + padding}px`;
-    this.#container.style.width = `${right - left + padding}px`;
+    this.#container.style.height = `${bottom - top + 2 * padding}px`;
+    this.#container.style.width = `${right - left + 2 * padding}px`;
   }
 }
