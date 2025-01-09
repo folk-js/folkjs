@@ -8,9 +8,12 @@
  */
 
 export class SpatialHash<T> {
+  #rects = new Map<T, DOMRectReadOnly>();
   #hash = new Map<string, Set<T>>();
 
   add(object: T, rect: DOMRectReadOnly): void {
+    this.#rects.set(object, rect);
+
     for (const key of this.#getKeys(rect)) {
       let rects = this.#hash.get(key);
 
@@ -24,7 +27,16 @@ export class SpatialHash<T> {
   }
 
   update(object: T, rect: DOMRectReadOnly) {
-    this.delete(object);
+    const previousRect = this.#rects.get(object);
+
+    if (previousRect !== undefined) {
+      const keysToDelete = this.#getKeys(previousRect).difference(this.#getKeys(rect));
+
+      for (const key of keysToDelete) {
+        this.#hash.get(key)?.delete(object);
+      }
+    }
+
     this.add(object, rect);
   }
 
@@ -39,25 +51,27 @@ export class SpatialHash<T> {
   }
 
   delete(object: T): void {
+    this.#rects.delete(object);
     this.#hash.forEach((set) => set.delete(object));
   }
 
   clear(): void {
+    this.#rects.clear();
     this.#hash.clear();
   }
 
-  #getKeys(rect: DOMRectReadOnly): string[] {
+  #getKeys(rect: DOMRectReadOnly): Set<string> {
     // How many times the rects should be shifted when hashing
     const shift = 5;
     const sx = rect.x >> shift;
     const sy = rect.y >> shift;
     const ex = (rect.x + rect.width) >> shift;
     const ey = (rect.y + rect.height) >> shift;
-    const keys = [];
+    const keys = new Set<string>();
 
     for (let y = sy; y <= ey; y++) {
       for (let x = sx; x <= ex; x++) {
-        keys.push('' + x + ':' + y);
+        keys.add('' + x + ':' + y);
       }
     }
     return keys;
