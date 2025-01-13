@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fisheye Scrolling</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body > label {
+        display: flex;
+        position: fixed;
+        top: 0;
+        right: 0;
+        padding: 0.5rem;
+      }
+
+      /* The basic approach is to zoom out entire document then animation the fisheye by scaling up the active elements. */
+      main {
+        /* Using zoom instead of scale works */
+        zoom: var(--zoom);
+        max-width: 75ch;
+        /* Content should start in the center and end above the center. */
+        margin: calc(50vh / var(--zoom)) auto calc(80vh / var(--zoom));
+      }
+
+      /* Animate all of the direct children of main. */
+      main > * {
+        animation: fisheye cubic-bezier(0.3, 0, 0.7, 1);
+        animation-timeline: view();
+        animation-range: cover;
+      }
+
+      @keyframes fisheye {
+        15%,
+        85% {
+          /* The higher the zoom, the more opacity there should be. */
+          opacity: var(--zoom);
+          padding: 0;
+          scale: 1;
+        }
+
+        40%,
+        60% {
+          /* Scale to the original size of the element, countering the zoom. */
+          scale: calc(1 / var(--zoom));
+          opacity: 1;
+          /* Arbitrarily space out the zoomed elements */
+          padding: calc(75px / var(--zoom)) 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <label>Zoom: <input type="range" min="0.1" max="0.75" step="0.001" value="0.25" /></label>
+
+    <!-- Content sourced from https://cristobal.space/writing/folk.html  -->
+    <main>
+      <h1>Folk (Browser) Interfaces</h1>
+
+      <p>
+        For the past couple of years I've found myself returning to vanilla Javascript to build a variety of media
+        interfaces. Ignoring the networked potential of the internet, I've felt liberated to simply point at local files
+        and enjoy the multi-media power of the browser as rendering engine.
+      </p>
+
+      <div style="display: flex; flex-flow: column; align-items: center; justify-content: center">
+        <div style="display: flex; align-items: center; justify-content: center">
+          <div style="margin: 0 20">
+            <video controls="" src="/refs/CS_Store/deep-compositing.mp4" width="320"></video>
+          </div>
+          <div style="margin: 0 20">
+            <video controls="" src="/refs/CS_Store/tsne-path.mov" width="320"></video>
+          </div>
+        </div>
+        <div style="margin: 20px 0px 5px 0px">
+          <i>Interfaces for deep compositing and T-SNE'd faces</i>
+        </div>
+      </div>
+
+      <p>
+        In this modality, one composes interfaces through browsers primitives—images, video, and text—interacted with
+        primarily through event handlers. If one can consider this programming, it's primarily because one is still
+        writing code. However, it deviates from traditional notions of programming: abstraction, composition, security,
+        extensibility, or performance. The goal is not to produce a system that runs forever as has historically been
+        the aim of software for the government and, subsequently, large tech behemoths.
+      </p>
+
+      <p>
+        Instead, it re-centers programming around designing powerful media interactions. This kind of interface design
+        is intimately connected to the materiality of media and, consequently, banks on domain knowledge in, e.g.,
+        computer graphics. It's akin to building a one-off Photoshop or Blender interface, built on robust web APIs
+        (canvas, audio, WebGL) and libraries (Three, p5, tf.js). Exceptionally, these libraries are focused a giving you
+        handles into media, rather than supporting an industrial mode of production. The tradition in question can be
+        drawn back through tools for artists such as Processing, Blender, Max/MSP, Quartz Composer, and TouchDesigner.
+      </p>
+
+      <div style="display: flex; flex-flow: column; align-items: center; justify-content: center">
+        <div style="display: flex; align-items: center; justify-content: center">
+          <img src="/refs/CS_Store/sensitivity.jpg" width="90%" />
+        </div>
+        <div style="margin: 20px 0px 5px 0px">
+          <i>Ken Isaacs on working with simple tools.</i>
+        </div>
+      </div>
+
+      <p>
+        I think of these as <i>folk interfaces</i>, akin to the jigs one makes in wood-working. Divorced from grandiose
+        ambitions of building comprehensive systems, it leads the programmer to directly engage with data. I hope this
+        mode can paint the picture of software, not as a teleological instrument careening towards automation and ease,
+        but as a medium for intimacy with the matter of our time (images, audio, video), yielding a sense of agency with
+        what, to most, feels like an indelible substrate.
+      </p>
+
+      <h3> Seeing what's happening </h3>
+
+      <p>
+        This realization began with me making small visualizers for a variety of ML projects, before I had any theses on
+        tool-making. The browser was a natural platform: thousands of lifetimes spent inside the techno-empires have
+        made it very robust for media display. I also had prior experience with web development.
+      </p>
+
+      <p>
+        One system in question was a
+        <a href="https://runwayml.com/green-screen/">human-in-the-loop rotoscoping tool</a>. Central to the design was
+        legibility of the outputs to the user so that they could then be refined by hand. My goal was to gain intimacy
+        with the inputs and outputs that the systems I was designing expected and produced, an intimacy that's
+        impossible to reach without swimming in the data and absent when simply flicking through results in a file
+        browser <a href="#fn1" id="fn1ref">[1]</a>.
+      </p>
+
+      <div style="display: flex; flex-flow: column; align-items: center; justify-content: center">
+        <div style="display: flex; align-items: center; justify-content: center">
+          <div style="margin: 0 10">
+            <img src="/refs/CS_Store/screen-presence.png" width="220" />
+          </div>
+          <div style="margin: 0 10">
+            <img src="/refs/CS_Store/visualizer.png" width="220" />
+          </div>
+          <div style="margin: 0 10">
+            <img src="/refs/CS_Store/clustering.png" width="220" />
+          </div>
+        </div>
+        <div style="margin: 20px 0px 5px 0px">
+          <i>Facial movements, optical flow, and voicings</i>
+        </div>
+      </div>
+
+      <p>
+        I was elated at the ease of inserting a &lt;video&gt; tag and having a scrubbable interface with a programmable
+        API to attach my model predictions to. Beyond simple inspection, I went on to build mock versions of the full
+        interaction flows. These visualizers were instrumental to validating that the machine learning outputs, more
+        than automate an existing workflow, could function as primitives at a new level of abstraction. The interface
+        functions as a "minimal proof of interaction" asking: can I wield this the way a Photoshop expert can wield
+        images?
+      </p>
+
+      <p>
+        From a technical perspective, all of these interfaces are single HTML pages with interaction logic stuck inside
+        &lt;script&gt; tags, forgoing any "best principles" regarding separating HTML, CSS, and Javascript. I slowly
+        build up the pages, at first just &lt;img src="local-path"&gt;, then some click handlers, then some inline
+        styling. It's the ethos of <a href="https://html.energy">html-energy</a>, combining the minimalism of
+        <a href="https://htmldom.dev">htmldom.dev</a> programming with quick feedback loops, centered around
+        <i>seeing</i> what a change does. No boilerplate, no frameworks, no server. Just an HTML file opened directly in
+        the browser.
+      </p>
+
+      <h3> Swimming in one's filesystem </h3>
+
+      <p>
+        A surplus of hand-curated media files live on our file-systems. These are artifacts we care about enough to
+        screenshot, save as PDF, or jot down in notes. Nonetheless, it's as if we've put them in deep-storage: it's hard
+        to do anything with them, and even rarer to mix different artifacts into a collage. One is forced to embed
+        images and text into inextricable word documents and slides, or use an infinite canvas like Figma, at which
+        point the files are no longer individuated, instead mere parts of a single new file. The browser as media viewer
+        can circumvent this.
+      </p>
+
+      <p>
+        Here's a trivial example, two dozen lines of code to bring a static library of PDFs to life, replicating the
+        well-known feeling of splaying all of one's papers out on a desk in preparation for writing. It brings the
+        digital filesystem closer to the feeling of entering a physical library. Let me <i>see</i> their covers,
+        <i>peruse</i> the collection, <i>leaf</i> through the pages!
+      </p>
+
+      <div style="display: flex; flex-flow: column; align-items: center; justify-content: center">
+        <div style="display: flex; align-items: center; justify-content: center">
+          <video controls="" src="/refs/CS_Store/pdf-demo.mp4" width="80%" style="margin: 10"></video>
+        </div>
+        <div style="margin: 10px 0px 5px 0px">
+          <i>A digital library, made a little more visceral</i>
+        </div>
+      </div>
+
+      <p>
+        This reconsiders the files on one's computer, not as static assets with fixed ways of viewing, but as raw
+        material to build with: archive bricolage. I use &lt;embed&gt; tags to render the PDFs and lower the activation
+        energy by forgoing a server. The interface relies on the `drop` operation to grant the browser permission to
+        read files. To share, just send over the `.html` or zip up a directory with the files. Best practices be damned.
+        This is a <a href="https://www.robinsloan.com/notes/home-cooked-app/"> home-cooked meal</a>.
+      </p>
+
+      <pre
+        onclick="window.open('https://cristobal.space/pdf-viewer.html')"
+        style="cursor: pointer"
+      >    <code id="pdf-viewer" style=" display: inline-block; background: white;">
+/* pdf-viewer.html */
+
+&lt;style&gt;
+  html  { background-color: #fdf6e3; margin: 20px }
+  body  { display: flex; flex-wrap: wrap; }
+&lt;/style&gt;
+
+&lt;script&gt;
+  const previewPdf = (name, url) =&gt; `
+    &lt;div style="width: 300; height: 425; margin: 40px"&gt;
+      &lt;embed width="100%" height="100%" type="application/pdf" src="${url}"&gt;&lt;/embed&gt;
+      &lt;p&gt;${name}&lt;/p&gt;
+    &lt;/div&gt;
+  `;
+
+  window.addEventListener("dragover", e =&gt; e.preventDefault());
+  window.addEventListener("drop", e =&gt; {
+    e.preventDefault();
+    [...e.dataTransfer.items].forEach(item =&gt; {
+      if (item.type === "application/pdf") {
+        const file = item.getAsFile();
+        const url = URL.createObjectURL(file);
+        document.body.innerHTML += previewPdf(file.name, url);
+      }
+    });
+  });
+&lt;/script&gt;
+  </code>
+</pre>
+
+      <script>
+        const code = `
+/* pdf-viewer.html */
+
+<style>
+  html  { background-color: #fdf6e3; margin: 20px }
+  body  { display: flex; flex-wrap: wrap; }
+</style>
+
+<script>
+  const previewPdf = (name, url) => \`
+    <div style="width: 300; height: 425; margin: 40px">
+      <embed width="100%" height="100%" type="application/pdf" src="\${url}"></embed>
+      <p>\${name}</p>
+    </div>
+  \`;
+
+  window.addEventListener("dragover", e => e.preventDefault());
+  window.addEventListener("drop", e => {
+    e.preventDefault();
+    [...e.dataTransfer.items].forEach(item => {
+      if (item.type === "application/pdf") {
+        const file = item.getAsFile();
+        const url = URL.createObjectURL(file);
+        document.body.innerHTML += previewPdf(file.name, url);
+      }
+    });
+  });
+<\/script>
+  `;
+        document.getElementById('pdf-viewer').textContent = code;
+      </script>
+
+      <h3> An infinite canvas for your filesystem </h3>
+
+      <p>
+        Compelled by the idea of archive bricolage, and having seen some demos of the Muse iPad app, and thought to make
+        a pared down version in this raw HTML, vanilla JS style. Wrapping everything into an absolute positioned
+        &lt;div&gt; with some mouse handlers gave me an
+        <a href="https://cristobal.space/infinite.html">infinite canvas</a>. Expanding it with the drag-and-drop
+        security loop-hole of the pdf-viewer, I got the demo below. Video, audio, text, image, and PDF co-existing in
+        one space.
+      </p>
+
+      <div style="display: flex; flex-flow: column; align-items: center; justify-content: center">
+        <div style="display: flex; align-items: center; justify-content: center">
+          <video controls="" src="/refs/CS_Store/metamedium.mp4" width="80%" style="margin: 10"></video>
+        </div>
+        <div style="margin: 10px 0px 5px 0px">
+          <i>An initial prototype for an infinite canvas</i>
+        </div>
+      </div>
+
+      <p>
+        Since, I've been tweaking the affordances into a system I've nicknamed
+        <i>CS_Store</i>. I was inspired by Omar's tweet on <i>DS_Store</i>, the infamous file ignored in everyone's Git.
+        It was a little bit of metadata stored right there in the file-system, right next to the content it was
+        describing. Each DS_Store holds information about the spatial layout of files in Finder. This felt like the
+        epitome of local-first development hidden in plain sight.
+      </p>
+
+      <div style="transform: scale(0.8); margin: -25px">
+        <center>
+          <div
+            class="twitter-tweet twitter-tweet-rendered"
+            style="display: flex; max-width: 550px; width: 100%; margin-top: 10px; margin-bottom: 10px"
+            ><iframe
+              id="twitter-widget-0"
+              scrolling="no"
+              frameborder="0"
+              allowtransparency="true"
+              allowfullscreen="true"
+              class=""
+              title="X Post"
+              src="https://platform.twitter.com/embed/Tweet.html?dnt=true&amp;embedId=twitter-widget-0&amp;features=eyJ0ZndfdGltZWxpbmVfbGlzdCI6eyJidWNrZXQiOltdLCJ2ZXJzaW9uIjpudWxsfSwidGZ3X2ZvbGxvd2VyX2NvdW50X3N1bnNldCI6eyJidWNrZXQiOnRydWUsInZlcnNpb24iOm51bGx9LCJ0ZndfdHdlZXRfZWRpdF9iYWNrZW5kIjp7ImJ1Y2tldCI6Im9uIiwidmVyc2lvbiI6bnVsbH0sInRmd19yZWZzcmNfc2Vzc2lvbiI6eyJidWNrZXQiOiJvbiIsInZlcnNpb24iOm51bGx9LCJ0ZndfZm9zbnJfc29mdF9pbnRlcnZlbnRpb25zX2VuYWJsZWQiOnsiYnVja2V0Ijoib24iLCJ2ZXJzaW9uIjpudWxsfSwidGZ3X21peGVkX21lZGlhXzE1ODk3Ijp7ImJ1Y2tldCI6InRyZWF0bWVudCIsInZlcnNpb24iOm51bGx9LCJ0ZndfZXhwZXJpbWVudHNfY29va2llX2V4cGlyYXRpb24iOnsiYnVja2V0IjoxMjA5NjAwLCJ2ZXJzaW9uIjpudWxsfSwidGZ3X3Nob3dfYmlyZHdhdGNoX3Bpdm90c19lbmFibGVkIjp7ImJ1Y2tldCI6Im9uIiwidmVyc2lvbiI6bnVsbH0sInRmd19kdXBsaWNhdGVfc2NyaWJlc190b19zZXR0aW5ncyI6eyJidWNrZXQiOiJvbiIsInZlcnNpb24iOm51bGx9LCJ0ZndfdXNlX3Byb2ZpbGVfaW1hZ2Vfc2hhcGVfZW5hYmxlZCI6eyJidWNrZXQiOiJvbiIsInZlcnNpb24iOm51bGx9LCJ0ZndfdmlkZW9faGxzX2R5bmFtaWNfbWFuaWZlc3RzXzE1MDgyIjp7ImJ1Y2tldCI6InRydWVfYml0cmF0ZSIsInZlcnNpb24iOm51bGx9LCJ0ZndfbGVnYWN5X3RpbWVsaW5lX3N1bnNldCI6eyJidWNrZXQiOnRydWUsInZlcnNpb24iOm51bGx9LCJ0ZndfdHdlZXRfZWRpdF9mcm9udGVuZCI6eyJidWNrZXQiOiJvbiIsInZlcnNpb24iOm51bGx9fQ%3D%3D&amp;frame=false&amp;hideCard=false&amp;hideThread=false&amp;id=1259667998362628097&amp;lang=en&amp;origin=https%3A%2F%2Fcristobal.space%2Fwriting%2Ffolk.html&amp;sessionId=70c9fcd3a39365d13318f170e7b0e6dd1412a0cc&amp;theme=light&amp;widgetsVersion=2615f7e52b7e0%3A1702314776716&amp;width=550px"
+              style="position: static; visibility: visible; width: 550px; height: 321px; display: block; flex-grow: 1"
+              data-tweet-id="1259667998362628097"
+            ></iframe
+          ></div>
+        </center>
+      </div>
+      <script async="" src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+
+      <p>
+        <i>CS_Store</i> is an infinite canvas for your file-system, providing the two-dimensional, visual presence of
+        the Desktop for any directory. The information about the layout is stored in a `.CS_Store`, this time in a
+        human-readable JSON blob pointing to files in the same directory. Here's the
+        <a href="https://github.com/tobyshooters/CS_Store">source</a>.
+      </p>
+
+      <div style="display: flex; flex-flow: column; align-items: center; justify-content: center">
+        <div style="display: flex; align-items: center; justify-content: center">
+          <video
+            controls=""
+            src="/refs/CS_Store/cs_store_demo.mov"
+            width="600"
+            height="400"
+            style="margin: 10; object-fit: cover; object-position: 0 1%"
+          ></video>
+        </div>
+        <div style="margin: 10px 0px 5px 0px">
+          <i>A demo of the some of the kooky interactions below</i>
+        </div>
+      </div>
+
+      <p> Having this system as a playground lets me try out some kooky interactions: </p>
+      <ol class="list">
+        <li>
+          Directory as scope: A CS_Store canvas corresponds to a single directory. Linking to other canvases is done by
+          visually representing sub-directories and the parent directory, and allowing navigation like a file browser.
+          Interestingly, this means that all data needed to view the canvas elsewhere can be packaged with a single .zip
+          operation at the desired root.
+        </li>
+        <li>
+          Sound regions: Audio files are automatically played whenever they are visible in the viewport. As you navigate
+          the virtual landscape, they function as a soundtrack, setting the mood for what is to be seen or read.
+        </li>
+        <li>
+          Viewport as context: When an element is added to the canvas, it's a fixed size relative to the viewport. To
+          add a header, zoom out to the region that matters. To add a small comment, zoom in next to the image. The
+          hunch is that one can establish an isomorphism between viewport and the context needed for interpreting an
+          artifact.
+        </li>
+      </ol>
+
+      <p></p>
+
+      <p>
+        Of course, the browser has clear failings: I could not easily e.g. make a PDF scroll sideways. The ladder of
+        abstraction is not evenly spaced. Some steps require terrifying leaps into the Chromium codebase and, in fact,
+        these interface boundaries have massive implications on the space of possible artifacts a system can produce.
+        Beyond technical feasibility, a poorly designed API forecloses the imagination of the user to just a few steps
+        beyond the starter code. What role do tools have in expanding that imagination?
+      </p>
+
+      <h3>
+        <i>How to build your own media environments</i>
+      </h3>
+
+      <p>
+        Since reading through Ken Isaacs' <i>How to Build Your Own Living Environments</i> and adapting his designs for
+        a few desks at <a href="https://reduct.video">Reduct's</a> space in Soft Surplus, I've been sold on the
+        emancipatory power of DIY. I've always been motivated to make, however articulating the motivation through a
+        sense of agency was revelatory. There's a subtle, yet political, transformation in which domains of the world
+        cease to seem immutable. This sentiment has been reinforced as I've read Ivan Illich's works, who writes about
+        convivial tooling: "[Tools] which give each person who uses them the greatest opportunity to enrich the
+        environment with the fruits of his or her vision." <a href="#fn2" id="fn2ref">[2]</a>
+      </p>
+
+      <div style="display: flex; flex-flow: column; align-items: center; justify-content: center">
+        <div style="display: flex; align-items: center; justify-content: center">
+          <img src="/refs/CS_Store/illich-scribes.png" width="80%" />
+        </div>
+        <div style="margin: 20px 0px 5px 0px">
+          <i>Software engineers are today's scribe. Their pen must be taken away.</i>
+        </div>
+      </div>
+
+      <p>
+        I've used the browser to exemplify the kinds of artifacts that should be simple to make, however the web is not
+        HyperCard; you can't really make a home-cooked meal. Just thinking about explaining to a layman the
+        client-server model, HTTP, CORS, URLs pointing to disk, JS syntax in an unstructured editor, &amp;c, makes my
+        head hurt. To make convivial tools in the current landscape of software is, as Rob Ochshorn put it, to be a
+        parasite, clinging on to the "platform capitalism" of search, social media, and SaaS. We, the programmers, are
+        the scribes of this world, who can misappropriate the platforms for our own ends. Our pen must be taken away.
+      </p>
+
+      <p>
+        The emphasis on materiality leads to a pedagogical aside. By focusing on an empirical ground truth, e.g. the
+        state of an image on the screen, a student can grasp that declarative frameworks, drawing abstractions
+        (`drawCircle`), or imperative access on arrays of data are simply paradigms to provide
+        <i>ergonomic</i> access to something beneath. This insight implicitly teaches what a "good" abstraction is: it
+        allows you to do work. This is in contrast to the approach I encountered at school, of function decomposition,
+        or avoiding repeated work, which make the design of computer software seem like a neurotic chore.
+      </p>
+
+      <p>
+        For the layman to build their own <i>Folk Interfaces</i>, jigs to wield the media they care about, we must offer
+        simple primitives. A designer in Blender thinks in terms of lighting, camera movements, and materials. An editor
+        in Premiere, in sequences, transitions, titles, and colors. Critically, this is different from automating
+        existing patterns, e.g. making it easy to create a website, simulate the visuals of film photography, or 3D-scan
+        one's room. Instead, it's about building a playground in which those novel computational artifacts can be
+        tinkered with and composed, via a grammar native to their own domain, to produce the fruits of the users' own
+        vision.
+      </p>
+
+      <p>
+        The goal of the computational tool-maker then is not to teach the layman about recursion, abstraction, or
+        composition, but to provide meaningful primitives (i.e. a system) with which the user can do real work. End-user
+        <i>programming</i> is a red herring: We need to focus on materiality, what some disparage as mere "side
+        effects." The goal is to enable others to feel the agency and power that comes when the world ceases to be
+        immutable.
+      </p>
+
+      <p>
+        <i> Cristóbal Sciutto, June 2022. </i>
+      </p>
+
+      <p style="font-size: 14px"
+        ><i> Thanks to Chris Beiser, Omar Rizwan, and Rob Ochshorn for their provocations and feedback. </i></p
+      >
+
+      <div style="padding: 0 10; font-size: 12px">
+        <p id="fn1">
+          [1] There's a consensus around some
+          <a href="https://twitter.com/_vade/status/1362106695997153281"> friends</a> who work on ML for VFX that the
+          quality of the data often matters more than the quantity. It's Karpathy's first
+          <a href="http://karpathy.github.io/2019/04/25/recipe/"> step</a>.
+          <a href="#fn1ref">↩</a>
+        </p>
+
+        <p id="fn2">
+          [2] In contrast, Illich writes about the hubris of engineers aiming to get higher speeds of transportation,
+          without realizing that they are usurping the commons into a highway with an entrance fee. I can't help but
+          wonder if a similar process is happening with the software community's emphasis on frameworks and best
+          practices, the industrial mode of production manifest in code. <a href="#fn2ref">↩</a>
+        </p>
+      </div>
+    </main>
+
+    <script type="module">
+      const input = document.querySelector('input');
+
+      function onInput() {
+        document.body.style.setProperty('--zoom', input.value);
+      }
+
+      input.addEventListener('input', onInput);
+
+      onInput();
+    </script>
+  </body>
+</html>
