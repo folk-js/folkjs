@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Typographical space</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+      }
+
+      folk-shape input {
+        border: unset;
+        field-sizing: content;
+        font-family: 'Recursive', serif;
+        font-optical-sizing: auto;
+        font-size: 7.5vw;
+
+        /*  */
+        font-variation-settings:
+          'wght' clamp(300, calc(var(--folk-y) + 300), 1000),
+          'CASL' clamp(0, calc(var(--folk-x) / 1000), 1),
+          'slnt' clamp(-15, calc(-666.6 * pow(var(--folk-rotation), 2)), 0),
+          'MONO' clamp(0, calc(1 - (var(--folk-width) / 1000)), 1),
+          'CRSV' 0.5;
+      }
+    </style>
+  </head>
+  <body>
+    <folk-shape x="100" y="100">
+      <input type="text" value="Recursive" />
+    </folk-shape>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+    </script>
+  </body>
+</html>

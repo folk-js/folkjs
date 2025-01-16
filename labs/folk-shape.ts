@@ -1,9 +1,18 @@
 import { getResizeCursorUrl, getRotateCursorUrl } from '@labs/utils/cursors';
-import { DOMRectTransform, DOMRectTransformReadonly, FolkElement, Point, TransformEvent, Vector } from '@lib';
+import {
+  DOMRectTransform,
+  DOMRectTransformReadonly,
+  FolkElement,
+  Point,
+  toDOMPrecision,
+  TransformEvent,
+  Vector,
+} from '@lib';
 import { ResizeManager } from '@lib/resize-manger';
 import { html } from '@lib/tags';
 import { MAX_Z_INDEX } from '@lib/utils';
 import { css, PropertyValues } from '@lit/reactive-element';
+import { RegisterSpaceEvent, UnregisterSpaceEvent } from './utils/space';
 
 const resizeManager = new ResizeManager();
 
@@ -46,8 +55,17 @@ const styles = css`
     top: 0;
     left: 0;
     cursor: move;
-    transform-origin: 0 0;
+    transform-origin: center center;
     box-sizing: border-box;
+    --folk-x: 0;
+    --folk-y: 0;
+    --folk-rotation: 0;
+    --folk-width: 0;
+    --folk-height: 0;
+    width: var(--folk-width-auto, calc(var(--folk-width) * 1px));
+    height: var(--folk-height-auto, calc(var(--folk-height) * 1px));
+    translate: calc(var(--folk-x) * 1px) calc(var(--folk-y) * 1px);
+    rotate: calc(var(--folk-rotation) * 1rad);
   }
 
   :host::before {
@@ -172,8 +190,8 @@ export class FolkShape extends FolkElement {
 
   #internals = this.attachInternals();
 
-  #attrWidth: Dimension = 0;
-  #attrHeight: Dimension = 0;
+  #attrWidth: Dimension = 'auto';
+  #attrHeight: Dimension = 'auto';
 
   #rect = new DOMRectTransform();
   #previousRect = new DOMRectTransform();
@@ -295,8 +313,8 @@ export class FolkShape extends FolkElement {
 
     this.x = Number(this.getAttribute('x')) || this.x;
     this.y = Number(this.getAttribute('y')) || this.y;
-    this.width = Number(this.getAttribute('width')) || 'auto';
-    this.height = Number(this.getAttribute('height')) || 'auto';
+    this.width = Number(this.getAttribute('width')) || this.#attrWidth;
+    this.height = Number(this.getAttribute('height')) || this.#attrHeight;
     this.rotation = (Number(this.getAttribute('rotation')) || 0) * (Math.PI / 180);
 
     this.#rect.transformOrigin = { x: 0, y: 0 };
@@ -477,9 +495,13 @@ export class FolkShape extends FolkElement {
       emittedRect.rotation = this.#previousRect.rotation;
     }
 
-    this.style.transform = emittedRect.toCssString();
-    this.style.width = this.#attrWidth === 'auto' ? '' : `${emittedRect.width}px`;
-    this.style.height = this.#attrHeight === 'auto' ? '' : `${emittedRect.height}px`;
+    this.style.setProperty('--folk-x', emittedRect.x.toString());
+    this.style.setProperty('--folk-y', emittedRect.y.toString());
+    this.style.setProperty('--folk-width', emittedRect.width.toString());
+    this.style.setProperty('--folk-width-auto', this.#attrWidth === 'auto' ? 'auto' : '');
+    this.style.setProperty('--folk-height', emittedRect.height.toString());
+    this.style.setProperty('--folk-height', this.#attrHeight === 'auto' ? 'auto' : '');
+    this.style.setProperty('--folk-rotation', emittedRect.rotation.toString());
 
     this.#readonlyRect = new DOMRectTransformReadonly(emittedRect);
   }
