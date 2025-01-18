@@ -24,7 +24,7 @@
         margin: 0;
       }
 
-      folk-shape input {
+      folk-shape textarea {
         border: unset;
         field-sizing: content;
         font-family: 'Recursive', serif;
@@ -34,16 +34,16 @@
         /*  */
         font-variation-settings:
           'wght' clamp(300, calc(var(--folk-y) + 300), 1000),
-          'CASL' clamp(0, calc(var(--folk-x) / 1000), 1),
-          'slnt' clamp(-15, calc(-666.6 * pow(var(--folk-rotation), 2)), 0),
+          'CASL' clamp(0, calc((var(--folk-x) - 100) / 1000), 1),
+          'slnt' clamp(-15, calc((15 / 0.261799) * var(--folk-rotation)), 0),
           'MONO' clamp(0, calc(1 - (var(--folk-width) / 1000)), 1),
-          'CRSV' 0.5;
+          'CRSV' 1;
       }
     </style>
   </head>
   <body>
     <folk-shape x="100" y="100">
-      <input type="text" value="Recursive" />
+      <textarea>Recursive</textarea>
     </folk-shape>
 
     <script type="module">
