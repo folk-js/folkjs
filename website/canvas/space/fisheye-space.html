@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shapes</title>
+    <style>
+      html {
+        width: 100%;
+        height: 100%;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+      }
+
+      folk-fisheye-space {
+        position: absolute;
+        inset: 0;
+      }
+
+      folk-shape {
+        border: solid 1px black;
+        background: limegreen;
+      }
+    </style>
+  </head>
+  <body>
+    <folk-fisheye-space></folk-fisheye-space>
+
+    <script type="module">
+      import '@labs/standalone/folk-fisheye-space.ts';
+      import '@labs/standalone/folk-shape.ts';
+
+      const fisheye = document.querySelector('folk-fisheye-space');
+
+      let id = 0;
+      for (let i = 0; i < 10; i++) {
+        for (let j = 0; j < 10; j++) {
+          const geo = document.createElement('folk-shape');
+          geo.id = ++id;
+          geo.x = 75 * i + 75;
+          geo.y = 75 * j + 75;
+          geo.width = geo.height = 25;
+          fisheye.append(geo);
+        }
+      }
+    </script>
+  </body>
+</html>
