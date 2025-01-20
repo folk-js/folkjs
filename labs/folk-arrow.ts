@@ -1,5 +1,5 @@
 import { getSvgPathFromStroke, pointsOnBezierCurves } from '@lib/utils';
-import { PropertyValues } from '@lit/reactive-element';
+import { css, PropertyValues } from '@lit/reactive-element';
 import { getBoxToBoxArrow } from 'perfect-arrows';
 import { getStroke, StrokeOptions } from 'perfect-freehand';
 import { FolkBaseConnection } from './folk-base-connection.ts';
@@ -34,25 +34,70 @@ declare global {
 export class FolkArrow extends FolkBaseConnection {
   static override tagName = 'folk-arrow';
 
-  #options: StrokeOptions = {
-    size: 7,
-    thinning: 0.5,
-    smoothing: 0.5,
-    streamline: 0.5,
-    simulatePressure: true,
-    // TODO: figure out how to expose these as attributes
-    easing: (t) => t,
-    start: {
-      taper: 50,
-      easing: (t) => t,
-      cap: true,
-    },
-    end: {
-      taper: 0,
-      easing: (t) => t,
-      cap: true,
-    },
-  };
+  static styles = [
+    FolkBaseConnection.styles,
+    css`
+      svg {
+        width: 100%;
+        height: 100%;
+        stroke: black;
+        fill: black;
+        pointer-events: none;
+
+        path {
+          pointer-events: all;
+        }
+
+        polygon {
+          pointer-events: all;
+        }
+      }
+    `,
+  ];
+
+  #svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  #path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  #headPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+
+  override createRenderRoot() {
+    const root = super.createRenderRoot();
+
+    const stroke = getStroke(
+      [
+        { x: -8, y: -8 },
+        { x: 7, y: 0 },
+        { x: -8, y: 8 },
+      ],
+      {
+        size: 4,
+        thinning: -0.25,
+        smoothing: 0.5,
+        streamline: 0,
+        simulatePressure: false,
+        // TODO: figure out how to expose these as attributes
+        easing: (t) => t,
+        start: {
+          taper: 0,
+          easing: (t) => t,
+          cap: true,
+        },
+        end: {
+          taper: 0,
+          easing: (t) => t,
+          cap: true,
+        },
+      },
+    );
+
+    const path = getSvgPathFromStroke(stroke);
+
+    this.#headPath.setAttribute('d', path);
+
+    this.#svg.append(this.#path, this.#headPath);
+
+    root.append(this.#svg);
+    return root;
+  }
 
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
@@ -60,14 +105,13 @@ export class FolkArrow extends FolkBaseConnection {
     const { sourceRect, targetRect } = this;
 
     if (sourceRect === null || targetRect === null) {
-      this.style.clipPath = '';
-      this.style.display = 'none';
+      this.#path.style.display = 'none';
       return;
     }
 
-    this.style.display = '';
+    this.#svg.style.display = '';
 
-    const [sx, sy, cx, cy, ex, ey] = getBoxToBoxArrow(
+    const [sx, sy, cx, cy, ex, ey, ae] = getBoxToBoxArrow(
       sourceRect.x,
       sourceRect.y,
       sourceRect.width,
@@ -76,6 +120,7 @@ export class FolkArrow extends FolkBaseConnection {
       targetRect.y,
       targetRect.width,
       targetRect.height,
+      { padStart: 1, padEnd: 15 },
     ) as Arrow;
 
     const points = pointsOnBezierCurves([
@@ -85,9 +130,27 @@ export class FolkArrow extends FolkBaseConnection {
       { x: ex, y: ey },
     ]);
 
-    const stroke = getStroke(points, this.#options);
+    const stroke = getStroke(points, {
+      size: 5,
+      thinning: 0.4,
+      smoothing: 0,
+      streamline: 0,
+      simulatePressure: true,
+      // TODO: figure out how to expose these as attributes
+      easing: (t) => t,
+      start: {
+        taper: 40,
+        easing: (t) => t,
+      },
+      end: {
+        cap: true,
+      },
+    });
     const path = getSvgPathFromStroke(stroke);
-    this.style.clipPath = `path('${path}')`;
-    this.style.backgroundColor = 'black';
+
+    this.#path.setAttribute('d', path);
+
+    const endAngleAsDegrees = ae * (180 / Math.PI);
+    this.#headPath.setAttribute('transform', `translate(${ex},${ey}) rotate(${endAngleAsDegrees})`);
   }
 }
