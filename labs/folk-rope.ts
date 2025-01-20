@@ -40,7 +40,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
 
       path {
         fill: none;
-        pointer-events: none;
+        pointer-events: all;
         stroke: var(--folk-rope-color, black);
         stroke-width: var(--folk-rope-width, 3);
         stroke-linecap: var(--folk-rope-linecap, round);

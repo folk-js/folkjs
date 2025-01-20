@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -107,36 +107,6 @@
         <folk-cell row="7" column="H"></folk-cell>
         <folk-cell row="7" column="I"></folk-cell>
         <folk-cell row="7" column="J"></folk-cell>
-        <folk-cell row="8" column="A"></folk-cell>
-        <folk-cell row="8" column="B"></folk-cell>
-        <folk-cell row="8" column="C"></folk-cell>
-        <folk-cell row="8" column="D"></folk-cell>
-        <folk-cell row="8" column="E"></folk-cell>
-        <folk-cell row="8" column="F"></folk-cell>
-        <folk-cell row="8" column="G"></folk-cell>
-        <folk-cell row="8" column="H"></folk-cell>
-        <folk-cell row="8" column="I"></folk-cell>
-        <folk-cell row="8" column="J"></folk-cell>
-        <folk-cell row="9" column="A"></folk-cell>
-        <folk-cell row="9" column="B"></folk-cell>
-        <folk-cell row="9" column="C"></folk-cell>
-        <folk-cell row="9" column="D"></folk-cell>
-        <folk-cell row="9" column="E"></folk-cell>
-        <folk-cell row="9" column="F"></folk-cell>
-        <folk-cell row="9" column="G"></folk-cell>
-        <folk-cell row="9" column="H"></folk-cell>
-        <folk-cell row="9" column="I"></folk-cell>
-        <folk-cell row="9" column="J"></folk-cell>
-        <folk-cell row="10" column="A"></folk-cell>
-        <folk-cell row="10" column="B"></folk-cell>
-        <folk-cell row="10" column="C"></folk-cell>
-        <folk-cell row="10" column="D"></folk-cell>
-        <folk-cell row="10" column="E"></folk-cell>
-        <folk-cell row="10" column="F"></folk-cell>
-        <folk-cell row="10" column="G"></folk-cell>
-        <folk-cell row="10" column="H"></folk-cell>
-        <folk-cell row="10" column="I"></folk-cell>
-        <folk-cell row="10" column="J"></folk-cell>
       </folk-spreadsheet>
     </folk-shape>
 
@@ -144,14 +114,14 @@
       source="#map1"
       target="folk-cell[column='A'][row='1']"
       trigger="recenter"
-      expression="expression: from.coordinates.lat"
+      expression="expression: round(from.coordinates.lat)"
     ></folk-event-propagator>
 
     <folk-event-propagator
       source="#map1"
       target="folk-cell[column='A'][row='2']"
       trigger="recenter"
-      expression="expression: from.coordinates.lng"
+      expression="expression: round(from.coordinates.lng)"
     ></folk-event-propagator>
 
     <folk-event-propagator
@@ -166,6 +136,8 @@
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-event-propagator.ts';
       import '@labs/standalone/folk-spreadsheet.ts';
+
+      window.round = (value) => Math.round(value * 1e4) / 1e4;
     </script>
   </body>
 </html>

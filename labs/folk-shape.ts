@@ -12,7 +12,6 @@ import { ResizeManager } from '@lib/resize-manger';
 import { html } from '@lib/tags';
 import { MAX_Z_INDEX } from '@lib/utils';
 import { css, PropertyValues } from '@lit/reactive-element';
-import { RegisterSpaceEvent, UnregisterSpaceEvent } from './utils/space';
 
 const resizeManager = new ResizeManager();
 
@@ -500,17 +499,22 @@ export class FolkShape extends FolkElement {
     this.style.setProperty('--folk-width', emittedRect.width.toString());
     this.style.setProperty('--folk-width-auto', this.#attrWidth === 'auto' ? 'auto' : '');
     this.style.setProperty('--folk-height', emittedRect.height.toString());
-    this.style.setProperty('--folk-height', this.#attrHeight === 'auto' ? 'auto' : '');
+    this.style.setProperty('--folk-height-auto', this.#attrHeight === 'auto' ? 'auto' : '');
     this.style.setProperty('--folk-rotation', emittedRect.rotation.toString());
 
     this.#readonlyRect = new DOMRectTransformReadonly(emittedRect);
   }
 
   #onAutoResize = (entry: ResizeObserverEntry) => {
-    this.#previousRect.height = this.#rect.height;
-    this.#rect.height = entry.contentRect.height;
-    this.#previousRect.width = this.#rect.width;
-    this.#rect.width = entry.contentRect.width;
+    if (this.#attrHeight === 'auto') {
+      this.#previousRect.height = this.#rect.height;
+      this.#rect.height = entry.contentRect.height;
+    }
+
+    if (this.#attrWidth === 'auto') {
+      this.#previousRect.width = this.#rect.width;
+      this.#rect.width = entry.contentRect.width;
+    }
     this.#dispatchTransformEvent();
   };
 

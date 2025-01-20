@@ -14,6 +14,10 @@ export class FolkGraph extends FolkBaseSet implements AnimationFrameControllerHo
   #integrator = TransformIntegrator.register('graph');
   #rAF = new AnimationFrameController(this);
 
+  get distance() {
+    return Number(this.getAttribute('distance')) || 200;
+  }
+
   connectedCallback() {
     super.connectedCallback();
     this.#rAF.start();
@@ -69,7 +73,12 @@ export class FolkGraph extends FolkBaseSet implements AnimationFrameControllerHo
     const colaNodes = this.#createNodes();
     const colaLinks = this.#createLinks();
 
-    this.#graphSim.nodes(colaNodes).links(colaLinks).linkDistance(400).avoidOverlaps(true).handleDisconnected(true);
+    this.#graphSim
+      .nodes(colaNodes)
+      .links(colaLinks)
+      .linkDistance(this.distance)
+      .avoidOverlaps(true)
+      .handleDisconnected(true);
   }
 
   #createNodes() {
