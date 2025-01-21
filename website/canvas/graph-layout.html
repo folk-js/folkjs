@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -23,7 +23,7 @@
         border: 2px solid rgba(0, 0, 0, 0.5);
       }
 
-      folk-rope {
+      folk-arrow {
         pointer-events: none;
       }
     </style>
@@ -38,18 +38,18 @@
       <folk-shape id="shape6" x="180" y="250" width="65" height="55" rotation="-40"></folk-shape>
       <folk-shape id="shape7" x="420" y="150" width="110" height="25" rotation="10"></folk-shape>
       <folk-shape id="shape8" x="280" y="380" width="75" height="95" rotation="-50"></folk-shape>
-      <folk-rope source="#shape1" target="#shape2"></folk-rope>
-      <folk-rope source="#shape1" target="#shape3"></folk-rope>
-      <folk-rope source="#shape2" target="#shape3"></folk-rope>
-      <folk-rope source="#shape3" target="#shape4"></folk-rope>
-      <folk-rope source="#shape4" target="#shape8"></folk-rope>
-      <folk-rope source="#shape5" target="#shape8"></folk-rope>
+      <folk-arrow source="#shape1" target="#shape2"></folk-arrow>
+      <folk-arrow source="#shape1" target="#shape3"></folk-arrow>
+      <folk-arrow source="#shape2" target="#shape3"></folk-arrow>
+      <folk-arrow source="#shape3" target="#shape4"></folk-arrow>
+      <folk-arrow source="#shape4" target="#shape8"></folk-arrow>
+      <folk-arrow source="#shape5" target="#shape8"></folk-arrow>
     </folk-graph>
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-arrow.ts';
-      import '@labs/standalone/folk-rope.ts';
+      import '@labs/standalone/folk-arrow.ts';
       import '@labs/standalone/folk-graph.ts';
     </script>
   </body>
