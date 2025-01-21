@@ -1,13 +1,5 @@
 import { getResizeCursorUrl, getRotateCursorUrl } from '@labs/utils/cursors';
-import {
-  DOMRectTransform,
-  DOMRectTransformReadonly,
-  FolkElement,
-  Point,
-  toDOMPrecision,
-  TransformEvent,
-  Vector,
-} from '@lib';
+import { DOMRectTransform, DOMRectTransformReadonly, FolkElement, Point, TransformEvent, Vector } from '@lib';
 import { ResizeManager } from '@lib/resize-manger';
 import { html } from '@lib/tags';
 import { MAX_Z_INDEX } from '@lib/utils';
@@ -65,6 +57,8 @@ const styles = css`
     height: var(--folk-height-auto, calc(var(--folk-height) * 1px));
     translate: calc(var(--folk-x) * 1px) calc(var(--folk-y) * 1px);
     rotate: calc(var(--folk-rotation) * 1rad);
+    outline: solid 0 hsl(214, 84%, 56%);
+    transition: outline-width 75ms ease-out;
   }
 
   :host::before {
@@ -89,12 +83,12 @@ const styles = css`
   :host(:focus-within),
   :host(:focus-visible) {
     z-index: calc(${MAX_Z_INDEX} - 1);
-    outline: solid 1px hsl(214, 84%, 56%);
+    outline-width: 1px;
   }
 
   :host(:hover),
   :host(:state(highlighted)) {
-    outline: solid 2px hsl(214, 84%, 56%);
+    outline-width: 2px;
   }
 
   :host(:state(move)),
@@ -467,42 +461,38 @@ export class FolkShape extends FolkElement {
     }
   }
 
-  protected override update(changedProperties: PropertyValues): void {
+  protected override willUpdate(): void {
     this.#dispatchTransformEvent();
-
-    super.update(changedProperties);
   }
 
   #dispatchTransformEvent() {
-    const emittedRect = new DOMRectTransform(this.#rect);
-    const event = new TransformEvent(emittedRect, this.#previousRect);
+    // we must emit a new reference to the rect
+    const event = new TransformEvent(new DOMRectTransform(this.#rect), this.#previousRect);
     this.dispatchEvent(event);
-
     if (event.xPrevented) {
-      emittedRect.x = this.#previousRect.x;
+      this.#rect.x = this.#previousRect.x;
     }
     if (event.yPrevented) {
-      emittedRect.y = this.#previousRect.y;
+      this.#rect.y = this.#previousRect.y;
     }
     if (event.widthPrevented) {
-      emittedRect.width = this.#previousRect.width;
+      this.#rect.width = this.#previousRect.width;
     }
     if (event.heightPrevented) {
-      emittedRect.height = this.#previousRect.height;
+      this.#rect.height = this.#previousRect.height;
     }
     if (event.rotatePrevented) {
-      emittedRect.rotation = this.#previousRect.rotation;
+      this.#rect.rotation = this.#previousRect.rotation;
     }
-
-    this.style.setProperty('--folk-x', emittedRect.x.toString());
-    this.style.setProperty('--folk-y', emittedRect.y.toString());
-    this.style.setProperty('--folk-width', emittedRect.width.toString());
+    this.style.setProperty('--folk-x', this.#rect.x.toString());
+    this.style.setProperty('--folk-y', this.#rect.y.toString());
+    this.style.setProperty('--folk-width', this.#rect.width.toString());
     this.style.setProperty('--folk-width-auto', this.#attrWidth === 'auto' ? 'auto' : '');
-    this.style.setProperty('--folk-height', emittedRect.height.toString());
+    this.style.setProperty('--folk-height', this.#rect.height.toString());
     this.style.setProperty('--folk-height-auto', this.#attrHeight === 'auto' ? 'auto' : '');
-    this.style.setProperty('--folk-rotation', emittedRect.rotation.toString());
+    this.style.setProperty('--folk-rotation', this.#rect.rotation.toString());
 
-    this.#readonlyRect = new DOMRectTransformReadonly(emittedRect);
+    this.#readonlyRect = new DOMRectTransformReadonly(this.#rect);
   }
 
   #onAutoResize = (entry: ResizeObserverEntry) => {

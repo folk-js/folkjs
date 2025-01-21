@@ -94,8 +94,9 @@ export class FolkSpaceRadial extends FolkBaseSet {
 
   #onTransform = (event: Event) => {
     if (!(event instanceof TransformEvent)) return;
+    const shape = event.target as FolkShape;
 
-    const transform = event.current as DOMRectTransform;
+    const transform = event.current;
 
     // Get the center of the radial space
     const bounds = this.getBoundingClientRect();
@@ -137,11 +138,11 @@ export class FolkSpaceRadial extends FolkBaseSet {
     const deltaY = newRotateOriginParent.y - rotateOriginParent.y;
 
     // Update transform position
-    transform.x += deltaX;
-    transform.y += deltaY;
+    shape.x += deltaX;
+    shape.y += deltaY;
 
     // Update rotation
-    transform.rotation = angle;
+    shape.rotation = angle;
   };
 
   override disconnectedCallback() {
