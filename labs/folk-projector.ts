@@ -128,6 +128,13 @@ export class FolkProjector extends HTMLElement {
       shapes.forEach((shape, i) => {
         const newTransform = positions[i].toCssString();
         const newRect = positions[i];
+        if (this.#isProjecting) {
+          shape.style.translate = '0 0';
+          shape.style.rotate = '0deg';
+        } else {
+          shape.style.translate = '';
+          shape.style.rotate = '';
+        }
         shape.style.transform = newTransform;
         shape.style.width = `${newRect.width}px`;
         shape.style.height = `${newRect.height}px`;
@@ -154,9 +161,15 @@ export class FolkProjector extends HTMLElement {
           shape.style.transform = newTransform;
           shape.style.width = `${newRect.width}px`;
           shape.style.height = `${newRect.height}px`;
+          console.log(this.#isProjecting);
           if (this.#isProjecting) {
+            shape.style.translate = '0 0';
+            shape.style.rotate = '0deg';
             shape.blur();
             shape.style.zIndex = '0';
+          } else {
+            shape.style.translate = '';
+            shape.style.rotate = '';
           }
           const mappedEl = mappedElements[i];
           if (mappedEl) {
