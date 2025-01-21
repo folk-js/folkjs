@@ -360,7 +360,7 @@ export class FolkShape extends FolkElement {
             y: this.#rect.height * this.#rect.rotateOrigin.y,
           });
           // Calculate initial angle including current rotation
-          const mousePos = { x: event.clientX, y: event.clientY };
+          const mousePos = { x: event.pageX, y: event.pageY };
           this.#startAngle = Vector.angleFromOrigin(mousePos, parentRotateOrigin) - this.#rect.rotation;
         }
 
@@ -437,7 +437,7 @@ export class FolkShape extends FolkElement {
       const mousePos =
         event instanceof KeyboardEvent
           ? { x: currentPos.x + moveDelta.x, y: currentPos.y + moveDelta.y }
-          : { x: event.clientX, y: event.clientY };
+          : { x: event.pageX, y: event.pageY };
 
       this.#handleResize(handle as ResizeHandle, mousePos, target, event instanceof PointerEvent ? event : undefined);
       event.preventDefault();
@@ -450,7 +450,7 @@ export class FolkShape extends FolkElement {
         x: this.#rect.width * this.#rect.rotateOrigin.x,
         y: this.#rect.height * this.#rect.rotateOrigin.y,
       });
-      const currentAngle = Vector.angleFromOrigin({ x: event.clientX, y: event.clientY }, parentRotateOrigin);
+      const currentAngle = Vector.angleFromOrigin({ x: event.pageX, y: event.pageY }, parentRotateOrigin);
       // Apply rotation relative to start angle
       this.rotation = currentAngle - this.#startAngle;
 
