@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FOC Virtual Meetup - Jan. 2024</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html {
+        height: 22000px;
+        font-size: 20px;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100%;
+        position: relative;
+        font-family: 'Recursive', serif;
+        font-variation-settings: 'CASL' 1;
+        font-optical-sizing: auto;
+      }
+
+      h1 {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+
+        em {
+          font-size: 1rem;
+          font-weight: normal;
+        }
+      }
+
+      #banner {
+        font-size: 0.75rem;
+      }
+
+      h2 {
+        text-align: center;
+        margin: 0;
+      }
+
+      folk-shape:has(blockquote) {
+        border-radius: 7px;
+        box-shadow: 1px 2px 4px hsl(0, 0%, 75%);
+        background-color: #ededed;
+
+        blockquote {
+          margin: 1rem 0.5rem;
+          max-width: 45ch;
+          font-variation-settings:
+            'CASL' 1,
+            'MONO' 1;
+        }
+      }
+
+      #box1,
+      #box2,
+      #box3,
+      #box4,
+      #box5,
+      #box6,
+      #box7,
+      #box8,
+      #box9,
+      #box10 {
+        background-color: black;
+        border-radius: 10%;
+      }
+
+      pre {
+        border-radius: 5px;
+        background: rgb(40 40 40);
+        margin: 0;
+        padding: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Folk Canvas <em>by Chris Shank and Orion Reed</em></h1>
+
+    <folk-shape id="banner" x="5" y="100" rotation="-22">
+      <blockquote>FOC Meetup • Jan. 22 2025</blockquote>
+    </folk-shape>
+
+    <folk-shape x="325" y="250" rotation="-1">
+      <h2>No more fridges!</h2>
+      <img
+        src="https://thumbs.dreamstime.com/b/fridge-vector-drawing-high-cooler-icebox-frig-isolated-white-backdrop-freehand-outline-ink-hand-drawn-picture-sketchy-art-80325535.jpg"
+        width="300"
+      />
+    </folk-shape>
+
+    <folk-shape x="100" y="1000" rotation="-5">
+      <blockquote>
+        Exploring how to decoupling user interfaces from applications and create a new
+        <em>interface integration domain</em> to enable the self-organization of information and behavior across
+        existing software boundaries.
+      </blockquote>
+    </folk-shape>
+
+    <folk-shape x="596" y="1104" rotation="15">
+      <iframe
+        width="280"
+        height="157.5"
+        src="https://www.youtube.com/embed/csGNVaB83Rk?si=OsRiS5OWcH2J_b-4"
+        title="YouTube video player"
+        frameborder="0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        referrerpolicy="strict-origin-when-cross-origin"
+        allowfullscreen
+      ></iframe>
+    </folk-shape>
+
+    <folk-shape x="50" y="1350" rotation="-10">
+      <h2>Shapes</h2>
+    </folk-shape>
+
+    <folk-shape id="box1" x="300" y="1500" width="50" height="50"></folk-shape>
+
+    <folk-shape id="box2" x="600" y="1500" width="50" height="50"></folk-shape>
+
+    <script>
+      window.box2.addEventListener('transform', (e) => e.preventX());
+    </script>
+
+    <folk-shape x="200" y="1800">
+      <iframe src="./responsive-canvas-shapes.html" width="500" height="500"></iframe>
+    </folk-shape>
+
+    <folk-shape x="50" y="2400" rotation="-10">
+      <h2>Space</h2>
+    </folk-shape>
+
+    <folk-shape x="75" y="2500">
+      <iframe src="./typographic-space.html" width="1000" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="75" y="3500">
+      <iframe src="./physics.html" width="800" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="75" y="4400">
+      <iframe src="./canvasify-a-html-document.html" width="800" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="75" y="5500">
+      <iframe src="./fluid-semantic-zoom-in-a-canvas.html" width="800" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="75" y="6300">
+      <iframe src="./fisheye-scrolling.html" width="800" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="75" y="7200">
+      <iframe src="./space/radial-space.html" width="800" height="700"></iframe>
+    </folk-shape>
+
+    <!-- <folk-shape x="50" y="8000" rotation="-10">
+      <h2>Morphing</h2>
+    </folk-shape> -->
+
+    <folk-shape x="75" y="8000">
+      <iframe src="./morph/spreadsheet-shape-projection.html" width="800" height="700"></iframe>
+    </folk-shape>
+
+    <!-- Demo is broken atm -->
+    <!-- <folk-shape x="75" y="9000">
+      <iframe src="./morph/projector.html" width="800" height="700"></iframe>
+    </folk-shape> -->
+
+    <folk-shape x="50" y="9000" rotation="-10">
+      <h2>Relationships</h2>
+    </folk-shape>
+
+    <folk-shape id="box4" x="200" y="9200" width="50" height="50"></folk-shape>
+    <folk-shape id="box5" x="500" y="9250" width="50" height="50"></folk-shape>
+    <folk-arrow source="#box4" target="#box5"></folk-arrow>
+
+    <folk-shape id="box7" x="100" y="9400" width="30" height="30"></folk-shape>
+    <folk-shape id="box8" x="300" y="9405" width="30" height="30"></folk-shape>
+    <folk-shape id="box9" x="200" y="9450" width="30" height="30"></folk-shape>
+    <folk-shape id="box10" x="400" y="9400" width="30" height="30"></folk-shape>
+    <folk-rope source="#box7" target="#box8"></folk-rope>
+    <folk-rope source="#box7" target="#box9"></folk-rope>
+    <folk-rope source="#box7" target="#box10"></folk-rope>
+
+    <folk-shape x="10" y="9700">
+      <iframe src="./xanadu-link.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="10600">
+      <iframe src="./cross-iframe-xanadu-links.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="11500">
+      <iframe src="./visualizing-set-relations.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="12400">
+      <iframe src="./shaders/distance-field.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="13200">
+      <iframe src="./cross-iframe-sand.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="50" y="14000" rotation="-10">
+      <h2>Computation</h2>
+    </folk-shape>
+
+    <folk-shape x="10" y="14100">
+      <iframe src="./propagators/cutting-event-propagators.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="15000">
+      <iframe src="./folk-interface-for-qr-codes.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="15900">
+      <iframe src="./music-crossfader.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="16700">
+      <iframe src="./propagators/spreadsheet-map-propagator.html" width="900" height="1000"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="17800">
+      <iframe src="./proximity-based-communication.html" width="900" height="1000"></iframe>
+    </folk-shape>
+
+    <folk-shape x="10" y="19000">
+      <iframe
+        src="./propagators/proximity-based-communication-and-event-propagators.html"
+        width="900"
+        height="700"
+      ></iframe>
+    </folk-shape>
+
+    <folk-shape x="50" y="19900" rotation="-10">
+      <h2>Tools/Instruments</h2>
+    </folk-shape>
+
+    <folk-shape x="10" y="20000">
+      <iframe src="./alignment-brush.html" width="900" height="700"></iframe>
+    </folk-shape>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-arrow.ts';
+      import '@labs/standalone/folk-rope.ts';
+      import '@lib/iframe-script.ts';
+    </script>
+  </body>
+</html>
