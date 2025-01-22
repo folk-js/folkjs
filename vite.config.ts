@@ -12,9 +12,6 @@ function getCanvasFiles() {
   // Helper function to read directory recursively
   const readDir = (dir: string, base = '') => {
     readdirSync(dir, { withFileTypes: true }).forEach((dirent) => {
-      // Skip directories that start with underscore
-      if (dirent.name.startsWith('_')) return;
-
       if (dirent.isDirectory()) {
         readDir(resolve(dir, dirent.name), `${base}${dirent.name}/`);
       } else if (dirent.name.endsWith('.html')) {
@@ -38,7 +35,9 @@ const linkGenerator = (): Plugin => {
       const files = getCanvasFiles();
 
       // Handle ungrouped files (in root canvas directory)
-      const ungroupedFiles = files.filter((file) => !file.path.includes('/') && !file.name.includes('index'));
+      const ungroupedFiles = files.filter(
+        (file) => !file.path.includes('/') && !file.name.includes('index') && !file.path.startsWith('_'),
+      );
 
       // Handle grouped files (in subdirectories)
       const groups = files
