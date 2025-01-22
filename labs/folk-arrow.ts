@@ -105,7 +105,7 @@ export class FolkArrow extends FolkBaseConnection {
     const { sourceRect, targetRect } = this;
 
     if (sourceRect === null || targetRect === null) {
-      this.#path.style.display = 'none';
+      this.#svg.style.display = 'none';
       return;
     }
 

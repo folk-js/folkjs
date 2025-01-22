@@ -37,7 +37,6 @@ export class FolkMap extends FolkElement {
     this.#map.addLayer(
       tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
-        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       }),
     );
 
@@ -51,6 +50,9 @@ export class FolkMap extends FolkElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+
+    // fix tile loading problem
+    setTimeout(() => this.#map.invalidateSize(), 1);
 
     // Move end includes changes to zoom
     this.#map.on('moveend', this.handleEvent);
