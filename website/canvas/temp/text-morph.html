@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HTML Text Morph</title>
+    <style>
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+      }
+
+      folk-shape {
+        background: rgb(187, 178, 178);
+      }
+
+      .source-html {
+        white-space: pre-wrap;
+        font-family: monospace;
+      }
+
+      ::highlight(clicked) {
+        background-color: rgb(255, 102, 0);
+      }
+    </style>
+  </head>
+  <body>
+    <p>this is a paragraph, hello.</p>
+    <folk-shape x="100" y="100" width="50" height="50"></folk-shape>
+    <folk-shape x="200" y="200" width="50" height="50"></folk-shape>
+    <folk-shape x="100" y="300" width="50" height="50" rotation="45">
+      <p>inner content</p>
+    </folk-shape>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+    </script>
+    <pre id="source" class="source-html"></pre>
+    <script id="hidden">
+      // Show body HTML
+
+      // Create highlight instance
+      const highlight = new Highlight();
+
+      document.addEventListener('click', (e) => {
+        const sourceEl = document.getElementById('source');
+        // Create a clone of body to modify
+        const bodyClone = document.body.cloneNode(true);
+
+        // Remove the hidden script and source pre elements from the clone
+        const hiddenScript = bodyClone.querySelector('#hidden');
+        const sourcePre = bodyClone.querySelector('#source');
+        hiddenScript?.remove();
+        sourcePre?.remove();
+
+        sourceEl.textContent = bodyClone.outerHTML;
+        if (e.target === sourceEl) return;
+
+        const clickedHTML = e.target.outerHTML;
+        const sourceText = sourceEl.textContent;
+        const start = sourceText.indexOf(clickedHTML);
+        console.log({ clickedHTML, sourceText, start });
+
+        if (start >= 0) {
+          const range = new Range();
+          range.setStart(sourceEl.firstChild, start);
+          range.setEnd(sourceEl.firstChild, start + clickedHTML.length);
+
+          // Update highlight
+          CSS.highlights.clear();
+          highlight.clear();
+          highlight.add(range);
+          CSS.highlights.set('clicked', highlight);
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Monospace</title>
+    <style>
+      /* @import url('https://fonts.cdnfonts.com/css/jetbrains-mono-2'); */
+
+      :root {
+        --font-family: 'JetBrains Mono', monospace;
+        --line-height: 1.2rem;
+        --border-thickness: 2px;
+        --text-color: #000;
+        --text-color-alt: #666;
+        --background-color: #fff;
+        --background-color-alt: #eee;
+
+        --font-weight-normal: 500;
+        --font-weight-medium: 600;
+        --font-weight-bold: 800;
+
+        font-family: var(--font-family);
+        font-optical-sizing: auto;
+        font-weight: var(--font-weight-normal);
+        font-style: normal;
+        font-variant-numeric: tabular-nums lining-nums;
+        font-size: 16px;
+      }
+
+      /* @media (prefers-color-scheme: dark) {
+        :root {
+          --text-color: #fff;
+          --text-color-alt: #aaa;
+          --background-color: #1f1f1f;
+          --background-color-alt: #222222;
+        }
+      } */
+
+      * {
+        box-sizing: border-box;
+        /* Experimental */
+        text-box-trim: trim-both;
+
+        text-box-edge: cap alphabetic;
+      }
+
+      * + * {
+        margin-top: var(--line-height);
+      }
+
+      html {
+        display: flex;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        flex-direction: column;
+        align-items: center;
+        background: var(--background-color);
+        color: var(--text-color);
+      }
+
+      body {
+        position: relative;
+        width: 100%;
+        margin: 0;
+        padding: var(--line-height) 2ch;
+        max-width: calc(min(80ch, round(down, 100%, 1ch)));
+        line-height: var(--line-height);
+        overflow-x: hidden;
+      }
+
+      @media screen and (max-width: 480px) {
+        :root {
+          font-size: 14px;
+        }
+        body {
+          padding: var(--line-height) 1ch;
+        }
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        font-weight: var(--font-weight-bold);
+        margin: calc(var(--line-height) * 2) 0 var(--line-height);
+        line-height: var(--line-height);
+      }
+
+      h1 {
+        font-size: 2rem;
+        line-height: calc(2 * var(--line-height));
+        margin-bottom: calc(var(--line-height) * 2);
+        text-transform: uppercase;
+      }
+      h2 {
+        font-size: 1rem;
+        text-transform: uppercase;
+      }
+
+      hr {
+        position: relative;
+        display: block;
+        height: var(--line-height);
+        /* margin: calc(var(--line-height) * 1.5) 0; */
+        border: none;
+        color: var(--text-color);
+      }
+      hr:after {
+        display: block;
+        content: '';
+        position: absolute;
+        top: calc(var(--line-height) / 2 - var(--border-thickness) / 2);
+        left: 0;
+        width: 100%;
+        border-top: var(--border-thickness) solid var(--text-color);
+        height: 0;
+      }
+
+      a {
+        text-decoration-thickness: var(--border-thickness);
+      }
+
+      a:link,
+      a:visited {
+        color: var(--text-color);
+      }
+
+      p {
+        margin-bottom: var(--line-height);
+      }
+
+      strong {
+        font-weight: var(--font-weight-bold);
+      }
+      em {
+        font-style: italic;
+      }
+
+      sub {
+        position: relative;
+        display: inline-block;
+        margin: 0;
+        vertical-align: sub;
+        line-height: 0;
+        width: calc(1ch / 0.75);
+        font-size: 0.75rem;
+      }
+
+      table {
+        position: relative;
+        top: calc(var(--line-height) / 2);
+        width: calc(round(down, 100%, 1ch));
+        border-collapse: collapse;
+        margin: 0 0 calc(var(--line-height) * 2);
+      }
+
+      th,
+      td {
+        border: var(--border-thickness) solid var(--text-color);
+        padding: calc((var(--line-height) / 2)) calc(1ch - var(--border-thickness) / 2)
+          calc((var(--line-height) / 2) - (var(--border-thickness)));
+        line-height: var(--line-height);
+        vertical-align: top;
+        text-align: left;
+      }
+      table tbody tr:first-child > * {
+        padding-top: calc((var(--line-height) / 2) - var(--border-thickness));
+      }
+
+      th {
+        font-weight: 700;
+      }
+      .width-min {
+        width: 0%;
+      }
+      .width-auto {
+        width: 100%;
+      }
+
+      .header {
+        margin-bottom: calc(var(--line-height) * 2);
+      }
+      .header h1 {
+        margin: 0;
+      }
+      .header tr td:last-child {
+        text-align: right;
+      }
+
+      p {
+        word-break: break-word;
+        word-wrap: break-word;
+        hyphens: auto;
+      }
+
+      img,
+      video {
+        display: block;
+        width: 100%;
+        object-fit: contain;
+        overflow: hidden;
+      }
+      img {
+        font-style: italic;
+        color: var(--text-color-alt);
+      }
+
+      details {
+        border: var(--border-thickness) solid var(--text-color);
+        padding: calc(var(--line-height) - var(--border-thickness)) 1ch;
+        margin-bottom: var(--line-height);
+      }
+
+      summary {
+        font-weight: var(--font-weight-medium);
+        cursor: pointer;
+      }
+      details[open] summary {
+        margin-bottom: var(--line-height);
+      }
+
+      details ::marker {
+        display: inline-block;
+        content: '▶';
+        margin: 0;
+      }
+      details[open] ::marker {
+        content: '▼';
+      }
+
+      details :last-child {
+        margin-bottom: 0;
+      }
+
+      pre {
+        white-space: pre;
+        overflow-x: auto;
+        margin: var(--line-height) 0;
+        overflow-y: hidden;
+      }
+      figure pre {
+        margin: 0;
+      }
+
+      pre,
+      code {
+        font-family: var(--font-family);
+      }
+
+      code {
+        font-weight: var(--font-weight-medium);
+      }
+
+      figure {
+        margin: calc(var(--line-height) * 2) 3ch;
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+
+      figcaption {
+        display: block;
+        font-style: italic;
+        margin-top: var(--line-height);
+      }
+
+      ul,
+      ol {
+        padding: 0;
+        margin: 0 0 var(--line-height);
+      }
+
+      ul {
+        list-style-type: square;
+        padding: 0 0 0 2ch;
+      }
+      ol {
+        list-style-type: none;
+        counter-reset: item;
+        padding: 0;
+      }
+      ol ul,
+      ol ol,
+      ul ol,
+      ul ul {
+        padding: 0 0 0 3ch;
+        margin: 0;
+      }
+      ol li:before {
+        content: counters(item, '.') '. ';
+        counter-increment: item;
+        font-weight: var(--font-weight-medium);
+      }
+
+      li {
+        margin: 0;
+        padding: 0;
+      }
+
+      li::marker {
+        line-height: 0;
+      }
+
+      ::-webkit-scrollbar {
+        height: var(--line-height);
+      }
+
+      input,
+      button,
+      textarea {
+        border: var(--border-thickness) solid var(--text-color);
+        padding: calc(var(--line-height) / 2 - var(--border-thickness)) calc(1ch - var(--border-thickness));
+        margin: 0;
+        font: inherit;
+        font-weight: inherit;
+        height: calc(var(--line-height) * 2);
+        width: auto;
+        overflow: visible;
+        background: var(--background-color);
+        color: var(--text-color);
+        line-height: normal;
+        -webkit-font-smoothing: inherit;
+        -moz-osx-font-smoothing: inherit;
+        -webkit-appearance: none;
+      }
+
+      input[type='checkbox'] {
+        display: inline-grid;
+        place-content: center;
+        vertical-align: top;
+        width: 2ch;
+        height: var(--line-height);
+        cursor: pointer;
+      }
+      input[type='checkbox']:checked:before {
+        content: '';
+        width: 1ch;
+        height: calc(var(--line-height) / 2);
+        background: var(--text-color);
+      }
+
+      button:focus,
+      input:focus {
+        --border-thickness: 3px;
+        outline: none;
+      }
+
+      input {
+        width: calc(round(down, 100%, 1ch));
+      }
+      ::placeholder {
+        color: var(--text-color-alt);
+        opacity: 1;
+      }
+      ::-ms-input-placeholder {
+        color: var(--text-color-alt);
+      }
+      button::-moz-focus-inner {
+        padding: 0;
+        border: 0;
+      }
+
+      button {
+        text-transform: uppercase;
+        font-weight: var(--font-weight-medium);
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: var(--background-color-alt);
+      }
+      button:active {
+        transform: translate(2px, 2px);
+      }
+
+      label {
+        display: block;
+        width: calc(round(down, 100%, 1ch));
+        height: auto;
+        line-height: var(--line-height);
+        font-weight: var(--font-weight-medium);
+        margin: 0;
+      }
+
+      label input {
+        width: 100%;
+      }
+
+      .tree,
+      .tree ul {
+        position: relative;
+        padding-left: 0;
+        list-style-type: none;
+        line-height: var(--line-height);
+      }
+      .tree ul {
+        margin: 0;
+      }
+      .tree ul li {
+        position: relative;
+        padding-left: 1.5ch;
+        margin-left: 1.5ch;
+        border-left: var(--border-thickness) solid var(--text-color);
+      }
+      .tree ul li:before {
+        position: absolute;
+        display: block;
+        top: calc(var(--line-height) / 2);
+        left: 0;
+        content: '';
+        width: 1ch;
+        border-bottom: var(--border-thickness) solid var(--text-color);
+      }
+      .tree ul li:last-child {
+        border-left: none;
+      }
+      .tree ul li:last-child:after {
+        position: absolute;
+        display: block;
+        top: 0;
+        left: 0;
+        content: '';
+        height: calc(var(--line-height) / 2);
+        border-left: var(--border-thickness) solid var(--text-color);
+      }
+
+      .grid {
+        --grid-cells: 0;
+        display: flex;
+        gap: 1ch;
+        width: calc(round(down, 100%, (1ch * var(--grid-cells)) - (1ch * var(--grid-cells) - 1)));
+        margin-bottom: var(--line-height);
+      }
+
+      .grid > *,
+      .grid > input {
+        flex: 0 0 calc(round(down, (100% - (1ch * (var(--grid-cells) - 1))) / var(--grid-cells), 1ch));
+      }
+      .grid:has(> :last-child:nth-child(1)) {
+        --grid-cells: 1;
+      }
+      .grid:has(> :last-child:nth-child(2)) {
+        --grid-cells: 2;
+      }
+      .grid:has(> :last-child:nth-child(3)) {
+        --grid-cells: 3;
+      }
+      .grid:has(> :last-child:nth-child(4)) {
+        --grid-cells: 4;
+      }
+      .grid:has(> :last-child:nth-child(5)) {
+        --grid-cells: 5;
+      }
+      .grid:has(> :last-child:nth-child(6)) {
+        --grid-cells: 6;
+      }
+      .grid:has(> :last-child:nth-child(7)) {
+        --grid-cells: 7;
+      }
+      .grid:has(> :last-child:nth-child(8)) {
+        --grid-cells: 8;
+      }
+      .grid:has(> :last-child:nth-child(9)) {
+        --grid-cells: 9;
+      }
+
+      /* DEBUG UTILITIES */
+
+      .debug .debug-grid {
+        --color: color-mix(in srgb, var(--text-color) 10%, var(--background-color) 90%);
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: -1;
+        background-image: repeating-linear-gradient(var(--color) 0 1px, transparent 1px 100%),
+          repeating-linear-gradient(90deg, var(--color) 0 1px, transparent 1px 100%);
+        background-size: 1ch var(--line-height);
+        margin: 0;
+      }
+
+      .debug .off-grid {
+        background: rgba(255, 0, 0, 0.1);
+      }
+
+      .debug-toggle-label {
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body class="debug">
+    <main>
+      <h1> Folk Canvas [<a href="https://github.com/folk-canvas/folk-canvas">Github</a>] </h1>
+      <ul>
+        <li>How do we make the web feel more alive and less rigid and closed off?</li>
+        <li>How can we more easily compose web pages and their data together?</li>
+        <li>How seamlessly can we turn an HTML document into a spatial canvas and visa versa?</li>
+        <li>What would it look like if the browser had primitives for building spatial canvases?</li>
+        <li>How can we annotate, re-layout, and program web pages we did not make or distribute?</li>
+        <li
+          >How can we compose visual programming interfaces, hypermedia, and LLMs that can be embedded into on any web
+          page?</li
+        >
+        <li
+          >How can we use spatial qualities like proximity and connection as a communication channel for hypermedia and
+          websites to communicate with each other?</li
+        >
+      </ul>
+
+      <h2>Experiments from the lab</h2>
+      <p>
+        These experiments (like this page) are very raw, intended to poke at new primitives and ideas. Make sure to
+        checkout the dev tools, all of these are just authored in HTML!
+      </p>
+      <div>
+        <div style="background: red">Some DIV content here</div>
+        <div style="background: blue">Some DIV content here</div>
+        <div style="background: green">Some DIV content here</div>
+      </div>
+    </main>
+    <table class="header">
+      <tr>
+        <td colspan="2" rowspan="2" class="width-auto">
+          <h1 class="title">The Monospace Web</h1>
+          <span class="subtitle">A minimalist design exploration</span>
+        </td>
+        <th>Version</th>
+        <td class="width-min">v0.1.1</td>
+      </tr>
+      <tr>
+        <th>Updated</th>
+        <td class="width-min"><time style="white-space: pre">2024-08-26</time></td>
+      </tr>
+      <tr>
+        <th class="width-min">Author</th>
+        <td class="width-auto"
+          ><a href="https://wickstrom.tech"><cite>Oskar Wickström</cite></a></td
+        >
+        <th class="width-min">License</th>
+        <td>MIT</td>
+      </tr>
+    </table>
+    <label class="debug-toggle-label"><input type="checkbox" class="debug-toggle" /> Debug mode</label>
+    <nav id="TOC" role="doc-toc">
+      <h2 id="toc-title">Contents</h2>
+      <ul class="incremental">
+        <li><a href="#introduction" id="toc-introduction">Introduction</a></li>
+        <li><a href="#the-basics" id="toc-the-basics">The Basics</a></li>
+        <li><a href="#lists" id="toc-lists">Lists</a></li>
+        <li><a href="#tables" id="toc-tables">Tables</a></li>
+        <li><a href="#forms" id="toc-forms">Forms</a></li>
+        <li><a href="#grids" id="toc-grids">Grids</a></li>
+        <li><a href="#ascii-drawings" id="toc-ascii-drawings">ASCII Drawings</a></li>
+        <li><a href="#media" id="toc-media">Media</a></li>
+        <li><a href="#discussion" id="toc-discussion">Discussion</a></li>
+      </ul>
+    </nav>
+    <h2 id="introduction">Introduction</h2>
+    <p
+      >Monospace fonts are dear to many of us. Some find them more readable, consistent, and beautiful, than their
+      proportional alternatives. Maybe we’re just brainwashed from spending years in terminals? Or are we hopelessly
+      nostalgic? I’m not sure. But I like them, and that’s why I started experimenting with all-monospace Web.</p
+    >
+    <p
+      >On this page, I use a monospace grid to align text and draw diagrams. It’s generated from a simple Markdown
+      document (using Pandoc), and the CSS and a tiny bit of Javascript renders it on the grid. The page is responsive,
+      shrinking in character-sized steps. Standard elements should <em>just work</em>, at least that’s the goal. It’s
+      semantic HTML, rendered as if we were back in the 70s.</p
+    >
+    <p
+      >All right, but is this even a good idea? It’s a technical and creative challenge and I like the aesthetic. If
+      you’d like to use it, feel free to fork or copy the bits you need, respecting the license. I might update it over
+      time with improvements and support for more standard elements.</p
+    >
+    <h2 id="the-basics">The Basics</h2>
+    <p
+      >This document uses a few extra classes here and there, but mostly it’s just markup. This, for instance, is a
+      regular paragraph.</p
+    >
+    <p>Look at this horizontal break:</p>
+    <hr />
+    <p>Lovely. We can hide stuff in the <code>&lt;details</code>&gt; element:</p>
+    <details>
+      <summary> A short summary of the contents </summary>
+      <p> Hidden gems. </p>
+    </details>
+    <h2 id="lists">Lists</h2>
+    <p>This is a plain old bulleted list:</p>
+    <ul class="incremental">
+      <li>Banana</li>
+      <li>Paper boat</li>
+      <li>Cucumber</li>
+      <li>Rocket</li>
+    </ul>
+    <p>Ordered lists look pretty much as you’d expect:</p>
+    <ol class="incremental" type="1">
+      <li>Goals</li>
+      <li
+        >Motivations
+        <ol class="incremental" type="1">
+          <li>Intrinsic</li>
+          <li>Extrinsic</li>
+        </ol></li
+      >
+      <li>Second-order effects</li>
+    </ol>
+    <p>It’s nice to visualize trees. This is a regular unordered list with a <code>tree</code> class:</p>
+    <ul class="tree">
+      <li>
+        <p style="margin: 0">
+          <strong>/dev/nvme0n1p2</strong>
+        </p>
+        <ul class="incremental">
+          <li
+            >usr
+            <ul class="incremental">
+              <li>local<br /> </li>
+              <li>share<br /> </li>
+              <li>libexec<br /> </li>
+              <li>include<br /> </li>
+              <li>sbin<br /> </li>
+              <li>src<br /> </li>
+              <li>lib64<br /> </li>
+              <li>lib<br /> </li>
+              <li>bin<br /> </li>
+              <li
+                >games
+                <ul class="incremental">
+                  <li>solitaire</li>
+                  <li>snake</li>
+                  <li>tic-tac-toe</li>
+                </ul></li
+              >
+              <li>media<br /> </li> </ul
+          ></li>
+          <li>media<br /> </li>
+          <li>run<br /> </li>
+          <li>tmp</li>
+        </ul>
+      </li>
+    </ul>
+    <h2 id="tables">Tables</h2>
+    <p>We can use regular tables that automatically adjust to the monospace grid. They’re responsive.</p>
+    <table>
+      <thead>
+        <tr>
+          <th class="width-min"> Name </th>
+          <th class="width-auto"> Dimensions </th>
+          <th class="width-min"> Position </th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td> Boboli Obelisk </td>
+          <td> 1.41m × 1.41m × 4.87m </td>
+          <td> 43°45’50.78”N 11°15’3.34”E </td>
+        </tr>
+        <tr>
+          <td> Pyramid of Khafre </td>
+          <td> 215.25m × 215.25m × 136.4m </td>
+          <td> 29°58’34”N 31°07’51”E </td>
+        </tr>
+      </tbody>
+    </table>
+    <p>Note that only one column is allowed to grow.</p>
+    <h2 id="forms">Forms</h2>
+    <p>Here are some buttons:</p>
+    <nav>
+      <button> Reset </button>
+      <button> Save </button>
+    </nav>
+    <p>And inputs:</p>
+    <form class="grid">
+      <label>First name <input type="text" placeholder="Placeholder..." /></label>
+      <label>Last name <input type="text" placeholder="Text goes here..." /></label>
+      <label>Age <input type="text" value="30" /></label>
+    </form>
+    <h2 id="grids">Grids</h2>
+    <p
+      >Add the <code>grid</code> class to a container to divide up the horizontal space evenly for the cells. Note that
+      it maintains the monospace, so the total width might not be 100%. Here are six grids with increasing cell
+      count:</p
+    >
+    <div class="grid">
+      <input readonly value="1" />
+    </div>
+    <div class="grid"> <input readonly value="1" /><input readonly value="2" /> </div>
+    <div class="grid"> <input readonly value="1" /><input readonly value="2" /><input readonly value="3" /> </div>
+    <div class="grid">
+      <input readonly value="1" /><input readonly value="2" /><input readonly value="3" /><input readonly value="4" />
+    </div>
+    <div class="grid">
+      <input readonly value="1" /><input readonly value="2" /><input readonly value="3" /><input
+        readonly
+        value="4"
+      /><input readonly value="5" />
+    </div>
+    <div class="grid">
+      <input readonly value="1" /><input readonly value="2" /><input readonly value="3" /><input
+        readonly
+        value="4"
+      /><input readonly value="5" /><input readonly value="6" />
+    </div>
+    <p>If we want one cell to fill the remainder, we set <code>flex-grow: 1;</code> for that particular cell.</p>
+    <div class="grid">
+      <input readonly value="1" /><input readonly value="2" /><input readonly value="3!" style="flex-grow: 1" /><input
+        readonly
+        value="4"
+      /><input readonly value="5" /><input readonly value="6" />
+    </div>
+    <h2 id="ascii-drawings">ASCII Drawings</h2>
+    <p
+      >We can draw in <code>&lt;pre&gt;</code> tags using
+      <a href="https://en.wikipedia.org/wiki/Box-drawing_characters">box-drawing characters</a>:</p
+    >
+    <pre><code>╭─────────────────╮
+    │ MONOSPACE ROCKS │
+    ╰─────────────────╯</code></pre>
+    <p
+      >To have it stand out a bit more, we can wrap it in a <code>&lt;figure&gt;</code> tag, and why not also add a
+      <code>&lt;figcaption&gt;</code>.</p
+    >
+    <figure>
+      <pre>
+    ┌───────┐ ┌───────┐ ┌───────┐
+    │Actor 1│ │Actor 2│ │Actor 3│
+    └───┬───┘ └───┬───┘ └───┬───┘
+        │         │         │    
+        │         │  msg 1  │    
+        │         │────────►│    
+        │         │         │    
+        │  msg 2  │         │    
+        │────────►│         │    
+    ┌───┴───┐ ┌───┴───┐ ┌───┴───┐
+    │Actor 1│ │Actor 2│ │Actor 3│
+    └───────┘ └───────┘ └───────┘</pre
+      >
+      <figcaption> Example: Message passing. </figcaption>
+    </figure>
+    <p>Let’s go wild and draw a chart!</p>
+    <figure>
+      <pre>
+                          Things I Have
+                                                  
+        │                                     ████ Usable
+    15  │
+        │                                     ░░░░ Broken
+        │
+    12  │             ░            
+        │             ░            
+        │   ░         ░              
+     9  │   ░         ░              
+        │   ░         ░              
+        │   ░         ░                    ░
+     6  │   █         ░         ░          ░
+        │   █         ░         ░          ░
+        │   █         ░         █          ░
+     3  │   █         █         █          ░
+        │   █         █         █          ░
+        │   █         █         █          ░
+     0  └───▀─────────▀─────────▀──────────▀─────────────
+          Socks     Jeans     Shirts   USB Drives
+    </pre
+      >
+    </figure>
+    <h2 id="media">Media</h2>
+    <p>Media objects are supported, like images and video:</p>
+    <figure>
+      <img src="castle.jpg" alt="A room in an old French castle (2024)" />
+      <figcaption aria-hidden="true">A room in an old French castle (2024)</figcaption>
+    </figure>
+    <figure>
+      <video src="https://upload.wikimedia.org/wikipedia/commons/e/e0/The_Center_of_the_Web_%281914%29.webm" controls=""
+        ><a href="https://upload.wikimedia.org/wikipedia/commons/e/e0/The_Center_of_the_Web_%281914%29.webm"
+          >The Center of the Web (1914), Wikimedia</a
+        ></video
+      >
+      <figcaption aria-hidden="true"
+        ><a href="https://en.wikisource.org/wiki/Page:The_Center_of_the_Web_(1914).webm/11"
+          >The Center of the Web (1914), Wikimedia</a
+        ></figcaption
+      >
+    </figure>
+    <p
+      >They extend to the width of the page, and add appropriate padding in the bottom to maintain the monospace
+      grid.</p
+    >
+    <h2 id="discussion">Discussion</h2>
+    <p
+      >That’s it for now. I’ve very much enjoyed making this, pushing my CSS chops and having a lot of fun with the
+      design. If you like it or even decide to use it, please <a href="https://x.com/owickstrom">let me know</a>.</p
+    >
+    <p
+      >The full source code is here:
+      <a href="https://github.com/owickstrom/the-monospace-web">github.com/owickstrom/the-monospace-web</a></p
+    >
+    <p
+      >Finally, a massive shout-out to <a href="https://x.com/usgraphics">U.S. Graphics Company</a> for all the
+      inspiration.</p
+    >
+    <div class="debug-grid"></div>
+  </body>
+</html>
