@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hyperedge Relations</title>
+    <style>
+      html {
+        height: 100%;
+      }
+
+      body {
+        z-index: -1;
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+      }
+
+      folk-shape {
+        background: rgb(187, 178, 178);
+
+        &:hover {
+          z-index: 2;
+        }
+      }
+
+      h1 {
+        margin: 0;
+        width: fit-content;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>This is a Hyperedge</h1>
+    <folk-gizmos></folk-gizmos>
+    <folk-shape id="a" x="50" y="100" width="50" height="50"></folk-shape>
+    <folk-shape id="b" x="200" y="200" width="50" height="50"></folk-shape>
+    <folk-shape id="c" x="100" y="300" width="50" height="50"></folk-shape>
+    <folk-shape id="d" x="180" y="300" width="50" height="50"></folk-shape>
+    <folk-hyperedge sources="h1, #a" targets="#b, #c, #d"></folk-hyperedge>
+
+    <script type="module">
+      import '@lib/folk-gizmos.ts';
+      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-hyperedge.ts';
+    </script>
+  </body>
+</html>

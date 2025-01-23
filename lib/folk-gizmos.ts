@@ -14,6 +14,7 @@ interface PointOptions extends GizmoOptions {
 
 interface LineOptions extends GizmoOptions {
   width?: number;
+  dashed?: boolean;
 }
 
 interface RectOptions extends LineOptions {
@@ -22,6 +23,10 @@ interface RectOptions extends LineOptions {
 
 interface VectorOptions extends LineOptions {
   size?: number;
+}
+
+interface TextOptions extends GizmoOptions {
+  fontSize?: number;
 }
 
 /**
@@ -119,13 +124,18 @@ export class Gizmos extends FolkElement {
   }
 
   /** Draws a line between two points */
-  static line(start: Point, end: Point, { color = 'blue', width = 2, layer = Gizmos.#defaultLayer }: LineOptions = {}) {
+  static line(
+    start: Point,
+    end: Point,
+    { color = 'blue', width = 2, dashed = false, layer = Gizmos.#defaultLayer }: LineOptions = {},
+  ) {
     const ctx = Gizmos.#getContext(layer);
     if (!ctx) return;
 
     ctx.beginPath();
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
+    ctx.setLineDash(dashed ? [5, 5] : []);
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
     ctx.stroke();
@@ -206,6 +216,20 @@ export class Gizmos extends FolkElement {
     ctx.lineTo(globalEndpoint.x, globalEndpoint.y);
     ctx.fillStyle = color;
     ctx.fill();
+  }
+
+  /** Draws a text label at a point */
+  static text(
+    text: string,
+    point: Point,
+    { color = 'black', fontSize = 12, layer = Gizmos.#defaultLayer }: TextOptions = {},
+  ) {
+    const ctx = Gizmos.#getContext(layer);
+    if (!ctx) return;
+
+    ctx.font = `${fontSize}px Arial`;
+    ctx.fillStyle = color;
+    ctx.fillText(text, point.x, point.y);
   }
 
   /** Clears drawings from a specific layer or all layers if no layer specified */

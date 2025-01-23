@@ -93,6 +93,16 @@ export class Vector {
   }
 
   /**
+   * Calculates the cross product of two vectors
+   * @param {Point} a - The first vector
+   * @param {Point} b - The second vector
+   * @returns {number} The cross product of the two vectors
+   */
+  static cross(a: Point, b: Point): number {
+    return a.x * b.y - a.y * b.x;
+  }
+
+  /**
    * Returns a normalized (unit) vector in the same direction
    * @param {Point} v - The vector to normalize
    * @returns {Point} The normalized vector
@@ -103,6 +113,25 @@ export class Vector {
     if (magnitude === 0) return { x: 0, y: 0 };
     const invMag = 1 / magnitude;
     return { x: x * invMag, y: y * invMag };
+  }
+
+  /**
+   * Returns a vector perpendicular to the given vector
+   * @param {Point} v - The vector to get the perpendicular of
+   * @returns {Point} The perpendicular vector
+   */
+  static normal(v: Point): Point {
+    return { x: -v.y, y: v.x };
+  }
+
+  /**
+   * Calculates the dot product of two vectors
+   * @param {Point} a - The first vector
+   * @param {Point} b - The second vector
+   * @returns {number} The dot product of the two vectors
+   */
+  static dot(a: Point, b: Point): number {
+    return a.x * b.x + a.y * b.y;
   }
 
   /**
