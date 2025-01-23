@@ -6,7 +6,7 @@ export class FolkInteractionHandler extends HTMLElement {
   static tagName = '';
 
   static define() {
-    if (!customElements.get(this.tagName)) return
+    if (customElements.get(this.tagName)) return;
     customElements.define(this.tagName, this);
   }
 
@@ -132,7 +132,7 @@ export class FolkShapeTool extends FolkInteractionHandler {
 
   constructor() {
     super();
-    
+
     this.button.textContent = 'Create Shape';
   }
 
@@ -233,9 +233,9 @@ export class FolkDeleteTool extends FolkInteractionHandler {
 
 export class FolkToolset extends HTMLElement {
   static tagName = 'folk-toolset';
-  
+
   static #instance: FolkToolset | null = null;
-  
+
   #currentHandler: ((event: Event) => void) | null = null;
   #activeTool: FolkInteractionHandler | null = null;
 
@@ -247,7 +247,7 @@ export class FolkToolset extends HTMLElement {
 
   constructor() {
     super();
-    
+
     FolkToolset.#instance = this;
   }
 
@@ -283,12 +283,7 @@ export class FolkToolset extends HTMLElement {
   }
 
   static define() {
-    if (!customElements.get(this.tagName)) return;
+    if (customElements.get(this.tagName)) return;
     customElements.define(this.tagName, this);
   }
 }
-
-FolkShapeTool.define();
-FolkDeleteTool.define();
-FolkPropagatorTool.define();
-FolkToolset.define();
