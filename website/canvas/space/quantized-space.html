@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quantized Space</title>
+    <style>
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        --color: color-mix(in srgb, #000 10%, #fff 90%);
+        background-image: repeating-linear-gradient(var(--color) 0 1px, transparent 1px 100%),
+          repeating-linear-gradient(90deg, var(--color) 0 1px, transparent 1px 100%);
+        background-size: var(--quantized-width) var(--quantized-height);
+      }
+
+      folk-shape {
+        box-sizing: border-box;
+        border: solid 1px black;
+        width: var(--folk-width-auto, round(calc(var(--folk-width) * 1px), var(--quantized-width)));
+        height: var(--folk-height-auto, round(calc(var(--folk-height) * 1px), var(--quantized-height)));
+        translate: round(calc(var(--folk-x) * 1px), var(--quantized-width))
+          round(calc(var(--folk-y) * 1px), var(--quantized-height));
+        rotate: round(calc(var(--folk-rotation) * 1rad), 1.5708rad);
+      }
+
+      #inputs {
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 0;
+        right: 0;
+        padding: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="inputs">
+      <label>Height: <input name="height" type="range" min="5" max="20" step="0.001" value="10" /></label>
+      <label>Width: <input name="width" type="range" min="5" max="20" step="0.001" value="10" /></label>
+    </div>
+    <folk-shape x="100" y="100" width="50" height="50"></folk-shape>
+    <folk-shape x="200" y="200" width="50" height="50"></folk-shape>
+    <folk-shape x="100" y="300" width="50" height="50" rotation="45"></folk-shape>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+
+      const heightInput = document.querySelector('input[name="height"]');
+      const widthInput = document.querySelector('input[name="width"]');
+
+      function onHeightInput() {
+        document.body.style.setProperty('--quantized-height', `${heightInput.value}px`);
+      }
+
+      heightInput.addEventListener('input', onHeightInput);
+
+      function onWidthInput() {
+        document.body.style.setProperty('--quantized-width', `${widthInput.value}px`);
+      }
+
+      widthInput.addEventListener('input', onWidthInput);
+
+      onHeightInput();
+      onWidthInput();
+    </script>
+  </body>
+</html>
