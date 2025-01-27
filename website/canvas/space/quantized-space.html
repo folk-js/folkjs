@@ -27,7 +27,6 @@
         height: var(--folk-height-auto, round(calc(var(--folk-height) * 1px), var(--quantized-height)));
         translate: round(calc(var(--folk-x) * 1px), var(--quantized-width))
           round(calc(var(--folk-y) * 1px), var(--quantized-height));
-        rotate: round(calc(var(--folk-rotation) * 1rad), 1.5708rad);
       }
 
       #inputs {
@@ -42,8 +41,8 @@
   </head>
   <body>
     <div id="inputs">
-      <label>Height: <input name="height" type="range" min="5" max="20" step="0.001" value="10" /></label>
-      <label>Width: <input name="width" type="range" min="5" max="20" step="0.001" value="10" /></label>
+      <label>Height: <input name="height" type="range" min="5" max="50" step="0.001" value="10" /></label>
+      <label>Width: <input name="width" type="range" min="5" max="50" step="0.001" value="10" /></label>
     </div>
     <folk-shape x="100" y="100" width="50" height="50"></folk-shape>
     <folk-shape x="200" y="200" width="50" height="50"></folk-shape>
