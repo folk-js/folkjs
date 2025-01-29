@@ -103,14 +103,14 @@ export class FolkFile extends FolkElement {
 
     #name {
       position: absolute;
-      top: clamp(0%, calc(((-200 * var(--folk-scale)) + 150) * 1%), 50%);
-      translate: 0px clamp(-50%, calc(((200 * var(--folk-scale)) - 150) * 1%), 0px);
+      top: calc(-200% * clamp(0.5, var(--folk-scale), 0.75) + 150%);
+      translate: 0px calc(200% * clamp(0.5, var(--folk-scale), 0.75) - 150%);
       left: 0;
       right: 0;
       padding: 0.25rem;
       font-family: monospace;
       font-weight: bold;
-      font-size: clamp(0.5rem, calc(((-2 * var(--folk-scale)) + 2) * 1rem), 1.5rem);
+      font-size: calc(-2rem * clamp(0.5, var(--folk-scale), 0.75) + 2rem);
       text-align: center;
       z-index: 2;
     }
@@ -119,7 +119,7 @@ export class FolkFile extends FolkElement {
       padding-top: 1lh;
       overflow: hidden;
       border-radius: 5px;
-      opacity: clamp(0.05, calc((2 * var(--folk-scale)) - 1), 1);
+      opacity: calc(2 * clamp(0.5, var(--folk-scale), 1) - 1);
     }
   `;
 

@@ -23,20 +23,20 @@ export class FolkDirectory extends FolkBaseSet {
       pointer-events: none;
       position: absolute;
       border: dashed rgba(100, 89, 89, 0.8);
-      border-width: clamp(2px, calc(((-21.67 * var(--folk-scale)) + 18.75) * 1px), 15px);
+      border-width: calc(-21.67px * clamp(0.15, var(--folk-scale), 0.75) + 18.75px);
       border-radius: 5px;
     }
 
     #name {
       position: absolute;
-      top: clamp(0%, calc(((-1000 * var(--folk-scale)) + 200) * 1%), 50%);
-      translate: 0px clamp(-50%, calc(((1000 * var(--folk-scale)) - 200) * 1%), 0px);
+      top: calc(-1000% * clamp(0.15, var(--folk-scale), 0.2) + 200%);
+      translate: 0px calc(1000% * clamp(0.15, var(--folk-scale), 0.2) - 200%);
       left: 0;
       right: 0;
       padding: 0.25rem;
       font-family: monospace;
       font-weight: bold;
-      font-size: clamp(2rem, calc(((-60 * var(--folk-scale)) + 17) * 1rem), 8rem);
+      font-size: calc(-60rem * clamp(0.15, var(--folk-scale), 0.25) + 17rem);
       text-align: center;
       z-index: 2;
     }
