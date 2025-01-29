@@ -87,18 +87,39 @@ export class FolkFile extends FolkElement {
   }
 
   static styles = css`
+    * {
+      box-sizing: border-box;
+    }
+
     :host {
       display: flex;
       flex-direction: column;
+      position: relative;
       border: 2px dashed #64595961;
       border-radius: 5px;
-      overflow: hidden;
       width: min-content;
+      opacity: clamp(0, calc((10 * var(--folk-scale)) - 1.5), 1);
     }
 
-    :host > span {
-      font-family: monospace;
+    #name {
+      position: absolute;
+      top: clamp(0%, calc(((-200 * var(--folk-scale)) + 150) * 1%), 50%);
+      translate: 0px clamp(-50%, calc(((200 * var(--folk-scale)) - 150) * 1%), 0px);
+      left: 0;
+      right: 0;
       padding: 0.25rem;
+      font-family: monospace;
+      font-weight: bold;
+      font-size: clamp(0.5rem, calc(((-2 * var(--folk-scale)) + 2) * 1rem), 1.5rem);
+      text-align: center;
+      z-index: 2;
+    }
+
+    #content {
+      padding-top: 1lh;
+      overflow: hidden;
+      border-radius: 5px;
+      opacity: clamp(0.05, calc((2 * var(--folk-scale)) - 1), 1);
     }
   `;
 
@@ -119,14 +140,15 @@ export class FolkFile extends FolkElement {
     return this.#type;
   }
 
-  #displayName = document.createElement('span');
-  #display = document.createElement('div');
+  #nameEl = document.createElement('span');
+  #contentEl = document.createElement('div');
   #fileCreator: FileCreator | undefined = undefined;
 
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
-
-    root.append(this.#displayName, this.#display);
+    this.#nameEl.id = 'name';
+    this.#contentEl.id = 'content';
+    root.append(this.#nameEl, this.#contentEl);
 
     return root;
   }
@@ -140,11 +162,11 @@ export class FolkFile extends FolkElement {
   override async update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
 
-    this.#display.textContent = '';
+    this.#contentEl.textContent = '';
 
     if (this.fileHandle === null) return;
 
-    this.#displayName.textContent = this.path;
+    this.#nameEl.textContent = this.path;
 
     this.#fileCreator?.destroy?.();
 
@@ -159,11 +181,11 @@ export class FolkFile extends FolkElement {
 
     const element = await this.#fileCreator.create(file);
 
-    this.#display.appendChild(element);
+    this.#contentEl.appendChild(element);
   }
 
   async save() {
-    const content = this.#fileCreator?.getValue?.(this.#display.firstElementChild!);
+    const content = this.#fileCreator?.getValue?.(this.#contentEl.firstElementChild!);
     console.log(this.name, content);
     if (!this.fileHandle || content === undefined) return;
 

@@ -15,23 +15,30 @@ export class FolkDirectory extends FolkBaseSet {
   static tagName = 'folk-directory';
 
   static styles = css`
-    div {
+    * {
+      box-sizing: border-box;
+    }
+
+    #container {
       pointer-events: none;
       position: absolute;
-      border: 2px dashed #64595961;
+      border: dashed rgba(100, 89, 89, 0.8);
+      border-width: clamp(2px, calc(((-21.67 * var(--folk-scale)) + 18.75) * 1px), 15px);
       border-radius: 5px;
+    }
 
-      span {
-        font-family: monospace;
-        font-size: 2rem;
-        position: absolute;
-        bottom: 100%;
-        left: -2px;
-        border: 2px dashed #64595961;
-        border-bottom: 0;
-        border-radius: 5px;
-        padding: 0.25rem;
-      }
+    #name {
+      position: absolute;
+      top: clamp(0%, calc(((-1000 * var(--folk-scale)) + 200) * 1%), 50%);
+      translate: 0px clamp(-50%, calc(((1000 * var(--folk-scale)) - 200) * 1%), 0px);
+      left: 0;
+      right: 0;
+      padding: 0.25rem;
+      font-family: monospace;
+      font-weight: bold;
+      font-size: clamp(2rem, calc(((-60 * var(--folk-scale)) + 17) * 1rem), 8rem);
+      text-align: center;
+      z-index: 2;
     }
   `;
 
@@ -46,6 +53,9 @@ export class FolkDirectory extends FolkBaseSet {
 
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
+
+    this.#container.id = 'container';
+    this.#displayName.id = 'name';
 
     this.#container.appendChild(this.#displayName);
 
@@ -116,7 +126,7 @@ export class FolkDirectory extends FolkBaseSet {
 
     const padding = 25;
 
-    this.#container.style.top = `${top - padding}px`;
+    this.#container.style.top = `${top - padding * 2}px`;
     this.#container.style.left = `${left - padding}px`;
     this.#container.style.height = `${bottom - top + 2 * padding}px`;
     this.#container.style.width = `${right - left + 2 * padding}px`;
