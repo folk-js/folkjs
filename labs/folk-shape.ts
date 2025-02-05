@@ -528,20 +528,7 @@ export class FolkShape extends FolkElement {
   #handleResize(handle: ResizeHandle, pointerPos: Point, target: HTMLElement, event?: PointerEvent) {
     const localPointer = this.#rect.toLocalSpace(pointerPos);
 
-    switch (handle) {
-      case 'resize-bottom-right':
-        this.#rect.bottomRight = localPointer;
-        break;
-      case 'resize-bottom-left':
-        this.#rect.bottomLeft = localPointer;
-        break;
-      case 'resize-top-left':
-        this.#rect.topLeft = localPointer;
-        break;
-      case 'resize-top-right':
-        this.#rect.topRight = localPointer;
-        break;
-    }
+    this.#rect[getCornerName(handle)] = localPointer;
 
     let nextHandle: ResizeHandle = handle;
 
@@ -554,6 +541,13 @@ export class FolkShape extends FolkElement {
       nextHandle = flipXHandleMap[handle];
     } else if (flipHeight) {
       nextHandle = flipYHandleMap[handle];
+    }
+
+    // When a flip happens the old handler should be at the position of the new handler and the new handler should be where the old handler was.
+    if (flipHeight || flipWidth) {
+      const handlePoint = this.#rect[getCornerName(handle)];
+      this.#rect[getCornerName(handle)] = this.#rect[getCornerName(nextHandle)];
+      this.#rect[getCornerName(nextHandle)] = handlePoint;
     }
 
     const newTarget = this.renderRoot.querySelector(`[part="${nextHandle}"]`) as HTMLElement;
@@ -583,5 +577,18 @@ export class FolkShape extends FolkElement {
     }
 
     this.requestUpdate();
+  }
+}
+
+function getCornerName(handle: ResizeHandle) {
+  switch (handle) {
+    case 'resize-bottom-right':
+      return 'bottomRight';
+    case 'resize-bottom-left':
+      return 'bottomLeft';
+    case 'resize-top-left':
+      return 'topLeft';
+    case 'resize-top-right':
+      return 'topRight';
   }
 }
