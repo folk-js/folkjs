@@ -3,7 +3,7 @@ import { DOMRectTransform, DOMRectTransformReadonly, FolkElement, Point, Transfo
 import { ResizeManager } from '@lib/resize-manger';
 import { html } from '@lib/tags';
 import { MAX_Z_INDEX } from '@lib/utils';
-import { css, PropertyValues } from '@lit/reactive-element';
+import { css } from '@lit/reactive-element';
 
 const resizeManager = new ResizeManager();
 
@@ -325,9 +325,9 @@ export class FolkShape extends FolkElement {
     return this.#readonlyRect;
   }
 
-  handleEvent(event: PointerEvent | KeyboardEvent | TouchEvent) {
+  handleEvent(event: PointerEvent | KeyboardEvent) {
     // prevent IOS Safari from scrolling when a shape is interacted with.
-    if (event instanceof TouchEvent) {
+    if (event.type === 'touchmove') {
       event.preventDefault();
       return;
     }
@@ -484,6 +484,7 @@ export class FolkShape extends FolkElement {
     if (event.rotatePrevented) {
       this.#rect.rotation = this.#previousRect.rotation;
     }
+
     this.style.setProperty('--folk-x', this.#rect.x.toString());
     this.style.setProperty('--folk-y', this.#rect.y.toString());
     this.style.setProperty('--folk-width', this.#rect.width.toString());
