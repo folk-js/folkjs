@@ -1,5 +1,14 @@
 import { getResizeCursorUrl, getRotateCursorUrl } from '@labs/utils/cursors';
-import { DOMRectTransform, DOMRectTransformReadonly, FolkElement, Point, TransformEvent, Vector } from '@lib';
+import {
+  DOMRectTransform,
+  DOMRectTransformReadonly,
+  FolkElement,
+  Point,
+  round,
+  toDOMPrecision,
+  TransformEvent,
+  Vector,
+} from '@lib';
 import { ResizeManager } from '@lib/resize-manger';
 import { html } from '@lib/tags';
 import { MAX_Z_INDEX } from '@lib/utils';
@@ -485,13 +494,13 @@ export class FolkShape extends FolkElement {
       this.#rect.rotation = this.#previousRect.rotation;
     }
 
-    this.style.setProperty('--folk-x', this.#rect.x.toString());
-    this.style.setProperty('--folk-y', this.#rect.y.toString());
-    this.style.setProperty('--folk-width', this.#rect.width.toString());
     this.style.setProperty('--folk-width-auto', this.#attrWidth === 'auto' ? 'auto' : '');
-    this.style.setProperty('--folk-height', this.#rect.height.toString());
     this.style.setProperty('--folk-height-auto', this.#attrHeight === 'auto' ? 'auto' : '');
-    this.style.setProperty('--folk-rotation', this.#rect.rotation.toString());
+    this.style.setProperty('--folk-x', toDOMPrecision(this.#rect.x).toString());
+    this.style.setProperty('--folk-y', toDOMPrecision(this.#rect.y).toString());
+    this.style.setProperty('--folk-width', toDOMPrecision(this.#rect.width).toString());
+    this.style.setProperty('--folk-height', toDOMPrecision(this.#rect.height).toString());
+    this.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation).toString());
 
     this.#readonlyRect = new DOMRectTransformReadonly(this.#rect);
   }
@@ -529,7 +538,10 @@ export class FolkShape extends FolkElement {
   #handleResize(handle: ResizeHandle, pointerPos: Point, target: HTMLElement, event?: PointerEvent) {
     const localPointer = this.#rect.toLocalSpace(pointerPos);
 
-    this.#rect[getCornerName(handle)] = localPointer;
+    // FIX: this is a bandaid for sub-pixel jitter that happens in the opposite resize handle
+    // It seems like there is sub-pixel imprecision happening in DOMRectTransform, but I haven't figured out where yet.
+    // If the coordinates are rounded to 2 decimal places, no jitter happens.
+    this.#rect[getCornerName(handle)] = { x: round(localPointer.x, 2), y: round(localPointer.y, 2) };
 
     let nextHandle: ResizeHandle = handle;
 

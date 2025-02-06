@@ -1,6 +1,8 @@
 import type { Point } from './types';
 
-export const toDOMPrecision = (value: number) => Math.round(value * 1e4) / 1e4;
+export const round = (value: number, decimal = 0) => Math.round(value * decimal) / decimal;
+
+export const toDOMPrecision = (value: number) => round(value, 1e4);
 
 const PI2 = Math.PI * 2;
 const TAU = Math.PI / 2;
