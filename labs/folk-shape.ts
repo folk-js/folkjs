@@ -118,6 +118,7 @@ const styles = css`
   }
 
   [part] {
+    all: unset;
     aspect-ratio: 1;
     display: none;
     position: absolute;
@@ -127,10 +128,10 @@ const styles = css`
 
   [part^='resize'] {
     background: hsl(210, 20%, 98%);
-    width: 9px;
+    width: 10px;
     transform: translate(-50%, -50%);
     border: 1.5px solid hsl(214, 84%, 56%);
-    border-radius: 2px;
+    border-radius: 3px;
 
     @media (any-pointer: coarse) {
       width: 15px;
@@ -139,7 +140,7 @@ const styles = css`
 
   [part^='rotation'] {
     opacity: 0;
-    width: 16px;
+    width: 15px;
 
     @media (any-pointer: coarse) {
       width: 25px;
