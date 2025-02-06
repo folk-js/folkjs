@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -26,8 +26,14 @@
         }
       }
 
-      folk-shape > video {
+      folk-shape:not(:state(auto-height):state(auto-width)) > video {
         height: 100%;
+        width: 100%;
+        object-fit: contain;
+      }
+
+      folk-shape:state(auto-height):state(auto-width) > video {
+        width: 166px;
       }
     </style>
   </head>
@@ -38,21 +44,21 @@
       </record-player>
     </folk-shape>
 
-    <folk-shape x="25" y="300" width="166" height="200">
+    <folk-shape x="25" y="300">
       <video loop>
         <source src="/dancing-flower.mov" type="video/quicktime" />
         <source src="/dancing-flower.webm" type="video/webm" />
       </video>
     </folk-shape>
 
-    <folk-shape x="155" y="315" width="166" height="200">
+    <folk-shape x="155" y="315">
       <video loop>
         <source src="/dancing-flower.mov" type="video/quicktime" />
         <source src="/dancing-flower.webm" type="video/webm" />
       </video>
     </folk-shape>
 
-    <folk-shape x="280" y="305" width="166" height="200">
+    <folk-shape x="280" y="305">
       <video loop>
         <source src="/dancing-flower.mov" type="video/quicktime" />
         <source src="/dancing-flower.webm" type="video/webm" />
@@ -85,7 +91,7 @@
         const isNowIntersecting = aabbIntersection(
           recordPlayerGeometry.getTransformDOMRect(),
           flower.getTransformDOMRect(),
-          proximityDistance
+          proximityDistance,
         );
 
         const video = flower.firstElementChild;

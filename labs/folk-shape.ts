@@ -62,12 +62,20 @@ const styles = css`
     --folk-rotation: 0;
     --folk-width: 0;
     --folk-height: 0;
-    width: var(--folk-width-auto, calc(var(--folk-width) * 1px));
-    height: var(--folk-height-auto, calc(var(--folk-height) * 1px));
+    width: calc(var(--folk-width) * 1px);
+    height: calc(var(--folk-height) * 1px);
     translate: calc(var(--folk-x) * 1px) calc(var(--folk-y) * 1px);
     rotate: calc(var(--folk-rotation) * 1rad);
     outline: solid 0 hsl(214, 84%, 56%);
     transition: outline-width 75ms ease-out;
+  }
+
+  :host(:state(auto-height)) {
+    height: auto;
+  }
+
+  :host(:state(auto-width)) {
+    width: auto;
   }
 
   :host::before {
@@ -286,6 +294,7 @@ export class FolkShape extends FolkElement {
     const root = super.createRenderRoot();
 
     this.addEventListener('pointerdown', this);
+    this.addEventListener('dblclick', this);
     this.addEventListener('touchmove', this, { passive: false });
     this.addEventListener('keydown', this);
 
@@ -350,6 +359,19 @@ export class FolkShape extends FolkElement {
       handle = focusedElement.getAttribute('part') as Handle | null;
     }
 
+    if (event.type === 'dblclick') {
+      if (handle?.startsWith('resize')) {
+        this.height = 'auto';
+        this.width = 'auto';
+        return;
+      }
+
+      if (handle?.startsWith('rotation')) {
+        this.rotation = 0;
+        return;
+      }
+    }
+
     // Handle pointer capture setup/cleanup
     if (event instanceof PointerEvent) {
       event.stopPropagation();
@@ -365,6 +387,13 @@ export class FolkShape extends FolkElement {
           // Calculate initial angle including current rotation
           const mousePos = { x: event.pageX, y: event.pageY };
           this.#startAngle = Vector.angleFromOrigin(mousePos, parentRotateOrigin) - this.#rect.rotation;
+        }
+
+        // If we're resizing and
+        if (handle?.startsWith('resize') && (this.#attrHeight === 'auto' || this.#attrWidth === 'auto')) {
+          this.#attrHeight = this.#rect.height;
+          this.#attrWidth = this.#rect.width;
+          resizeManager.unobserve(this, this.#onAutoResize);
         }
 
         // Setup pointer capture
@@ -494,8 +523,18 @@ export class FolkShape extends FolkElement {
       this.#rect.rotation = this.#previousRect.rotation;
     }
 
-    this.style.setProperty('--folk-width-auto', this.#attrWidth === 'auto' ? 'auto' : '');
-    this.style.setProperty('--folk-height-auto', this.#attrHeight === 'auto' ? 'auto' : '');
+    if (this.#attrHeight === 'auto') {
+      this.#internals.states.add('auto-height');
+    } else {
+      this.#internals.states.delete('auto-height');
+    }
+
+    if (this.#attrWidth === 'auto') {
+      this.#internals.states.add('auto-width');
+    } else {
+      this.#internals.states.delete('auto-width');
+    }
+
     this.style.setProperty('--folk-x', toDOMPrecision(this.#rect.x).toString());
     this.style.setProperty('--folk-y', toDOMPrecision(this.#rect.y).toString());
     this.style.setProperty('--folk-width', toDOMPrecision(this.#rect.width).toString());
@@ -515,6 +554,7 @@ export class FolkShape extends FolkElement {
       this.#previousRect.width = this.#rect.width;
       this.#rect.width = entry.contentRect.width;
     }
+
     this.#dispatchTransformEvent();
   };
 
