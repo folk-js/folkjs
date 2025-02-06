@@ -410,9 +410,6 @@ export class FolkShape extends FolkElement {
         target.removeEventListener('pointermove', this);
         target.removeEventListener('lostpointercapture', this);
         this.#updateCursors();
-        if (handle?.startsWith('rotation')) {
-          target.style.removeProperty('cursor');
-        }
         return;
       }
     }
