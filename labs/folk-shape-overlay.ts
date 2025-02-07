@@ -1,6 +1,7 @@
-import { FolkElement } from '@lib';
+import { FolkElement, toDOMPrecision } from '@lib';
 import { html } from '@lib/tags';
 import { css } from '@lit/reactive-element';
+import { FolkShapeAttribute } from './folk-shape-attribute';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -12,9 +13,18 @@ export class FolkShapeOverlay extends FolkElement {
   static tagName = 'folk-shape-overlay';
 
   static styles = css`
+    :host {
+      background: unset;
+      border: unset;
+      inset: unset;
+      padding: 0;
+      position: absolute;
+      overflow: visible;
+      transform-origin: center center;
+    }
+
     [part] {
       aspect-ratio: 1;
-      display: none;
       position: absolute;
       padding: 0;
     }
@@ -77,10 +87,12 @@ export class FolkShapeOverlay extends FolkElement {
     }
   `;
 
+  #shapes = new Set<FolkShapeAttribute>();
+
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot() as ShadowRoot;
 
-    this.popover = 'auto';
+    this.popover = 'manual';
 
     (root as ShadowRoot).setHTMLUnsafe(
       html`<button part="rotation-top-left" tabindex="-1" aria-label="Rotate shape from top left"></button>
@@ -94,5 +106,66 @@ export class FolkShapeOverlay extends FolkElement {
     );
 
     return root;
+  }
+
+  addShape(shape: FolkShapeAttribute) {
+    this.#shapes.add(shape);
+  }
+
+  removeShape(shape: FolkShapeAttribute) {
+    this.#shapes.delete(shape);
+  }
+
+  open() {
+    console.log('open overlay');
+    this.#update();
+    this.showPopover();
+  }
+
+  close() {
+    this.#shapes.clear();
+    this.hidePopover();
+  }
+
+  #update() {
+    let x, y, width, height, rotation;
+    if (this.#shapes.size === 1) {
+      const shape = this.#shapes.keys().next().value!;
+
+      x = shape.x;
+      y = shape.y;
+      width = shape.width;
+      height = shape.height;
+      rotation = shape.rotation;
+    } else {
+      const shapes = Array.from(this.#shapes);
+
+      x = Math.min.apply(
+        null,
+        shapes.map((rect) => rect.left),
+      );
+      y = Math.min.apply(
+        null,
+        shapes.map((rect) => rect.top),
+      );
+      const right = Math.max.apply(
+        null,
+        shapes.map((rect) => rect.right),
+      );
+      const bottom = Math.max.apply(
+        null,
+        shapes.map((rect) => rect.bottom),
+      );
+
+      width = right - x;
+      height = bottom - y;
+      rotation = 0;
+    }
+
+    this.style.top = `${toDOMPrecision(y)}px`;
+    this.style.left = `${toDOMPrecision(x)}px`;
+    this.style.width = `${toDOMPrecision(width)}px`;
+    this.style.height = `${toDOMPrecision(height)}px`;
+    this.style.rotate = `${toDOMPrecision(rotation)}rad`;
   }
 }

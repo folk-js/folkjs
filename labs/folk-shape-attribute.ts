@@ -38,11 +38,11 @@ export class FolkShapeAttribute extends CustomAttribute {
 
       &:focus,
       &:focus-visible {
-        outline-width: 1px;
+        outline-width: 1.5px;
       }
 
       &:hover {
-        outline-width: 2px;
+        outline-width: 2.25px;
       }
 
       & > * {
@@ -179,6 +179,10 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.center;
   }
 
+  get #shapeOverlay() {
+    return (this.constructor as typeof FolkShapeAttribute).#overlay;
+  }
+
   toLocalSpace(point: Point): Point {
     return this.#rect.toLocalSpace(point);
   }
@@ -215,8 +219,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     el.addEventListener('blur', this);
   }
 
-  changedCallback(oldValue: string, newValue: string): void {
-    console.log(newValue);
+  changedCallback(_oldValue: string, newValue: string): void {
     for (const property of newValue.split(';')) {
       const [name, value] = property.split(':').map((str) => str.trim());
       const parsedValue = Number(value);
@@ -225,7 +228,6 @@ export class FolkShapeAttribute extends CustomAttribute {
         !Number.isNaN(parsedValue) &&
         (name === 'x' || name === 'y' || name === 'width' || name === 'height' || name === 'rotation')
       ) {
-        console.log(name, parsedValue);
         this[name] = parsedValue;
       }
     }
@@ -238,10 +240,11 @@ export class FolkShapeAttribute extends CustomAttribute {
   }
 
   handleEvent(event: Event) {
-    if (event instanceof FocusEvent && event.type === 'focusin') {
-      if (!this.ownerElement.contains(event.relatedTarget as Node | null)) {
-        (this.constructor as typeof FolkShapeAttribute).#overlay.showPopover();
-      }
+    if (event.type === 'focus') {
+      this.#shapeOverlay.addShape(this);
+      this.#shapeOverlay.open();
+    } else if (event.type === 'blur') {
+      this.#shapeOverlay.close();
     }
   }
 
