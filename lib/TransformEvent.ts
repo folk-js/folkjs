@@ -57,11 +57,11 @@ export class TransformEvent extends Event {
     this.#widthPrevented = true;
   }
 
-  #rotatePrevented = false;
-  get rotatePrevented() {
-    return this.defaultPrevented || this.#rotatePrevented;
+  #rotationPrevented = false;
+  get rotationPrevented() {
+    return this.defaultPrevented || this.#rotationPrevented;
   }
   preventRotate() {
-    this.#rotatePrevented = true;
+    this.#rotationPrevented = true;
   }
 }

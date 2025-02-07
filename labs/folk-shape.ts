@@ -517,7 +517,7 @@ export class FolkShape extends FolkElement {
     if (event.heightPrevented) {
       this.#rect.height = this.#previousRect.height;
     }
-    if (event.rotatePrevented) {
+    if (event.rotationPrevented) {
       this.#rect.rotation = this.#previousRect.rotation;
     }
 
@@ -553,7 +553,8 @@ export class FolkShape extends FolkElement {
       this.#rect.width = entry.contentRect.width;
     }
 
-    this.#dispatchTransformEvent();
+    // Using requestAnimationFrame prevents warnings of "Uncaught ResizeObserver loop completed with undelivered notifications."
+    requestAnimationFrame(() => this.#dispatchTransformEvent());
   };
 
   #updateCursors() {

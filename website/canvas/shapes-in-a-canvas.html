@@ -20,6 +20,21 @@
 
       folk-shape {
         background: rgb(187, 178, 178);
+
+        &:state(resize-top-left)::part(resize-top-right),
+        &:state(resize-top-left)::part(resize-bottom-right),
+        &:state(resize-top-left)::part(resize-bottom-left),
+        &:state(resize-top-right)::part(resize-top-left),
+        &:state(resize-top-right)::part(resize-bottom-right),
+        &:state(resize-top-right)::part(resize-bottom-left),
+        &:state(resize-bottom-right)::part(resize-top-left),
+        &:state(resize-bottom-right)::part(resize-top-right),
+        &:state(resize-bottom-right)::part(resize-bottom-left),
+        &:state(resize-bottom-left)::part(resize-top-left),
+        &:state(resize-bottom-left)::part(resize-top-right),
+        &:state(resize-bottom-left)::part(resize-bottom-right) {
+          opacity: 0.75;
+        }
       }
     </style>
   </head>

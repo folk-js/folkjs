@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shape Attribute</title>
+    <style>
+      [folk-shape] {
+        background: rgb(187, 178, 178);
+      }
+    </style>
+  </head>
+  <body>
+    <div folk-shape="x: 100; y: 100; width: 50; height: 50;"></div>
+    <div folk-shape="x: 200; y: 200; width: 50; height: 50;"></div>
+    <div folk-shape="x: 100; y: 300; width: 50; height: 50; rotation: 45;"></div>
+
+    <script type="module">
+      import { FolkShapeAttribute } from '@labs/folk-shape-attribute.ts';
+
+      FolkShapeAttribute.define();
+    </script>
+  </body>
+</html>
