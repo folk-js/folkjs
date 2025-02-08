@@ -293,8 +293,7 @@ export class FolkShapeAttribute extends CustomAttribute {
   handleEvent(event: Event) {
     // If someone is tabbing backwards and hits an element with a shadow DOM, we cant tell the difference between is that element is focused of if something in it is.
     if (event.type === 'focus') {
-      this.#shapeOverlay.addShape(this);
-      this.#shapeOverlay.open();
+      this.#shapeOverlay.open(this);
     } else if (event.type === 'blur') {
       if (this.#shapeOverlay.isOpen) {
         this.#shapeOverlay.close();

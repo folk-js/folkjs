@@ -100,7 +100,8 @@ export class FolkShapeOverlay extends FolkElement {
     return this.#isOpen;
   }
 
-  #shape: FolkShapeAttribute | #canReceivePreviousFocus = false;
+  #shape: FolkShapeAttribute | null = null;
+  #canReceivePreviousFocus = false;
 
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot() as ShadowRoot;
@@ -137,8 +138,7 @@ export class FolkShapeOverlay extends FolkElement {
         const shape = (event.target as Element).getShape();
 
         if (shape) {
-          this.addShape(shape);
-          this.open();
+          this.open(shape);
         }
       }
 
@@ -167,19 +167,12 @@ export class FolkShapeOverlay extends FolkElement {
       }
       return;
     }
-    console.log(event);
+
     event.preventDefault();
   }
 
-  addShape(shape: FolkShapeAttribute) {
-    this.#shapes.add(shape);
-  }
-
-  removeShape(shape: FolkShapeAttribute) {
-    this.#shapes.delete(shape);
-  }
-
-  open() {
+  open(shape: FolkShapeAttribute) {
+    this.#shape = shape;
     this.#update();
     this.showPopover();
     document.addEventListener('keydown', this, { capture: true });
@@ -187,32 +180,23 @@ export class FolkShapeOverlay extends FolkElement {
   }
 
   close() {
-    this.#shapes.clear();
+    this.#shape = null;
     this.hidePopover();
     document.removeEventListener('keydown', this, { capture: true });
     this.#isOpen = false;
   }
 
   #update() {
-    if (this.#shapes.size === 0) return;
-
-    let x, y, width, height, rotation;
-
-    if (this.#shapes.size === 1) {
-      const shape = this.#shapes.keys().next().value!;
-
-      x = shape.x;
-      y = shape.y;
-      width = shape.width;
-      height = shape.height;
-      rotation = shape.rotation;
-    }
+    if (this.#shape === null) return;
 
     // TODO: use css anchoring in the future when it's supported.
-    this.style.top = `${toDOMPrecision(y)}px`;
-    this.style.left = `${toDOMPrecision(x)}px`;
-    this.style.width = `${toDOMPrecision(width)}px`;
-    this.style.height = `${toDOMPrecision(height)}px`;
-    this.style.rotate = `${toDOMPrecision(rotation)}rad`;
+    this.style.top = `${toDOMPrecision(this.#shape.y)}px`;
+    this.style.left = `${toDOMPrecision(this.#shape.x)}px`;
+    this.style.width = `${toDOMPrecision(this.#shape.width)}px`;
+    this.style.height = `${toDOMPrecision(this.#shape.height)}px`;
+    this.style.rotate = `${toDOMPrecision(this.#shape.rotation)}rad`;
   }
 }
+
+// https://github.com/ai/keyux
+// https://github.com/nolanlawson/arrow-key-navigation
