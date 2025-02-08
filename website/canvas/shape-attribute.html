@@ -5,15 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Shape Attribute</title>
     <style>
-      [folk-shape] {
+      div[folk-shape] {
         background: rgb(187, 178, 178);
       }
     </style>
   </head>
   <body>
     <div folk-shape="x: 100; y: 100; width: 50; height: 50;"></div>
-    <div folk-shape="x: 200; y: 200; width: 50; height: 50;"></div>
-    <div folk-shape="x: 100; y: 300; width: 50; height: 50; rotation: 45;"></div>
+    <div folk-shape="x: 150; y: 200; width: 50; height: 50; rotation: 45;"></div>
+    <div folk-shape="x: 250; y: 100;">
+      <h1>Heading</h1>
+      <h2>Subheading</h2>
+      <input value="Text input" />
+    </div>
+    <input folk-shape="x: 100; y: 300;" value="Hello World" />
+    <audio src="/Feather.mov" controls folk-shape="x: 100; y: 350;"></audio>
 
     <script type="module">
       import { FolkShapeAttribute } from '@labs/folk-shape-attribute.ts';

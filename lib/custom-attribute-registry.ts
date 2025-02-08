@@ -6,6 +6,7 @@ export class CustomAttribute {
 
     customAttributes.define(this.attributeName, this);
   }
+
   readonly #ownerElement;
   get ownerElement() {
     return this.#ownerElement;
@@ -23,6 +24,7 @@ export class CustomAttribute {
 
   set value(value) {
     this.#value = value;
+    this.ownerElement.setAttribute(this.#name, value);
   }
 
   constructor(ownerElement: Element, name: string, value: string) {

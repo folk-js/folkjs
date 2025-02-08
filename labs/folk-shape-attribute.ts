@@ -1,6 +1,27 @@
-import { CustomAttribute, DOMRectTransform, Matrix, Point, toDOMPrecision, TransformEvent } from '@lib';
+import {
+  CustomAttribute,
+  customAttributes,
+  DOMRectTransform,
+  Matrix,
+  Point,
+  ResizeManager,
+  toDOMPrecision,
+  TransformEvent,
+} from '@lib';
 import { css } from '@lib/tags';
 import { FolkShapeOverlay } from './folk-shape-overlay';
+
+declare global {
+  interface Element {
+    getShape(): FolkShapeAttribute | undefined;
+  }
+}
+
+Element.prototype.getShape = function getShape() {
+  return customAttributes.get(this, 'folk-shape') as FolkShapeAttribute | undefined;
+};
+
+const resizeManager = new ResizeManager();
 
 export class FolkShapeAttribute extends CustomAttribute {
   static attributeName = 'folk-shape';
@@ -16,38 +37,12 @@ export class FolkShapeAttribute extends CustomAttribute {
     [folk-shape] {
       box-sizing: border-box;
       cursor: move;
-      display: block;
       position: absolute;
       top: 0;
       left: 0;
-      outline: solid 0 hsl(214, 84%, 56%);
+      margin: 0;
       overflow: scroll;
       transform-origin: center center;
-      transition: outline-width 75ms ease-out;
-
-      --folk-x: 0;
-      --folk-y: 0;
-      --folk-rotation: 0;
-      --folk-width: 0;
-      --folk-height: 0;
-
-      width: calc(var(--folk-width) * 1px);
-      height: calc(var(--folk-height) * 1px);
-      translate: calc(var(--folk-x) * 1px) calc(var(--folk-y) * 1px);
-      rotate: calc(var(--folk-rotation) * 1rad);
-
-      &:focus,
-      &:focus-visible {
-        outline-width: 1.5px;
-      }
-
-      &:hover {
-        outline-width: 2.25px;
-      }
-
-      & > * {
-        cursor: default;
-      }
     }
   `;
 
@@ -57,6 +52,8 @@ export class FolkShapeAttribute extends CustomAttribute {
     document.documentElement.appendChild(this.#overlay);
   }
 
+  #autoHeight = false;
+  #autoWidth = false;
   #previousRect = new DOMRectTransform();
   #rect = new DOMRectTransform();
 
@@ -82,18 +79,54 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.width;
   }
   set width(value: number) {
+    if (this.#autoWidth) {
+      this.autoWidth = false;
+    }
     this.#previousRect.width = this.#rect.width;
     this.#rect.width = value;
     this.#requestUpdate();
+  }
+
+  get autoWidth(): boolean {
+    return this.#autoWidth;
+  }
+  set autoWidth(value: boolean) {
+    if (value === this.#autoWidth) return;
+
+    this.#autoWidth = value;
+
+    if (this.#autoWidth && !this.#autoHeight) {
+      resizeManager.observe(this.ownerElement, this.#onResize);
+    } else if (!this.#autoWidth && !this.#autoHeight) {
+      resizeManager.unobserve(this.ownerElement, this.#onResize);
+    }
   }
 
   get height(): number {
     return this.#rect.height;
   }
   set height(value: number) {
+    if (this.#autoHeight) {
+      this.autoHeight = false;
+    }
     this.#previousRect.height = this.#rect.height;
     this.#rect.height = value;
     this.#requestUpdate();
+  }
+
+  get autoHeight(): boolean {
+    return this.#autoHeight;
+  }
+  set autoHeight(value: boolean) {
+    if (value === this.#autoHeight) return;
+
+    this.#autoHeight = value;
+
+    if (this.#autoHeight && !this.#autoWidth) {
+      resizeManager.observe(this.ownerElement, this.#onResize);
+    } else if (!this.#autoHeight && !this.#autoWidth) {
+      resizeManager.unobserve(this.ownerElement, this.#onResize);
+    }
   }
 
   get rotation(): number {
@@ -179,9 +212,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.center;
   }
 
-  get #shapeOverlay() {
-    return (this.constructor as typeof FolkShapeAttribute).#overlay;
-  }
+  #shapeOverlay = (this.constructor as typeof FolkShapeAttribute).#overlay;
 
   toLocalSpace(point: Point): Point {
     return this.#rect.toLocalSpace(point);
@@ -220,6 +251,8 @@ export class FolkShapeAttribute extends CustomAttribute {
   }
 
   changedCallback(_oldValue: string, newValue: string): void {
+    let autoHeight = true;
+    let autoWidth = true;
     for (const property of newValue.split(';')) {
       const [name, value] = property.split(':').map((str) => str.trim());
       const parsedValue = Number(value);
@@ -228,23 +261,44 @@ export class FolkShapeAttribute extends CustomAttribute {
         !Number.isNaN(parsedValue) &&
         (name === 'x' || name === 'y' || name === 'width' || name === 'height' || name === 'rotation')
       ) {
+        if (name === 'height') {
+          autoHeight = false;
+        } else if (name === 'width') {
+          autoWidth = false;
+        }
         this[name] = parsedValue;
       }
     }
+
+    this.autoHeight = autoHeight;
+    this.autoWidth = autoWidth;
   }
 
   disconnectedCallback(): void {
     const el = this.ownerElement as HTMLElement;
+
     el.removeEventListener('focus', this);
     el.removeEventListener('blur', this);
+
+    el.style.setProperty('translate', '');
+    el.style.setProperty('height', '');
+    el.style.setProperty('width', '');
+    el.style.setProperty('rotate', '');
+
+    if (this.#autoHeight || this.#autoWidth) {
+      resizeManager.unobserve(el, this.#onResize);
+    }
   }
 
   handleEvent(event: Event) {
+    // If someone is tabbing backwards and hits an element with a shadow DOM, we cant tell the difference between is that element is focused of if something in it is.
     if (event.type === 'focus') {
       this.#shapeOverlay.addShape(this);
       this.#shapeOverlay.open();
     } else if (event.type === 'blur') {
-      this.#shapeOverlay.close();
+      if (this.#shapeOverlay.isOpen) {
+        this.#shapeOverlay.close();
+      }
     }
   }
 
@@ -282,37 +336,27 @@ export class FolkShapeAttribute extends CustomAttribute {
       this.#rect.rotation = this.#previousRect.rotation;
     }
 
-    // if (this.#attrHeight === 'auto') {
-    //   this.#internals.states.add('auto-height');
-    // } else {
-    //   this.#internals.states.delete('auto-height');
-    // }
-
-    // if (this.#attrWidth === 'auto') {
-    //   this.#internals.states.add('auto-width');
-    // } else {
-    //   this.#internals.states.delete('auto-width');
-    // }
-
-    el.style.setProperty('--folk-x', toDOMPrecision(this.#rect.x).toString());
-    el.style.setProperty('--folk-y', toDOMPrecision(this.#rect.y).toString());
-    el.style.setProperty('--folk-width', toDOMPrecision(this.#rect.width).toString());
-    el.style.setProperty('--folk-height', toDOMPrecision(this.#rect.height).toString());
-    el.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation).toString());
+    el.style.setProperty('translate', toDOMPrecision(this.#rect.x) + 'px ' + toDOMPrecision(this.#rect.y) + 'px');
+    el.style.setProperty('height', this.#autoHeight ? '' : toDOMPrecision(this.#rect.height) + 'px');
+    el.style.setProperty('width', this.#autoWidth ? '' : toDOMPrecision(this.#rect.width) + 'px');
+    el.style.setProperty('rotate', this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad');
   }
 
-  // #onAutoResize = (entry: ResizeObserverEntry) => {
-  //   if (this.#attrHeight === 'auto') {
-  //     this.#previousRect.height = this.#rect.height;
-  //     this.#rect.height = entry.contentRect.height;
-  //   }
+  #onResize = (entry: ResizeObserverEntry) => {
+    const rect = entry.borderBoxSize[0];
 
-  //   if (this.#attrWidth === 'auto') {
-  //     this.#previousRect.width = this.#rect.width;
-  //     this.#rect.width = entry.contentRect.width;
-  //   }
+    if (rect === undefined) return;
 
-  //   // Using requestAnimationFrame prevents warnings of "Uncaught ResizeObserver loop completed with undelivered notifications."
-  //   requestAnimationFrame(() => this.#update());
-  // };
+    if (this.#autoHeight) {
+      this.#previousRect.height = this.#rect.height;
+      this.#rect.height = rect.blockSize;
+    }
+
+    if (this.#autoWidth) {
+      this.#previousRect.width = this.#rect.width;
+      this.#rect.width = rect.inlineSize;
+    }
+
+    this.#update();
+  };
 }
