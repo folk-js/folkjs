@@ -37,9 +37,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     [folk-shape] {
       box-sizing: border-box;
       cursor: move;
-      position: absolute;
-      top: 0;
-      left: 0;
+      inset: 0 auto auto 0;
       margin: 0;
       overflow: scroll;
       transform-origin: center center;
@@ -52,6 +50,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     document.documentElement.appendChild(this.#overlay);
   }
 
+  #autoPosition = false;
   #autoHeight = false;
   #autoWidth = false;
   #previousRect = new DOMRectTransform();
@@ -61,6 +60,9 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.x;
   }
   set x(value: number) {
+    if (this.#autoPosition) {
+      this.autoPosition = false;
+    }
     this.#previousRect.x = this.#rect.x;
     this.#rect.x = value;
     this.#requestUpdate();
@@ -70,8 +72,30 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.y;
   }
   set y(value: number) {
+    if (this.#autoPosition) {
+      this.autoPosition = false;
+    }
     this.#previousRect.y = this.#rect.y;
     this.#rect.y = value;
+    this.#requestUpdate();
+  }
+
+  get autoPosition(): boolean {
+    return this.autoPosition;
+  }
+  set autoPosition(value: boolean) {
+    if (value === this.#autoPosition) return;
+
+    this.#autoPosition = value;
+
+    if (this.#autoPosition) {
+      // TODO: we need to observe changes to this position.
+      const rect = this.ownerElement.getBoundingClientRect();
+
+      this.#rect.x = rect.x;
+      this.#rect.y = rect.y;
+    }
+
     this.#requestUpdate();
   }
 
@@ -250,7 +274,15 @@ export class FolkShapeAttribute extends CustomAttribute {
     el.addEventListener('blur', this);
   }
 
+  #ignoreAttributeChange = false;
+
   changedCallback(_oldValue: string, newValue: string): void {
+    if (this.#ignoreAttributeChange) {
+      this.#ignoreAttributeChange = false;
+    }
+
+    let autoX = true;
+    let autoY = true;
     let autoHeight = true;
     let autoWidth = true;
     for (const property of newValue.split(';')) {
@@ -265,11 +297,24 @@ export class FolkShapeAttribute extends CustomAttribute {
           autoHeight = false;
         } else if (name === 'width') {
           autoWidth = false;
+        } else if (name === 'x') {
+          autoX = false;
+        } else if (name === 'y') {
+          autoY = false;
         }
         this[name] = parsedValue;
       }
     }
 
+    if (autoX && !autoY) {
+      this.x = 0;
+    }
+
+    if (autoY && !autoX) {
+      this.y = 0;
+    }
+
+    this.autoPosition = autoX || autoY;
     this.autoHeight = autoHeight;
     this.autoWidth = autoWidth;
   }
@@ -335,10 +380,23 @@ export class FolkShapeAttribute extends CustomAttribute {
       this.#rect.rotation = this.#previousRect.rotation;
     }
 
-    el.style.setProperty('translate', toDOMPrecision(this.#rect.x) + 'px ' + toDOMPrecision(this.#rect.y) + 'px');
+    el.style.setProperty('position', this.#autoPosition ? '' : 'absolute');
+    el.style.setProperty(
+      'translate',
+      this.#autoPosition ? '' : toDOMPrecision(this.#rect.x) + 'px ' + toDOMPrecision(this.#rect.y) + 'px',
+    );
     el.style.setProperty('height', this.#autoHeight ? '' : toDOMPrecision(this.#rect.height) + 'px');
     el.style.setProperty('width', this.#autoWidth ? '' : toDOMPrecision(this.#rect.width) + 'px');
     el.style.setProperty('rotate', this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad');
+
+    this.value = (
+      (this.#autoPosition ? '' : `x: ${this.#rect.x}; y: ${this.#rect.y}; `) +
+      (this.#autoWidth ? '' : `width: ${this.#rect.y}; `) +
+      (this.#autoHeight ? '' : `height: ${this.#rect.y}; `) +
+      (this.#rect.rotation === 0 ? '' : `rotation: ${this.#rect.x};`)
+    ).trim();
+    // We don't need this reflection to cause another update.
+    this.#ignoreAttributeChange = true;
   }
 
   #onResize = (entry: ResizeObserverEntry) => {
