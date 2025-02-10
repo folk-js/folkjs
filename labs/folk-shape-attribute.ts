@@ -42,7 +42,10 @@ export class FolkShapeAttribute extends CustomAttribute {
       inset: 0 auto auto 0;
       margin: 0;
       overflow: scroll;
+      /* safari has a weird rendering bug without this */
+      transform: translateZ(1px);
       transform-origin: center center;
+      contain: content;
     }
   `;
 
