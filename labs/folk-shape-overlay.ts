@@ -76,6 +76,7 @@ export class FolkShapeOverlay extends FolkElement {
       aspect-ratio: 1;
       position: absolute;
       padding: 0;
+      pointer-events: all;
     }
 
     [part^='resize'] {
@@ -237,6 +238,10 @@ export class FolkShapeOverlay extends FolkElement {
           this.#startAngle = Vector.angleFromOrigin(mousePos, parentRotateOrigin) - this.#shape.rotation;
         }
 
+        // Safari has a rendering bug unless we create a new stacking context
+        // only apply it while the shape is being moved
+        (this.#shape.ownerElement as HTMLElement).style.transform = 'translateZ(0)';
+
         // Setup pointer capture
         target.addEventListener('pointermove', this);
         target.addEventListener('lostpointercapture', this);
@@ -247,6 +252,7 @@ export class FolkShapeOverlay extends FolkElement {
       }
 
       if (event.type === 'lostpointercapture') {
+        (this.#shape.ownerElement as HTMLElement).style.transform = '';
         this.#internals.states.delete(handle || 'move');
         target.removeEventListener('pointermove', this);
         target.removeEventListener('lostpointercapture', this);
@@ -410,7 +416,8 @@ export class FolkShapeOverlay extends FolkElement {
     if (this.#shape === null) return;
 
     // TODO: use css anchoring in the future when it's supported.
-    this.style.translate = `${toDOMPrecision(this.#shape.x)}px ${toDOMPrecision(this.#shape.y)}px`;
+    this.style.top = `${toDOMPrecision(this.#shape.y)}px`;
+    this.style.left = `${toDOMPrecision(this.#shape.x)}px`;
     this.style.width = `${toDOMPrecision(this.#shape.width)}px`;
     this.style.height = `${toDOMPrecision(this.#shape.height)}px`;
     this.style.rotate = `${toDOMPrecision(this.#shape.rotation)}rad`;

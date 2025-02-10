@@ -25,6 +25,7 @@ Object.defineProperty(Element.prototype, 'shape', {
 
 const resizeManager = new ResizeManager();
 
+// TODO: if an auto position/size is defined as a style then we should probably save it and set it back
 export class FolkShapeAttribute extends CustomAttribute {
   static attributeName = 'folk-shape';
 
@@ -42,8 +43,6 @@ export class FolkShapeAttribute extends CustomAttribute {
       inset: 0 auto auto 0;
       margin: 0;
       overflow: scroll;
-      /* safari has a weird rendering bug without this */
-      transform: translateZ(1px);
       transform-origin: center center;
       contain: content;
     }
@@ -360,11 +359,7 @@ export class FolkShapeAttribute extends CustomAttribute {
       resizeManager.unobserve(el, this.#onResize);
     }
 
-    el.style.position = '';
-    el.style.translate = '';
-    el.style.height = '';
-    el.style.width = '';
-    el.style.rotate = '';
+    el.style.position = el.style.top = el.style.height = el.style.width = el.style.rotate = '';
   }
 
   handleEvent(event: Event) {
@@ -421,9 +416,8 @@ export class FolkShapeAttribute extends CustomAttribute {
     }
 
     el.style.position = this.#autoPosition ? '' : 'absolute';
-    el.style.translate = this.#autoPosition
-      ? ''
-      : toDOMPrecision(this.#rect.x) + 'px ' + toDOMPrecision(this.#rect.y) + 'px';
+    el.style.top = this.#autoPosition ? '' : toDOMPrecision(this.#rect.y) + 'px';
+    el.style.left = this.#autoPosition ? '' : toDOMPrecision(this.#rect.x) + 'px';
     el.style.height = this.#autoHeight ? '' : toDOMPrecision(this.#rect.height) + 'px';
     el.style.width = this.#autoWidth ? '' : toDOMPrecision(this.#rect.width) + 'px';
     el.style.rotate = this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad';
