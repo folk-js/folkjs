@@ -17,9 +17,11 @@ declare global {
   }
 }
 
-Element.prototype.getShape = function getShape() {
-  return customAttributes.get(this, 'folk-shape') as FolkShapeAttribute | undefined;
-};
+Object.defineProperty(Element.prototype, 'shape', {
+  get() {
+    return customAttributes.get(this, 'folk-shape') as FolkShapeAttribute | undefined;
+  },
+});
 
 const resizeManager = new ResizeManager();
 
@@ -60,9 +62,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.x;
   }
   set x(value: number) {
-    if (this.#autoPosition) {
-      this.autoPosition = false;
-    }
+    this.autoPosition = false;
     this.#previousRect.x = this.#rect.x;
     this.#rect.x = value;
     this.#requestUpdate();
@@ -72,9 +72,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.y;
   }
   set y(value: number) {
-    if (this.#autoPosition) {
-      this.autoPosition = false;
-    }
+    this.autoPosition = false;
     this.#previousRect.y = this.#rect.y;
     this.#rect.y = value;
     this.#requestUpdate();
@@ -89,23 +87,26 @@ export class FolkShapeAttribute extends CustomAttribute {
     this.#autoPosition = value;
 
     if (this.#autoPosition) {
-      // TODO: we need to observe changes to this position.
-      const rect = this.ownerElement.getBoundingClientRect();
-
+      const el = this.ownerElement as HTMLElement;
+      el.style.translate = '';
+      el.style.position = '';
+      // need to undo any rotation to get the correct x/y coordinates, is there a better way to do this?
+      el.style.rotate = '';
+      this.#previousRect.x = this.#rect.x;
+      this.#previousRect.y = this.#rect.y;
+      const rect = el.getBoundingClientRect();
       this.#rect.x = rect.x;
       this.#rect.y = rect.y;
+      el.style.rotate = this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad';
+      this.#requestUpdate();
     }
-
-    this.#requestUpdate();
   }
 
   get width(): number {
     return this.#rect.width;
   }
   set width(value: number) {
-    if (this.#autoWidth) {
-      this.autoWidth = false;
-    }
+    this.autoWidth = false;
     this.#previousRect.width = this.#rect.width;
     this.#rect.width = value;
     this.#requestUpdate();
@@ -124,15 +125,21 @@ export class FolkShapeAttribute extends CustomAttribute {
     } else if (!this.#autoWidth && !this.#autoHeight) {
       resizeManager.unobserve(this.ownerElement, this.#onResize);
     }
+
+    if (this.#autoWidth) {
+      const el = this.ownerElement as HTMLElement;
+      el.style.width = '';
+      this.#previousRect.width = this.#rect.width;
+      this.#rect.width = el.getBoundingClientRect().width;
+      this.#requestUpdate();
+    }
   }
 
   get height(): number {
     return this.#rect.height;
   }
   set height(value: number) {
-    if (this.#autoHeight) {
-      this.autoHeight = false;
-    }
+    this.autoHeight = false;
     this.#previousRect.height = this.#rect.height;
     this.#rect.height = value;
     this.#requestUpdate();
@@ -150,6 +157,14 @@ export class FolkShapeAttribute extends CustomAttribute {
       resizeManager.observe(this.ownerElement, this.#onResize);
     } else if (!this.#autoHeight && !this.#autoWidth) {
       resizeManager.unobserve(this.ownerElement, this.#onResize);
+    }
+
+    if (this.#autoHeight) {
+      const el = this.ownerElement as HTMLElement;
+      el.style.height = '';
+      this.#previousRect.height = this.#rect.height;
+      this.#rect.height = el.getBoundingClientRect().height;
+      this.#requestUpdate();
     }
   }
 
@@ -208,28 +223,47 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.topLeft;
   }
   set topLeft(point: Point) {
-    throw new Error('Method not implemented.');
+    this.autoWidth = false;
+    this.autoHeight = false;
+    this.#autoPosition = false;
+    this.#previousRect.topLeft = this.#rect.topLeft;
+    this.#rect.topLeft = point;
+    this.#requestUpdate();
   }
 
   get topRight(): Point {
     return this.#rect.topRight;
   }
   set topRight(point: Point) {
-    throw new Error('Method not implemented.');
+    this.autoWidth = false;
+    this.autoHeight = false;
+    this.#autoPosition = false;
+    this.#previousRect.topRight = this.#rect.topRight;
+    this.#rect.topRight = point;
+    this.#requestUpdate();
   }
 
   get bottomRight(): Point {
     return this.#rect.bottomRight;
   }
   set bottomRight(point: Point) {
-    throw new Error('Method not implemented.');
+    this.autoWidth = false;
+    this.autoHeight = false;
+    this.#previousRect.bottomRight = this.#rect.bottomRight;
+    this.#rect.bottomRight = point;
+    this.#requestUpdate();
   }
 
   get bottomLeft(): Point {
     return this.#rect.bottomLeft;
   }
   set bottomLeft(point: Point) {
-    throw new Error('Method not implemented.');
+    this.autoWidth = false;
+    this.autoHeight = false;
+    this.#autoPosition = false;
+    this.#previousRect.bottomLeft = this.#rect.bottomLeft;
+    this.#rect.bottomLeft = point;
+    this.#requestUpdate();
   }
 
   get center(): Point {
@@ -258,7 +292,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.toJSON();
   }
 
-  getBounds(): DOMRectInit {
+  getBounds(): Required<DOMRectInit> {
     return this.#rect.getBounds();
   }
 
@@ -271,16 +305,10 @@ export class FolkShapeAttribute extends CustomAttribute {
     }
 
     el.addEventListener('focus', this);
-    el.addEventListener('blur', this);
+    // el.addEventListener('blur', this);
   }
 
-  #ignoreAttributeChange = false;
-
   changedCallback(_oldValue: string, newValue: string): void {
-    if (this.#ignoreAttributeChange) {
-      this.#ignoreAttributeChange = false;
-    }
-
     let autoX = true;
     let autoY = true;
     let autoHeight = true;
@@ -323,21 +351,30 @@ export class FolkShapeAttribute extends CustomAttribute {
     const el = this.ownerElement as HTMLElement;
 
     el.removeEventListener('focus', this);
-    el.removeEventListener('blur', this);
-
-    el.style.setProperty('translate', '');
-    el.style.setProperty('height', '');
-    el.style.setProperty('width', '');
-    el.style.setProperty('rotate', '');
+    // el.removeEventListener('blur', this);
 
     if (this.#autoHeight || this.#autoWidth) {
       resizeManager.unobserve(el, this.#onResize);
     }
+
+    el.style.position = '';
+    el.style.translate = '';
+    el.style.height = '';
+    el.style.width = '';
+    el.style.rotate = '';
   }
 
   handleEvent(event: Event) {
     // If someone is tabbing backwards and hits an element with a shadow DOM, we cant tell the difference between is that element is focused of if something in it is.
     if (event.type === 'focus') {
+      // this is a hack until we observe the position changing
+      const el = this.ownerElement as HTMLElement;
+      el.style.rotate = '';
+      const rect = el.getBoundingClientRect();
+      this.#rect.x = rect.x;
+      this.#rect.y = rect.y;
+      el.style.rotate = this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad';
+
       this.#shapeOverlay.open(this);
     } else if (event.type === 'blur') {
       if (this.#shapeOverlay.isOpen) {
@@ -380,23 +417,20 @@ export class FolkShapeAttribute extends CustomAttribute {
       this.#rect.rotation = this.#previousRect.rotation;
     }
 
-    el.style.setProperty('position', this.#autoPosition ? '' : 'absolute');
-    el.style.setProperty(
-      'translate',
-      this.#autoPosition ? '' : toDOMPrecision(this.#rect.x) + 'px ' + toDOMPrecision(this.#rect.y) + 'px',
-    );
-    el.style.setProperty('height', this.#autoHeight ? '' : toDOMPrecision(this.#rect.height) + 'px');
-    el.style.setProperty('width', this.#autoWidth ? '' : toDOMPrecision(this.#rect.width) + 'px');
-    el.style.setProperty('rotate', this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad');
+    el.style.position = this.#autoPosition ? '' : 'absolute';
+    el.style.translate = this.#autoPosition
+      ? ''
+      : toDOMPrecision(this.#rect.x) + 'px ' + toDOMPrecision(this.#rect.y) + 'px';
+    el.style.height = this.#autoHeight ? '' : toDOMPrecision(this.#rect.height) + 'px';
+    el.style.width = this.#autoWidth ? '' : toDOMPrecision(this.#rect.width) + 'px';
+    el.style.rotate = this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad';
 
     this.value = (
-      (this.#autoPosition ? '' : `x: ${this.#rect.x}; y: ${this.#rect.y}; `) +
-      (this.#autoWidth ? '' : `width: ${this.#rect.y}; `) +
-      (this.#autoHeight ? '' : `height: ${this.#rect.y}; `) +
-      (this.#rect.rotation === 0 ? '' : `rotation: ${this.#rect.x};`)
+      (this.#autoPosition ? '' : `x: ${toDOMPrecision(this.#rect.x)}; y: ${toDOMPrecision(this.#rect.y)}; `) +
+      (this.#autoWidth ? '' : `width: ${toDOMPrecision(this.#rect.width)}; `) +
+      (this.#autoHeight ? '' : `height: ${toDOMPrecision(this.#rect.height)}; `) +
+      (this.#rect.rotation === 0 ? '' : `rotation: ${toDOMPrecision(this.#rect.rotation)};`)
     ).trim();
-    // We don't need this reflection to cause another update.
-    this.#ignoreAttributeChange = true;
   }
 
   #onResize = (entry: ResizeObserverEntry) => {
@@ -414,6 +448,7 @@ export class FolkShapeAttribute extends CustomAttribute {
       this.#rect.width = rect.inlineSize;
     }
 
-    this.#update();
+    // any DOM updates should happen in the next frame
+    requestAnimationFrame(() => this.#update());
   };
 }

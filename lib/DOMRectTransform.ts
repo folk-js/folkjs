@@ -436,7 +436,7 @@ export class DOMRectTransform implements DOMRect {
    * Computes the **axis-aligned bounding box** of the transformed rectangle in **parent space**.
    * @returns An object representing the bounding rectangle with properties: `x`, `y`, `width`, `height`.
    */
-  getBounds(): DOMRectInit {
+  getBounds(): Required<DOMRectInit> {
     // Transform all vertices to parent space
     const transformedVertices = this.vertices().map((v) => this.toParentSpace(v));
 
