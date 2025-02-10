@@ -42,8 +42,6 @@ class Rect {
   }
 }
 
-function minBy() {}
-
 // Ported from https://gist.github.com/juancampa/330949688776a46ae03302a134609c79
 export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compactionSteps: number): void {
   if (rects.length === 0) return;
@@ -58,7 +56,7 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
 
         const overlap = Rect.intersect(r1, r2);
 
-        if (overlap.isPositive()) {
+        if (overlap.width > 0 && overlap.height > 0) {
           const expandedOverlap = Rect.expand(overlap, 10);
 
           const accumulated = forces.get(r1) || Vector.zero();
@@ -84,7 +82,7 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
   const center = Vector.center(rects.map((r) => r.center));
 
   // Find block closest to center and keep it fixed
-  const centerBlock = rects.minBy((r) => Vector.distanceSquared(center, r.center))!;
+  const centerBlock = minBy(center, rects);
 
   const centerPosition = centerBlock.center;
 
@@ -93,8 +91,8 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
     for (const r1 of rects) {
       if (r1 === centerBlock) continue;
 
-      const toCenter = centerPosition.subtract(r1.center);
-      const step = toCenter.normalize().multiply(Math.min(r1.width, r1.height, toCenter.length()) * 0.1);
+      const toCenter = Vector.sub(centerPosition, r1.center);
+      const step = Vector.scale(Vector.normalized(toCenter), Math.min(r1.width, r1.height, Vector.mag(toCenter)) * 0.1);
       Rect.translate(r1, step);
 
       // Solve collisions
@@ -103,7 +101,7 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
 
         const overlap = Rect.intersect(r1, r2);
 
-        if (overlap.isPositive()) {
+        if (overlap.width > 0 && overlap.height > 0) {
           if (overlap.width >= overlap.height) {
             Rect.translate(r1, { x: 0, y: -Math.sign(step.y) * overlap.height });
           } else {
@@ -121,4 +119,18 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
   //   const layer = new Area(blockAreaId(this.id, b)).layer();
   //   AreaTransition.trigger(ui.ctx(), layer, original.get(b)!.min);
   // }
+}
+
+function minBy(center: Point, [closest, ...rects]: DOMRectTransform[]): DOMRectTransform {
+  let distance = Vector.distanceSquared(center, closest.center);
+
+  for (const rect of rects) {
+    const d = Vector.distanceSquared(center, rect.center);
+    if (d < distance) {
+      distance = d;
+      closest = rect;
+    }
+  }
+
+  return closest;
 }
