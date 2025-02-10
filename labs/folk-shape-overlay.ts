@@ -59,7 +59,7 @@ export class FolkShapeOverlay extends FolkElement {
       background: oklch(0.54 0.01 0 / 0.2);
       border: unset;
       cursor: move;
-      inset: 0 auto auto 0;
+      inset: unset;
       padding: 0;
       position: absolute;
       overflow: visible;

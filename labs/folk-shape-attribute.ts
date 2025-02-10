@@ -44,7 +44,6 @@ export class FolkShapeAttribute extends CustomAttribute {
       margin: 0;
       overflow: scroll;
       transform-origin: center center;
-      contain: content;
     }
   `;
 
