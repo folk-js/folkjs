@@ -56,13 +56,10 @@ export class FolkShapeOverlay extends FolkElement {
 
   static styles = css`
     :host {
+      all: unset;
       background: oklch(0.54 0.01 0 / 0.2);
-      border: unset;
       cursor: move;
-      inset: unset;
-      padding: 0;
       position: absolute;
-      overflow: visible;
       transform-origin: center center;
       transition: outline-width 75ms ease-out;
       outline: solid 1.5px hsl(214, 84%, 56%);
@@ -206,17 +203,10 @@ export class FolkShapeOverlay extends FolkElement {
       if (handle?.startsWith('resize')) {
         this.#shape.autoHeight = true;
         this.#shape.autoWidth = true;
-        this.#update();
-      }
-
-      if (handle?.startsWith('rotation')) {
+      } else if (handle?.startsWith('rotation')) {
         this.#shape.rotation = 0;
-        this.#update();
-      }
-
-      if (handle === null) {
+      } else if (handle === null) {
         this.#shape.autoPosition = true;
-        this.#update();
       }
       return;
     }
@@ -296,7 +286,6 @@ export class FolkShapeOverlay extends FolkElement {
         this.#shape.y += moveDelta.y;
       }
       event.preventDefault();
-      this.#update();
       return;
     }
 
@@ -340,7 +329,6 @@ export class FolkShapeOverlay extends FolkElement {
       }[handle as RotateHandle];
 
       target.style.setProperty('cursor', getRotateCursorUrl(cursorRotation));
-      this.#update();
       return;
     }
   }
@@ -398,6 +386,7 @@ export class FolkShapeOverlay extends FolkElement {
     if (this.#isOpen) this.close();
 
     this.#shape = shape;
+    this.#shape.ownerElement.addEventListener('transform', this.#update);
     this.#update();
     this.#updateCursors();
     this.showPopover();
@@ -406,22 +395,22 @@ export class FolkShapeOverlay extends FolkElement {
   }
 
   close() {
+    this.#shape?.ownerElement.removeEventListener('transform', this.#update);
     this.#shape = null;
     this.hidePopover();
     // document.removeEventListener('keydown', this, { capture: true });
     this.#isOpen = false;
   }
 
-  #update() {
+  #update = () => {
     if (this.#shape === null) return;
 
-    // TODO: use css anchoring in the future when it's supported.
     this.style.top = `${toDOMPrecision(this.#shape.y)}px`;
     this.style.left = `${toDOMPrecision(this.#shape.x)}px`;
     this.style.width = `${toDOMPrecision(this.#shape.width)}px`;
     this.style.height = `${toDOMPrecision(this.#shape.height)}px`;
     this.style.rotate = `${toDOMPrecision(this.#shape.rotation)}rad`;
-  }
+  };
 
   #updateCursors() {
     if (this.#shape === null) return;

@@ -13,7 +13,7 @@ import { FolkShapeOverlay } from './folk-shape-overlay';
 
 declare global {
   interface Element {
-    getShape(): FolkShapeAttribute | undefined;
+    shape: FolkShapeAttribute | undefined;
   }
 }
 
@@ -40,10 +40,24 @@ export class FolkShapeAttribute extends CustomAttribute {
     [folk-shape] {
       box-sizing: border-box;
       cursor: move;
-      inset: 0 auto auto 0;
-      margin: 0;
       overflow: scroll;
       transform-origin: center center;
+      rotate: var(--folk-rotation);
+    }
+
+    [folk-shape*='x:'][folk-shape*='y:'] {
+      position: absolute;
+      left: var(--folk-x);
+      top: var(--folk-y);
+      margin: 0;
+    }
+
+    [folk-shape*='width:'] {
+      width: var(--folk-width);
+    }
+
+    [folk-shape*='height:'] {
+      height: var(--folk-height);
     }
   `;
 
@@ -80,7 +94,7 @@ export class FolkShapeAttribute extends CustomAttribute {
   }
 
   get autoPosition(): boolean {
-    return this.autoPosition;
+    return this.#autoPosition;
   }
   set autoPosition(value: boolean) {
     if (value === this.#autoPosition) return;
@@ -89,17 +103,29 @@ export class FolkShapeAttribute extends CustomAttribute {
 
     if (this.#autoPosition) {
       const el = this.ownerElement as HTMLElement;
-      el.style.translate = '';
-      el.style.position = '';
+      el.style.display = '';
+      el.style.setProperty('--folk-rotation', '');
       // need to undo any rotation to get the correct x/y coordinates, is there a better way to do this?
-      el.style.rotate = '';
       this.#previousRect.x = this.#rect.x;
       this.#previousRect.y = this.#rect.y;
       const rect = el.getBoundingClientRect();
-      this.#rect.x = rect.x;
-      this.#rect.y = rect.y;
-      el.style.rotate = this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad';
+      this.#rect.x = rect.x + window.scrollX;
+      this.#rect.y = rect.y + window.scrollY;
+
+      // Inline elements dont work with the
+      if (this.#autoWidth) {
+        this.#rect.width = rect.width;
+      }
+
+      if (this.#autoWidth) {
+        this.#rect.width = rect.width;
+      }
+
+      el.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation) + 'rad');
+
       this.#requestUpdate();
+    } else if (getComputedStyle(this.ownerElement).display === 'inline') {
+      (this.ownerElement as HTMLElement).style.display = 'inline-block';
     }
   }
 
@@ -358,19 +384,21 @@ export class FolkShapeAttribute extends CustomAttribute {
       resizeManager.unobserve(el, this.#onResize);
     }
 
-    el.style.position = el.style.top = el.style.height = el.style.width = el.style.rotate = '';
+    el.style.top = el.style.left = el.style.height = el.style.width = el.style.rotate = '';
   }
 
   handleEvent(event: Event) {
     // If someone is tabbing backwards and hits an element with a shadow DOM, we cant tell the difference between is that element is focused of if something in it is.
     if (event.type === 'focus') {
       // this is a hack until we observe the position changing
-      const el = this.ownerElement as HTMLElement;
-      el.style.rotate = '';
-      const rect = el.getBoundingClientRect();
-      this.#rect.x = rect.x;
-      this.#rect.y = rect.y;
-      el.style.rotate = this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad';
+      if (this.autoPosition) {
+        const el = this.ownerElement as HTMLElement;
+        el.style.setProperty('--folk-rotation', '');
+        const rect = el.getBoundingClientRect();
+        this.#rect.x = rect.x + window.scrollX;
+        this.#rect.y = rect.y + window.scrollY;
+        el.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation) + 'rad');
+      }
 
       this.#shapeOverlay.open(this);
     } else if (event.type === 'blur') {
@@ -414,12 +442,11 @@ export class FolkShapeAttribute extends CustomAttribute {
       this.#rect.rotation = this.#previousRect.rotation;
     }
 
-    el.style.position = this.#autoPosition ? '' : 'absolute';
-    el.style.top = this.#autoPosition ? '' : toDOMPrecision(this.#rect.y) + 'px';
-    el.style.left = this.#autoPosition ? '' : toDOMPrecision(this.#rect.x) + 'px';
-    el.style.height = this.#autoHeight ? '' : toDOMPrecision(this.#rect.height) + 'px';
-    el.style.width = this.#autoWidth ? '' : toDOMPrecision(this.#rect.width) + 'px';
-    el.style.rotate = this.#rect.rotation === 0 ? '' : toDOMPrecision(this.#rect.rotation) + 'rad';
+    el.style.setProperty('--folk-x', toDOMPrecision(this.#rect.x) + 'px');
+    el.style.setProperty('--folk-y', toDOMPrecision(this.#rect.y) + 'px');
+    el.style.setProperty('--folk-height', toDOMPrecision(this.#rect.height) + 'px');
+    el.style.setProperty('--folk-width', toDOMPrecision(this.#rect.width) + 'px');
+    el.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation) + 'rad');
 
     this.value = (
       (this.#autoPosition ? '' : `x: ${toDOMPrecision(this.#rect.x)}; y: ${toDOMPrecision(this.#rect.y)}; `) +
@@ -430,18 +457,23 @@ export class FolkShapeAttribute extends CustomAttribute {
   }
 
   #onResize = (entry: ResizeObserverEntry) => {
-    const rect = entry.borderBoxSize[0];
+    let { blockSize: height = 0, inlineSize: width = 0 } = entry.borderBoxSize[0] || {};
 
-    if (rect === undefined) return;
+    // this is likely a inline element so let's try to use the bounding box
+    if (height === 0 && width === 0) {
+      const rect = entry.target.getBoundingClientRect();
+      height = rect.height;
+      width = rect.width;
+    }
 
     if (this.#autoHeight) {
       this.#previousRect.height = this.#rect.height;
-      this.#rect.height = rect.blockSize;
+      this.#rect.height = height;
     }
 
     if (this.#autoWidth) {
       this.#previousRect.width = this.#rect.width;
-      this.#rect.width = rect.inlineSize;
+      this.#rect.width = width;
     }
 
     // any DOM updates should happen in the next frame

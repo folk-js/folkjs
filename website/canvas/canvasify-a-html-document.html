@@ -1,42 +1,26 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Canvasify</title>
     <style>
-      html {
-        height: 100%;
-      }
-
-      body {
-        min-height: 100%;
-        position: relative;
-        margin: 0;
-      }
-
       main {
         padding: 1rem;
-        width: 80ch;
+        max-width: 80ch;
       }
 
-      main,
       main * {
         transition: outline-color 250ms ease-out;
         outline: solid 1px transparent;
       }
 
-      main:hover:not(:has(:hover)),
-      main :hover:not(:has(:hover)) {
+      main :hover:not(:has(:hover)):not([folk-shape]) {
         outline-color: hsl(214, 84%, 56%);
       }
 
       main span {
         font-style: italic;
-      }
-
-      folk-shape {
-        z-index: 2;
       }
     </style>
   </head>
@@ -44,6 +28,9 @@
     <main>
       <h1>My article</h1>
       <p>
+        Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis
+        aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint
+        occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
         <span
           >Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
           magna aliqua.</span
@@ -84,7 +71,7 @@
         laborum.
       </p>
       <p>
-        Lorem ipsum dolor sit amet,>consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
         magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
         consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
         pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est
@@ -97,51 +84,34 @@
         pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est
         laborum.
       </p>
+
+      <p>
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
+        magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
+        consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+        pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est
+        laborum.
+      </p>
+
+      <p>
+        Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
+        magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
+        consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+        pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est
+        laborum.
+      </p>
     </main>
 
     <script type="module">
-      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-shape-attribute.ts';
 
-      function copyStyles(from, to) {
-        const styles = getComputedStyle(from);
-        for (const name of styles) {
-          const style = styles[name];
-          if (style !== undefined) {
-            to.style[name] = style;
-          }
-        }
+      let el = document.body.firstElementChild.firstElementChild;
+
+      while (el) {
+        el.setAttribute('folk-shape', '');
+        Promise.resolve().then(() => console.log('raf'));
+        el = el.nextElementSibling;
       }
-
-      document.addEventListener('click', ({ target }) => {
-        if (target.closest('folk-shape') || target.matches('body, html')) return;
-
-        const rect = target.getBoundingClientRect();
-
-        const copiedTarget = target.cloneNode(true);
-
-        const targetElements = target.querySelectorAll('*');
-        const copiedElements = copiedTarget.querySelectorAll('*');
-
-        copyStyles(target, copiedTarget);
-
-        copiedTarget.style.margin = '0';
-        copiedTarget.style.outline = '';
-
-        targetElements.forEach((el, i) => {
-          copyStyles(el, copiedElements[i]);
-        });
-
-        const geometry = document.createElement('folk-shape');
-        geometry.x = rect.x;
-        geometry.y = rect.y;
-        geometry.height = rect.height;
-        geometry.width = rect.width;
-        geometry.appendChild(copiedTarget);
-
-        target.style.visibility = 'hidden';
-
-        document.body.appendChild(geometry);
-      });
     </script>
   </body>
 </html>
