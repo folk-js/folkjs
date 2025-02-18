@@ -109,7 +109,6 @@
 
       while (el) {
         el.setAttribute('folk-shape', '');
-        Promise.resolve().then(() => console.log('raf'));
         el = el.nextElementSibling;
       }
     </script>

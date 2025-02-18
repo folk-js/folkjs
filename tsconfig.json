@@ -13,7 +13,13 @@
     "skipLibCheck": true,
     "noUnusedLocals": false,
     "lib": ["DOM", "DOM.Iterable", "ESNext", "WebWorker"],
-    "types": ["@webgpu/types", "@types/node", "@types/wicg-file-system-access", "bun-types"],
+    "types": [
+      "@webgpu/types",
+      "@types/node",
+      "@types/wicg-file-system-access",
+      "@types/webextension-polyfill",
+      "bun-types"
+    ],
     "baseUrl": ".",
     "paths": {
       "@lib": ["lib"],
@@ -25,5 +31,5 @@
     }
   },
   "include": ["**/*.ts", "vite.config.ts"],
-  "exclude": ["node_modules/**/*", "web-extension/*"]
+  "exclude": ["node_modules/**/*"]
 }

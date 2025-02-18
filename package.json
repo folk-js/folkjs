@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:extension": "vite build web-extension -w",
     "build": "tsc --noEmit && vite build",
+    "build:extension": "tsc --noEmit && vite build web-extension",
     "preview": "tsc --noEmit && vite build && vite preview",
     "test": "bun test",
     "types": "tsc --noEmit",
@@ -25,6 +27,7 @@
   "devDependencies": {
     "@types/leaflet": "^1.9.14",
     "@types/node": "^22.10.1",
+    "@types/webextension-polyfill": "^0.12.1",
     "@types/wicg-file-system-access": "^2023.10.5",
     "@webgpu/types": "^0.1.51",
     "bun-types": "^1.1.38",
