@@ -369,8 +369,8 @@ export class FolkSpreadsheet extends HTMLElement {
     this.#editedCell = cell;
     const gridColumn = getColumnIndex(cell.column) + 2;
     const gridRow = cell.row + 1;
-    this.#textarea.style.setProperty('--text-column', `${gridColumn} / ${gridColumn + 3}`);
-    this.#textarea.style.setProperty('--text-row', `${gridRow} / ${gridRow + 3}`);
+    this.#textarea.style.setProperty('--text-column', `${gridColumn}`);
+    this.#textarea.style.setProperty('--text-row', `${gridRow}`);
     this.#textarea.value = cell.expression;
     this.#textarea.hidden = false;
     this.#textarea.focus();
@@ -380,6 +380,8 @@ export class FolkSpreadsheet extends HTMLElement {
     if (this.#editedCell === null) return;
     this.#textarea.style.setProperty('--text-column', '0');
     this.#textarea.style.setProperty('--text-row', '0');
+    this.#textarea.style.width = '';
+    this.#textarea.style.height = '';
     this.#editedCell.expression = this.#textarea.value;
     this.#textarea.value = '';
     this.#editedCell.focus();
