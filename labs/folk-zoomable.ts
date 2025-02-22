@@ -14,6 +14,9 @@ Object.defineProperty(Element.prototype, 'zoom', {
   },
 });
 
+const MIN_SCALE = 0.05;
+const MAX_SCALE = 8;
+
 export class FolkZoomable extends CustomAttribute {
   static attributeName = 'folk-zoomable';
 
@@ -101,7 +104,7 @@ export class FolkZoomable extends CustomAttribute {
     this.#requestUpdate();
   }
 
-  #minScale = 0.05;
+  #minScale = MIN_SCALE;
   get minScale() {
     return this.#minScale;
   }
@@ -110,7 +113,7 @@ export class FolkZoomable extends CustomAttribute {
     this.#requestUpdate();
   }
 
-  #maxScale = 8;
+  #maxScale = MAX_SCALE;
   get maxScale() {
     return this.#maxScale;
   }
@@ -147,9 +150,17 @@ export class FolkZoomable extends CustomAttribute {
   }
 
   changedCallback(_oldValue: string, newValue: string): void {
+    if (newValue.length === 0) {
+      this.x = 0;
+      this.y = 0;
+      this.scale = 1;
+      this.minScale = MIN_SCALE;
+      this.maxScale = MAX_SCALE;
+      return;
+    }
+
     for (const property of newValue.split(';')) {
       const [name, value] = property.split(':').map((str) => str.trim());
-      console.log(name, value);
       if (name === 'grid' && value === 'true') {
         this.grid = true;
       } else {
@@ -189,7 +200,11 @@ export class FolkZoomable extends CustomAttribute {
       `clamp(${toDOMPrecision(this.#minScale)}, ${toDOMPrecision(this.#scale)}, ${toDOMPrecision(this.#maxScale)})`,
     );
 
-    this.value = `x: ${toDOMPrecision(this.#x)}; y: ${toDOMPrecision(this.#y)}; scale: ${toDOMPrecision(this.scale)};${this.#minScale === 0.05 ? '' : ` minScale: ${toDOMPrecision(this.#minScale)};`}${this.#maxScale === 8 ? '' : `maxScale: ${toDOMPrecision(this.#maxScale)};`}${this.#grid ? ' grid: true;' : ''}`;
+    this.value =
+      `x: ${toDOMPrecision(this.#x)}; y: ${toDOMPrecision(this.#y)}; scale: ${toDOMPrecision(this.scale)};` +
+      (this.#minScale === MIN_SCALE ? '' : ` minScale: ${toDOMPrecision(this.#minScale)};`) +
+      (this.#maxScale === MAX_SCALE ? '' : `maxScale: ${toDOMPrecision(this.#maxScale)};`) +
+      (this.#grid ? ' grid: true;' : '');
   }
 
   #onWheel = (event: WheelEvent) => {

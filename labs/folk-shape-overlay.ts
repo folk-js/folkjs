@@ -56,13 +56,18 @@ export class FolkShapeOverlay extends FolkElement {
 
   static styles = css`
     :host {
-      all: unset;
+      display: none;
       background: oklch(0.54 0.01 0 / 0.2);
       cursor: move;
       position: absolute;
       transform-origin: center center;
       transition: outline-width 75ms ease-out;
       outline: solid 1.5px hsl(214, 84%, 56%);
+    }
+
+    :host(:state(open)) {
+      display: block;
+      z-index: calc(infinity);
     }
 
     :host(:hover) {
@@ -136,10 +141,8 @@ export class FolkShapeOverlay extends FolkElement {
 
   #internals = this.attachInternals();
 
-  #isOpen = false;
-
   get isOpen() {
-    return this.#isOpen;
+    return this.#internals.states.has('open');
   }
 
   #startAngle = 0;
@@ -152,8 +155,6 @@ export class FolkShapeOverlay extends FolkElement {
 
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot() as ShadowRoot;
-
-    this.popover = 'manual';
 
     this.addEventListener('pointerdown', this);
     this.addEventListener('dblclick', this);
@@ -383,23 +384,22 @@ export class FolkShapeOverlay extends FolkElement {
   // }
 
   open(shape: FolkShapeAttribute) {
-    if (this.#isOpen) this.close();
+    if (this.isOpen) this.close();
 
     this.#shape = shape;
     this.#shape.ownerElement.addEventListener('transform', this.#update);
     this.#update();
     this.#updateCursors();
-    this.showPopover();
+
     // document.addEventListener('keydown', this, { capture: true });
-    this.#isOpen = true;
+    this.#internals.states.add('open');
   }
 
   close() {
     this.#shape?.ownerElement.removeEventListener('transform', this.#update);
     this.#shape = null;
-    this.hidePopover();
     // document.removeEventListener('keydown', this, { capture: true });
-    this.#isOpen = false;
+    this.#internals.states.delete('open');
   }
 
   #update = () => {

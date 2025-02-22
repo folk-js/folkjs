@@ -1,10 +1,16 @@
 import { FolkShapeAttribute } from '@labs/folk-shape-attribute.ts';
+import { FolkZoomable } from '@labs/folk-zoomable.ts';
 
 FolkShapeAttribute.define();
+FolkZoomable.define();
 
-let el = document.body.firstElementChild?.firstElementChild;
+document.documentElement.setAttribute('folk-zoomable', '');
 
-while (el) {
-  el.setAttribute('folk-shape', '');
-  el = el.nextElementSibling;
-}
+document.body.addEventListener('dblclick', (e) => {
+  const el = e.target as HTMLElement;
+  // don't allow nesting of shapes
+  if (el.closest('[folk-shape]') === null && el.querySelector('[folk-shape]') === null) {
+    el.setAttribute('folk-shape', `width: ${el.clientWidth}`);
+    requestAnimationFrame(() => el.focus());
+  }
+});

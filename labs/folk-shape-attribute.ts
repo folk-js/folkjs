@@ -104,24 +104,19 @@ export class FolkShapeAttribute extends CustomAttribute {
     if (this.#autoPosition) {
       const el = this.ownerElement as HTMLElement;
       el.style.display = '';
-      el.style.setProperty('--folk-rotation', '');
-      // need to undo any rotation to get the correct x/y coordinates, is there a better way to do this?
       this.#previousRect.x = this.#rect.x;
       this.#previousRect.y = this.#rect.y;
-      const rect = el.getBoundingClientRect();
-      this.#rect.x = rect.x + window.scrollX;
-      this.#rect.y = rect.y + window.scrollY;
+      this.#rect.x = el.offsetLeft;
+      this.#rect.y = el.offsetTop;
 
       // Inline elements dont work with the
       if (this.#autoWidth) {
-        this.#rect.width = rect.width;
+        this.#rect.width = el.offsetWidth;
       }
 
-      if (this.#autoWidth) {
-        this.#rect.width = rect.width;
+      if (this.#autoHeight) {
+        this.#rect.height = el.offsetTop;
       }
-
-      el.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation) + 'rad');
 
       this.#requestUpdate();
     } else if (getComputedStyle(this.ownerElement).display === 'inline') {
@@ -157,7 +152,7 @@ export class FolkShapeAttribute extends CustomAttribute {
       const el = this.ownerElement as HTMLElement;
       el.style.width = '';
       this.#previousRect.width = this.#rect.width;
-      this.#rect.width = el.getBoundingClientRect().width;
+      this.#rect.width = el.offsetWidth;
       this.#requestUpdate();
     }
   }
@@ -190,7 +185,7 @@ export class FolkShapeAttribute extends CustomAttribute {
       const el = this.ownerElement as HTMLElement;
       el.style.height = '';
       this.#previousRect.height = this.#rect.height;
-      this.#rect.height = el.getBoundingClientRect().height;
+      this.#rect.height = el.offsetWidth;
       this.#requestUpdate();
     }
   }
@@ -393,13 +388,9 @@ export class FolkShapeAttribute extends CustomAttribute {
       // this is a hack until we observe the position changing
       if (this.autoPosition) {
         const el = this.ownerElement as HTMLElement;
-        el.style.setProperty('--folk-rotation', '');
-        const rect = el.getBoundingClientRect();
-        this.#rect.x = rect.x + window.scrollX;
-        this.#rect.y = rect.y + window.scrollY;
-        el.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation) + 'rad');
+        this.#rect.x = el.offsetLeft;
+        this.#rect.y = el.offsetTop;
       }
-
       this.#shapeOverlay.open(this);
     } else if (event.type === 'blur') {
       if (this.#shapeOverlay.isOpen) {
@@ -460,10 +451,10 @@ export class FolkShapeAttribute extends CustomAttribute {
     let { blockSize: height = 0, inlineSize: width = 0 } = entry.borderBoxSize[0] || {};
 
     // this is likely a inline element so let's try to use the bounding box
+    const el = entry.target as HTMLElement;
     if (height === 0 && width === 0) {
-      const rect = entry.target.getBoundingClientRect();
-      height = rect.height;
-      width = rect.width;
+      height = el.offsetHeight;
+      width = el.offsetWidth;
     }
 
     if (this.#autoHeight) {
