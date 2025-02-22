@@ -19,7 +19,7 @@ declare global {
 
 Object.defineProperty(Element.prototype, 'shape', {
   get() {
-    return customAttributes.get(this, 'folk-shape') as FolkShapeAttribute | undefined;
+    return customAttributes.get(this, FolkShapeAttribute.attributeName) as FolkShapeAttribute | undefined;
   },
 });
 

@@ -1,25 +1,36 @@
-import { FolkElement, Matrix, Vector } from '@lib';
+import { CustomAttribute, customAttributes, Matrix, toDOMPrecision, Vector } from '@lib';
 import PointerTracker, { Pointer } from '@lib/pointer-tracker';
-import { css, PropertyValues } from '@lit/reactive-element';
-import { property } from '@lit/reactive-element/decorators.js';
+import { css } from '@lib/tags';
 
 declare global {
-  interface HTMLElementTagNameMap {
-    'folk-pinch': FolkPinch;
+  interface Element {
+    zoom: FolkZoomable | undefined;
   }
 }
 
-export class FolkPinch extends FolkElement {
-  static tagName = 'folk-pinch';
+Object.defineProperty(Element.prototype, 'zoom', {
+  get() {
+    return customAttributes.get(this, FolkZoomable.attributeName) as FolkZoomable | undefined;
+  },
+});
+
+export class FolkZoomable extends CustomAttribute {
+  static attributeName = 'folk-zoomable';
 
   static styles = css`
-    :host {
+    [folk-zoomable] {
       display: block;
       overflow: hidden;
       touch-action: none;
+      --folk-x: 0px;
+      --folk-y: 0px;
+      --folk-scale: 1;
+      scale: var(--folk-scale);
+      translate: var(--folk-x) var(--folk-y);
+      transform-origin: 0 0;
     }
 
-    :host([grid]) {
+    [folk-zoomable*='grid: true'] {
       --circle-width: 1px;
       --circle: circle at var(--circle-width) var(--circle-width);
       /* Map color transparency to --folk-scale for each level of the grid */
@@ -56,30 +67,68 @@ export class FolkPinch extends FolkElement {
       /* Pan each background position to each point in the underlay. */
       background-position: var(--folk-x) var(--folk-y);
     }
-
-    div {
-      position: absolute;
-      inset: 0;
-      scale: var(--folk-scale);
-      translate: var(--folk-x) var(--folk-y);
-      transform-origin: 0 0;
-    }
   `;
 
-  @property({ type: Number, reflect: true }) x: number = 0;
+  static {
+    // TODO: detect how to inject styles into shadowroot
+    document.adoptedStyleSheets.push(this.styles);
+  }
 
-  @property({ type: Number, reflect: true }) y: number = 0;
+  #x = 0;
+  get x() {
+    return this.#x;
+  }
+  set x(value) {
+    this.#x = value;
+    this.#requestUpdate();
+  }
 
-  @property({ type: Number, reflect: true }) scale: number = 1;
+  #y = 0;
+  get y() {
+    return this.#y;
+  }
+  set y(value) {
+    this.#y = value;
+    this.#requestUpdate();
+  }
 
-  @property({ type: Number, reflect: true }) minScale: number = 0.05;
+  #scale = 1;
+  get scale() {
+    return this.#scale;
+  }
+  set scale(value) {
+    this.#scale = value;
+    this.#requestUpdate();
+  }
 
-  @property({ type: Number, reflect: true }) maxScale: number = 8;
+  #minScale = 0.05;
+  get minScale() {
+    return this.#minScale;
+  }
+  set minScale(value) {
+    this.#minScale = value;
+    this.#requestUpdate();
+  }
 
-  #container = document.createElement('div');
+  #maxScale = 8;
+  get maxScale() {
+    return this.#maxScale;
+  }
+  set maxScale(value) {
+    this.#maxScale = value;
+    this.#requestUpdate();
+  }
 
-  // clean up?
-  #pointerTracker = new PointerTracker(this, {
+  #grid = false;
+  get grid() {
+    return this.#grid;
+  }
+  set grid(value) {
+    this.#grid = value;
+    this.#requestUpdate();
+  }
+
+  #pointerTracker = new PointerTracker(this.ownerElement as HTMLElement, {
     start: (_, event) => {
       // We only want to track 2 pointers at most
       if (this.#pointerTracker.currentPointers.length === 2) return false;
@@ -93,53 +142,60 @@ export class FolkPinch extends FolkElement {
     },
   });
 
-  override createRenderRoot(): HTMLElement | DocumentFragment {
-    const root = super.createRenderRoot();
-
-    this.#container.appendChild(document.createElement('slot'));
-
-    root.append(this.#container);
-
-    this.addEventListener('wheel', this.#onWheel);
-
-    return root;
+  connectedCallback(): void {
+    (this.ownerElement as HTMLElement).addEventListener('wheel', this.#onWheel, { passive: false });
   }
 
-  override willUpdate(): void {
-    if (this.scale < this.minScale) {
-      this.scale = this.minScale;
-    } else if (this.scale > this.maxScale) {
-      this.scale = this.maxScale;
+  changedCallback(_oldValue: string, newValue: string): void {
+    for (const property of newValue.split(';')) {
+      const [name, value] = property.split(':').map((str) => str.trim());
+      console.log(name, value);
+      if (name === 'grid' && value === 'true') {
+        this.grid = true;
+      } else {
+        const parsedValue = Number(value);
+        if (
+          !Number.isNaN(parsedValue) &&
+          (name === 'x' || name === 'y' || name === 'scale' || name === 'minScale' || name === 'maxScale')
+        ) {
+          this[name] = parsedValue;
+        }
+      }
     }
   }
 
-  override update(changedProperties: PropertyValues<this>): void {
-    super.update(changedProperties);
-
-    if (changedProperties.has('x')) {
-      this.style.setProperty('--folk-x', `${this.x}px`);
-    }
-
-    if (changedProperties.has('y')) {
-      this.style.setProperty('--folk-y', `${this.y}px`);
-    }
-
-    if (changedProperties.has('scale')) {
-      this.style.setProperty('--folk-scale', this.scale.toString());
-    }
-
-    // emit transform event
-  }
-
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
+  disconnectedCallback(): void {
+    (this.ownerElement as HTMLElement).removeEventListener('wheel', this.#onWheel);
     this.#pointerTracker.stop();
+  }
+
+  #updateRequested = false;
+
+  async #requestUpdate() {
+    if (this.#updateRequested) return;
+
+    this.#updateRequested = true;
+    await true;
+    this.#updateRequested = false;
+    this.#update();
+  }
+
+  #update() {
+    const el = this.ownerElement as HTMLElement;
+    el.style.setProperty('--folk-x', `${toDOMPrecision(this.#x)}px`);
+    el.style.setProperty('--folk-y', `${toDOMPrecision(this.#y)}px`);
+    el.style.setProperty(
+      '--folk-scale',
+      `clamp(${toDOMPrecision(this.#minScale)}, ${toDOMPrecision(this.#scale)}, ${toDOMPrecision(this.#maxScale)})`,
+    );
+
+    this.value = `x: ${toDOMPrecision(this.#x)}; y: ${toDOMPrecision(this.#y)}; scale: ${toDOMPrecision(this.scale)};${this.#minScale === 0.05 ? '' : ` minScale: ${toDOMPrecision(this.#minScale)};`}${this.#maxScale === 8 ? '' : `maxScale: ${toDOMPrecision(this.#maxScale)};`}${this.#grid ? ' grid: true;' : ''}`;
   }
 
   #onWheel = (event: WheelEvent) => {
     event.preventDefault();
 
-    const currentRect = this.#container.getBoundingClientRect();
+    const currentRect = this.ownerElement.getBoundingClientRect();
 
     let { deltaY } = event;
 
@@ -160,7 +216,7 @@ export class FolkPinch extends FolkElement {
 
   #onPointerMove = (previousPointers: Pointer[], currentPointers: Pointer[]) => {
     // Combine next points with previous points
-    const currentRect = this.#container.getBoundingClientRect();
+    const currentRect = this.ownerElement.getBoundingClientRect();
 
     const previousPoints = previousPointers.slice(0, 2).map((pointer) => ({ x: pointer.clientX, y: pointer.clientY }));
 

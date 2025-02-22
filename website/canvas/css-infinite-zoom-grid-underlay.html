@@ -11,13 +11,7 @@
 
       body {
         min-height: 100%;
-        position: relative;
         margin: 0;
-      }
-
-      folk-pinch {
-        position: absolute;
-        inset: 0;
       }
 
       folk-shape {
@@ -26,14 +20,12 @@
       }
     </style>
   </head>
-  <body>
-    <folk-pinch grid>
-      <folk-shape id="box3" x="100" y="100" width="30" height="30"></folk-shape>
-      <folk-shape id="box4" x="200" y="300" width="30" height="30"></folk-shape>
-    </folk-pinch>
+  <body folk-zoomable>
+    <folk-shape id="box3" x="100" y="100" width="30" height="30"></folk-shape>
+    <folk-shape id="box4" x="200" y="300" width="30" height="30"></folk-shape>
 
     <script type="module">
-      import '@labs/standalone/folk-pinch.ts';
+      import '@labs/standalone/folk-zoomable.ts';
       import '@labs/standalone/folk-shape.ts';
     </script>
   </body>
