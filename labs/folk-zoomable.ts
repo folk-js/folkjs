@@ -21,54 +21,56 @@ export class FolkZoomable extends CustomAttribute {
   static attributeName = 'folk-zoomable';
 
   static styles = css`
-    [folk-zoomable] {
-      display: block;
-      overflow: hidden;
-      touch-action: none;
-      --folk-x: 0px;
-      --folk-y: 0px;
-      --folk-scale: 1;
-      scale: var(--folk-scale);
-      translate: var(--folk-x) var(--folk-y);
-      transform-origin: 0 0;
-    }
+    @layer folk {
+      [folk-zoomable] {
+        display: block;
+        overflow: visible;
+        touch-action: none;
+        --folk-x: 0px;
+        --folk-y: 0px;
+        --folk-scale: 1;
+        scale: var(--folk-scale);
+        translate: var(--folk-x) var(--folk-y);
+        transform-origin: 0 0;
+      }
 
-    [folk-zoomable*='grid: true'] {
-      --circle-width: 1px;
-      --circle: circle at var(--circle-width) var(--circle-width);
-      /* Map color transparency to --folk-scale for each level of the grid */
-      --bg-color-1: rgba(0, 0, 0, 1);
-      --bg-color-2: rgba(0, 0, 0, clamp(0, var(--folk-scale), 1));
-      --bg-color-3: rgba(0, 0, 0, clamp(0, calc(var(--folk-scale) - 0.1), 1));
-      --bg-color-4: rgba(0, 0, 0, clamp(0, calc(var(--folk-scale) - 1), 1));
-      --bg-color-5: rgba(0, 0, 0, clamp(0, calc(0.5 * var(--folk-scale) - 2), 1));
+      [folk-zoomable*='grid: true'] {
+        --circle-width: 1px;
+        --circle: circle at var(--circle-width) var(--circle-width);
+        /* Map color transparency to --folk-scale for each level of the grid */
+        --bg-color-1: rgba(0, 0, 0, 1);
+        --bg-color-2: rgba(0, 0, 0, clamp(0, var(--folk-scale), 1));
+        --bg-color-3: rgba(0, 0, 0, clamp(0, calc(var(--folk-scale) - 0.1), 1));
+        --bg-color-4: rgba(0, 0, 0, clamp(0, calc(var(--folk-scale) - 1), 1));
+        --bg-color-5: rgba(0, 0, 0, clamp(0, calc(0.5 * var(--folk-scale) - 2), 1));
 
-      /* Draw points for each level of grid as set of a background image. First background is on top.*/
-      background-image: radial-gradient(var(--circle), var(--bg-color-1) var(--circle-width), transparent 0),
-        radial-gradient(var(--circle), var(--bg-color-2) var(--circle-width), transparent 0),
-        radial-gradient(var(--circle), var(--bg-color-3) var(--circle-width), transparent 0),
-        radial-gradient(var(--circle), var(--bg-color-4) var(--circle-width), transparent 0),
-        radial-gradient(var(--circle), var(--bg-color-5) var(--circle-width), transparent 0);
+        /* Draw points for each level of grid as set of a background image. First background is on top.*/
+        background-image: radial-gradient(var(--circle), var(--bg-color-1) var(--circle-width), transparent 0),
+          radial-gradient(var(--circle), var(--bg-color-2) var(--circle-width), transparent 0),
+          radial-gradient(var(--circle), var(--bg-color-3) var(--circle-width), transparent 0),
+          radial-gradient(var(--circle), var(--bg-color-4) var(--circle-width), transparent 0),
+          radial-gradient(var(--circle), var(--bg-color-5) var(--circle-width), transparent 0);
 
-      /* Each level of the grid should be a factor of --size. */
-      --bg-size: calc(var(--size, 100px) / pow(2, 6) * var(--folk-scale));
+        /* Each level of the grid should be a factor of --size. */
+        --bg-size: calc(var(--size, 100px) / pow(2, 6) * var(--folk-scale));
 
-      /* Divide each part of grid into 4 sections. */
-      --bg-size-1: calc(var(--bg-size) * pow(var(--sections, 4), 5));
-      --bg-size-2: calc(var(--bg-size) * pow(var(--sections, 4), 4));
-      --bg-size-3: calc(var(--bg-size) * pow(var(--sections, 4), 3));
-      --bg-size-4: calc(var(--bg-size) * pow(var(--sections, 4), 2));
-      --bg-size-5: calc(var(--bg-size) * var(--sections, 4));
+        /* Divide each part of grid into 4 sections. */
+        --bg-size-1: calc(var(--bg-size) * pow(var(--sections, 4), 5));
+        --bg-size-2: calc(var(--bg-size) * pow(var(--sections, 4), 4));
+        --bg-size-3: calc(var(--bg-size) * pow(var(--sections, 4), 3));
+        --bg-size-4: calc(var(--bg-size) * pow(var(--sections, 4), 2));
+        --bg-size-5: calc(var(--bg-size) * var(--sections, 4));
 
-      background-size:
-        var(--bg-size-1) var(--bg-size-1),
-        var(--bg-size-2) var(--bg-size-2),
-        var(--bg-size-3) var(--bg-size-3),
-        var(--bg-size-4) var(--bg-size-4),
-        var(--bg-size-5) var(--bg-size-5);
+        background-size:
+          var(--bg-size-1) var(--bg-size-1),
+          var(--bg-size-2) var(--bg-size-2),
+          var(--bg-size-3) var(--bg-size-3),
+          var(--bg-size-4) var(--bg-size-4),
+          var(--bg-size-5) var(--bg-size-5);
 
-      /* Pan each background position to each point in the underlay. */
-      background-position: var(--folk-x) var(--folk-y);
+        /* Pan each background position to each point in the underlay. */
+        background-position: var(--folk-x) var(--folk-y);
+      }
     }
   `;
 
@@ -131,22 +133,26 @@ export class FolkZoomable extends CustomAttribute {
     this.#requestUpdate();
   }
 
-  #pointerTracker = new PointerTracker(this.ownerElement as HTMLElement, {
-    start: (_, event) => {
-      // We only want to track 2 pointers at most
-      if (this.#pointerTracker.currentPointers.length === 2) return false;
+  // #pointerTracker = new PointerTracker(this.ownerElement as HTMLElement, {
+  //   start: (_, event) => {
+  //     // We only want to track 2 pointers at most
+  //     if (this.#pointerTracker.currentPointers.length === 2) return false;
 
-      // is this needed, when it happens it prevents the blur of other elements
-      // event.preventDefault();
-      return true;
-    },
-    move: (previousPointers) => {
-      this.#onPointerMove(previousPointers, this.#pointerTracker.currentPointers);
-    },
-  });
+  //     // is this needed, when it happens it prevents the blur of other elements
+  //     // event.preventDefault();
+  //     document.documentElement.style.userSelect = 'none';
+  //     return true;
+  //   },
+  //   move: (previousPointers) => {
+  //     this.#onPointerMove(previousPointers, this.#pointerTracker.currentPointers);
+  //   },
+  //   end: () => {
+  //     document.documentElement.style.userSelect = '';
+  //   },
+  // });
 
   connectedCallback(): void {
-    (this.ownerElement as HTMLElement).addEventListener('wheel', this.#onWheel, { passive: false });
+    window.addEventListener('wheel', this.#onWheel, { passive: false });
   }
 
   changedCallback(_oldValue: string, newValue: string): void {
@@ -176,8 +182,8 @@ export class FolkZoomable extends CustomAttribute {
   }
 
   disconnectedCallback(): void {
-    (this.ownerElement as HTMLElement).removeEventListener('wheel', this.#onWheel);
-    this.#pointerTracker.stop();
+    window.removeEventListener('wheel', this.#onWheel);
+    // this.#pointerTracker.stop();
   }
 
   #updateRequested = false;
@@ -207,53 +213,71 @@ export class FolkZoomable extends CustomAttribute {
       (this.#grid ? ' grid: true;' : '');
   }
 
+  // We are using event delegation to capture wheel events that don't happen in the transformed rect of the zoomable element.
   #onWheel = (event: WheelEvent) => {
+    const { clientX, clientY } = event;
+    const el = event.target as HTMLElement;
+    const { offsetLeft, offsetTop, offsetHeight, offsetWidth } = this.ownerElement as HTMLElement;
+
+    // Check that this wheel event is happening inside of the zoomable element, accounting for the transformed rect.
+    // TODO: add another check for children that are scrollable.
+    if (
+      el.contains(this.ownerElement) &&
+      !(
+        offsetLeft <= clientX &&
+        clientX <= offsetLeft + offsetWidth &&
+        offsetTop <= clientY &&
+        clientY <= offsetTop + offsetHeight
+      )
+    )
+      return;
+
     event.preventDefault();
 
-    const currentRect = this.ownerElement.getBoundingClientRect();
+    const { left, top } = this.ownerElement.getBoundingClientRect();
 
-    let { deltaY } = event;
+    let { deltaX, deltaY } = event;
 
-    const { ctrlKey, deltaMode } = event;
-
-    if (deltaMode === 1) {
+    if (event.deltaMode === 1) {
       // 1 is "lines", 0 is "pixels"
       // Firefox uses "lines" for some types of mouse
+      deltaX *= 15;
       deltaY *= 15;
     }
 
     // ctrlKey is true when pinch-zooming on a trackpad.
-    const divisor = ctrlKey ? 100 : 300;
-    const scaleDiff = 1 - deltaY / divisor;
-
-    this.#applyChange(0, 0, scaleDiff, event.clientX - currentRect.left, event.clientY - currentRect.top);
+    if (event.ctrlKey) {
+      this.applyChange(0, 0, 1 - deltaY / 100, clientX - left, clientY - top);
+    } else {
+      this.applyChange(-1 * deltaX, -1 * deltaY, 1, clientX - left, clientY - top);
+    }
   };
 
-  #onPointerMove = (previousPointers: Pointer[], currentPointers: Pointer[]) => {
-    // Combine next points with previous points
-    const currentRect = this.ownerElement.getBoundingClientRect();
+  // #onPointerMove = (previousPointers: Pointer[], currentPointers: Pointer[]) => {
+  //   // Combine next points with previous points
+  //   const currentRect = this.ownerElement.getBoundingClientRect();
 
-    const previousPoints = previousPointers.slice(0, 2).map((pointer) => ({ x: pointer.clientX, y: pointer.clientY }));
+  //   const previousPoints = previousPointers.slice(0, 2).map((pointer) => ({ x: pointer.clientX, y: pointer.clientY }));
 
-    const currentPoints = currentPointers.slice(0, 2).map((pointer) => ({ x: pointer.clientX, y: pointer.clientY }));
+  //   const currentPoints = currentPointers.slice(0, 2).map((pointer) => ({ x: pointer.clientX, y: pointer.clientY }));
 
-    // For calculating panning movement
-    const prevMidpoint = Vector.center(previousPoints);
-    const newMidpoint = Vector.center(currentPoints);
+  //   // For calculating panning movement
+  //   const prevMidpoint = Vector.center(previousPoints);
+  //   const newMidpoint = Vector.center(currentPoints);
 
-    // Midpoint within the element
-    const originX = prevMidpoint.x - currentRect.left;
-    const originY = prevMidpoint.y - currentRect.top;
+  //   // Midpoint within the element
+  //   const originX = prevMidpoint.x - currentRect.left;
+  //   const originY = prevMidpoint.y - currentRect.top;
 
-    // Calculate the desired change in scale
-    const prevDistance = previousPoints.length === 1 ? 0 : Vector.distance(previousPoints[0], previousPoints[1]);
-    const newDistance = currentPoints.length === 1 ? 0 : Vector.distance(currentPoints[0], currentPoints[1]);
-    const scaleDiff = prevDistance ? newDistance / prevDistance : 1;
+  //   // Calculate the desired change in scale
+  //   const prevDistance = previousPoints.length === 1 ? 0 : Vector.distance(previousPoints[0], previousPoints[1]);
+  //   const newDistance = currentPoints.length === 1 ? 0 : Vector.distance(currentPoints[0], currentPoints[1]);
+  //   const scaleDiff = prevDistance ? newDistance / prevDistance : 1;
 
-    this.#applyChange(newMidpoint.x - prevMidpoint.x, newMidpoint.y - prevMidpoint.y, scaleDiff, originX, originY);
-  };
+  //   this.applyChange(newMidpoint.x - prevMidpoint.x, newMidpoint.y - prevMidpoint.y, scaleDiff, originX, originY);
+  // };
 
-  #applyChange(panX = 0, panY = 0, scaleDiff = 1, originX = 0, originY = 0) {
+  applyChange(panX = 0, panY = 0, scaleDiff = 1, originX = 0, originY = 0) {
     const matrix = new Matrix()
       .translate(panX, panY) // Translate according to panning.
       .translate(originX, originY) // Scale about the origin.
