@@ -37,27 +37,29 @@ export class FolkShapeAttribute extends CustomAttribute {
   static #overlay = document.createElement('folk-shape-overlay');
 
   static styles = css`
-    [folk-shape] {
-      box-sizing: border-box;
-      cursor: move;
-      overflow: scroll;
-      transform-origin: center center;
-      rotate: var(--folk-rotation);
-    }
+    @layer folk {
+      [folk-shape] {
+        box-sizing: border-box;
+        cursor: move;
+        overflow: scroll;
+        transform-origin: center center;
+        rotate: var(--folk-rotation);
+      }
 
-    [folk-shape*='x:'][folk-shape*='y:'] {
-      position: absolute;
-      left: var(--folk-x);
-      top: var(--folk-y);
-      margin: 0;
-    }
+      [folk-shape*='x:'][folk-shape*='y:'] {
+        position: absolute;
+        left: var(--folk-x);
+        top: var(--folk-y);
+        margin: 0;
+      }
 
-    [folk-shape*='width:'] {
-      width: var(--folk-width);
-    }
+      [folk-shape*='width:'] {
+        width: var(--folk-width);
+      }
 
-    [folk-shape*='height:'] {
-      height: var(--folk-height);
+      [folk-shape*='height:'] {
+        height: var(--folk-height);
+      }
     }
   `;
 
