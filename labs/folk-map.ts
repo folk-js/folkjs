@@ -86,10 +86,10 @@ export class FolkMap extends FolkElement {
     this.#map.setView(coordinates);
   }
 
-  get zoom() {
+  get zoomLevel() {
     return this.#map.getZoom();
   }
-  set zoom(zoom) {
+  set zoomLevel(zoom) {
     this.#map.setZoom(zoom);
   }
 
