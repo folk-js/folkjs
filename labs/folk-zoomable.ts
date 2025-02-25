@@ -216,21 +216,9 @@ export class FolkZoomable extends CustomAttribute {
   // We are using event delegation to capture wheel events that don't happen in the transformed rect of the zoomable element.
   #onWheel = (event: WheelEvent) => {
     const { clientX, clientY } = event;
-    const el = event.target as HTMLElement;
-    const { offsetLeft, offsetTop, offsetHeight, offsetWidth } = this.ownerElement as HTMLElement;
-
     // Check that this wheel event is happening inside of the zoomable element, accounting for the transformed rect.
     // TODO: add another check for children that are scrollable.
-    if (
-      el.contains(this.ownerElement) &&
-      !(
-        offsetLeft <= clientX &&
-        clientX <= offsetLeft + offsetWidth &&
-        offsetTop <= clientY &&
-        clientY <= offsetTop + offsetHeight
-      )
-    )
-      return;
+    if (!isZoomableElementBeingScrolled(event, this.ownerElement as HTMLElement)) return;
 
     event.preventDefault();
 
@@ -293,4 +281,25 @@ export class FolkZoomable extends CustomAttribute {
     this.x = matrix.e;
     this.y = matrix.f;
   }
+}
+
+function isZoomableElementBeingScrolled(wheelEvent: WheelEvent, zoomableElement: HTMLElement): boolean {
+  let el = wheelEvent.target as Element | null;
+
+  while (el) {
+    if (
+      el === zoomableElement &&
+      zoomableElement.offsetLeft < wheelEvent.clientX &&
+      wheelEvent.clientX < zoomableElement.offsetLeft + zoomableElement.offsetWidth &&
+      zoomableElement.offsetTop < wheelEvent.clientY &&
+      wheelEvent.clientY < zoomableElement.offsetTop + zoomableElement.offsetHeight
+    )
+      return true;
+
+    if (el.scrollHeight > el.clientHeight) return false;
+
+    el = el.parentElement;
+  }
+
+  return false;
 }
