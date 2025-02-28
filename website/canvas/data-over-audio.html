@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>Data over Audio</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        font-family: Arial, sans-serif;
+      }
+
+      folk-shape {
+        background: rgb(248, 248, 248);
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        padding: 12px;
+      }
+
+      .info-panel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: transparent;
+        padding: 20px 25px;
+        text-align: center;
+        font-size: 14px;
+        border-radius: 8px;
+        border: 1px solid #e0e0e0;
+        z-index: 100;
+        max-width: 80%;
+      }
+
+      .info-title {
+        font-size: 20px;
+        font-weight: bold;
+        margin-bottom: 12px;
+        color: #333;
+      }
+
+      .warning {
+        color: #ff5722;
+        font-weight: bold;
+        display: block;
+        margin-top: 12px;
+        font-size: 16px;
+      }
+
+      textarea {
+        width: 100%;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+
+      button {
+        padding: 6px 12px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background-color: #45a049;
+      }
+
+      h3 {
+        margin-top: 0;
+        margin-bottom: 8px;
+        color: #333;
+        font-size: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="info-panel">
+      <div class="info-title">data over audio</div>
+      <p
+        >Use your speaker and microphone to send and receive data between 2 or more devices with
+        <a href="https://github.com/ggerganov/ggwave">ggwave</a>.</p
+      >
+      <span class="warning">Volume can be loud!</span>
+    </div>
+
+    <!-- Sender Shape -->
+    <folk-shape x="50" y="50" width="300" height="200">
+      <h3>Send Data</h3>
+      <textarea id="txData" style="height: 100px">Hello from Folk Canvas!</textarea>
+      <button onclick="onSend();">Send via Audio</button>
+    </folk-shape>
+
+    <!-- Receiver Shape -->
+    <folk-shape x="400" y="50" width="300" height="200">
+      <h3>Receive Data</h3>
+      <textarea id="rxData" style="height: 100px" disabled></textarea>
+      <div style="display: flex; gap: 8px">
+        <button id="captureStart">Start Listening</button>
+        <button id="captureStop" hidden>Stop</button>
+      </div>
+    </folk-shape>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+    </script>
+
+    <script type="text/javascript" src="/ggwave.js"></script>
+    <script type="text/javascript">
+      window.AudioContext = window.AudioContext || window.webkitAudioContext;
+      window.OfflineAudioContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+
+      var context = null;
+      var recorder = null;
+      var mediaStream = null;
+
+      var ggwave = null;
+      var parameters = null;
+      var instance = null;
+
+      ggwave_factory().then(function (obj) {
+        ggwave = obj;
+      });
+
+      var txData = document.getElementById('txData');
+      var rxData = document.getElementById('rxData');
+      var captureStart = document.getElementById('captureStart');
+      var captureStop = document.getElementById('captureStop');
+
+      function convertTypedArray(src, type) {
+        var buffer = new ArrayBuffer(src.byteLength);
+        var baseView = new src.constructor(buffer).set(src);
+        return new type(buffer);
+      }
+
+      function init() {
+        if (!context) {
+          context = new AudioContext({ sampleRate: 48000 });
+          parameters = ggwave.getDefaultParameters();
+          parameters.sampleRateInp = context.sampleRate;
+          parameters.sampleRateOut = context.sampleRate;
+          instance = ggwave.init(parameters);
+        }
+      }
+
+      function onSend() {
+        init();
+        captureStop.click();
+
+        var waveform = ggwave.encode(instance, txData.value, ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FAST, 10);
+        var buf = convertTypedArray(waveform, Float32Array);
+        var buffer = context.createBuffer(1, buf.length, context.sampleRate);
+        buffer.getChannelData(0).set(buf);
+        var source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        source.start(0);
+      }
+
+      captureStart.addEventListener('click', function () {
+        init();
+
+        navigator.mediaDevices
+          .getUserMedia({
+            audio: {
+              echoCancellation: false,
+              autoGainControl: false,
+              noiseSuppression: false,
+            },
+          })
+          .then(function (stream) {
+            mediaStream = context.createMediaStreamSource(stream);
+
+            var bufferSize = 1024;
+            recorder = context.createScriptProcessor(bufferSize, 1, 1);
+
+            recorder.onaudioprocess = function (e) {
+              var source = e.inputBuffer;
+              var res = ggwave.decode(
+                instance,
+                convertTypedArray(new Float32Array(source.getChannelData(0)), Int8Array),
+              );
+
+              if (res && res.length > 0) {
+                rxData.value = new TextDecoder('utf-8').decode(res);
+              }
+            };
+
+            mediaStream.connect(recorder);
+            recorder.connect(context.destination);
+          })
+          .catch(function (e) {
+            console.error(e);
+          });
+
+        rxData.value = 'Listening...';
+        captureStart.hidden = true;
+        captureStop.hidden = false;
+      });
+
+      captureStop.addEventListener('click', function () {
+        if (recorder) {
+          recorder.disconnect(context.destination);
+          mediaStream.disconnect(recorder);
+          recorder = null;
+        }
+
+        rxData.value = '';
+        captureStart.hidden = false;
+        captureStop.hidden = true;
+      });
+
+      captureStop.click();
+    </script>
+  </body>
+</html>

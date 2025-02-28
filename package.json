@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:host": "vite --host",
     "dev:extension": "vite build web-extension -w",
     "build": "tsc --noEmit && vite build",
     "build:extension": "tsc --noEmit && vite build web-extension",
