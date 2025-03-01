@@ -176,7 +176,6 @@
 
       function onSend(protocol) {
         init();
-        captureStop.click();
 
         var protocolId = protocol || ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST;
         var waveform = ggwave.encode(instance, txData.value, protocolId, 10);

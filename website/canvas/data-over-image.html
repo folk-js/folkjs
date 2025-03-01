@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>Data over Image</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+        background-color: #f5f5f5;
+        overflow-x: hidden;
+      }
+
+      .app-container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .title {
+        font-size: 28px;
+        font-weight: bold;
+        text-align: center;
+        margin-bottom: 20px;
+        color: #333;
+      }
+
+      .sender-section {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+
+      .receiver-section {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .section-title {
+        font-size: 18px;
+        margin-top: 0;
+        margin-bottom: 15px;
+        color: #333;
+      }
+
+      textarea {
+        width: 100%;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+        padding: 12px;
+        margin-bottom: 15px;
+        font-size: 16px;
+        resize: none;
+      }
+
+      button {
+        padding: 10px 16px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: background-color 0.2s;
+      }
+
+      button:hover {
+        background-color: #45a049;
+      }
+
+      .qr-container {
+        display: flex;
+        justify-content: center;
+        margin: 20px 0;
+      }
+
+      #qrcode {
+        background-color: white;
+        padding: 15px;
+        border-radius: 8px;
+        text-align: center;
+        width: 350px;
+        height: 350px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #eee;
+      }
+
+      #qrcode canvas {
+        max-width: 100%;
+        max-height: 100%;
+      }
+
+      .camera-controls {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 15px;
+      }
+
+      .camera-container {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+      }
+
+      #videoContainer {
+        width: 200px;
+        height: 200px;
+        position: relative;
+        overflow: hidden;
+        background-color: #000;
+        border-radius: 8px;
+        flex-shrink: 0;
+        cursor: pointer;
+      }
+
+      #video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      #canvas {
+        display: none;
+      }
+
+      .message-container {
+        flex-grow: 1;
+      }
+
+      .status {
+        margin-top: 10px;
+        font-size: 14px;
+        color: #666;
+      }
+
+      .camera-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: rgba(0, 0, 0, 0.5);
+        border-radius: 8px;
+        transition: opacity 0.3s ease;
+      }
+
+      .camera-label {
+        color: white;
+        font-size: 16px;
+        font-weight: bold;
+        text-align: center;
+        padding: 10px;
+        opacity: 1;
+        visibility: visible;
+      }
+
+      /* Show stop camera text on hover when camera is active */
+      .camera-active .camera-overlay {
+        opacity: 0;
+        visibility: hidden;
+      }
+
+      .camera-active:hover .camera-overlay {
+        opacity: 1;
+        visibility: visible;
+        background-color: rgba(0, 0, 0, 0.7);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-container">
+      <div class="title">Data over Image</div>
+
+      <!-- Sender Section -->
+      <div class="sender-section">
+        <h3 class="section-title">Send Message</h3>
+        <textarea id="txData" style="height: 80px">Hello from Folk Canvas!</textarea>
+        <div class="qr-container">
+          <div id="qrcode"></div>
+        </div>
+      </div>
+
+      <!-- Receiver Section -->
+      <div class="receiver-section">
+        <h3 class="section-title">Receive Message</h3>
+        <div class="camera-container">
+          <div id="videoContainer">
+            <video id="video" playsinline></video>
+            <div id="cameraOverlay" class="camera-overlay">
+              <div class="camera-label">Start Camera</div>
+            </div>
+          </div>
+          <div class="message-container">
+            <textarea id="rxData" style="height: 200px" disabled></textarea>
+            <div class="status" id="scanStatus">Ready to scan</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <!-- QR Code libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+
+    <script type="text/javascript">
+      // DOM elements
+      const txData = document.getElementById('txData');
+      const rxData = document.getElementById('rxData');
+      const qrcodeContainer = document.getElementById('qrcode');
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      const videoContainer = document.getElementById('videoContainer');
+      const cameraOverlay = document.getElementById('cameraOverlay');
+      const cameraLabel = cameraOverlay.querySelector('.camera-label');
+      const scanStatus = document.getElementById('scanStatus');
+
+      // Variables for video scanning
+      let videoStream = null;
+      let scanInterval = null;
+      let cameraActive = false;
+      const canvasContext = canvas.getContext('2d');
+
+      // Generate QR code from text input
+      function generateQRCode() {
+        qrcodeContainer.innerHTML = '';
+        const text = txData.value.trim();
+
+        if (text) {
+          // Create a new canvas element inside the container
+          const canvas = document.createElement('canvas');
+          qrcodeContainer.appendChild(canvas);
+
+          QRCode.toCanvas(
+            canvas,
+            text,
+            {
+              width: 320,
+              margin: 1,
+              color: {
+                dark: '#000',
+                light: '#fff',
+              },
+            },
+            function (error) {
+              if (error) console.error(error);
+            },
+          );
+        }
+      }
+
+      // Generate QR code when text changes
+      txData.addEventListener('input', generateQRCode);
+
+      // Toggle camera on/off when clicking the video container
+      videoContainer.addEventListener('click', function () {
+        if (cameraActive) {
+          stopCamera();
+        } else {
+          startCamera();
+        }
+      });
+
+      // Start camera for QR code scanning
+      function startCamera() {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          navigator.mediaDevices
+            .getUserMedia({
+              video: { facingMode: 'user' }, // Use front camera
+            })
+            .then(function (stream) {
+              videoStream = stream;
+              video.srcObject = stream;
+              video.setAttribute('playsinline', true);
+              video.play();
+
+              // Set canvas size to match video dimensions
+              video.onloadedmetadata = function () {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+              };
+
+              // Start scanning for QR codes
+              scanStatus.textContent = 'Scanning...';
+              scanInterval = setInterval(scanQrCode, 200);
+
+              // Update UI to show camera is active
+              cameraActive = true;
+              videoContainer.classList.add('camera-active');
+              cameraLabel.textContent = 'Stop Camera';
+            })
+            .catch(function (error) {
+              console.error('Camera error:', error);
+              scanStatus.textContent = 'Camera access error: ' + error.message;
+            });
+        } else {
+          scanStatus.textContent = 'Camera not supported on this device/browser';
+        }
+      }
+
+      // Stop camera scanning
+      function stopCamera() {
+        if (videoStream) {
+          videoStream.getTracks().forEach((track) => track.stop());
+          videoStream = null;
+        }
+
+        if (scanInterval) {
+          clearInterval(scanInterval);
+          scanInterval = null;
+        }
+
+        // Update UI to show camera is inactive
+        cameraActive = false;
+        videoContainer.classList.remove('camera-active');
+        cameraLabel.textContent = 'Start Camera';
+        scanStatus.textContent = 'Ready to scan';
+      }
+
+      // Function to scan video frame for QR codes
+      function scanQrCode() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          // Set canvas dimensions
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+
+          // Draw video frame to canvas
+          canvasContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          // Get image data from canvas
+          const imageData = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
+
+          // Scan for QR code
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: 'dontInvert',
+          });
+
+          // If QR code found
+          if (code) {
+            // Display the data in the rxData textarea
+            rxData.value = code.data;
+            scanStatus.textContent = 'QR Code detected!';
+
+            // Add a quick visual feedback
+            setTimeout(() => {
+              scanStatus.textContent = 'Scanning...';
+            }, 1000);
+          }
+        }
+      }
+
+      // Initial QR code generation
+      generateQRCode();
+    </script>
+  </body>
+</html>
