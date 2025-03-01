@@ -160,7 +160,7 @@
         init();
         captureStop.click();
 
-        var waveform = ggwave.encode(instance, txData.value, ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FAST, 10);
+        var waveform = ggwave.encode(instance, txData.value, ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST, 10);
         var buf = convertTypedArray(waveform, Float32Array);
         var buffer = context.createBuffer(1, buf.length, context.sampleRate);
         buffer.getChannelData(0).set(buf);
