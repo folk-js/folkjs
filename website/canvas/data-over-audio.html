@@ -106,7 +106,10 @@
     <folk-shape x="50" y="50" width="300" height="200">
       <h3>Send Data</h3>
       <textarea id="txData" style="height: 100px">Hello from Folk Canvas!</textarea>
-      <button onclick="onSend();">Send via Audio</button>
+      <div style="display: flex; gap: 8px">
+        <button onclick="onSend(ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);">Send</button>
+        <button onclick="onSend(ggwave.ProtocolId.GGWAVE_PROTOCOL_ULTRASOUND_FASTEST);">Send Ultrasonic</button>
+      </div>
     </folk-shape>
 
     <!-- Receiver Shape -->
@@ -171,11 +174,12 @@
         }
       }
 
-      function onSend() {
+      function onSend(protocol) {
         init();
         captureStop.click();
 
-        var waveform = ggwave.encode(instance, txData.value, ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST, 10);
+        var protocolId = protocol || ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST;
+        var waveform = ggwave.encode(instance, txData.value, protocolId, 10);
         var buf = convertTypedArray(waveform, Float32Array);
         var buffer = context.createBuffer(1, buf.length, context.sampleRate);
         buffer.getChannelData(0).set(buf);
