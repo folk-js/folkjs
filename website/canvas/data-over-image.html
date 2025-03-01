@@ -774,15 +774,12 @@
 
                 // Start scanning for QR codes
                 addMessageToLog('system', 'info', 'Scanning for QR codes...');
-                scanInterval = setInterval(scanQrCode, 200);
+                scanInterval = setInterval(scanQrCode, 100);
 
                 // Update UI to show camera is active
                 cameraActive = true;
                 videoContainer.classList.add('camera-active');
                 cameraLabel.textContent = 'Stop Camera';
-
-                // Reset received chunks when starting camera
-                qrProtocol.reset();
               })
               .catch(function (error) {
                 console.error('Camera error:', error);
