@@ -421,9 +421,64 @@
         const canvasContext = canvas.getContext('2d');
 
         // Create protocol instance
-        const qrProtocol = new QRTP();
+        const qrProtocol = new QRTP(
+          // Message log callback
+          (direction, type, message, data = null) => {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-entry-${direction}`;
+            if (type === 'error') logEntry.className += ' log-entry-error';
+            if (type === 'warning') logEntry.className += ' log-entry-warning';
+            if (type === 'debug') logEntry.className += ' log-entry-debug';
+            if (type === 'hash') logEntry.className += ' log-entry-hash';
 
-        // Set up message logging
+            const timestamp = new Date().toLocaleTimeString();
+
+            let html = `<span class="log-timestamp">${timestamp}</span>`;
+            html += `<span class="log-direction">${direction.toUpperCase()}</span>`;
+            html += `<span class="log-type">[${type}]</span>`;
+            html += `<span class="log-message">${message}</span>`;
+
+            if (data && typeof data === 'string') {
+              html += `<div class="log-data">${data}</div>`;
+            }
+
+            logEntry.innerHTML = html;
+            messageLog.appendChild(logEntry);
+
+            // Auto-scroll to bottom
+            messageLog.scrollTop = messageLog.scrollHeight;
+          },
+          // onChange callback
+          (state) => {
+            // Update chunk counter
+            if (state.totalChunks === 0) {
+              chunkCounter.textContent = '0/0';
+            } else {
+              chunkCounter.textContent = `${state.currentChunkIndex + 1}/${state.totalChunks}`;
+            }
+
+            // Update received chunks display
+            const received = state.receivedChunksCount;
+            const total = Math.max(qrProtocol.getTotalChunksToReceive(), received);
+            receivedChunks.textContent = `Received: ${received}/${total} chunks`;
+
+            // Always generate new QR code when state changes
+            generateQRCodeFromProtocol();
+
+            // Handle completion
+            if (state.isTransmissionComplete && state.receivedChunksCount === state.totalChunks) {
+              scanStatus.textContent = 'All chunks received!';
+            }
+          },
+        );
+
+        // Function to clear the message log
+        function clearMessageLog() {
+          messageLog.innerHTML = '';
+          addMessageToLog('system', 'info', 'Message log cleared');
+        }
+
+        // Add message to log function (for direct use in the UI)
         function addMessageToLog(direction, type, message, data = null) {
           const logEntry = document.createElement('div');
           logEntry.className = `log-entry log-entry-${direction}`;
@@ -439,8 +494,8 @@
           html += `<span class="log-type">[${type}]</span>`;
           html += `<span class="log-message">${message}</span>`;
 
-          if (data) {
-            html += `<div class="log-data">${JSON.stringify(data)}</div>`;
+          if (data && typeof data === 'string') {
+            html += `<div class="log-data">${data}</div>`;
           }
 
           logEntry.innerHTML = html;
@@ -448,15 +503,6 @@
 
           // Auto-scroll to bottom
           messageLog.scrollTop = messageLog.scrollHeight;
-        }
-
-        // Set the message log callback
-        qrProtocol.setMessageLogCallback(addMessageToLog);
-
-        // Function to clear the message log
-        function clearMessageLog() {
-          messageLog.innerHTML = '';
-          addMessageToLog('system', 'info', 'Message log cleared');
         }
 
         // Add clear log button
@@ -467,73 +513,7 @@
         clearLogBtn.addEventListener('click', clearMessageLog);
         document.querySelector('.message-log-container').appendChild(clearLogBtn);
 
-        // Add debug button
-        const debugBtn = document.createElement('button');
-        debugBtn.textContent = 'Debug Info';
-        debugBtn.style.marginTop = '10px';
-        debugBtn.addEventListener('click', showDebugInfo);
-        document.querySelector('.message-log-container').appendChild(debugBtn);
-
-        // Function to show debug info
-        function showDebugInfo() {
-          addMessageToLog('debug', 'info', 'Protocol State', {
-            currentChunkIndex: qrProtocol.getCurrentChunkIndex(),
-            totalChunks: qrProtocol.getTotalChunks(),
-            receivedChunksCount: qrProtocol.getReceivedChunksCount(),
-            isTransmissionComplete: qrProtocol.isAllChunksSent(),
-          });
-
-          // If we have chunks to send, show the current chunk and its hash
-          if (qrProtocol.getTotalChunks() > 0 && qrProtocol.getCurrentChunkIndex() < qrProtocol.getTotalChunks()) {
-            const currentChunk = qrProtocol.getCurrentQRCodeData();
-            addMessageToLog('debug', 'info', `Current QR code data`, {
-              data: currentChunk,
-            });
-          }
-
-          // Show received chunks
-          const receivedChunksInfo = {};
-          for (let i = 0; i < qrProtocol.getTotalChunksToReceive(); i++) {
-            receivedChunksInfo[`chunk_${i}`] = qrProtocol.getReceivedChunksCount() > i ? 'received' : 'pending';
-          }
-
-          addMessageToLog('debug', 'info', 'Received Chunks', receivedChunksInfo);
-        }
-
-        // Function to chunk data
-        function chunkData() {
-          const text = txData.value.trim();
-          if (!text) return;
-
-          const chunkSize = parseInt(chunkSizeInput.value, 10);
-          if (isNaN(chunkSize) || chunkSize < 10) {
-            alert('Please enter a valid chunk size (minimum 10 bytes)');
-            return;
-          }
-
-          // Clear the message log
-          clearMessageLog();
-
-          // Set data in protocol
-          qrProtocol.setData(text, chunkSize);
-
-          // Update UI
-          updateChunkCounter();
-
-          // Generate QR code
-          generateQRCodeFromProtocol();
-        }
-
-        // Update chunk counter display
-        function updateChunkCounter() {
-          if (qrProtocol.getTotalChunks() === 0) {
-            chunkCounter.textContent = '0/0';
-          } else {
-            chunkCounter.textContent = `${qrProtocol.getCurrentChunkIndex() + 1}/${qrProtocol.getTotalChunks()}`;
-          }
-        }
-
-        // Generate QR code from protocol
+        // Function to generate QR code from protocol
         function generateQRCodeFromProtocol() {
           qrcodeContainer.innerHTML = '';
 
@@ -562,18 +542,21 @@
 
         // Process received QR code data
         function processQRData(data) {
+          // Only log the raw data, let QRTP handle the detailed parsing
+          addMessageToLog('incoming', 'qr', `Received QR code`, data);
+
+          // Process the data with QRTP
           const result = qrProtocol.processReceivedData(data);
 
+          // Handle the result based on type
           switch (result.type) {
             case 'chunk':
               scanStatus.textContent = result.message;
-              updateReceivedChunksDisplay();
               break;
 
             case 'complete':
               rxData.value = result.data;
               scanStatus.textContent = 'All chunks received!';
-              updateReceivedChunksDisplay();
               break;
 
             case 'ack':
@@ -586,45 +569,6 @@
 
             default:
               scanStatus.textContent = result.message;
-          }
-
-          // Update QR code to include acknowledgment
-          generateQRCodeFromProtocol();
-        }
-
-        // Update received chunks display
-        function updateReceivedChunksDisplay() {
-          const received = qrProtocol.getReceivedChunksCount();
-          const total = Math.max(qrProtocol.getTotalChunksToReceive(), received);
-
-          receivedChunks.textContent = `Received: ${received}/${total} chunks`;
-        }
-
-        // Generate simple QR code from text input
-        function generateSimpleQRCode() {
-          qrcodeContainer.innerHTML = '';
-          const text = txData.value.trim();
-
-          if (text) {
-            // Create a new canvas element inside the container
-            const canvas = document.createElement('canvas');
-            qrcodeContainer.appendChild(canvas);
-
-            QRCode.toCanvas(
-              canvas,
-              text,
-              {
-                width: 320,
-                margin: 1,
-                color: {
-                  dark: '#000',
-                  light: '#fff',
-                },
-              },
-              function (error) {
-                if (error) console.error(error);
-              },
-            );
           }
         }
 
@@ -673,7 +617,6 @@
 
                 // Reset received chunks when starting camera
                 qrProtocol.reset();
-                updateReceivedChunksDisplay();
               })
               .catch(function (error) {
                 console.error('Camera error:', error);
@@ -726,13 +669,6 @@
 
             // If QR code found
             if (code) {
-              // Log the raw QR code data for debugging
-              addMessageToLog(
-                'debug',
-                'qr',
-                `Raw QR code data: ${code.data.substring(0, 50)}${code.data.length > 50 ? '...' : ''}`,
-              );
-
               // Process the QR code data
               processQRData(code.data);
 
@@ -751,32 +687,30 @@
         txData.addEventListener('input', function () {
           // Reset protocol when text changes
           qrProtocol.reset();
-          updateChunkCounter();
 
-          // Generate simple QR code for the text
-          generateSimpleQRCode();
+          // Clear the QR code container
+          qrcodeContainer.innerHTML = '';
         });
 
-        chunkDataBtn.addEventListener('click', chunkData);
+        chunkDataBtn.addEventListener('click', function () {
+          const text = txData.value.trim();
+          if (!text) return;
 
-        // Set up the callback for when a chunk is acknowledged
-        qrProtocol.setChunkAcknowledgedCallback(function () {
-          // Update the chunk counter display
-          updateChunkCounter();
+          const chunkSize = parseInt(chunkSizeInput.value, 10);
+          if (isNaN(chunkSize) || chunkSize < 10) {
+            alert('Please enter a valid chunk size (minimum 10 bytes)');
+            return;
+          }
 
-          // Generate a new QR code for the next chunk
-          generateQRCodeFromProtocol();
+          // Clear the message log
+          clearMessageLog();
 
-          // Log that we're moving to the next chunk
-          addMessageToLog(
-            'system',
-            'info',
-            `Moving to next chunk: ${qrProtocol.getCurrentChunkIndex() + 1}/${qrProtocol.getTotalChunks()}`,
-          );
+          // Set data in protocol
+          qrProtocol.setData(text, chunkSize);
         });
 
         // Initial setup
-        generateSimpleQRCode();
+        generateQRCodeFromProtocol();
         addMessageToLog('system', 'info', 'QR Code Protocol initialized');
         addMessageToLog('system', 'info', 'Ready to send and receive data');
       }
