@@ -19,6 +19,13 @@ export interface QRTPState {
   isTransmissionComplete: boolean;
 }
 
+export interface QRTPPacket {
+  index: number | null;
+  total: number | null;
+  hash: string | null;
+  payload: string | null;
+}
+
 export class QRTP {
   // Data to be sent
   private dataToSend: string | null = null;
@@ -114,7 +121,6 @@ export class QRTP {
 
   // Generate hash for a chunk
   generateChunkHash(chunk: string): string {
-    console.log('hashing:', chunk);
     // Simple hash function that only considers the chunk data
     let hash = 0;
     const str = chunk; // Only hash the chunk data, not the index
@@ -135,32 +141,57 @@ export class QRTP {
     const hashUint = hash < 0 ? hash + 4294967296 : hash; // Convert negative to positive
     const hashStr = hashUint.toString(16).padStart(8, '0');
 
-    this.logMessage('debug', 'hash', `Generated hash: ${hashStr}`);
     return hashStr;
+  }
+
+  // Convert a packet object to a string for QR code
+  private packetToString(packet: QRTPPacket): string {
+    let header = '';
+    if (packet.index !== null && packet.total !== null) {
+      header = `${packet.index}/${packet.total}`;
+    }
+
+    return `${this.protocolPrefix}[${header}]:${packet.hash || ''}:${packet.payload || ''}`;
+  }
+
+  // Get the current packet to send
+  private getCurrentPacket(): QRTPPacket {
+    // If we have no data to send or all chunks sent, just send an acknowledgment
+    if (this.dataChunks.length === 0 || this.currentChunkIndex >= this.dataChunks.length) {
+      this.isTransmissionComplete = this.dataChunks.length > 0 && this.currentChunkIndex >= this.dataChunks.length;
+
+      return {
+        index: null,
+        total: null,
+        hash: this.lastReceivedHash,
+        payload: null,
+      };
+    }
+
+    // We have data to send
+    return {
+      index: this.currentChunkIndex,
+      total: this.totalChunks,
+      hash: this.lastReceivedHash,
+      payload: this.dataChunks[this.currentChunkIndex],
+    };
   }
 
   // Get the current QR code data to display
   getCurrentQRCodeData(): string {
-    // If we have no data to send
-    if (this.dataChunks.length === 0) {
-      const qrData = `${this.protocolPrefix}[]:${this.lastReceivedHash}:`;
-      this.logMessage('outgoing', 'ack', `Sending acknowledgment only`, qrData);
-      return qrData;
+    const packet = this.getCurrentPacket();
+    const qrData = this.packetToString(packet);
+
+    // Log appropriate message based on packet type
+    if (packet.index === null) {
+      if (this.isTransmissionComplete) {
+        this.logMessage('outgoing', 'ack', `All chunks sent, sending acknowledgment only`, qrData);
+      } else {
+        this.logMessage('outgoing', 'ack', `Sending acknowledgment only`, qrData);
+      }
+    } else {
+      this.logMessage('outgoing', 'data', `Sending chunk ${packet.index + 1}/${packet.total}`, qrData);
     }
-
-    // If we've sent all chunks
-    if (this.currentChunkIndex >= this.dataChunks.length) {
-      this.isTransmissionComplete = true;
-      const qrData = `${this.protocolPrefix}[]:${this.lastReceivedHash}:`;
-      this.logMessage('outgoing', 'ack', `All chunks sent, sending acknowledgment only`, qrData);
-      return qrData;
-    }
-
-    // We have data to send
-    const chunk = this.dataChunks[this.currentChunkIndex];
-    const qrData = `${this.protocolPrefix}[${this.currentChunkIndex}/${this.totalChunks}]:${this.lastReceivedHash}:${chunk}`;
-
-    this.logMessage('outgoing', 'data', `Sending chunk ${this.currentChunkIndex + 1}/${this.totalChunks}`, qrData);
 
     return qrData;
   }
@@ -170,44 +201,44 @@ export class QRTP {
     // Log the raw data we're processing
     this.logMessage('incoming', 'raw', `Processing raw data`, data);
 
-    // Early return for non-QRTP data
-    if (!data.startsWith(`${this.protocolPrefix}[`)) {
+    // Parse the QR code data into a packet
+    const packet = this.parseQRTPData(data);
+
+    // If parsing failed, return invalid response
+    if (!packet) {
       this.logMessage('incoming', 'error', `Invalid QR code format`, data);
       return { type: 'invalid', message: 'Invalid QR code format' };
     }
 
-    // Parse all parts of the QR code data
-    const parts = this.parseQRTPData(data);
-    if (!parts) {
-      return { type: 'invalid', message: 'Invalid QR code format' };
-    }
+    return this.processPacket(packet);
+  }
 
-    const { index, total, hash, payload } = parts;
-
+  // Process a parsed packet
+  private processPacket(packet: QRTPPacket): QRTPResponse {
     // Log the parsed components
     this.logMessage(
       'incoming',
       'parse',
-      `Parsed QR: index=${index !== null ? index : 'null'}, total=${total !== null ? total : 'null'}, hash=${hash || 'none'}, payload=${payload ? payload.substring(0, 20) + (payload.length > 20 ? '...' : '') : 'none'}`,
+      `Parsed QR: index=${packet.index !== null ? packet.index : 'null'}, total=${packet.total !== null ? packet.total : 'null'}, hash=${packet.hash || 'none'}, payload=${packet.payload ? packet.payload.substring(0, 20) + (packet.payload.length > 20 ? '...' : '') : 'none'}`,
     );
 
     // First, check if this is an acknowledgment for our current chunk
-    if (hash && this.dataChunks.length > 0 && this.currentChunkIndex < this.dataChunks.length) {
+    if (packet.hash && this.dataChunks.length > 0 && this.currentChunkIndex < this.dataChunks.length) {
       const currentChunk = this.dataChunks[this.currentChunkIndex];
       const expectedHash = this.generateChunkHash(currentChunk);
 
       this.logMessage(
         'incoming',
         'ack-check',
-        `Checking acknowledgment: received=${hash}, expected=${expectedHash}, index=${this.currentChunkIndex}`,
+        `Checking acknowledgment: received=${packet.hash}, expected=${expectedHash}, index=${this.currentChunkIndex}`,
       );
 
-      if (hash === expectedHash) {
+      if (packet.hash === expectedHash) {
         this.logMessage(
           'incoming',
           'ack',
           `✓ ACKNOWLEDGMENT MATCHED for chunk ${this.currentChunkIndex + 1}/${this.totalChunks}`,
-          hash,
+          packet.hash,
         );
 
         // Increment the chunk index
@@ -227,34 +258,34 @@ export class QRTP {
         this.logMessage(
           'incoming',
           'ack',
-          `✗ Acknowledgment did NOT match for chunk ${this.currentChunkIndex + 1}/${this.totalChunks}. Expected: ${expectedHash}, Received: ${hash}`,
+          `✗ Acknowledgment did NOT match for chunk ${this.currentChunkIndex + 1}/${this.totalChunks}. Expected: ${expectedHash}, Received: ${packet.hash}`,
         );
       }
     }
 
     // Process incoming data chunk if present
-    if (index !== null && total !== null && payload) {
+    if (packet.index !== null && packet.total !== null && packet.payload) {
       // Store the received chunk
-      this.receivedChunks.set(index, payload);
+      this.receivedChunks.set(packet.index, packet.payload);
 
       // Generate hash for acknowledgment - only hash the payload
-      this.lastReceivedHash = this.generateChunkHash(payload);
+      this.lastReceivedHash = this.generateChunkHash(packet.payload);
 
       this.logMessage(
         'incoming',
         'chunk',
-        `Received chunk ${index + 1}/${total}, generated hash=${this.lastReceivedHash}`,
-        payload.substring(0, 20) + (payload.length > 20 ? '...' : ''),
+        `Received chunk ${packet.index + 1}/${packet.total}, generated hash=${this.lastReceivedHash}`,
+        packet.payload.substring(0, 20) + (packet.payload.length > 20 ? '...' : ''),
       );
 
       // Notify about the change
       this.notifyChange();
 
       // Check if we've received all chunks
-      if (this.receivedChunks.size === total) {
+      if (this.receivedChunks.size === packet.total) {
         // Combine all chunks
         let combinedData = '';
-        for (let i = 0; i < total; i++) {
+        for (let i = 0; i < packet.total; i++) {
           if (this.receivedChunks.has(i)) {
             combinedData += this.receivedChunks.get(i);
           }
@@ -263,7 +294,7 @@ export class QRTP {
         this.logMessage(
           'incoming',
           'complete',
-          `All ${total} chunks received, message complete: ${combinedData.length} bytes`,
+          `All ${packet.total} chunks received, message complete: ${combinedData.length} bytes`,
         );
 
         // Notify about completion
@@ -273,63 +304,66 @@ export class QRTP {
           type: 'complete',
           message: 'All chunks received',
           data: combinedData,
-          totalChunks: total,
+          totalChunks: packet.total,
         };
       }
 
       return {
         type: 'chunk',
-        message: `Received chunk ${index + 1} of ${total}`,
-        chunkIndex: index,
-        totalChunks: total,
+        message: `Received chunk ${packet.index + 1} of ${packet.total}`,
+        chunkIndex: packet.index,
+        totalChunks: packet.total,
       };
     }
 
     // Just an acknowledgment with no data
-    if (index === null && hash) {
-      this.logMessage('incoming', 'ack-only', `Received acknowledgment only: ${hash}`);
+    if (packet.index === null && packet.hash) {
+      this.logMessage('incoming', 'ack-only', `Received acknowledgment only: ${packet.hash}`);
       this.notifyChange();
       return { type: 'ack', message: 'Acknowledgment received' };
     }
 
-    this.logMessage('incoming', 'unknown', `Unknown QR code format`, data);
+    this.logMessage('incoming', 'unknown', `Unknown QR code format`, packet);
     return { type: 'unknown', message: 'Unknown QR code format' };
   }
 
   // Helper method to parse QRTP data
-  private parseQRTPData(
-    data: string,
-  ): { index: number | null; total: number | null; hash: string | null; payload: string | null } | null {
+  private parseQRTPData(data: string): QRTPPacket | null {
     try {
-      // Parse the QRTP header
-      const headerEndIndex = data.indexOf(']');
-      if (headerEndIndex === -1) {
-        this.logMessage('incoming', 'error', `Invalid QR code format: missing closing bracket`, data);
+      // Quick validation - must start with QRTP[
+      if (!data.startsWith(`${this.protocolPrefix}[`)) {
         return null;
       }
 
-      const header = data.substring(this.protocolPrefix.length + 1, headerEndIndex); // Extract what's inside QRTP[...]
-      const remainingData = data.substring(headerEndIndex + 1);
+      // Find the second colon which separates header from payload
+      const firstColonIndex = data.indexOf(':');
+      if (firstColonIndex === -1) return null;
 
-      // Find the position of the first colon
-      const firstColonIndex = remainingData.indexOf(':');
-      if (firstColonIndex === -1) {
-        this.logMessage('incoming', 'error', `Invalid QR code format: missing first colon separator`, data);
-        return null;
-      }
+      const secondColonIndex = data.indexOf(':', firstColonIndex + 1);
+      if (secondColonIndex === -1) return null;
 
-      const hash = remainingData.substring(0, firstColonIndex);
-      const payload = remainingData.substring(firstColonIndex + 1); // Everything after the first colon is payload
+      // Split into header and payload
+      const headerPart = data.substring(0, secondColonIndex);
+      const payload = data.substring(secondColonIndex + 1) || null;
 
-      // Parse the header to get index and total
+      // Extract hash - everything between first and second colon
+      const hash = headerPart.substring(firstColonIndex + 1) || null;
+
+      // Extract index/total from the header
       let index: number | null = null;
       let total: number | null = null;
 
-      if (header) {
-        const chunkInfo = header.split('/');
-        if (chunkInfo.length === 2) {
-          index = parseInt(chunkInfo[0], 10);
-          total = parseInt(chunkInfo[1], 10);
+      // Find the bracket positions to extract the index/total part
+      const openBracketIndex = headerPart.indexOf('[');
+      const closeBracketIndex = headerPart.indexOf(']');
+
+      if (openBracketIndex !== -1 && closeBracketIndex !== -1) {
+        const indexTotalPart = headerPart.substring(openBracketIndex + 1, closeBracketIndex);
+
+        if (indexTotalPart.includes('/')) {
+          const [indexStr, totalStr] = indexTotalPart.split('/');
+          index = parseInt(indexStr, 10);
+          total = parseInt(totalStr, 10);
 
           if (isNaN(index) || isNaN(total)) {
             index = null;
@@ -340,11 +374,12 @@ export class QRTP {
 
       console.log({ index, total, hash, payload });
 
+      // Create and return the packet
       return {
         index,
         total,
-        hash: hash || null,
-        payload: payload || null,
+        hash,
+        payload,
       };
     } catch (error) {
       this.logMessage('incoming', 'error', `Error parsing QRTP data: ${error}`, data);
@@ -365,6 +400,11 @@ export class QRTP {
     this.notifyChange();
   }
 
+  // Get the number of chunks received
+  getReceivedChunksCount(): number {
+    return this.receivedChunks.size;
+  }
+
   // Get the total number of chunks expected to receive
   getTotalChunksToReceive(): number {
     // Find the maximum total from all received chunks
@@ -375,7 +415,36 @@ export class QRTP {
     return maxTotal;
   }
 
+  // Check if all chunks have been sent
+  isAllChunksSent(): boolean {
+    return this.isTransmissionComplete;
+  }
+
+  // Get sending progress percentage
+  getSendingProgress(): number {
+    if (this.totalChunks === 0) return 0;
+    return (Math.min(this.currentChunkIndex, this.totalChunks) / this.totalChunks) * 100;
+  }
+
+  // Getters for internal state (useful for UI updates)
+  getCurrentChunkIndex(): number {
+    return this.currentChunkIndex;
+  }
+
   getTotalChunks(): number {
     return this.totalChunks;
+  }
+
+  // Get data for a specific chunk
+  getChunkData(index: number): string | null {
+    if (index >= 0 && index < this.dataChunks.length) {
+      return this.dataChunks[index];
+    }
+    return null;
+  }
+
+  // Check if a specific chunk has been received
+  hasReceivedChunk(index: number): boolean {
+    return this.receivedChunks.has(index);
   }
 }
