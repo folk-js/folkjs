@@ -242,6 +242,94 @@
         font-size: 14px;
         color: #666;
       }
+
+      .message-log-container {
+        margin-top: 20px;
+        padding: 20px;
+        background-color: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+
+      .message-log {
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 12px;
+        line-height: 1.4;
+        padding: 10px;
+        background-color: #f5f5f5;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+      }
+
+      .log-entry {
+        margin-bottom: 4px;
+        padding: 4px;
+        border-radius: 2px;
+      }
+
+      .log-entry-outgoing {
+        background-color: #e6f7ff;
+        border-left: 3px solid #1890ff;
+      }
+
+      .log-entry-incoming {
+        background-color: #f6ffed;
+        border-left: 3px solid #52c41a;
+      }
+
+      .log-entry-system {
+        background-color: #f9f9f9;
+        border-left: 3px solid #d9d9d9;
+      }
+
+      .log-entry-error {
+        background-color: #fff1f0;
+        border-left: 3px solid #f5222d;
+      }
+
+      .log-entry-warning {
+        background-color: #fffbe6;
+        border-left: 3px solid #faad14;
+      }
+
+      .log-entry-debug {
+        background-color: #f0f5ff;
+        border-left: 3px solid #597ef7;
+      }
+
+      .log-entry-hash {
+        font-family: monospace;
+        font-size: 11px;
+      }
+
+      .log-timestamp {
+        color: #888;
+        font-size: 10px;
+        margin-right: 5px;
+      }
+
+      .log-direction {
+        font-weight: bold;
+        margin-right: 5px;
+      }
+
+      .log-type {
+        color: #666;
+        margin-right: 5px;
+      }
+
+      .log-message {
+        color: #333;
+      }
+
+      .log-data {
+        margin-top: 2px;
+        color: #666;
+        font-size: 10px;
+        font-style: italic;
+      }
     </style>
   </head>
   <body>
@@ -264,17 +352,14 @@
         </div>
 
         <div class="streaming-controls">
-          <div class="chunk-controls">
-            <button id="prevChunkBtn" disabled>Previous Chunk</button>
-            <button id="nextChunkBtn" disabled>Next Chunk</button>
-          </div>
           <div class="chunk-info">
             <span id="chunkCounter">0/0</span>
           </div>
         </div>
 
-        <div class="progress-bar-container">
-          <div id="sendProgressBar" class="progress-bar"></div>
+        <div class="message-log-container">
+          <h4>Message Log</h4>
+          <div id="messageLog" class="message-log"></div>
         </div>
       </div>
 
@@ -292,9 +377,6 @@
             <textarea id="rxData" style="height: 200px" disabled></textarea>
             <div class="status" id="scanStatus">Ready to scan</div>
             <div class="received-chunks" id="receivedChunks">Received: 0/0 chunks</div>
-            <div class="progress-bar-container">
-              <div id="receiveProgressBar" class="progress-bar"></div>
-            </div>
           </div>
         </div>
       </div>
@@ -305,265 +387,165 @@
     <!-- QR Code libraries -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <!-- Crypto library for hashing -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <!-- Import QRTP module -->
+    <script type="module">
+      import { QRTP } from './QRTP.ts';
 
-    <script type="text/javascript">
-      // DOM elements
-      const txData = document.getElementById('txData');
-      const rxData = document.getElementById('rxData');
-      const qrcodeContainer = document.getElementById('qrcode');
-      const video = document.getElementById('video');
-      const canvas = document.getElementById('canvas');
-      const videoContainer = document.getElementById('videoContainer');
-      const cameraOverlay = document.getElementById('cameraOverlay');
-      const cameraLabel = cameraOverlay.querySelector('.camera-label');
-      const scanStatus = document.getElementById('scanStatus');
-      const chunkSizeInput = document.getElementById('chunkSize');
-      const chunkDataBtn = document.getElementById('chunkDataBtn');
-      const prevChunkBtn = document.getElementById('prevChunkBtn');
-      const nextChunkBtn = document.getElementById('nextChunkBtn');
-      const chunkCounter = document.getElementById('chunkCounter');
-      const receivedChunks = document.getElementById('receivedChunks');
-      const sendProgressBar = document.getElementById('sendProgressBar');
-      const receiveProgressBar = document.getElementById('receiveProgressBar');
+      // Make QRTP available globally for debugging
+      window.QRTP = QRTP;
 
-      // Variables for video scanning
-      let videoStream = null;
-      let scanInterval = null;
-      let cameraActive = false;
-      const canvasContext = canvas.getContext('2d');
+      // Initialize after DOM is loaded
+      document.addEventListener('DOMContentLoaded', initApp);
 
-      // Variables for data streaming
-      let dataChunks = [];
-      let currentChunkIndex = 0;
-      let receivedChunksData = [];
-      let receivedChunksMap = new Map();
-      let lastReceivedHash = '';
-      let totalChunks = 0;
+      function initApp() {
+        // DOM elements
+        const txData = document.getElementById('txData');
+        const rxData = document.getElementById('rxData');
+        const qrcodeContainer = document.getElementById('qrcode');
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const videoContainer = document.getElementById('videoContainer');
+        const cameraOverlay = document.getElementById('cameraOverlay');
+        const cameraLabel = cameraOverlay.querySelector('.camera-label');
+        const scanStatus = document.getElementById('scanStatus');
+        const chunkSizeInput = document.getElementById('chunkSize');
+        const chunkDataBtn = document.getElementById('chunkDataBtn');
+        const chunkCounter = document.getElementById('chunkCounter');
+        const receivedChunks = document.getElementById('receivedChunks');
+        const messageLog = document.getElementById('messageLog');
 
-      // Function to chunk data
-      function chunkData() {
-        const text = txData.value.trim();
-        if (!text) return;
+        // Variables for video scanning
+        let videoStream = null;
+        let scanInterval = null;
+        let cameraActive = false;
+        const canvasContext = canvas.getContext('2d');
 
-        const chunkSize = parseInt(chunkSizeInput.value, 10);
-        if (isNaN(chunkSize) || chunkSize < 10) {
-          alert('Please enter a valid chunk size (minimum 10 bytes)');
-          return;
+        // Create protocol instance
+        const qrProtocol = new QRTP();
+
+        // Set up message logging
+        function addMessageToLog(direction, type, message, data = null) {
+          const logEntry = document.createElement('div');
+          logEntry.className = `log-entry log-entry-${direction}`;
+          if (type === 'error') logEntry.className += ' log-entry-error';
+          if (type === 'warning') logEntry.className += ' log-entry-warning';
+          if (type === 'debug') logEntry.className += ' log-entry-debug';
+          if (type === 'hash') logEntry.className += ' log-entry-hash';
+
+          const timestamp = new Date().toLocaleTimeString();
+
+          let html = `<span class="log-timestamp">${timestamp}</span>`;
+          html += `<span class="log-direction">${direction.toUpperCase()}</span>`;
+          html += `<span class="log-type">[${type}]</span>`;
+          html += `<span class="log-message">${message}</span>`;
+
+          if (data) {
+            html += `<div class="log-data">${JSON.stringify(data)}</div>`;
+          }
+
+          logEntry.innerHTML = html;
+          messageLog.appendChild(logEntry);
+
+          // Auto-scroll to bottom
+          messageLog.scrollTop = messageLog.scrollHeight;
         }
 
-        // Reset variables
-        dataChunks = [];
-        currentChunkIndex = 0;
+        // Set the message log callback
+        qrProtocol.setMessageLogCallback(addMessageToLog);
 
-        // Split text into chunks
-        for (let i = 0; i < text.length; i += chunkSize) {
-          const chunk = text.substring(i, i + chunkSize);
-          dataChunks.push(chunk);
+        // Function to clear the message log
+        function clearMessageLog() {
+          messageLog.innerHTML = '';
+          addMessageToLog('system', 'info', 'Message log cleared');
         }
 
-        totalChunks = dataChunks.length;
+        // Add clear log button
+        const clearLogBtn = document.createElement('button');
+        clearLogBtn.textContent = 'Clear Log';
+        clearLogBtn.style.marginTop = '10px';
+        clearLogBtn.style.marginRight = '10px';
+        clearLogBtn.addEventListener('click', clearMessageLog);
+        document.querySelector('.message-log-container').appendChild(clearLogBtn);
 
-        // Update UI
-        updateChunkCounter();
-        prevChunkBtn.disabled = true;
-        nextChunkBtn.disabled = totalChunks <= 1;
+        // Add debug button
+        const debugBtn = document.createElement('button');
+        debugBtn.textContent = 'Debug Info';
+        debugBtn.style.marginTop = '10px';
+        debugBtn.addEventListener('click', showDebugInfo);
+        document.querySelector('.message-log-container').appendChild(debugBtn);
 
-        // Generate QR code for first chunk
-        if (totalChunks > 0) {
-          generateQRCodeForCurrentChunk();
+        // Function to show debug info
+        function showDebugInfo() {
+          addMessageToLog('debug', 'info', 'Protocol State', {
+            currentChunkIndex: qrProtocol.getCurrentChunkIndex(),
+            totalChunks: qrProtocol.getTotalChunks(),
+            receivedChunksCount: qrProtocol.getReceivedChunksCount(),
+            isTransmissionComplete: qrProtocol.isAllChunksSent(),
+          });
+
+          // If we have chunks to send, show the current chunk and its hash
+          if (qrProtocol.getTotalChunks() > 0 && qrProtocol.getCurrentChunkIndex() < qrProtocol.getTotalChunks()) {
+            const currentChunk = qrProtocol.getCurrentQRCodeData();
+            addMessageToLog('debug', 'info', `Current QR code data`, {
+              data: currentChunk,
+            });
+          }
+
+          // Show received chunks
+          const receivedChunksInfo = {};
+          for (let i = 0; i < qrProtocol.getTotalChunksToReceive(); i++) {
+            receivedChunksInfo[`chunk_${i}`] = qrProtocol.getReceivedChunksCount() > i ? 'received' : 'pending';
+          }
+
+          addMessageToLog('debug', 'info', 'Received Chunks', receivedChunksInfo);
         }
-      }
 
-      // Update chunk counter display
-      function updateChunkCounter() {
-        if (dataChunks.length === 0) {
-          chunkCounter.textContent = '0/0';
-          sendProgressBar.style.width = '0%';
-        } else {
-          chunkCounter.textContent = `${currentChunkIndex + 1}/${totalChunks}`;
-          sendProgressBar.style.width = `${((currentChunkIndex + 1) / totalChunks) * 100}%`;
-        }
-      }
+        // Function to chunk data
+        function chunkData() {
+          const text = txData.value.trim();
+          if (!text) return;
 
-      // Generate hash for a chunk
-      function generateChunkHash(chunk, index) {
-        // Create a hash of the chunk content and its index
-        return CryptoJS.SHA256(`${index}:${chunk}`).toString(CryptoJS.enc.Hex).substring(0, 8);
-      }
+          const chunkSize = parseInt(chunkSizeInput.value, 10);
+          if (isNaN(chunkSize) || chunkSize < 10) {
+            alert('Please enter a valid chunk size (minimum 10 bytes)');
+            return;
+          }
 
-      // Generate QR code for current chunk
-      function generateQRCodeForCurrentChunk() {
-        qrcodeContainer.innerHTML = '';
+          // Clear the message log
+          clearMessageLog();
 
-        if (dataChunks.length === 0 || currentChunkIndex >= dataChunks.length) {
-          return;
-        }
+          // Set data in protocol
+          qrProtocol.setData(text, chunkSize);
 
-        const chunk = dataChunks[currentChunkIndex];
-        const hash = generateChunkHash(chunk, currentChunkIndex);
-
-        // Format: CHUNK:index:total:hash:data
-        const qrData = `CHUNK:${currentChunkIndex}:${totalChunks}:${hash}:${chunk}`;
-
-        // Create a new canvas element inside the container
-        const canvas = document.createElement('canvas');
-        qrcodeContainer.appendChild(canvas);
-
-        QRCode.toCanvas(
-          canvas,
-          qrData,
-          {
-            width: 320,
-            margin: 1,
-            color: {
-              dark: '#000',
-              light: '#fff',
-            },
-          },
-          function (error) {
-            if (error) console.error(error);
-          },
-        );
-      }
-
-      // Generate QR code for acknowledgment
-      function generateAckQRCode(hash) {
-        qrcodeContainer.innerHTML = '';
-
-        // Format: ACK:hash
-        const qrData = `ACK:${hash}`;
-
-        // Create a new canvas element inside the container
-        const canvas = document.createElement('canvas');
-        qrcodeContainer.appendChild(canvas);
-
-        QRCode.toCanvas(
-          canvas,
-          qrData,
-          {
-            width: 320,
-            margin: 1,
-            color: {
-              dark: '#000',
-              light: '#fff',
-            },
-          },
-          function (error) {
-            if (error) console.error(error);
-          },
-        );
-      }
-
-      // Navigate to previous chunk
-      function goToPrevChunk() {
-        if (currentChunkIndex > 0) {
-          currentChunkIndex--;
+          // Update UI
           updateChunkCounter();
-          generateQRCodeForCurrentChunk();
 
-          // Update button states
-          prevChunkBtn.disabled = currentChunkIndex === 0;
-          nextChunkBtn.disabled = false;
+          // Generate QR code
+          generateQRCodeFromProtocol();
         }
-      }
 
-      // Navigate to next chunk
-      function goToNextChunk() {
-        if (currentChunkIndex < dataChunks.length - 1) {
-          currentChunkIndex++;
-          updateChunkCounter();
-          generateQRCodeForCurrentChunk();
-
-          // Update button states
-          prevChunkBtn.disabled = false;
-          nextChunkBtn.disabled = currentChunkIndex === dataChunks.length - 1;
-        }
-      }
-
-      // Process received QR code data
-      function processQRData(data) {
-        // Check if it's a chunk
-        if (data.startsWith('CHUNK:')) {
-          const parts = data.split(':');
-          if (parts.length >= 5) {
-            const index = parseInt(parts[1], 10);
-            const total = parseInt(parts[2], 10);
-            const hash = parts[3];
-            // Reconstruct the chunk data (in case it contains colons)
-            const chunkData = parts.slice(4).join(':');
-
-            // Verify hash
-            const calculatedHash = generateChunkHash(chunkData, index);
-            if (calculatedHash === hash) {
-              // Store the chunk
-              if (!receivedChunksMap.has(index)) {
-                receivedChunksMap.set(index, chunkData);
-                lastReceivedHash = hash;
-
-                // Update UI
-                updateReceivedChunks(total);
-
-                // Generate acknowledgment QR code
-                generateAckQRCode(hash);
-
-                // If all chunks received, combine them
-                if (receivedChunksMap.size === total) {
-                  combineReceivedChunks(total);
-                }
-              }
-            }
-          }
-        }
-        // Check if it's an acknowledgment
-        else if (data.startsWith('ACK:')) {
-          const parts = data.split(':');
-          if (parts.length >= 2) {
-            const hash = parts[1];
-            const currentChunkHash = generateChunkHash(dataChunks[currentChunkIndex], currentChunkIndex);
-
-            // If the hash matches the current chunk, move to the next one
-            if (hash === currentChunkHash && currentChunkIndex < dataChunks.length - 1) {
-              goToNextChunk();
-            }
-          }
-        }
-      }
-
-      // Update received chunks display
-      function updateReceivedChunks(total) {
-        receivedChunks.textContent = `Received: ${receivedChunksMap.size}/${total} chunks`;
-        receiveProgressBar.style.width = `${(receivedChunksMap.size / total) * 100}%`;
-      }
-
-      // Combine received chunks into complete message
-      function combineReceivedChunks(total) {
-        let combinedData = '';
-        for (let i = 0; i < total; i++) {
-          if (receivedChunksMap.has(i)) {
-            combinedData += receivedChunksMap.get(i);
+        // Update chunk counter display
+        function updateChunkCounter() {
+          if (qrProtocol.getTotalChunks() === 0) {
+            chunkCounter.textContent = '0/0';
+          } else {
+            chunkCounter.textContent = `${qrProtocol.getCurrentChunkIndex() + 1}/${qrProtocol.getTotalChunks()}`;
           }
         }
 
-        // Display the complete message
-        rxData.value = combinedData;
-        scanStatus.textContent = 'All chunks received!';
-      }
+        // Generate QR code from protocol
+        function generateQRCodeFromProtocol() {
+          qrcodeContainer.innerHTML = '';
 
-      // Generate QR code from text input (original function, now used for single messages)
-      function generateQRCode() {
-        qrcodeContainer.innerHTML = '';
-        const text = txData.value.trim();
+          const qrData = qrProtocol.getCurrentQRCodeData();
 
-        if (text) {
           // Create a new canvas element inside the container
           const canvas = document.createElement('canvas');
           qrcodeContainer.appendChild(canvas);
 
           QRCode.toCanvas(
             canvas,
-            text,
+            qrData,
             {
               width: 320,
               margin: 1,
@@ -577,130 +559,311 @@
             },
           );
         }
-      }
 
-      // Toggle camera on/off when clicking the video container
-      videoContainer.addEventListener('click', function () {
-        if (cameraActive) {
-          stopCamera();
-        } else {
-          startCamera();
-        }
-      });
+        // Process received QR code data
+        function processQRData(data) {
+          const result = qrProtocol.processReceivedData(data);
 
-      // Start camera for QR code scanning
-      function startCamera() {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          navigator.mediaDevices
-            .getUserMedia({
-              video: { facingMode: 'user' }, // Use front camera
-            })
-            .then(function (stream) {
-              videoStream = stream;
-              video.srcObject = stream;
-              video.setAttribute('playsinline', true);
-              video.play();
+          switch (result.type) {
+            case 'chunk':
+              scanStatus.textContent = result.message;
+              updateReceivedChunksDisplay();
+              break;
 
-              // Set canvas size to match video dimensions
-              video.onloadedmetadata = function () {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-              };
+            case 'complete':
+              rxData.value = result.data;
+              scanStatus.textContent = 'All chunks received!';
+              updateReceivedChunksDisplay();
+              break;
 
-              // Start scanning for QR codes
-              scanStatus.textContent = 'Scanning...';
-              scanInterval = setInterval(scanQrCode, 200);
+            case 'ack':
+              scanStatus.textContent = 'Acknowledgment received';
+              break;
 
-              // Update UI to show camera is active
-              cameraActive = true;
-              videoContainer.classList.add('camera-active');
-              cameraLabel.textContent = 'Stop Camera';
+            case 'invalid':
+              scanStatus.textContent = 'Invalid QR code: ' + result.message;
+              break;
 
-              // Reset received chunks when starting camera
-              receivedChunksMap = new Map();
-              updateReceivedChunks(0);
-            })
-            .catch(function (error) {
-              console.error('Camera error:', error);
-              scanStatus.textContent = 'Camera access error: ' + error.message;
-            });
-        } else {
-          scanStatus.textContent = 'Camera not supported on this device/browser';
-        }
-      }
+            default:
+              scanStatus.textContent = result.message;
+          }
 
-      // Stop camera scanning
-      function stopCamera() {
-        if (videoStream) {
-          videoStream.getTracks().forEach((track) => track.stop());
-          videoStream = null;
+          // Update QR code to include acknowledgment
+          generateQRCodeFromProtocol();
         }
 
-        if (scanInterval) {
-          clearInterval(scanInterval);
-          scanInterval = null;
+        // Update received chunks display
+        function updateReceivedChunksDisplay() {
+          const received = qrProtocol.getReceivedChunksCount();
+          const total = Math.max(qrProtocol.getTotalChunksToReceive(), received);
+
+          receivedChunks.textContent = `Received: ${received}/${total} chunks`;
         }
 
-        // Update UI to show camera is inactive
-        cameraActive = false;
-        videoContainer.classList.remove('camera-active');
-        cameraLabel.textContent = 'Start Camera';
-        scanStatus.textContent = 'Ready to scan';
-      }
+        // Generate simple QR code from text input
+        function generateSimpleQRCode() {
+          qrcodeContainer.innerHTML = '';
+          const text = txData.value.trim();
 
-      // Function to scan video frame for QR codes
-      function scanQrCode() {
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-          // Set canvas dimensions
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
+          if (text) {
+            // Create a new canvas element inside the container
+            const canvas = document.createElement('canvas');
+            qrcodeContainer.appendChild(canvas);
 
-          // Draw video frame to canvas
-          canvasContext.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-          // Get image data from canvas
-          const imageData = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
-
-          // Scan for QR code
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: 'dontInvert',
-          });
-
-          // If QR code found
-          if (code) {
-            // Process the QR code data
-            processQRData(code.data);
-
-            // Display feedback
-            scanStatus.textContent = 'QR Code detected!';
-
-            // Add a quick visual feedback
-            setTimeout(() => {
-              scanStatus.textContent = 'Scanning...';
-            }, 1000);
+            QRCode.toCanvas(
+              canvas,
+              text,
+              {
+                width: 320,
+                margin: 1,
+                color: {
+                  dark: '#000',
+                  light: '#fff',
+                },
+              },
+              function (error) {
+                if (error) console.error(error);
+              },
+            );
           }
         }
+
+        // Toggle camera on/off when clicking the video container
+        videoContainer.addEventListener('click', function () {
+          if (cameraActive) {
+            stopCamera();
+          } else {
+            startCamera();
+          }
+        });
+
+        // Start camera for QR code scanning
+        function startCamera() {
+          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            addMessageToLog('system', 'info', 'Starting camera...');
+            navigator.mediaDevices
+              .getUserMedia({
+                video: { facingMode: 'user' }, // Use front camera
+              })
+              .then(function (stream) {
+                videoStream = stream;
+                video.srcObject = stream;
+                video.setAttribute('playsinline', true);
+                video.play();
+
+                // Set canvas size to match video dimensions
+                video.onloadedmetadata = function () {
+                  canvas.width = video.videoWidth;
+                  canvas.height = video.videoHeight;
+                  addMessageToLog(
+                    'system',
+                    'info',
+                    `Camera started, resolution: ${video.videoWidth}x${video.videoHeight}`,
+                  );
+                };
+
+                // Start scanning for QR codes
+                scanStatus.textContent = 'Scanning...';
+                scanInterval = setInterval(scanQrCode, 200);
+
+                // Update UI to show camera is active
+                cameraActive = true;
+                videoContainer.classList.add('camera-active');
+                cameraLabel.textContent = 'Stop Camera';
+
+                // Reset received chunks when starting camera
+                qrProtocol.reset();
+                updateReceivedChunksDisplay();
+              })
+              .catch(function (error) {
+                console.error('Camera error:', error);
+                scanStatus.textContent = 'Camera access error: ' + error.message;
+                addMessageToLog('system', 'error', `Camera access error: ${error.message}`);
+              });
+          } else {
+            scanStatus.textContent = 'Camera not supported on this device/browser';
+            addMessageToLog('system', 'error', 'Camera not supported on this device/browser');
+          }
+        }
+
+        // Stop camera scanning
+        function stopCamera() {
+          if (videoStream) {
+            videoStream.getTracks().forEach((track) => track.stop());
+            videoStream = null;
+            addMessageToLog('system', 'info', 'Camera stopped');
+          }
+
+          if (scanInterval) {
+            clearInterval(scanInterval);
+            scanInterval = null;
+          }
+
+          // Update UI to show camera is inactive
+          cameraActive = false;
+          videoContainer.classList.remove('camera-active');
+          cameraLabel.textContent = 'Start Camera';
+          scanStatus.textContent = 'Ready to scan';
+        }
+
+        // Function to scan video frame for QR codes
+        function scanQrCode() {
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            // Set canvas dimensions
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            // Draw video frame to canvas
+            canvasContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Get image data from canvas
+            const imageData = canvasContext.getImageData(0, 0, canvas.width, canvas.height);
+
+            // Scan for QR code
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: 'dontInvert',
+            });
+
+            // If QR code found
+            if (code) {
+              // Log the raw QR code data for debugging
+              addMessageToLog(
+                'debug',
+                'qr',
+                `Raw QR code data: ${code.data.substring(0, 50)}${code.data.length > 50 ? '...' : ''}`,
+              );
+
+              // Process the QR code data
+              processQRData(code.data);
+
+              // Display feedback
+              scanStatus.textContent = 'QR Code detected!';
+
+              // Add a quick visual feedback
+              setTimeout(() => {
+                scanStatus.textContent = 'Scanning...';
+              }, 1000);
+            }
+          }
+        }
+
+        // Event listeners
+        txData.addEventListener('input', function () {
+          // Reset protocol when text changes
+          qrProtocol.reset();
+          updateChunkCounter();
+
+          // Generate simple QR code for the text
+          generateSimpleQRCode();
+        });
+
+        chunkDataBtn.addEventListener('click', chunkData);
+
+        // Set up the callback for when a chunk is acknowledged
+        qrProtocol.setChunkAcknowledgedCallback(function () {
+          // Update the chunk counter display
+          updateChunkCounter();
+
+          // Generate a new QR code for the next chunk
+          generateQRCodeFromProtocol();
+
+          // Log that we're moving to the next chunk
+          addMessageToLog(
+            'system',
+            'info',
+            `Moving to next chunk: ${qrProtocol.getCurrentChunkIndex() + 1}/${qrProtocol.getTotalChunks()}`,
+          );
+        });
+
+        // Initial setup
+        generateSimpleQRCode();
+        addMessageToLog('system', 'info', 'QR Code Protocol initialized');
+        addMessageToLog('system', 'info', 'Ready to send and receive data');
       }
-
-      // Event listeners
-      txData.addEventListener('input', function () {
-        // Reset chunks when text changes
-        dataChunks = [];
-        currentChunkIndex = 0;
-        updateChunkCounter();
-        prevChunkBtn.disabled = true;
-        nextChunkBtn.disabled = true;
-
-        // Generate single QR code for the text
-        generateQRCode();
-      });
-
-      chunkDataBtn.addEventListener('click', chunkData);
-      prevChunkBtn.addEventListener('click', goToPrevChunk);
-      nextChunkBtn.addEventListener('click', goToNextChunk);
-
-      // Initial QR code generation
-      generateQRCode();
     </script>
+
+    <!-- Protocol Description -->
+    <div
+      class="protocol-description"
+      style="margin-top: 40px; padding: 20px; background-color: #f8f9fa; border-radius: 12px"
+    >
+      <h3>QRTP: QR Transfer Protocol</h3>
+      <p
+        >A bi-directional data transfer protocol using QR codes for device-to-device communication without network
+        connectivity.</p
+      >
+
+      <h4>Protocol Format</h4>
+      <pre style="background-color: #f0f0f0; padding: 15px; border-radius: 8px; overflow-x: auto">
+/**
+ * QRTP - QR Transfer Protocol
+ * 
+ * Format: QRTP[chunk_index/total_chunks]:[hash_of_received_chunk]:[chunk_data]
+ * 
+ * Examples:
+ * - Sending chunk 0 of 3 with acknowledgment hash:
+ *   QRTP[0/3]:a1b2c3d4:Hello world
+ * 
+ * - Sending chunk 1 of 3 with acknowledgment of previous chunk:
+ *   QRTP[1/3]:e5f6g7h8:This is chunk 2
+ * 
+ * - Sending acknowledgment only (no data):
+ *   QRTP[]:i9j0k1l2:
+ * 
+ * Protocol Flow:
+ * 1. Sender chunks data and displays first chunk as QR code
+ * 2. Receiver scans QR code and stores chunk
+ * 3. Receiver generates hash of received chunk
+ * 4. Receiver displays QR with acknowledgment hash
+ * 5. Sender scans receiver's QR, verifies hash matches
+ * 6. Sender moves to next chunk if hash matches
+ * 7. Process repeats until all chunks transferred
+ * 
+ * Hash Generation:
+ * hash = SHA256(chunk_index + ":" + chunk_data).substring(0, 8)
+ */
+
+// Pseudocode implementation
+class QRTP {
+  // Sending data
+  function setData(text, chunkSize) {
+    this.chunks = splitIntoChunks(text, chunkSize);
+    this.currentChunk = 0;
+  }
+  
+  // Generate QR code data
+  function getCurrentQRData() {
+    if (noDataToSend)
+      return `QRTP[]:${lastReceivedHash}:`;
+      
+    return `QRTP[${currentChunk}/${totalChunks}]:${lastReceivedHash}:${chunkData}`;
+  }
+  
+  // Process received QR code
+  function processReceivedData(qrData) {
+    // Parse QRTP header and extract components
+    [header, hash, payload] = parseQRTP(qrData);
+    
+    // If contains data chunk, store it
+    if (header contains chunk info) {
+      storeChunk(chunkIndex, payload);
+      generateAckHash(payload, chunkIndex);
+    }
+    
+    // Check if hash acknowledges our current chunk
+    if (hash matches expectedHash) {
+      moveToNextChunk();
+      updateQRCode();
+    }
+    
+    // Check if all chunks received
+    if (allChunksReceived) {
+      reassembleData();
+      return completeMessage;
+    }
+  }
+}
+      </pre>
+    </div>
   </body>
 </html>
