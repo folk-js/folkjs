@@ -39,7 +39,6 @@
         font-size: 14px;
         border-radius: 8px;
         border: 1px solid #e0e0e0;
-        z-index: 100;
         max-width: 80%;
       }
 
@@ -85,6 +84,14 @@
         color: #333;
         font-size: 16px;
       }
+
+      #spectrogram-canvas {
+        width: 100%;
+        height: 300px;
+        background-color: #000;
+        border-radius: 4px;
+        display: block;
+      }
     </style>
   </head>
   <body>
@@ -114,6 +121,12 @@
       </div>
     </folk-shape>
 
+    <!-- Spectrogram Shape -->
+    <folk-shape x="50" y="280" width="650" height="350">
+      <h3>Audio Spectrogram</h3>
+      <canvas id="spectrogram-canvas"></canvas>
+    </folk-shape>
+
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
     </script>
@@ -126,6 +139,8 @@
       var context = null;
       var recorder = null;
       var mediaStream = null;
+      var analyser = null;
+      var spectrogramAnimationId = null;
 
       var ggwave = null;
       var parameters = null;
@@ -139,6 +154,63 @@
       var rxData = document.getElementById('rxData');
       var captureStart = document.getElementById('captureStart');
       var captureStop = document.getElementById('captureStop');
+      var spectrogramCanvas = document.getElementById('spectrogram-canvas');
+      var spectrogramCtx = spectrogramCanvas.getContext('2d');
+
+      // Initialize the canvas size properly
+      function resizeCanvas() {
+        if (spectrogramCanvas) {
+          spectrogramCanvas.width = spectrogramCanvas.parentElement.clientWidth - 24; // Account for padding
+          spectrogramCanvas.height = 300; // Increased from 150 to 300 for more vertical detail
+
+          // Clear the canvas with black background
+          spectrogramCtx.fillStyle = 'black';
+          spectrogramCtx.fillRect(0, 0, spectrogramCanvas.width, spectrogramCanvas.height);
+
+          // Draw frequency scale on the right side
+          drawFrequencyScale();
+        }
+      }
+
+      // Draw frequency scale on the right side of the canvas
+      function drawFrequencyScale() {
+        var height = spectrogramCanvas.height;
+        var width = spectrogramCanvas.width;
+
+        spectrogramCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        spectrogramCtx.fillRect(width - 40, 0, 40, height);
+
+        spectrogramCtx.fillStyle = 'white';
+        spectrogramCtx.font = '10px Arial';
+        spectrogramCtx.textAlign = 'right';
+
+        // Draw frequency markers
+        var maxFreq = context ? context.sampleRate / 2 : 24000; // Nyquist frequency
+        var step = height / 10;
+
+        for (var i = 0; i <= 10; i++) {
+          var y = height - i * step;
+          var freq = (i / 10) * maxFreq;
+
+          // Format frequency display
+          var freqText = freq >= 1000 ? (freq / 1000).toFixed(1) + ' kHz' : freq.toFixed(0) + ' Hz';
+
+          // Draw tick mark
+          spectrogramCtx.fillRect(width - 35, y, 5, 1);
+
+          // Draw text
+          spectrogramCtx.fillText(freqText, width - 8, y + 3);
+        }
+      }
+
+      // Initialize on page load
+      window.addEventListener('load', function () {
+        init();
+        resizeCanvas();
+      });
+
+      // Handle window resize
+      window.addEventListener('resize', resizeCanvas);
 
       function convertTypedArray(src, type) {
         var buffer = new ArrayBuffer(src.byteLength);
@@ -156,6 +228,82 @@
         }
       }
 
+      // Custom spectrogram visualization
+      function drawSpectrogram() {
+        if (!analyser) return;
+
+        // Get frequency data
+        var fftSize = analyser.frequencyBinCount;
+        var dataArray = new Uint8Array(fftSize);
+        analyser.getByteFrequencyData(dataArray);
+
+        // Shift the existing spectrogram to the left
+        var imageData = spectrogramCtx.getImageData(1, 0, spectrogramCanvas.width - 41, spectrogramCanvas.height);
+        spectrogramCtx.putImageData(imageData, 0, 0);
+
+        // Clear the right edge where we'll draw new data
+        spectrogramCtx.fillStyle = 'black';
+        spectrogramCtx.fillRect(spectrogramCanvas.width - 41, 0, 1, spectrogramCanvas.height);
+
+        // Draw the new column of frequency data
+        for (var i = 0; i < fftSize; i++) {
+          // Map the frequency data (0-255) to a color
+          var value = dataArray[i];
+
+          // Skip very low values for cleaner visualization
+          if (value < 5) continue;
+
+          // Create a vibrant color gradient
+          var intensity = value / 255;
+
+          // HSL color model for more vibrant colors
+          var hue = 240 - intensity * 240; // Blue to red
+          var saturation = 100;
+          var lightness = 50;
+
+          // Adjust lightness based on intensity for better contrast
+          if (intensity > 0.8) {
+            lightness = 60 + (intensity - 0.8) * 40; // Brighter for high intensities
+          } else if (intensity < 0.2) {
+            lightness = 30 + intensity * 100; // Darker for low intensities
+          }
+
+          spectrogramCtx.fillStyle = 'hsl(' + hue + ', ' + saturation + '%, ' + lightness + '%)';
+
+          // Calculate y position - map frequency bin to canvas height
+          var y = spectrogramCanvas.height - Math.round((i / fftSize) * spectrogramCanvas.height);
+
+          // Draw a line instead of a pixel for better visibility
+          var lineHeight = Math.max(1, Math.round(spectrogramCanvas.height / fftSize) + 1);
+          spectrogramCtx.fillRect(spectrogramCanvas.width - 41, y - lineHeight / 2, 1, lineHeight);
+        }
+
+        // Continue animation
+        spectrogramAnimationId = requestAnimationFrame(drawSpectrogram);
+      }
+
+      // Start the spectrogram visualization
+      function startSpectrogram() {
+        if (spectrogramAnimationId) {
+          cancelAnimationFrame(spectrogramAnimationId);
+        }
+
+        // Clear the canvas
+        spectrogramCtx.fillStyle = 'black';
+        spectrogramCtx.fillRect(0, 0, spectrogramCanvas.width, spectrogramCanvas.height);
+
+        // Start the animation
+        spectrogramAnimationId = requestAnimationFrame(drawSpectrogram);
+      }
+
+      // Stop the spectrogram visualization
+      function stopSpectrogram() {
+        if (spectrogramAnimationId) {
+          cancelAnimationFrame(spectrogramAnimationId);
+          spectrogramAnimationId = null;
+        }
+      }
+
       function onSend() {
         init();
         captureStop.click();
@@ -166,12 +314,31 @@
         buffer.getChannelData(0).set(buf);
         var source = context.createBufferSource();
         source.buffer = buffer;
+
+        // Create analyzer for visualization
+        analyser = context.createAnalyser();
+        analyser.fftSize = 2048; // Increased from 256 to 2048 for higher resolution
+        analyser.smoothingTimeConstant = 0.3; // Reduced from 0.5 for more responsiveness
+        analyser.minDecibels = -90;
+        analyser.maxDecibels = -10; // Increased from -30 for better dynamic range
+
+        source.connect(analyser);
         source.connect(context.destination);
+
+        // Start visualization
+        startSpectrogram();
+
         source.start(0);
+
+        // Stop visualization after the audio is done
+        source.onended = function () {
+          stopSpectrogram();
+        };
       }
 
       captureStart.addEventListener('click', function () {
         init();
+        resizeCanvas();
 
         navigator.mediaDevices
           .getUserMedia({
@@ -183,6 +350,17 @@
           })
           .then(function (stream) {
             mediaStream = context.createMediaStreamSource(stream);
+
+            // Create analyzer node for spectrogram
+            analyser = context.createAnalyser();
+            analyser.fftSize = 2048; // Increased from 256 to 2048 for higher resolution
+            analyser.smoothingTimeConstant = 0.3; // Reduced from 0.5 for more responsiveness
+            analyser.minDecibels = -90;
+            analyser.maxDecibels = -10; // Increased from -30 for better dynamic range
+            mediaStream.connect(analyser);
+
+            // Start the spectrogram visualization
+            startSpectrogram();
 
             var bufferSize = 1024;
             recorder = context.createScriptProcessor(bufferSize, 1, 1);
@@ -204,6 +382,16 @@
           })
           .catch(function (e) {
             console.error(e);
+
+            // Show error message on canvas
+            spectrogramCtx.fillStyle = 'white';
+            spectrogramCtx.font = '14px Arial';
+            spectrogramCtx.textAlign = 'center';
+            spectrogramCtx.fillText(
+              'Error accessing microphone: ' + e.message,
+              spectrogramCanvas.width / 2,
+              spectrogramCanvas.height / 2,
+            );
           });
 
         rxData.value = 'Listening...';
@@ -217,6 +405,13 @@
           mediaStream.disconnect(recorder);
           recorder = null;
         }
+
+        if (analyser && mediaStream) {
+          mediaStream.disconnect(analyser);
+        }
+
+        // Stop the spectrogram visualization
+        stopSpectrogram();
 
         rxData.value = '';
         captureStart.hidden = false;
