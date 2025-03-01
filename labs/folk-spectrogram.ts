@@ -1,55 +1,73 @@
+import { FolkElement } from '@lib';
+import { css } from '@lit/reactive-element';
+import { property } from '@lit/reactive-element/decorators.js';
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'folk-spectrogram': FolkSpectrogram;
+  }
+}
+
 /**
  * FolkSpectrogram - A custom element for visualizing audio frequency data
  *
  * This component creates a real-time scrolling spectrogram visualization
  * that can be connected to any Web Audio API source or analyzer node.
  */
+export class FolkSpectrogram extends FolkElement {
+  static tagName = 'folk-spectrogram';
 
-export class FolkSpectrogram extends HTMLElement {
-  // Properties for observed attributes
-  static get observedAttributes(): string[] {
-    return ['height', 'fft-size', 'min-decibels', 'max-decibels', 'smoothing'];
-  }
-
-  static define(): void {
-    if (!customElements.get('folk-spectrogram')) {
-      customElements.define('folk-spectrogram', FolkSpectrogram);
+  static override styles = css`
+    :host {
+      display: block;
+      width: 100%;
+      height: 100%;
     }
-  }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background-color: #000;
+      border-radius: 4px;
+    }
+  `;
+
+  // Configuration properties
+  @property({ type: Number, attribute: 'fft-size' }) fftSize = 2048;
+  @property({ type: Number, attribute: 'min-decibels' }) minDecibels = -90;
+  @property({ type: Number, attribute: 'max-decibels' }) maxDecibels = -10;
+  @property({ type: Number, attribute: 'smoothing' }) smoothingTimeConstant = 0.3;
 
   #canvas: HTMLCanvasElement;
   #ctx: CanvasRenderingContext2D;
   #analyser: AnalyserNode | null = null;
-  #audioContext: AudioContext | null = null;
   #animationId: number | null = null;
   #connected: boolean = false;
   #resizeObserver: ResizeObserver;
   #audioSource: AudioNode | null = null;
 
-  // Configuration
-  private config = {
-    fftSize: 2048,
-    minDecibels: -90,
-    maxDecibels: -10,
-    smoothingTimeConstant: 0.3,
-  };
-
   constructor() {
     super();
 
-    // Create shadow DOM
-    const shadow = this.attachShadow({ mode: 'open' });
-
     // Create canvas element
     this.#canvas = document.createElement('canvas');
-    this.#canvas.style.width = '100%';
-    this.#canvas.style.height = '100%';
-    this.#canvas.style.display = 'block';
-    this.#canvas.style.backgroundColor = '#000';
-    this.#canvas.style.borderRadius = '4px';
 
-    // Add canvas to shadow DOM
-    shadow.appendChild(this.#canvas);
+    // Initialize canvas context with a temporary context
+    // This will be properly set in createRenderRoot
+    const tempContext = this.#canvas.getContext('2d');
+    if (!tempContext) {
+      throw new Error('Could not get canvas context');
+    }
+    this.#ctx = tempContext;
+
+    // Add resize observer
+    this.#resizeObserver = new ResizeObserver(this.#resizeCanvas);
+    this.#resizeObserver.observe(this);
+  }
+
+  override createRenderRoot(): HTMLElement | DocumentFragment {
+    const root = super.createRenderRoot();
 
     // Get canvas context
     const context = this.#canvas.getContext('2d');
@@ -58,98 +76,48 @@ export class FolkSpectrogram extends HTMLElement {
     }
     this.#ctx = context;
 
-    // Bind methods
-    this._draw = this._draw.bind(this);
-    this._resizeCanvas = this._resizeCanvas.bind(this);
+    // Add canvas to shadow DOM
+    root.appendChild(this.#canvas);
 
-    // Add resize observer
-    this.#resizeObserver = new ResizeObserver(this._resizeCanvas);
-    this.#resizeObserver.observe(this);
+    return root;
   }
 
-  connectedCallback(): void {
-    this._resizeCanvas();
-    window.addEventListener('resize', this._resizeCanvas);
-
-    // Apply attributes
-    this._applyAttributes();
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.#resizeCanvas();
+    window.addEventListener('resize', this.#resizeCanvas);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
     this.stop();
     this.disconnect();
-    window.removeEventListener('resize', this._resizeCanvas);
+    window.removeEventListener('resize', this.#resizeCanvas);
     this.#resizeObserver.disconnect();
   }
 
-  attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null): void {
-    if (oldValue === newValue) return;
-
-    if (name === 'height' && newValue) {
-      this.style.height = `${newValue}px`;
-      this._resizeCanvas();
-    } else if (name === 'fft-size' && newValue) {
-      this.config.fftSize = parseInt(newValue, 10);
-      this._updateAnalyserSettings();
-    } else if (name === 'min-decibels' && newValue) {
-      this.config.minDecibels = parseFloat(newValue);
-      this._updateAnalyserSettings();
-    } else if (name === 'max-decibels' && newValue) {
-      this.config.maxDecibels = parseFloat(newValue);
-      this._updateAnalyserSettings();
-    } else if (name === 'smoothing' && newValue) {
-      this.config.smoothingTimeConstant = parseFloat(newValue);
-      this._updateAnalyserSettings();
-    }
-  }
-
-  /**
-   * Apply attributes from HTML to component
-   */
-  private _applyAttributes(): void {
-    // Apply height attribute
-    const height = this.getAttribute('height');
-    if (height) {
-      this.style.height = `${height}px`;
-      this._resizeCanvas();
-    }
-
-    // Apply FFT size
-    const fftSize = this.getAttribute('fft-size');
-    if (fftSize) {
-      this.config.fftSize = parseInt(fftSize, 10);
-    }
-
-    // Apply min decibels
-    const minDecibels = this.getAttribute('min-decibels');
-    if (minDecibels) {
-      this.config.minDecibels = parseFloat(minDecibels);
-    }
-
-    // Apply max decibels
-    const maxDecibels = this.getAttribute('max-decibels');
-    if (maxDecibels) {
-      this.config.maxDecibels = parseFloat(maxDecibels);
-    }
-
-    // Apply smoothing
-    const smoothing = this.getAttribute('smoothing');
-    if (smoothing) {
-      this.config.smoothingTimeConstant = parseFloat(smoothing);
+  override updated(changedProperties: Map<string, unknown>): void {
+    if (
+      changedProperties.has('fftSize') ||
+      changedProperties.has('minDecibels') ||
+      changedProperties.has('maxDecibels') ||
+      changedProperties.has('smoothingTimeConstant')
+    ) {
+      this.#updateAnalyserSettings();
     }
   }
 
   /**
    * Update analyzer settings based on current configuration
    */
-  private _updateAnalyserSettings(): void {
+  #updateAnalyserSettings = (): void => {
     if (this.#analyser) {
-      this.#analyser.fftSize = this.config.fftSize;
-      this.#analyser.minDecibels = this.config.minDecibels;
-      this.#analyser.maxDecibels = this.config.maxDecibels;
-      this.#analyser.smoothingTimeConstant = this.config.smoothingTimeConstant;
+      this.#analyser.fftSize = this.fftSize;
+      this.#analyser.minDecibels = this.minDecibels;
+      this.#analyser.maxDecibels = this.maxDecibels;
+      this.#analyser.smoothingTimeConstant = this.smoothingTimeConstant;
     }
-  }
+  };
 
   /**
    * Connect to an audio source
@@ -160,27 +128,15 @@ export class FolkSpectrogram extends HTMLElement {
     // Disconnect any existing connections
     this.disconnect();
 
-    this.#audioContext = audioContext;
     this.#audioSource = source;
 
     // Create analyzer
     this.#analyser = audioContext.createAnalyser();
-    this._updateAnalyserSettings();
+    this.#updateAnalyserSettings();
 
     // Connect source to analyzer
     source.connect(this.#analyser);
     this.#connected = true;
-
-    // Draw frequency scale
-    this._drawFrequencyScale();
-  }
-
-  /**
-   * Get the analyzer node
-   * @returns The analyzer node or null if not connected
-   */
-  getAnalyser(): AnalyserNode | null {
-    return this.#analyser;
   }
 
   /**
@@ -217,11 +173,8 @@ export class FolkSpectrogram extends HTMLElement {
     this.#ctx.fillStyle = 'black';
     this.#ctx.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
 
-    // Draw frequency scale
-    this._drawFrequencyScale();
-
     // Start animation
-    this.#animationId = requestAnimationFrame(this._draw);
+    this.#animationId = requestAnimationFrame(this.#draw);
   }
 
   /**
@@ -235,57 +188,9 @@ export class FolkSpectrogram extends HTMLElement {
   }
 
   /**
-   * Show error message on canvas
-   * @param message - Error message to display
-   */
-  showError(message: string): void {
-    this.#ctx.fillStyle = 'black';
-    this.#ctx.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
-
-    this.#ctx.fillStyle = 'white';
-    this.#ctx.font = '14px Arial';
-    this.#ctx.textAlign = 'center';
-    this.#ctx.fillText(message, this.#canvas.width / 2, this.#canvas.height / 2);
-  }
-
-  /**
-   * Draw frequency scale on the right side
-   */
-  private _drawFrequencyScale(): void {
-    const height = this.#canvas.height;
-    const width = this.#canvas.width;
-
-    // Draw scale background
-    this.#ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    this.#ctx.fillRect(width - 40, 0, 40, height);
-
-    this.#ctx.fillStyle = 'white';
-    this.#ctx.font = '10px Arial';
-    this.#ctx.textAlign = 'right';
-
-    // Draw frequency markers
-    const maxFreq = this.#audioContext ? this.#audioContext.sampleRate / 2 : 24000; // Nyquist frequency
-    const step = height / 10;
-
-    for (let i = 0; i <= 10; i++) {
-      const y = height - i * step;
-      const freq = (i / 10) * maxFreq;
-
-      // Format frequency display
-      const freqText = freq >= 1000 ? `${(freq / 1000).toFixed(1)} kHz` : `${freq.toFixed(0)} Hz`;
-
-      // Draw tick mark
-      this.#ctx.fillRect(width - 35, y, 5, 1);
-
-      // Draw text
-      this.#ctx.fillText(freqText, width - 8, y + 3);
-    }
-  }
-
-  /**
    * Draw spectrogram frame
    */
-  private _draw(): void {
+  #draw = (): void => {
     if (!this.#analyser || !this.#connected) return;
 
     // Get frequency data
@@ -294,12 +199,12 @@ export class FolkSpectrogram extends HTMLElement {
     this.#analyser.getByteFrequencyData(dataArray);
 
     // Shift existing spectrogram to the left
-    const imageData = this.#ctx.getImageData(1, 0, this.#canvas.width - 41, this.#canvas.height);
+    const imageData = this.#ctx.getImageData(1, 0, this.#canvas.width - 1, this.#canvas.height);
     this.#ctx.putImageData(imageData, 0, 0);
 
     // Clear the right edge where we'll draw new data
     this.#ctx.fillStyle = 'black';
-    this.#ctx.fillRect(this.#canvas.width - 41, 0, 1, this.#canvas.height);
+    this.#ctx.fillRect(this.#canvas.width - 1, 0, 1, this.#canvas.height);
 
     // Draw the new column of frequency data
     for (let i = 0; i < fftSize; i++) {
@@ -331,17 +236,17 @@ export class FolkSpectrogram extends HTMLElement {
 
       // Draw a line instead of a pixel for better visibility
       const lineHeight = Math.max(1, Math.round(this.#canvas.height / fftSize) + 1);
-      this.#ctx.fillRect(this.#canvas.width - 41, y - lineHeight / 2, 1, lineHeight);
+      this.#ctx.fillRect(this.#canvas.width - 1, y - lineHeight / 2, 1, lineHeight);
     }
 
     // Continue animation
-    this.#animationId = requestAnimationFrame(this._draw);
-  }
+    this.#animationId = requestAnimationFrame(this.#draw);
+  };
 
   /**
    * Resize canvas to match container dimensions
    */
-  private _resizeCanvas(): void {
+  #resizeCanvas = (): void => {
     if (!this.#canvas) return;
 
     const rect = this.getBoundingClientRect();
@@ -351,10 +256,5 @@ export class FolkSpectrogram extends HTMLElement {
     // Redraw canvas after resize
     this.#ctx.fillStyle = 'black';
     this.#ctx.fillRect(0, 0, this.#canvas.width, this.#canvas.height);
-
-    // Draw frequency scale
-    if (this.#audioContext) {
-      this._drawFrequencyScale();
-    }
-  }
+  };
 }
