@@ -28,7 +28,7 @@ export interface QRTPPacket {
 
 export class QRTP {
   // Static configuration
-  static readonly DEFAULT_CHUNK_SIZE: number = 200;
+  static readonly DEFAULT_CHUNK_SIZE: number = 100;
 
   // Data to be sent
   private dataToSend: string | null = null;
@@ -123,12 +123,15 @@ export class QRTP {
   }
 
   // Generate hash for a chunk
-  generateChunkHash(chunk: string): string {
-    // Simple hash function that only considers the chunk data
+  generateChunkHash(chunk: string, index: number, total: number): string {
+    // Include index and total in the hash calculation to prevent issues with repeat chunks
+    const dataToHash = `${index}/${total}:${chunk}`;
+
+    // Simple hash function that considers chunk data and metadata
     let hash = 0;
 
-    for (let i = 0; i < chunk.length; i++) {
-      const char = chunk.charCodeAt(i);
+    for (let i = 0; i < dataToHash.length; i++) {
+      const char = dataToHash.charCodeAt(i);
       hash = ((hash << 5) - hash + char) | 0; // Force 32-bit integer with | 0
     }
 
@@ -210,7 +213,7 @@ export class QRTP {
     // First, check if this is an acknowledgment for our current chunk
     if (packet.hash && this.dataChunks.length > 0 && this.currentChunkIndex < this.dataChunks.length) {
       const currentChunk = this.dataChunks[this.currentChunkIndex];
-      const expectedHash = this.generateChunkHash(currentChunk);
+      const expectedHash = this.generateChunkHash(currentChunk, this.currentChunkIndex, this.totalChunks);
 
       if (packet.hash === expectedHash) {
         this.logMessage(
@@ -247,13 +250,13 @@ export class QRTP {
       // Store the received chunk
       this.receivedChunks.set(packet.index, packet.payload);
 
-      // Generate hash for acknowledgment - only hash the payload
-      this.lastReceivedHash = this.generateChunkHash(packet.payload);
+      // Generate hash for acknowledgment - include index and total in the hash
+      this.lastReceivedHash = this.generateChunkHash(packet.payload, packet.index, packet.total);
 
       this.logMessage(
         'incoming',
         'chunk',
-        `Received chunk ${packet.index + 1}/${packet.total}, generated hash=${this.lastReceivedHash}`,
+        `Received chunk ${packet.index + 1}/${packet.total}`,
         packet.payload.substring(0, 20) + (packet.payload.length > 20 ? '...' : ''),
       );
 

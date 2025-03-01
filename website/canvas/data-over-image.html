@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
-    <title>Data over Image</title>
+    <title>Data over QR</title>
     <!-- Include pseudocode.js library -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pseudocode@latest/build/pseudocode.min.css" />
     <script src="https://cdn.jsdelivr.net/npm/pseudocode@latest/build/pseudocode.min.js"></script>
@@ -34,6 +34,8 @@
         font-family: Arial, sans-serif;
         background-color: #f5f5f5;
         overflow-x: hidden;
+        min-height: 100vh;
+        position: relative;
       }
 
       .app-container {
@@ -133,6 +135,11 @@
         display: flex;
         gap: 20px;
         align-items: flex-start;
+      }
+
+      .protocol-description {
+        margin-left: 1rem;
+        margin-right: 1rem;
       }
 
       #videoContainer {
@@ -413,7 +420,7 @@
   </head>
   <body>
     <div class="app-container">
-      <div class="title">Data over Image</div>
+      <div class="title">Data over QR</div>
 
       <!-- Sender Section -->
       <div class="sender-section">
@@ -883,16 +890,13 @@
       }
     </script>
 
-    <!-- Protocol Description with pseudocode.js -->
-    <div class="protocol-description" style="margin-top: 40px; padding: 20px">
-      <!-- Pseudocode algorithm description -->
+    <div class="protocol-description">
       <pre id="qrtp-algorithm" class="pseudocode">
-        % QRTP: QR Transfer Protocol Algorithm
         \begin{algorithm}
-        \caption{QR Transfer Protocol (QRTP)}
+        \caption{QR Transfer Protocol}
         \begin{algorithmic}
         
-        \REQUIRE Two devices $D_1, D_2$ each with a message to send
+        \REQUIRE Two devices $D_1, D_2$ with camera and display
         \ENSURE Complete exchange of messages between devices
         
         \PROCEDURE{Exchange}{$D_1, D_2$}
@@ -902,15 +906,16 @@
             \STATE $D.hash \gets \text{""}$ \COMMENT{Hash of last received chunk}
           \ENDFOR
           
-          \WHILE{$\exists D \in \{D_1, D_2\} : D.index \lt |D.chunks|$}
-            \STATE \textbf{For each device $D$ with peer $P$:} \COMMENT{Executed in parallel}
-            \STATE $D$ displays QR code: $[D.index/|D.chunks|]:D.hash:D.chunks[D.index]$
+          \WHILE{either device has chunks left to send}
+            \STATE \textbf{On each device simultaneously:} 
+            \STATE $D$ displays QR code containing: \texttt{"QRTP", current index, total chunks, acknowledgment hash, chunk-data}
             \STATE $D$ scans QR code from peer $P$
             
             \IF{$D$ receives new chunk from $P$}
-              \STATE $D.hash \gets \text{Hash}(P\text{'s chunk})$ \COMMENT{Store hash for acknowledgment}
-            \ELSIF{$D$ sees hash matching $\text{Hash}(D.chunks[D.index])$}
-              \STATE $D.index \gets D.index + 1$ \COMMENT{Advance to next chunk}
+              \STATE $D.hash \gets \text{Hash}(P\text{'s index} + P\text{'s total chunks} + P\text{'s chunk})$
+            \ENDIF
+            \IF{$D$ sees hash matching $\text{Hash}(D.index + D.totalChunks + D.chunks[D.index])$}
+              \STATE $D.index \gets D.index + 1$
             \ENDIF
           \ENDWHILE
         \ENDPROCEDURE
