@@ -45,14 +45,14 @@ export class FolkSpectrogram extends FolkElement {
 
   // Configuration properties
   @property({ type: Number, attribute: 'fft-size' }) fftSize = 8192;
-  @property({ type: Number, attribute: 'min-decibels' }) minDecibels = -90; // Increased from -90 for better sensitivity
+  @property({ type: Number, attribute: 'min-decibels' }) minDecibels = -100;
   @property({ type: Number, attribute: 'max-decibels' }) maxDecibels = -10;
   @property({ type: Number, attribute: 'smoothing' }) smoothingTimeConstant = 0.1;
-  @property({ attribute: 'scaling' }) scaling: FrequencyScaling = 'log'; // Changed default from 'mel' to 'logarithmic'
-  @property({ attribute: 'color-scheme' }) colorScheme: ColorScheme = 'dark'; // Changed from 'thermal' to 'dark'
-  @property({ type: Number, attribute: 'min-frequency' }) minFrequency = 80;
-  @property({ type: Number, attribute: 'max-frequency' }) maxFrequency = 8000;
-  @property({ type: Number, attribute: 'gain' }) gain = 1.5;
+  @property({ attribute: 'scaling' }) scaling: FrequencyScaling = 'log';
+  @property({ attribute: 'color-scheme' }) colorScheme: ColorScheme = 'dark';
+  @property({ type: Number, attribute: 'min-frequency' }) minFrequency = 40;
+  @property({ type: Number, attribute: 'max-frequency' }) maxFrequency = 7000;
+  @property({ type: Number, attribute: 'gain' }) gain = 2;
 
   #canvas: HTMLCanvasElement;
   #ctx: CanvasRenderingContext2D;
@@ -369,9 +369,6 @@ export class FolkSpectrogram extends FolkElement {
     // Draw the new column of frequency data
     for (let y = 0; y < this.#canvas.height; y++) {
       const value = scaledData[y];
-
-      // Skip very low values for cleaner visualization
-      if (value < 5) continue;
 
       // Get color based on intensity and color scheme
       this.#ctx.fillStyle = this.getColor(value);
