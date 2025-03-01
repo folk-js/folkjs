@@ -27,6 +27,9 @@ export interface QRTPPacket {
 }
 
 export class QRTP {
+  // Static configuration
+  static readonly DEFAULT_CHUNK_SIZE: number = 200;
+
   // Data to be sent
   private dataToSend: string | null = null;
   private dataChunks: string[] = [];
@@ -38,7 +41,7 @@ export class QRTP {
   private lastReceivedHash: string = '';
 
   // Configuration
-  private chunkSize: number = 100;
+  private chunkSize: number = QRTP.DEFAULT_CHUNK_SIZE;
   private protocolPrefix: string = 'QRTP';
 
   // State
@@ -123,17 +126,9 @@ export class QRTP {
   generateChunkHash(chunk: string): string {
     // Simple hash function that only considers the chunk data
     let hash = 0;
-    const str = chunk; // Only hash the chunk data, not the index
 
-    // Log what we're hashing for debugging
-    this.logMessage(
-      'debug',
-      'hash',
-      `Generating hash for chunk: ${chunk.substring(0, 20)}${chunk.length > 20 ? '...' : ''}`,
-    );
-
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
+    for (let i = 0; i < chunk.length; i++) {
+      const char = chunk.charCodeAt(i);
       hash = ((hash << 5) - hash + char) | 0; // Force 32-bit integer with | 0
     }
 
@@ -185,7 +180,7 @@ export class QRTP {
     // Log appropriate message based on packet type
     if (packet.index === null) {
       if (this.isTransmissionComplete) {
-        this.logMessage('outgoing', 'ack', `All chunks sent, sending acknowledgment only`, qrData);
+        this.logMessage('outgoing', 'ack', `All chunks sent, sending acknowledgment`, qrData);
       } else {
         this.logMessage('outgoing', 'ack', `Sending acknowledgment only`, qrData);
       }
@@ -198,9 +193,6 @@ export class QRTP {
 
   // Process received QR code data
   processReceivedData(data: string): QRTPResponse {
-    // Log the raw data we're processing
-    this.logMessage('incoming', 'raw', `Processing raw data`, data);
-
     // Parse the QR code data into a packet
     const packet = this.parseQRTPData(data);
 
@@ -215,23 +207,10 @@ export class QRTP {
 
   // Process a parsed packet
   private processPacket(packet: QRTPPacket): QRTPResponse {
-    // Log the parsed components
-    this.logMessage(
-      'incoming',
-      'parse',
-      `Parsed QR: index=${packet.index !== null ? packet.index : 'null'}, total=${packet.total !== null ? packet.total : 'null'}, hash=${packet.hash || 'none'}, payload=${packet.payload ? packet.payload.substring(0, 20) + (packet.payload.length > 20 ? '...' : '') : 'none'}`,
-    );
-
     // First, check if this is an acknowledgment for our current chunk
     if (packet.hash && this.dataChunks.length > 0 && this.currentChunkIndex < this.dataChunks.length) {
       const currentChunk = this.dataChunks[this.currentChunkIndex];
       const expectedHash = this.generateChunkHash(currentChunk);
-
-      this.logMessage(
-        'incoming',
-        'ack-check',
-        `Checking acknowledgment: received=${packet.hash}, expected=${expectedHash}, index=${this.currentChunkIndex}`,
-      );
 
       if (packet.hash === expectedHash) {
         this.logMessage(
