@@ -14,11 +14,10 @@ export interface RTCConnectionData {
 /**
  * Ultra-compact format for RTCConnectionData
  * Format:
- * type|sessionId|iceUfrag|icePwd|fingerprint|candidates
+ * type|iceUfrag|icePwd|fingerprint|candidates
  *
  * Where:
  * - type: 'o' or 'a'
- * - sessionId: truncated to 8 chars
  * - fingerprint: with colons removed
  * - candidates: pipe-separated list of comma-separated values
  *   foundation,protocol,ip,port,type
@@ -233,18 +232,19 @@ export class FolkRTC {
     const sdpString = data.sdp.sdp;
     const lines = sdpString.split('\r\n');
 
-    // Extract session ID from o= line and truncate to 8 chars
-    const originLine = lines.find((line) => line.startsWith('o='));
-    const fullSessionId = originLine ? originLine.split(' ')[1] : '';
-    const sessionId = fullSessionId.substring(0, 8);
-
     // Extract ICE credentials and fingerprint
     const iceUfrag = this.extractValue(lines, 'a=ice-ufrag:');
     const icePwd = this.extractValue(lines, 'a=ice-pwd:');
 
-    // Remove colons from fingerprint to save space
+    // Get fingerprint and convert to base64 for smaller size
     const rawFingerprint = this.extractValue(lines, 'a=fingerprint:sha-256 ');
-    const fingerprint = rawFingerprint.replace(/:/g, '');
+    // First remove colons, then convert from hex to bytes, then to base64
+    const cleanFingerprint = rawFingerprint.replace(/:/g, '');
+    const fingerprintBytes = new Uint8Array(cleanFingerprint.length / 2);
+    for (let i = 0; i < cleanFingerprint.length; i += 2) {
+      fingerprintBytes[i / 2] = parseInt(cleanFingerprint.substring(i, i + 2), 16);
+    }
+    const fingerprint = btoa(String.fromCharCode(...fingerprintBytes));
 
     // Select a diverse set of ICE candidates for better connectivity
     const selectedCandidates = this.selectDiverseCandidates(data.iceCandidates);
@@ -260,7 +260,8 @@ export class FolkRTC {
         const parts = candidateStr.split(' ');
         if (parts.length < 8) return null;
 
-        const foundation = parts[0].split(':')[1];
+        // Truncate foundation to first 4 characters for size reduction while keeping uniqueness
+        const foundation = parts[0].split(':')[1].substring(0, 4);
         const protocol = parts[2].toLowerCase();
         const ip = parts[4];
         const port = parts[5];
@@ -294,8 +295,8 @@ export class FolkRTC {
     const type = data.sdp.type === 'offer' ? 'o' : 'a';
 
     // Create ultra-compact format with pipe delimiter
-    // type|sessionId|iceUfrag|icePwd|fingerprint|candidate1|candidate2|...
-    const encodedStr = [type, sessionId, iceUfrag, icePwd, fingerprint, ...candidates].join('|');
+    // type|iceUfrag|icePwd|fingerprint|candidate1|candidate2|...
+    const encodedStr = [type, iceUfrag, icePwd, fingerprint, ...candidates].join('|');
 
     // Log size information
     const originalSize = new TextEncoder().encode(JSON.stringify(data)).length;
@@ -417,16 +418,26 @@ export class FolkRTC {
 
     // Extract header components
     const typeCode = parts[0];
-    const sessionId = parts[1];
-    const iceUfrag = parts[2];
-    const icePwd = parts[3];
-    const fingerprint = parts[4];
+    const iceUfrag = parts[1];
+    const icePwd = parts[2];
+    const fingerprintBase64 = parts[3];
 
-    // Format fingerprint with colons for WebRTC compatibility
-    const formattedFingerprint = fingerprint.replace(/(.{2})(?!$)/g, '$1:');
+    // Convert fingerprint from base64 back to hex with colons
+    const binaryStr = atob(fingerprintBase64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    // Convert to hex with colons
+    const formattedFingerprint = Array.from(bytes)
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join(':');
 
     // Convert type code back to full type
     const type = typeCode === 'o' ? 'offer' : 'answer';
+
+    // Hardcoded sessionId - this value isn't critical for functionality
+    const sessionId = '1';
 
     // Reconstruct SDP
     const sdpLines = [
@@ -453,7 +464,7 @@ export class FolkRTC {
     } as RTCSessionDescription;
 
     // Reconstruct ICE candidates from remaining parts
-    const iceCandidates = parts.slice(5).map((candidateStr) => {
+    const iceCandidates = parts.slice(4).map((candidateStr) => {
       // Parse candidate string: foundation,protocolCode,ip,port,typeCode
       const [foundation, protocolCode, ip, port, typeCode] = candidateStr.split(',');
 
