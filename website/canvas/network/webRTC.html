@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>WebRTC Text Chat</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        font-family: Arial, sans-serif;
+      }
+
+      folk-shape {
+        background: rgb(248, 248, 248);
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        padding: 12px;
+      }
+
+      textarea {
+        width: 100%;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+
+      textarea:disabled {
+        background-color: white;
+        color: black;
+      }
+
+      button {
+        padding: 6px 12px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-right: 5px;
+      }
+
+      button:hover {
+        background-color: #45a049;
+      }
+
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+
+      h3 {
+        margin-top: 0;
+        margin-bottom: 8px;
+        color: #333;
+        font-size: 16px;
+      }
+
+      .status {
+        font-size: 12px;
+        color: #666;
+        margin-top: 8px;
+      }
+
+      .connection-status {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: #ccc;
+        margin-right: 5px;
+      }
+
+      .connected {
+        background-color: #4caf50;
+      }
+
+      .connecting {
+        background-color: #ff9800;
+      }
+
+      .disconnected {
+        background-color: #f44336;
+      }
+
+      .step {
+        background-color: #f5f5f5;
+        border-left: 4px solid #4caf50;
+        padding: 8px 12px;
+        margin-bottom: 10px;
+        border-radius: 0 4px 4px 0;
+      }
+
+      .step-number {
+        font-weight: bold;
+        color: #4caf50;
+        margin-right: 5px;
+      }
+
+      .step-title {
+        font-weight: bold;
+        margin-bottom: 5px;
+      }
+
+      .instruction {
+        font-size: 13px;
+        color: #666;
+        font-style: italic;
+        margin-bottom: 5px;
+      }
+
+      .button-group {
+        display: flex;
+        gap: 5px;
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Initiator Shape -->
+    <folk-shape x="50" y="50" width="300" height="350">
+      <h3>Initiator</h3>
+
+      <div class="step">
+        <div class="step-title"><span class="step-number">1.</span> Create and share your connection offer</div>
+        <div class="button-group">
+          <button id="createOfferBtn">Create Offer</button>
+          <button id="copyOfferBtn" disabled>Copy</button>
+        </div>
+        <textarea
+          id="localOfferDescription"
+          style="height: 80px"
+          placeholder="Your connection offer will appear here..."
+          readonly
+        ></textarea>
+        <div class="instruction">Create an offer and send it to the other person</div>
+      </div>
+
+      <div class="step">
+        <div class="step-title"><span class="step-number">2.</span> Set the answer you received</div>
+        <textarea
+          id="remoteAnswerDescription"
+          style="height: 80px"
+          placeholder="Paste the answer from the other person here..."
+        ></textarea>
+        <button id="setRemoteAnswerBtn">Set Answer & Connect</button>
+      </div>
+    </folk-shape>
+
+    <!-- Responder Shape -->
+    <folk-shape x="400" y="50" width="300" height="350">
+      <h3>Responder</h3>
+
+      <div class="step">
+        <div class="step-title"><span class="step-number">1.</span> Paste the offer you received</div>
+        <textarea
+          id="remoteOfferDescription"
+          style="height: 80px"
+          placeholder="Paste the offer from the other person here..."
+        ></textarea>
+      </div>
+
+      <div class="step">
+        <div class="step-title"><span class="step-number">2.</span> Create and share your answer</div>
+        <div class="button-group">
+          <button id="createAnswerBtn">Create Answer</button>
+          <button id="copyAnswerBtn" disabled>Copy</button>
+        </div>
+        <textarea
+          id="localAnswerDescription"
+          style="height: 80px"
+          placeholder="Your connection answer will appear here..."
+          readonly
+        ></textarea>
+        <div class="instruction">After the initiator sets your answer, you'll be connected automatically</div>
+      </div>
+    </folk-shape>
+
+    <!-- Chat Shape -->
+    <folk-shape x="50" y="420" width="650" height="300">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px">
+        <h3>Text Chat</h3>
+        <div class="status">
+          <span>Connection: </span>
+          <span class="connection-status disconnected"></span>
+          <span id="connectionStatus">Disconnected</span>
+        </div>
+      </div>
+      <textarea
+        id="chatHistory"
+        style="height: 180px"
+        disabled
+        placeholder="Messages will appear here once connected..."
+      ></textarea>
+      <div style="display: flex; gap: 8px">
+        <textarea
+          id="messageInput"
+          style="flex: 1; height: 40px"
+          placeholder="Type your message here..."
+          disabled
+        ></textarea>
+        <button id="sendMessageBtn" style="height: 40px" disabled>Send</button>
+      </div>
+    </folk-shape>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+    </script>
+
+    <script type="text/javascript">
+      // DOM Elements - Initiator
+      const createOfferBtn = document.getElementById('createOfferBtn');
+      const localOfferDescription = document.getElementById('localOfferDescription');
+      const copyOfferBtn = document.getElementById('copyOfferBtn');
+      const remoteAnswerDescription = document.getElementById('remoteAnswerDescription');
+      const setRemoteAnswerBtn = document.getElementById('setRemoteAnswerBtn');
+
+      // DOM Elements - Responder
+      const remoteOfferDescription = document.getElementById('remoteOfferDescription');
+      const createAnswerBtn = document.getElementById('createAnswerBtn');
+      const localAnswerDescription = document.getElementById('localAnswerDescription');
+      const copyAnswerBtn = document.getElementById('copyAnswerBtn');
+
+      // DOM Elements - Chat
+      const connectionStatus = document.getElementById('connectionStatus');
+      const connectionStatusIndicator = document.querySelector('.connection-status');
+      const chatHistory = document.getElementById('chatHistory');
+      const messageInput = document.getElementById('messageInput');
+      const sendMessageBtn = document.getElementById('sendMessageBtn');
+
+      // WebRTC variables will be initialized here
+      let peerConnection = null;
+      let dataChannel = null;
+      let activeRole = null; // 'initiator' or 'responder'
+
+      // Initiator UI Event Listeners
+      createOfferBtn.addEventListener('click', function () {
+        // Create offer logic will go here
+        activeRole = 'initiator';
+        updateConnectionStatus('connecting', 'Creating offer...');
+
+        // Simulate offer creation for UI demo
+        setTimeout(() => {
+          localOfferDescription.value =
+            'This is where the SDP offer will appear. In the real implementation, this will be a JSON object with connection details.';
+          updateConnectionStatus('connecting', 'Offer created. Waiting for answer...');
+          copyOfferBtn.disabled = false;
+        }, 500);
+      });
+
+      copyOfferBtn.addEventListener('click', function () {
+        localOfferDescription.select();
+        document.execCommand('copy');
+      });
+
+      setRemoteAnswerBtn.addEventListener('click', function () {
+        if (remoteAnswerDescription.value.trim() === '') {
+          alert('Please paste the answer from the other person first.');
+          return;
+        }
+        // Set remote answer logic will go here
+        updateConnectionStatus('connecting', 'Setting remote answer...');
+
+        // Simulate connection for UI demo
+        setTimeout(() => {
+          updateConnectionStatus('connected', 'Connected!');
+          enableChat();
+        }, 1000);
+      });
+
+      // Responder UI Event Listeners
+      createAnswerBtn.addEventListener('click', function () {
+        if (remoteOfferDescription.value.trim() === '') {
+          alert('Please paste the offer from the other person first.');
+          return;
+        }
+        // Create answer logic will go here
+        activeRole = 'responder';
+        updateConnectionStatus('connecting', 'Creating answer...');
+
+        // Simulate answer creation for UI demo
+        setTimeout(() => {
+          localAnswerDescription.value =
+            'This is where the SDP answer will appear. In the real implementation, this will be a JSON object with connection details.';
+          updateConnectionStatus('connecting', 'Answer created. Waiting for connection...');
+          copyAnswerBtn.disabled = false;
+        }, 500);
+      });
+
+      copyAnswerBtn.addEventListener('click', function () {
+        localAnswerDescription.select();
+        document.execCommand('copy');
+      });
+
+      // Chat UI Event Listeners
+      sendMessageBtn.addEventListener('click', function () {
+        sendMessage();
+      });
+
+      messageInput.addEventListener('keypress', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      // Helper functions
+      function sendMessage() {
+        const message = messageInput.value;
+        if (message.trim() !== '') {
+          addMessageToChat('You', message);
+          messageInput.value = '';
+        }
+      }
+
+      function updateConnectionStatus(status, message) {
+        connectionStatusIndicator.className = 'connection-status ' + status;
+        connectionStatus.textContent = message;
+      }
+
+      function addMessageToChat(sender, message) {
+        const timestamp = new Date().toLocaleTimeString();
+        chatHistory.value += `[${timestamp}] ${sender}: ${message}\n`;
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+      }
+
+      function enableChat() {
+        messageInput.disabled = false;
+        sendMessageBtn.disabled = false;
+        chatHistory.value = 'Connection established! You can now chat.\n';
+      }
+
+      // Initialize with disconnected status
+      updateConnectionStatus('disconnected', 'Disconnected');
+    </script>
+  </body>
+</html>
