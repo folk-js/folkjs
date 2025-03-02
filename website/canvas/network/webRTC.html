@@ -145,6 +145,9 @@
           readonly
         ></textarea>
         <div class="instruction">Create an offer and send it to the other person</div>
+        <div id="offerCounter" style="display: none; margin-top: 5px">
+          Time elapsed: <span id="counterValue">0</span>s
+        </div>
       </div>
 
       <div class="step">
@@ -241,6 +244,36 @@
       // FolkRTC instance
       let rtcConnection = null;
 
+      // Timer variables
+      let timerInterval = null;
+      let counterValue = 0;
+      const offerCounter = document.getElementById('offerCounter');
+      const counterValueElement = document.getElementById('counterValue');
+
+      // Timer functions
+      function startTimer() {
+        // Reset counter and display
+        counterValue = 0;
+        counterValueElement.textContent = '0';
+        offerCounter.style.display = 'block';
+
+        // Clear any existing interval
+        if (timerInterval) clearInterval(timerInterval);
+
+        // Start new timer
+        timerInterval = setInterval(() => {
+          counterValue++;
+          counterValueElement.textContent = counterValue;
+        }, 1000);
+      }
+
+      function stopTimer() {
+        if (timerInterval) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
+      }
+
       // Create a new FolkRTC instance with event handlers
       function createRTCConnection() {
         // Close existing connection if any
@@ -256,9 +289,11 @@
           if (status === 'connected') {
             updateConnectionStatus('connected', 'Connected!');
             enableChat();
+            stopTimer(); // Stop the timer when connected
           } else if (status === 'disconnected' || status === 'failed' || status === 'closed') {
             updateConnectionStatus('disconnected', 'Disconnected');
             disableChat();
+            stopTimer(); // Stop the timer when disconnected
           } else if (status === 'connecting') {
             updateConnectionStatus('connecting', 'Connecting...');
           }
@@ -273,6 +308,7 @@
       // Initiator UI Event Listeners
       createOfferBtn.addEventListener('click', async function () {
         createRTCConnection();
+        startTimer(); // Start the timer when creating an offer
 
         try {
           // Create offer
@@ -283,12 +319,20 @@
           copyOfferBtn.disabled = false;
         } catch (error) {
           console.error('Error creating offer:', error);
+          stopTimer(); // Stop timer if there's an error
         }
       });
 
       copyOfferBtn.addEventListener('click', function () {
-        localOfferDescription.select();
-        document.execCommand('copy');
+        navigator.clipboard
+          .writeText(localOfferDescription.value)
+          .then(() => {
+            // Optional: provide user feedback
+            const originalText = copyOfferBtn.textContent;
+            copyOfferBtn.textContent = 'Copied!';
+            setTimeout(() => (copyOfferBtn.textContent = originalText), 2000);
+          })
+          .catch((err) => console.error('Failed to copy: ', err));
       });
 
       setRemoteAnswerBtn.addEventListener('click', async function () {
@@ -335,8 +379,15 @@
       });
 
       copyAnswerBtn.addEventListener('click', function () {
-        localAnswerDescription.select();
-        document.execCommand('copy');
+        navigator.clipboard
+          .writeText(localAnswerDescription.value)
+          .then(() => {
+            // Optional: provide user feedback
+            const originalText = copyAnswerBtn.textContent;
+            copyAnswerBtn.textContent = 'Copied!';
+            setTimeout(() => (copyAnswerBtn.textContent = originalText), 2000);
+          })
+          .catch((err) => console.error('Failed to copy: ', err));
       });
 
       // Chat UI Event Listeners
