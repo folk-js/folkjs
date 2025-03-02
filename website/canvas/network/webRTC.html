@@ -243,59 +243,230 @@
       let peerConnection = null;
       let dataChannel = null;
       let activeRole = null; // 'initiator' or 'responder'
+      let iceCandidates = []; // Store ICE candidates to include in offer/answer
+
+      // WebRTC configuration with Google's public STUN server
+      const rtcConfig = {
+        iceServers: [
+          {
+            urls: 'stun:stun.l.google.com:19302',
+          },
+        ],
+      };
+
+      // Initialize WebRTC connection
+      function initPeerConnection() {
+        // Create a new RTCPeerConnection
+        peerConnection = new RTCPeerConnection(rtcConfig);
+
+        // Set up ICE candidate handling
+        peerConnection.onicecandidate = handleICECandidate;
+
+        // Connection state changes
+        peerConnection.onconnectionstatechange = () => {
+          console.log('Connection state:', peerConnection.connectionState);
+
+          if (peerConnection.connectionState === 'connected') {
+            updateConnectionStatus('connected', 'Connected!');
+            enableChat();
+          } else if (
+            peerConnection.connectionState === 'disconnected' ||
+            peerConnection.connectionState === 'failed' ||
+            peerConnection.connectionState === 'closed'
+          ) {
+            updateConnectionStatus('disconnected', 'Disconnected');
+            disableChat();
+          }
+        };
+
+        // ICE connection state changes
+        peerConnection.oniceconnectionstatechange = () => {
+          console.log('ICE connection state:', peerConnection.iceConnectionState);
+        };
+      }
+
+      // Handle ICE candidates
+      function handleICECandidate(event) {
+        if (event.candidate) {
+          console.log('New ICE candidate:', event.candidate);
+          iceCandidates.push(event.candidate);
+        } else {
+          console.log('All ICE candidates gathered');
+        }
+      }
+
+      // Create and set up data channel (for initiator)
+      function createDataChannel() {
+        dataChannel = peerConnection.createDataChannel('chat');
+        setupDataChannel(dataChannel);
+      }
+
+      // Set up data channel event handlers
+      function setupDataChannel(channel) {
+        channel.onopen = () => {
+          console.log('Data channel is open');
+          enableChat();
+        };
+
+        channel.onclose = () => {
+          console.log('Data channel is closed');
+          disableChat();
+        };
+
+        channel.onmessage = (event) => {
+          console.log('Message received:', event.data);
+          addMessageToChat('Peer', event.data);
+        };
+      }
 
       // Initiator UI Event Listeners
-      createOfferBtn.addEventListener('click', function () {
-        // Create offer logic will go here
+      createOfferBtn.addEventListener('click', async function () {
         activeRole = 'initiator';
         updateConnectionStatus('connecting', 'Creating offer...');
 
-        // Simulate offer creation for UI demo
-        setTimeout(() => {
-          localOfferDescription.value =
-            'This is where the SDP offer will appear. In the real implementation, this will be a JSON object with connection details.';
-          updateConnectionStatus('connecting', 'Offer created. Waiting for answer...');
+        // Initialize WebRTC connection
+        initPeerConnection();
+
+        // Create data channel
+        createDataChannel();
+
+        try {
+          // Create offer
+          const offer = await peerConnection.createOffer();
+
+          // Set local description
+          await peerConnection.setLocalDescription(offer);
+
+          // Wait for ICE gathering to complete or timeout after 2 seconds
+          await waitForIceCandidates();
+
+          // Create the complete offer with ICE candidates
+          const completeOffer = {
+            sdp: peerConnection.localDescription,
+            iceCandidates: iceCandidates,
+          };
+
+          // Display the offer
+          localOfferDescription.value = JSON.stringify(completeOffer);
           copyOfferBtn.disabled = false;
-        }, 500);
+
+          updateConnectionStatus('connecting', 'Offer created. Waiting for answer...');
+        } catch (error) {
+          console.error('Error creating offer:', error);
+          updateConnectionStatus('disconnected', 'Error creating offer');
+        }
       });
+
+      // Wait for ICE candidates to be gathered (with timeout)
+      function waitForIceCandidates() {
+        return new Promise((resolve) => {
+          if (peerConnection.iceGatheringState === 'complete') {
+            resolve();
+            return;
+          }
+
+          const checkState = () => {
+            if (peerConnection.iceGatheringState === 'complete') {
+              peerConnection.removeEventListener('icegatheringstatechange', checkState);
+              resolve();
+            }
+          };
+
+          peerConnection.addEventListener('icegatheringstatechange', checkState);
+
+          // Set a timeout in case gathering takes too long
+          setTimeout(resolve, 2000);
+        });
+      }
 
       copyOfferBtn.addEventListener('click', function () {
         localOfferDescription.select();
         document.execCommand('copy');
       });
 
-      setRemoteAnswerBtn.addEventListener('click', function () {
+      setRemoteAnswerBtn.addEventListener('click', async function () {
         if (remoteAnswerDescription.value.trim() === '') {
           alert('Please paste the answer from the other person first.');
           return;
         }
-        // Set remote answer logic will go here
+
         updateConnectionStatus('connecting', 'Setting remote answer...');
 
-        // Simulate connection for UI demo
-        setTimeout(() => {
-          updateConnectionStatus('connected', 'Connected!');
-          enableChat();
-        }, 1000);
+        try {
+          // Parse the answer
+          const answerData = JSON.parse(remoteAnswerDescription.value);
+
+          // Set the remote description
+          await peerConnection.setRemoteDescription(answerData.sdp);
+
+          // Add ICE candidates from the answer
+          for (const candidate of answerData.iceCandidates) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+          }
+
+          updateConnectionStatus('connecting', 'Answer set. Establishing connection...');
+        } catch (error) {
+          console.error('Error setting remote answer:', error);
+          updateConnectionStatus('disconnected', 'Error setting remote answer');
+        }
       });
 
       // Responder UI Event Listeners
-      createAnswerBtn.addEventListener('click', function () {
+      createAnswerBtn.addEventListener('click', async function () {
         if (remoteOfferDescription.value.trim() === '') {
           alert('Please paste the offer from the other person first.');
           return;
         }
-        // Create answer logic will go here
+
         activeRole = 'responder';
         updateConnectionStatus('connecting', 'Creating answer...');
 
-        // Simulate answer creation for UI demo
-        setTimeout(() => {
-          localAnswerDescription.value =
-            'This is where the SDP answer will appear. In the real implementation, this will be a JSON object with connection details.';
-          updateConnectionStatus('connecting', 'Answer created. Waiting for connection...');
+        // Initialize WebRTC connection
+        initPeerConnection();
+
+        // Set up data channel handler (for responder)
+        peerConnection.ondatachannel = (event) => {
+          console.log('Data channel received');
+          dataChannel = event.channel;
+          setupDataChannel(dataChannel);
+        };
+
+        try {
+          // Parse the offer
+          const offerData = JSON.parse(remoteOfferDescription.value);
+
+          // Set the remote description
+          await peerConnection.setRemoteDescription(offerData.sdp);
+
+          // Add ICE candidates from the offer
+          for (const candidate of offerData.iceCandidates) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+          }
+
+          // Create answer
+          const answer = await peerConnection.createAnswer();
+
+          // Set local description
+          await peerConnection.setLocalDescription(answer);
+
+          // Wait for ICE gathering to complete or timeout after 2 seconds
+          await waitForIceCandidates();
+
+          // Create the complete answer with ICE candidates
+          const completeAnswer = {
+            sdp: peerConnection.localDescription,
+            iceCandidates: iceCandidates,
+          };
+
+          // Display the answer
+          localAnswerDescription.value = JSON.stringify(completeAnswer);
           copyAnswerBtn.disabled = false;
-        }, 500);
+
+          updateConnectionStatus('connecting', 'Answer created. Waiting for connection...');
+        } catch (error) {
+          console.error('Error creating answer:', error);
+          updateConnectionStatus('disconnected', 'Error creating answer');
+        }
       });
 
       copyAnswerBtn.addEventListener('click', function () {
@@ -318,8 +489,14 @@
       // Helper functions
       function sendMessage() {
         const message = messageInput.value;
-        if (message.trim() !== '') {
+        if (message.trim() !== '' && dataChannel && dataChannel.readyState === 'open') {
+          // Send the message through the data channel
+          dataChannel.send(message);
+
+          // Display the message in the chat
           addMessageToChat('You', message);
+
+          // Clear the input
           messageInput.value = '';
         }
       }
@@ -338,7 +515,14 @@
       function enableChat() {
         messageInput.disabled = false;
         sendMessageBtn.disabled = false;
-        chatHistory.value = 'Connection established! You can now chat.\n';
+        if (chatHistory.value === '') {
+          chatHistory.value = 'Connection established! You can now chat.\n';
+        }
+      }
+
+      function disableChat() {
+        messageInput.disabled = true;
+        sendMessageBtn.disabled = true;
       }
 
       // Initialize with disconnected status
