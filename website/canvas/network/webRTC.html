@@ -216,7 +216,7 @@
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
-      import FolkRTC from '@labs/FolkRTC.ts';
+      import { FolkRTC } from '@labs/FolkRTC.ts';
 
       // DOM Elements - Initiator
       const createOfferBtn = document.getElementById('createOfferBtn');
@@ -248,23 +248,26 @@
           rtcConnection.close();
         }
 
-        rtcConnection = new FolkRTC({
-          onStateChange: (state, message) => {
-            updateConnectionStatus(state, message);
-            if (state === 'connected') {
-              enableChat();
-            } else if (state === 'disconnected') {
-              disableChat();
-            }
-          },
-          onMessage: (message) => {
-            addMessageToChat('Peer', message);
-          },
-          onError: (error) => {
-            console.error('RTC Error:', error);
-            updateConnectionStatus('disconnected', `Error: ${error.message}`);
-          },
-        });
+        // Create a new FolkRTC instance
+        rtcConnection = new FolkRTC();
+
+        // Set up status callback
+        rtcConnection.onStatusChange = (status) => {
+          if (status === 'connected') {
+            updateConnectionStatus('connected', 'Connected!');
+            enableChat();
+          } else if (status === 'disconnected' || status === 'failed' || status === 'closed') {
+            updateConnectionStatus('disconnected', 'Disconnected');
+            disableChat();
+          } else if (status === 'connecting') {
+            updateConnectionStatus('connecting', 'Connecting...');
+          }
+        };
+
+        // Set up message callback
+        rtcConnection.onMessage = (message) => {
+          addMessageToChat('Peer', message);
+        };
       }
 
       // Initiator UI Event Listeners
