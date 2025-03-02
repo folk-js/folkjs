@@ -279,7 +279,7 @@
           const offer = await rtcConnection.createOffer();
 
           // Display the offer
-          localOfferDescription.value = JSON.stringify(offer);
+          localOfferDescription.value = offer;
           copyOfferBtn.disabled = false;
         } catch (error) {
           console.error('Error creating offer:', error);
@@ -298,11 +298,11 @@
         }
 
         try {
-          // Parse the answer
-          const answerData = JSON.parse(remoteAnswerDescription.value);
+          // Get the answer string directly
+          const answerString = remoteAnswerDescription.value.trim();
 
           // Set the remote answer
-          await rtcConnection.setAnswer(answerData);
+          await rtcConnection.setAnswer(answerString);
         } catch (error) {
           console.error('Error setting remote answer:', error);
           alert('Invalid answer format. Please check the answer and try again.');
@@ -319,14 +319,14 @@
         createRTCConnection();
 
         try {
-          // Parse the offer
-          const offerData = JSON.parse(remoteOfferDescription.value);
+          // Get the offer string directly
+          const offerString = remoteOfferDescription.value.trim();
 
           // Create answer
-          const answer = await rtcConnection.createAnswer(offerData);
+          const answer = await rtcConnection.createAnswer(offerString);
 
           // Display the answer
-          localAnswerDescription.value = JSON.stringify(answer);
+          localAnswerDescription.value = answer;
           copyAnswerBtn.disabled = false;
         } catch (error) {
           console.error('Error creating answer:', error);
