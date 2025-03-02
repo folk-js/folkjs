@@ -12,14 +12,19 @@ export interface RTCConnectionData {
 }
 
 /**
- * Compressed format for RTCConnectionData suitable for QR codes and low-bandwidth channels
+ * Ultra-compact format for RTCConnectionData
+ * Format:
+ * type|sessionId|iceUfrag|icePwd|fingerprint|candidates
+ *
+ * Where:
+ * - type: 'o' or 'a'
+ * - sessionId: truncated to 8 chars
+ * - fingerprint: with colons removed
+ * - candidates: pipe-separated list of comma-separated values
+ *   foundation,protocol,ip,port,type
+ *   protocol is empty for UDP, "t" for TCP
+ *   type is "h" for host, "s" for srflx, "r" for relay
  */
-interface CompressedRTCData {
-  // Header: type,sessionId,iceUfrag,icePwd,fingerprint
-  h: string;
-  // Candidates: Array of strings with format: foundation,protocol,ip,port,type
-  c: string[];
-}
 
 /**
  * Minimal WebRTC connection manager
@@ -219,7 +224,7 @@ export class FolkRTC {
   }
 
   /**
-   * Encode RTCConnectionData to a compact string format
+   * Encode RTCConnectionData to an ultra-compact string format
    * @param data The connection data to encode
    * @returns A compact string representation
    */
@@ -228,24 +233,23 @@ export class FolkRTC {
     const sdpString = data.sdp.sdp;
     const lines = sdpString.split('\r\n');
 
-    // Extract session ID from o= line
+    // Extract session ID from o= line and truncate to 8 chars
     const originLine = lines.find((line) => line.startsWith('o='));
-    const sessionId = originLine ? originLine.split(' ')[1] : '';
+    const fullSessionId = originLine ? originLine.split(' ')[1] : '';
+    const sessionId = fullSessionId.substring(0, 8);
 
     // Extract ICE credentials and fingerprint
     const iceUfrag = this.extractValue(lines, 'a=ice-ufrag:');
     const icePwd = this.extractValue(lines, 'a=ice-pwd:');
-    const fingerprint = this.extractValue(lines, 'a=fingerprint:sha-256 ');
+
+    // Remove colons from fingerprint to save space
+    const rawFingerprint = this.extractValue(lines, 'a=fingerprint:sha-256 ');
+    const fingerprint = rawFingerprint.replace(/:/g, '');
 
     // Select a diverse set of ICE candidates for better connectivity
     const selectedCandidates = this.selectDiverseCandidates(data.iceCandidates);
 
-    // Create header as comma-separated string: type,sessionId,iceUfrag,icePwd,fingerprint
-    // Use "o" for offer and "a" for answer to save space
-    const type = data.sdp.type === 'offer' ? 'o' : 'a';
-    const header = `${type},${sessionId},${iceUfrag},${icePwd},${fingerprint}`;
-
-    // Process the selected candidates into array of comma-separated strings
+    // Process the selected candidates into ultra-compact strings
     const candidates = selectedCandidates
       .map((candidate) => {
         const candidateObj = candidate.toJSON ? candidate.toJSON() : candidate;
@@ -257,28 +261,45 @@ export class FolkRTC {
         if (parts.length < 8) return null;
 
         const foundation = parts[0].split(':')[1];
-        const protocol = parts[2];
+        const protocol = parts[2].toLowerCase();
         const ip = parts[4];
         const port = parts[5];
         const type = parts[7];
 
-        // Format: foundation,protocol,ip,port,type
-        return `${foundation},${protocol},${ip},${port},${type}`;
+        // Ultra-compact format:
+        // - Omit protocol for UDP (default), use "t" for TCP
+        // - Use single letters for candidate types: h=host, s=srflx, r=relay
+        const protocolCode = protocol === 'udp' ? '' : 't';
+        let typeCode;
+        switch (type) {
+          case 'host':
+            typeCode = 'h';
+            break;
+          case 'srflx':
+            typeCode = 's';
+            break;
+          case 'relay':
+            typeCode = 'r';
+            break;
+          default:
+            typeCode = type;
+        }
+
+        // Format: foundation,protocolCode,ip,port,typeCode
+        return `${foundation},${protocolCode},${ip},${port},${typeCode}`;
       })
-      .filter(Boolean) as string[];
+      .filter(Boolean);
 
-    // Create compressed data structure
-    const compressed: CompressedRTCData = {
-      h: header,
-      c: candidates,
-    };
+    // Type code: 'o' for offer, 'a' for answer
+    const type = data.sdp.type === 'offer' ? 'o' : 'a';
 
-    // Convert to JSON string
-    const jsonString = JSON.stringify(compressed);
+    // Create ultra-compact format with pipe delimiter
+    // type|sessionId|iceUfrag|icePwd|fingerprint|candidate1|candidate2|...
+    const encodedStr = [type, sessionId, iceUfrag, icePwd, fingerprint, ...candidates].join('|');
 
     // Log size information
     const originalSize = new TextEncoder().encode(JSON.stringify(data)).length;
-    const compressedSize = jsonString.length;
+    const compressedSize = encodedStr.length;
     const originalCandidateCount = data.iceCandidates.length;
     const selectedCandidateCount = selectedCandidates.length;
 
@@ -288,7 +309,7 @@ export class FolkRTC {
       candidates: `${selectedCandidateCount} of ${originalCandidateCount} candidates included`,
     });
 
-    return jsonString;
+    return encodedStr;
   }
 
   /**
@@ -391,13 +412,20 @@ export class FolkRTC {
    * @returns The decoded RTCConnectionData
    */
   private decode(encoded: string): RTCConnectionData {
-    // Parse JSON
-    const compressed = JSON.parse(encoded) as CompressedRTCData;
+    // Split by pipe delimiter
+    const parts = encoded.split('|');
 
-    // Parse header: type,sessionId,iceUfrag,icePwd,fingerprint
-    const [typeCode, sessionId, iceUfrag, icePwd, fingerprint] = compressed.h.split(',');
+    // Extract header components
+    const typeCode = parts[0];
+    const sessionId = parts[1];
+    const iceUfrag = parts[2];
+    const icePwd = parts[3];
+    const fingerprint = parts[4];
 
-    // Convert "o" to "offer" and "a" to "answer"
+    // Format fingerprint with colons for WebRTC compatibility
+    const formattedFingerprint = fingerprint.replace(/(.{2})(?!$)/g, '$1:');
+
+    // Convert type code back to full type
     const type = typeCode === 'o' ? 'offer' : 'answer';
 
     // Reconstruct SDP
@@ -410,7 +438,7 @@ export class FolkRTC {
       `a=ice-ufrag:${iceUfrag}`,
       `a=ice-pwd:${icePwd}`,
       'a=ice-options:trickle',
-      `a=fingerprint:sha-256 ${fingerprint}`,
+      `a=fingerprint:sha-256 ${formattedFingerprint}`,
       `a=setup:${type === 'offer' ? 'actpass' : 'active'}`,
       'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
       'c=IN IP4 0.0.0.0',
@@ -424,16 +452,34 @@ export class FolkRTC {
       sdp: sdpLines.join('\r\n') + '\r\n',
     } as RTCSessionDescription;
 
-    // Reconstruct ICE candidates from array of comma-separated strings
-    const iceCandidates = compressed.c.map((candidateStr) => {
-      // Parse candidate string: foundation,protocol,ip,port,type
-      const [foundation, protocol, ip, port, type] = candidateStr.split(',');
+    // Reconstruct ICE candidates from remaining parts
+    const iceCandidates = parts.slice(5).map((candidateStr) => {
+      // Parse candidate string: foundation,protocolCode,ip,port,typeCode
+      const [foundation, protocolCode, ip, port, typeCode] = candidateStr.split(',');
+
+      // Convert protocol and type codes back to full values
+      const protocol = protocolCode === 't' ? 'tcp' : 'udp';
+
+      let type;
+      switch (typeCode) {
+        case 'h':
+          type = 'host';
+          break;
+        case 's':
+          type = 'srflx';
+          break;
+        case 'r':
+          type = 'relay';
+          break;
+        default:
+          type = typeCode;
+      }
 
       // Calculate priority based on type and protocol
       const priority = this.calculatePriority(type, protocol);
 
       // Construct candidate string - component is always 1 for data channels
-      const candidate = `candidate:${foundation} 1 ${protocol} ${priority} ` + `${ip} ${port} typ ${type}`;
+      const candidate = `candidate:${foundation} 1 ${protocol} ${priority} ${ip} ${port} typ ${type}`;
 
       return new RTCIceCandidate({
         candidate,
