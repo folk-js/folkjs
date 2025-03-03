@@ -443,6 +443,16 @@
 
       // Check URL hash for room info on load
       window.addEventListener('load', () => {
+        checkHashAndJoinRoom();
+      });
+
+      // Also check when hash changes (for when URL is updated in existing tab)
+      window.addEventListener('hashchange', () => {
+        checkHashAndJoinRoom();
+      });
+
+      // Function to check hash and join room if needed
+      function checkHashAndJoinRoom() {
         if (window.location.hash.includes('#broker=') && window.location.hash.includes('&room=')) {
           // We're joining a room
           const hashPart = window.location.hash.substring(1);
@@ -451,11 +461,21 @@
           const roomId = decodeURIComponent(params.get('room'));
 
           if (brokerUrl && roomId) {
-            // Auto-join the room
-            joinRoom(brokerUrl, roomId);
+            // Only join if we're not already connected
+            if (!mqttClient || currentTopic !== `folkcanvas/mqtt/${roomId}`) {
+              // Disconnect from any existing connection
+              if (mqttClient) {
+                mqttClient.end();
+                mqttClient = null;
+                currentTopic = null;
+              }
+
+              // Auto-join the room
+              joinRoom(brokerUrl, roomId);
+            }
           }
         }
-      });
+      }
 
       // Join a room
       async function joinRoom(brokerUrl, roomId) {
