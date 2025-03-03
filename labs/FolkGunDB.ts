@@ -1,19 +1,12 @@
-/**
- * SimpleFolkGunDB - A lightweight messaging system using GunDB
- *
- * This class provides a simple interface for message passing using GunDB,
- * with built-in deduplication and minimal overhead.
- */
-
-// Define callback type for message events
 export type MessageCallback = (data: any, sender: string) => void;
 
 export class FolkGunDB {
   private gun: any;
   private room: any;
+  private messages: any;
   private clientId: string;
-  private seenMessages: Set<string> = new Set();
   private messageListeners: MessageCallback[] = [];
+  private processedMessages: Set<string> = new Set(); // Track processed message IDs
   private relayUrl: string;
   private debug: boolean;
 
@@ -55,8 +48,9 @@ export class FolkGunDB {
         // Initialize Gun with the relay
         this.gun = new Gun([this.relayUrl]);
 
-        // Get reference to the room
+        // Get reference to the room and messages
         this.room = this.gun.get(`folkcanvas/room/${this.roomId}`);
+        this.messages = this.room.get('messages');
         this.log('Joined room:', this.roomId);
 
         // Set up message handler
@@ -96,17 +90,14 @@ export class FolkGunDB {
    * @param data - The data to send
    */
   public send(data: any): void {
-    if (!this.room) {
+    if (!this.messages) {
       throw new Error('Not connected to a room. Call connect() first.');
     }
 
     this.log('Sending message:', data);
 
-    // Create a unique message ID
-    const messageId = this.generateMessageId();
-
-    // Store the message in the room
-    this.room.get('messages').get(messageId).put({
+    // Use GunDB's set() to automatically generate a unique ID
+    this.messages.set({
       data: data,
       sender: this.clientId,
       timestamp: Date.now(),
@@ -131,11 +122,12 @@ export class FolkGunDB {
 
       // Clear all listeners
       this.messageListeners = [];
-      this.seenMessages.clear();
+      this.processedMessages.clear();
 
       // Note: Gun doesn't have a true disconnect method,
       // but we can stop listening to updates
       this.room = null;
+      this.messages = null;
     }
   }
 
@@ -160,55 +152,48 @@ export class FolkGunDB {
   }
 
   /**
-   * Generate a unique message ID
-   * @returns A unique message ID
-   */
-  private generateMessageId(): string {
-    return 'msg_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-  }
-
-  /**
    * Set up handler for incoming messages
    */
   private setupMessageHandler(): void {
-    this.room
-      .get('messages')
-      .map()
-      .on((data: any, key: string) => {
-        // Skip if no data
-        if (!data) return;
+    // First, get all existing messages as a baseline
+    this.messages.map().once((data: any, key: string) => {
+      if (data && data.sender && data.timestamp) {
+        // Mark existing messages as processed (without firing callbacks)
+        this.processedMessages.add(key);
+        this.log('Indexed existing message:', key);
+      }
+    });
 
-        this.log('Raw message received:', key, data);
+    // Then listen for new messages
+    this.messages.map().on((data: any, key: string) => {
+      // Skip if no data or not a valid message
+      if (!data || !data.sender || !data.timestamp || data.data === undefined) {
+        return;
+      }
 
-        // Skip if not a valid message
-        if (!data.sender || !data.timestamp || data.data === undefined) {
-          this.log('Skipping invalid message');
-          return;
+      // Skip our own messages
+      if (data.sender === this.clientId) {
+        return;
+      }
+
+      // Skip if we've already processed this message
+      if (this.processedMessages.has(key)) {
+        return;
+      }
+
+      // Mark as processed
+      this.processedMessages.add(key);
+
+      this.log('New message received:', key, data);
+
+      // Notify all listeners
+      this.messageListeners.forEach((callback) => {
+        try {
+          callback(data.data, data.sender);
+        } catch (err) {
+          console.error('Error in message listener:', err);
         }
-
-        // Skip our own messages
-        if (data.sender === this.clientId) {
-          this.log('Skipping own message');
-          return;
-        }
-
-        // Use the key as the message ID for deduplication
-        if (this.seenMessages.has(key)) {
-          this.log('Skipping already seen message:', key);
-          return;
-        }
-
-        // Mark as seen
-        this.seenMessages.add(key);
-
-        // Notify all listeners
-        this.messageListeners.forEach((callback) => {
-          try {
-            callback(data.data, data.sender);
-          } catch (err) {
-            console.error('Error in message listener:', err);
-          }
-        });
       });
+    });
   }
 }
