@@ -168,13 +168,16 @@
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
+      import { FolkGunDB } from '@labs/FolkGunDB.ts';
     </script>
 
     <!-- GunDB library -->
     <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
 
-    <script type="text/javascript">
+    <script type="module">
+      import { FolkGunDB } from '@labs/FolkGunDB.ts';
+
       // DOM Elements
       const connectionStatus = document.getElementById('connectionStatus');
       const shareBtn = document.getElementById('shareBtn');
@@ -183,20 +186,8 @@
       const chatMessages = document.getElementById('chatMessages');
       const connectionLog = document.getElementById('connectionLog');
 
-      // GunDB initialization with public relay
-      const gun = Gun(['https://gun-manhattan.herokuapp.com/gun']);
-
-      // Room and peer tracking
-      let currentRoom = null;
-      let peerId = generatePeerId();
-
-      // Track seen messages to prevent duplicates
-      const seenMessages = new Set();
-
-      // Generate a unique peer ID
-      function generatePeerId() {
-        return 'peer_' + Math.random().toString(36).substring(2, 10);
-      }
+      // FolkGunDB instance
+      let gunDB = null;
 
       // Log function
       function log(message, type = 'system') {
@@ -222,7 +213,7 @@
       }
 
       // Create a room and generate share link
-      function createAndShareRoom() {
+      async function createAndShareRoom() {
         try {
           // Update button state
           shareBtn.textContent = 'Generating...';
@@ -232,34 +223,24 @@
           const roomId = generateRoomId();
           log(`Creating room with ID: ${roomId}`);
 
-          // Get reference to this room in GunDB
-          currentRoom = gun.get(`folkcanvas/gundb/${roomId}`);
+          // Create FolkGunDB instance with debugging enabled
+          gunDB = new FolkGunDB(roomId, 'https://gun-manhattan.herokuapp.com/gun', true);
 
-          // Initialize room metadata
-          currentRoom.get('meta').put({
-            created: Date.now(),
-            creator: peerId,
-          });
+          // Connect to the room
+          await gunDB.connect();
 
-          // Add ourselves to the peers list
-          currentRoom.get('peers').set({
-            id: peerId,
-            joined: Date.now(),
-          });
-
-          // Subscribe to messages
-          setupMessageHandler();
+          // Set up event listeners
+          setupEventListeners();
 
           // Generate share link
-          const shareUrl = new URL(window.location.href);
-          shareUrl.hash = `#r=${roomId}`;
+          const shareUrl = gunDB.getShareLink();
 
           // Update the current URL hash
-          window.location.hash = shareUrl.hash;
+          window.location.hash = `#r=${roomId}`;
 
           // Copy to clipboard
           navigator.clipboard
-            .writeText(shareUrl.toString())
+            .writeText(shareUrl)
             .then(() => {
               log('Share link copied to clipboard');
               shareBtn.textContent = 'Copied Link';
@@ -267,7 +248,7 @@
             .catch((err) => {
               log(`Failed to copy link: ${err.message}`, 'error');
               shareBtn.textContent = 'Link Created (See Console)';
-              console.log('Share link:', shareUrl.toString());
+              console.log('Share link:', shareUrl);
             });
 
           // Update status
@@ -278,16 +259,6 @@
           sendBtn.disabled = false;
 
           log('Waiting for someone to join...');
-
-          // Monitor peers
-          currentRoom
-            .get('peers')
-            .map()
-            .on((data) => {
-              if (data.id && data.id !== peerId && data.joined) {
-                log(`Peer ${data.id.substring(0, 8)} joined the room`);
-              }
-            });
         } catch (error) {
           shareBtn.textContent = 'Create Link';
           shareBtn.disabled = false;
@@ -296,53 +267,52 @@
         }
       }
 
-      // Set up handler for incoming messages
-      function setupMessageHandler() {
-        currentRoom
-          .get('messages')
-          .map()
-          .on((data, key) => {
-            // Skip if it's not a valid message or it's from us
-            if (!data || !data.content || data.sender === peerId) return;
+      // Set up event listeners for FolkGunDB
+      function setupEventListeners() {
+        // Listen for broadcast messages
+        gunDB.onBroadcast((data, sender) => {
+          console.log('Received broadcast data:', data);
 
-            // Create a unique ID for this message to deduplicate
-            const messageId = `${data.sender}_${data.timestamp}_${data.content.substring(0, 10)}`;
+          // Handle different data formats
+          let content = 'undefined message';
 
-            // Skip if we've already seen this message
-            if (seenMessages.has(messageId)) return;
+          if (data && typeof data === 'object') {
+            // If data is an object with content property
+            if (data.content !== undefined) {
+              content = data.content;
+            } else {
+              // Just use the whole object
+              content = JSON.stringify(data);
+            }
+          } else if (data !== undefined) {
+            // If data is a primitive value
+            content = String(data);
+          }
 
-            // Mark as seen
-            seenMessages.add(messageId);
+          // Add to chat
+          addMessageToChat(content, false);
 
-            // Add to chat
-            addMessageToChat(data.content, false);
+          // Log
+          log(`Received: ${content}`, 'received');
+        });
 
-            // Log
-            log(`Received: ${data.content}`, 'received');
-          });
+        // Listen for peer events
+        gunDB.onPeer((peerId, joined) => {
+          if (joined) {
+            log(`Peer ${peerId.substring(0, 8)} joined the room`);
+          } else {
+            log(`Peer ${peerId.substring(0, 8)} left the room`);
+          }
+        });
       }
 
       // Send a message
       function sendMessage(message) {
-        if (!currentRoom) return;
+        if (!gunDB) return;
 
         try {
-          // Create message object with a timestamp for uniqueness
-          const timestamp = Date.now();
-          const messageData = {
-            content: message,
-            sender: peerId,
-            timestamp: timestamp,
-          };
-
-          // Create a unique ID for this message
-          const messageId = `${peerId}_${timestamp}_${message.substring(0, 10)}`;
-
-          // Mark our own message as seen to prevent echoing
-          seenMessages.add(messageId);
-
-          // Add message to the room
-          currentRoom.get('messages').set(messageData);
+          // Broadcast the message directly - no wrapping in object
+          gunDB.broadcast(message);
 
           // Add to chat
           addMessageToChat(message, true);
@@ -362,21 +332,18 @@
       }
 
       // Join an existing room
-      function joinRoom(roomId) {
+      async function joinRoom(roomId) {
         try {
           log(`Joining room: ${roomId}`);
 
-          // Get reference to the room
-          currentRoom = gun.get(`folkcanvas/gundb/${roomId}`);
+          // Create FolkGunDB instance with debugging enabled
+          gunDB = new FolkGunDB(roomId, 'https://gun-manhattan.herokuapp.com/gun', true);
 
-          // Add ourselves to the peers list
-          currentRoom.get('peers').set({
-            id: peerId,
-            joined: Date.now(),
-          });
+          // Connect to the room
+          await gunDB.connect();
 
-          // Subscribe to messages
-          setupMessageHandler();
+          // Set up event listeners
+          setupEventListeners();
 
           // Update status
           connectionStatus.textContent = 'Connected to Room';
@@ -387,14 +354,6 @@
           sendBtn.disabled = false;
 
           log('Joined room successfully');
-
-          // Check room metadata
-          currentRoom.get('meta').once((data) => {
-            if (data && data.created) {
-              const createdDate = new Date(data.created);
-              log(`Room was created on ${createdDate.toLocaleString()}`);
-            }
-          });
         } catch (error) {
           shareBtn.textContent = 'Create Link';
           shareBtn.disabled = false;
@@ -428,9 +387,9 @@
       window.addEventListener('load', () => {
         checkHashAndJoinRoom();
 
-        // Log connection to Gun
-        log('Connected to GunDB network');
-        connectionStatus.textContent = 'Connected to GunDB';
+        // Log connection status
+        log('Ready to create or join a room');
+        connectionStatus.textContent = 'Ready';
       });
 
       // Also check when hash changes (for when URL is updated in existing tab)
@@ -443,12 +402,14 @@
         if (window.location.hash.startsWith('#r=')) {
           const roomId = window.location.hash.substring(3);
 
-          if (roomId) {
+          if (roomId && (!gunDB || gunDB.roomId !== roomId)) {
+            // Disconnect from any existing room
+            if (gunDB) {
+              gunDB.disconnect();
+            }
+
             // Disable share button during join
             shareBtn.disabled = true;
-
-            // Clear seen messages when joining a new room
-            seenMessages.clear();
 
             // Join the room
             joinRoom(roomId);
