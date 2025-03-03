@@ -147,7 +147,7 @@
     </folk-shape>
 
     <!-- Connection Log Shape -->
-    <folk-shape x="420" y="50" width="350" height="250">
+    <folk-shape x="420" y="50" width="350">
       <div class="title">Connection Log</div>
       <div id="connectionLog" class="log-container"></div>
     </folk-shape>
@@ -158,7 +158,8 @@
       <p
         ><a href="https://en.wikipedia.org/wiki/MQTT" target="_blank">MQTT</a> is a lightweight pubsub protocol for
         resource-constrained devices. This demo uses public MQTT brokers to connect exchange small amounts of data
-        between devices.</p
+        between devices. This can be used to setup high-bandwidth, low-latency webRTC connections without the use of a
+        traditional signaling server.</p
       >
       <p style="font-size: 12px; color: #666">
         Using public brokers:
@@ -186,7 +187,6 @@
       // MQTT client
       let mqttClient = null;
       let currentTopic = null;
-      let isHost = false;
       let clientId = generateClientId(); // Unique ID for this client
 
       // Broker URLs - first one is the default, will try second if first fails
@@ -305,7 +305,6 @@
           // Generate a unique topic
           const roomId = generateRoomId();
           currentTopic = `folkcanvas/mqtt/${roomId}`;
-          isHost = true;
 
           log(`Room created with ID: ${roomId}`);
 
@@ -316,9 +315,13 @@
           // Set up message handler
           setupMessageHandler();
 
-          // Generate share link
+          // Generate share link with base64 encoded broker URL
+          const encodedBroker = btoa(brokerUrl);
           const shareUrl = new URL(window.location.href);
-          shareUrl.hash = `#broker=${encodeURIComponent(brokerUrl)}&room=${encodeURIComponent(roomId)}`;
+          shareUrl.hash = `#b=${encodedBroker}&r=${roomId}`;
+
+          // Update the current URL hash
+          window.location.hash = shareUrl.hash;
 
           // Copy to clipboard
           navigator.clipboard
@@ -362,9 +365,7 @@
 
             // Handle different message types
             if (topic === `${currentTopic}/join`) {
-              if (isHost) {
-                log('Someone joined the room');
-              }
+              log('Someone joined the room');
               return;
             }
 
@@ -453,25 +454,32 @@
 
       // Function to check hash and join room if needed
       function checkHashAndJoinRoom() {
-        if (window.location.hash.includes('#broker=') && window.location.hash.includes('&room=')) {
-          // We're joining a room
+        if (window.location.hash) {
+          // Parse the hash
           const hashPart = window.location.hash.substring(1);
-          const params = new URLSearchParams(hashPart.replace('broker=', 'broker_url='));
-          const brokerUrl = decodeURIComponent(params.get('broker_url'));
-          const roomId = decodeURIComponent(params.get('room'));
+          const params = new URLSearchParams(hashPart);
+          const encodedBroker = params.get('b');
+          const roomId = params.get('r');
 
-          if (brokerUrl && roomId) {
-            // Only join if we're not already connected
-            if (!mqttClient || currentTopic !== `folkcanvas/mqtt/${roomId}`) {
-              // Disconnect from any existing connection
-              if (mqttClient) {
-                mqttClient.end();
-                mqttClient = null;
-                currentTopic = null;
+          if (encodedBroker && roomId) {
+            try {
+              const brokerUrl = atob(encodedBroker);
+
+              // Only join if we're not already connected
+              if (!mqttClient || currentTopic !== `folkcanvas/mqtt/${roomId}`) {
+                // Disconnect from any existing connection
+                if (mqttClient) {
+                  mqttClient.end();
+                  mqttClient = null;
+                  currentTopic = null;
+                }
+
+                // Auto-join the room
+                joinRoom(brokerUrl, roomId);
               }
-
-              // Auto-join the room
-              joinRoom(brokerUrl, roomId);
+            } catch (e) {
+              console.error('Error decoding broker URL:', e);
+              log('Invalid share link', 'error');
             }
           }
         }
