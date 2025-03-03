@@ -188,6 +188,8 @@ export class FolkRTC {
         iceCandidates: this.#iceCandidates,
       };
 
+      console.log('createOffer', this.encode(connectionData));
+
       // Encode the offer
       return this.encode(connectionData);
     } catch (error) {
@@ -201,6 +203,7 @@ export class FolkRTC {
    * @param encodedAnswer The encoded answer string from the responder
    */
   public async setAnswer(encodedAnswer: string): Promise<void> {
+    console.log('setAnswer', encodedAnswer);
     if (this.#role !== 'initiator') {
       throw new Error('This method should only be called by the initiator');
     }
@@ -263,7 +266,10 @@ export class FolkRTC {
       };
 
       // Encode the answer
-      return this.encode(connectionData);
+      const encodedAnswer = this.encode(connectionData);
+      console.log('createAnswer', encodedAnswer);
+      console.log('from offer', encodedOffer);
+      return encodedAnswer;
     } catch (error) {
       console.error('Error creating answer:', error);
       throw error;
