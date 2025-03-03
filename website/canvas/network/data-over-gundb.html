@@ -190,6 +190,9 @@
       let currentRoom = null;
       let peerId = generatePeerId();
 
+      // Track seen messages to prevent duplicates
+      const seenMessages = new Set();
+
       // Generate a unique peer ID
       function generatePeerId() {
         return 'peer_' + Math.random().toString(36).substring(2, 10);
@@ -298,9 +301,18 @@
         currentRoom
           .get('messages')
           .map()
-          .on((data) => {
+          .on((data, key) => {
             // Skip if it's not a valid message or it's from us
             if (!data || !data.content || data.sender === peerId) return;
+
+            // Create a unique ID for this message to deduplicate
+            const messageId = `${data.sender}_${data.timestamp}_${data.content.substring(0, 10)}`;
+
+            // Skip if we've already seen this message
+            if (seenMessages.has(messageId)) return;
+
+            // Mark as seen
+            seenMessages.add(messageId);
 
             // Add to chat
             addMessageToChat(data.content, false);
@@ -315,12 +327,19 @@
         if (!currentRoom) return;
 
         try {
-          // Create message object
+          // Create message object with a timestamp for uniqueness
+          const timestamp = Date.now();
           const messageData = {
             content: message,
             sender: peerId,
-            timestamp: Date.now(),
+            timestamp: timestamp,
           };
+
+          // Create a unique ID for this message
+          const messageId = `${peerId}_${timestamp}_${message.substring(0, 10)}`;
+
+          // Mark our own message as seen to prevent echoing
+          seenMessages.add(messageId);
 
           // Add message to the room
           currentRoom.get('messages').set(messageData);
@@ -427,6 +446,9 @@
           if (roomId) {
             // Disable share button during join
             shareBtn.disabled = true;
+
+            // Clear seen messages when joining a new room
+            seenMessages.clear();
 
             // Join the room
             joinRoom(roomId);
