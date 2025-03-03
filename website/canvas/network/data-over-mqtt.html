@@ -133,7 +133,7 @@
   <body>
     <!-- Chat Shape -->
     <folk-shape x="50" y="50" width="350" height="400">
-      <div class="title">MQTT Chat</div>
+      <div class="title">Data over MQTT</div>
       <span class="status" id="connectionStatus">Not connected</span>
 
       <div class="chat-container" id="chatMessages"></div>
@@ -155,7 +155,11 @@
     <!-- Info Shape -->
     <folk-shape x="420" y="320" width="350" height="130">
       <div class="title">About</div>
-      <p>Data over MQTT: Connect two devices using public MQTT brokers without requiring accounts.</p>
+      <p
+        ><a href="https://en.wikipedia.org/wiki/MQTT" target="_blank">MQTT</a> is a lightweight pubsub protocol for
+        resource-constrained devices. This demo uses public MQTT brokers to connect exchange small amounts of data
+        between devices.</p
+      >
       <p style="font-size: 12px; color: #666">
         Using public brokers:
         <a href="https://www.emqx.io/mqtt/public-mqtt5-broker" target="_blank">EMQX</a> and
@@ -183,9 +187,15 @@
       let mqttClient = null;
       let currentTopic = null;
       let isHost = false;
+      let clientId = generateClientId(); // Unique ID for this client
 
       // Broker URLs - first one is the default, will try second if first fails
       const brokerUrls = ['wss://broker.emqx.io:8084/mqtt', 'ws://test.mosquitto.org:8080'];
+
+      // Generate a unique client ID
+      function generateClientId() {
+        return 'client_' + Math.random().toString(36).substring(2, 10);
+      }
 
       // Log function
       function log(message, type = 'system') {
@@ -359,6 +369,11 @@
             }
 
             if (topic === `${currentTopic}/message`) {
+              // Skip messages from ourselves
+              if (data.senderId === clientId) {
+                return;
+              }
+
               // Handle regular messages
               const content = data.content || messageStr;
 
@@ -383,6 +398,7 @@
           const messageData = {
             content: message,
             timestamp: Date.now(),
+            senderId: clientId,
           };
 
           mqttClient.publish(`${currentTopic}/message`, JSON.stringify(messageData));
