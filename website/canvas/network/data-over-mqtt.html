@@ -28,22 +28,8 @@
         padding: 12px;
       }
 
-      .info-panel {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: transparent;
-        padding: 20px 25px;
-        text-align: center;
-        font-size: 14px;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
-        max-width: 80%;
-      }
-
-      .info-title {
-        font-size: 20px;
+      .title {
+        font-size: 18px;
         font-weight: bold;
         margin-bottom: 12px;
         color: #333;
@@ -53,8 +39,8 @@
         color: #2196f3;
         font-weight: bold;
         display: block;
-        margin-top: 12px;
-        font-size: 16px;
+        margin-top: 8px;
+        font-size: 14px;
       }
 
       textarea {
@@ -63,11 +49,7 @@
         border: 1px solid #ddd;
         padding: 8px;
         margin-bottom: 8px;
-      }
-
-      textarea:disabled {
-        background-color: white;
-        color: black;
+        resize: none;
       }
 
       button {
@@ -78,6 +60,7 @@
         border-radius: 4px;
         cursor: pointer;
         margin-right: 8px;
+        margin-bottom: 8px;
       }
 
       button:hover {
@@ -89,31 +72,12 @@
         cursor: not-allowed;
       }
 
-      h3 {
-        margin-top: 0;
-        margin-bottom: 8px;
-        color: #333;
-        font-size: 16px;
-      }
-
-      .share-link {
-        margin-top: 10px;
-        padding: 8px;
-        background-color: #f5f5f5;
-        border-radius: 4px;
-        word-break: break-all;
-        font-family: monospace;
-        font-size: 12px;
-        cursor: pointer;
-      }
-
       .log-container {
-        height: 150px;
+        height: 200px;
         overflow-y: auto;
         border: 1px solid #ddd;
         border-radius: 4px;
         padding: 8px;
-        margin-top: 10px;
         font-family: monospace;
         font-size: 12px;
         background-color: #f9f9f9;
@@ -122,6 +86,7 @@
       .log-entry {
         margin-bottom: 4px;
         line-height: 1.4;
+        color: #555;
       }
 
       .log-entry.received {
@@ -132,64 +97,70 @@
         color: #4caf50;
       }
 
-      .log-entry.system {
+      .log-entry.error {
         color: #ff5722;
       }
 
-      .broker-selector {
-        margin-bottom: 10px;
+      .chat-container {
+        height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 8px;
+        margin-bottom: 8px;
+        background-color: white;
+      }
+
+      .message {
+        padding: 6px 10px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+        max-width: 80%;
+        word-wrap: break-word;
+      }
+
+      .message.sent {
+        background-color: #e3f2fd;
+        margin-left: auto;
+        text-align: right;
+      }
+
+      .message.received {
+        background-color: #f1f1f1;
       }
     </style>
   </head>
   <body>
-    <div class="info-panel">
-      <div class="info-title">data over mqtt</div>
-      <p>Connect two devices using public MQTT brokers without requiring accounts.</p>
+    <!-- Chat Shape -->
+    <folk-shape x="50" y="50" width="350" height="400">
+      <div class="title">MQTT Chat</div>
       <span class="status" id="connectionStatus">Not connected</span>
-    </div>
 
-    <!-- Host Shape -->
-    <folk-shape x="50" y="50" width="300" height="450">
-      <h3>Host Connection</h3>
-      <div class="broker-selector">
-        <label for="brokerSelect">MQTT Broker:</label>
-        <select id="brokerSelect">
-          <option value="wss://broker.hivemq.com:8884/mqtt">HiveMQ</option>
-          <option value="wss://broker.emqx.io:8084/mqtt">EMQX</option>
-          <option value="wss://test.mosquitto.org:8081">Mosquitto</option>
-        </select>
-      </div>
-      <button id="createRoomBtn">Create Room</button>
-      <div id="shareLink" class="share-link" style="display: none" onclick="copyShareLink()">
-        Share link will appear here
-      </div>
-      <div style="margin-top: 15px">
-        <h3>Send Message</h3>
-        <textarea id="txData" style="height: 80px" disabled>Hello from Folk Canvas!</textarea>
-        <button id="sendBtn" disabled>Send Message</button>
-      </div>
-      <div style="margin-top: 15px">
-        <h3>Connection Log</h3>
-        <div id="hostLog" class="log-container"></div>
+      <div class="chat-container" id="chatMessages"></div>
+
+      <textarea id="messageInput" style="height: 60px" placeholder="Type a message..."></textarea>
+
+      <div>
+        <button id="shareBtn">Create Link</button>
+        <button id="sendBtn" disabled>Send</button>
       </div>
     </folk-shape>
 
-    <!-- Receiver Shape -->
-    <folk-shape x="400" y="50" width="300" height="450">
-      <h3>Join Connection</h3>
-      <div id="joinControls">
-        <textarea id="joinLink" style="height: 60px" placeholder="Paste share link here..."></textarea>
-        <button id="joinRoomBtn">Join Room</button>
-      </div>
-      <div style="margin-top: 15px">
-        <h3>Received Messages</h3>
-        <textarea id="rxData" style="height: 80px" disabled></textarea>
-        <button id="replyBtn" disabled>Reply</button>
-      </div>
-      <div style="margin-top: 15px">
-        <h3>Connection Log</h3>
-        <div id="guestLog" class="log-container"></div>
-      </div>
+    <!-- Connection Log Shape -->
+    <folk-shape x="420" y="50" width="350" height="250">
+      <div class="title">Connection Log</div>
+      <div id="connectionLog" class="log-container"></div>
+    </folk-shape>
+
+    <!-- Info Shape -->
+    <folk-shape x="420" y="320" width="350" height="130">
+      <div class="title">About</div>
+      <p>Data over MQTT: Connect two devices using public MQTT brokers without requiring accounts.</p>
+      <p style="font-size: 12px; color: #666">
+        Using public brokers:
+        <a href="https://www.emqx.io/mqtt/public-mqtt5-broker" target="_blank">EMQX</a> and
+        <a href="https://test.mosquitto.org/" target="_blank">Mosquitto</a>
+      </p>
     </folk-shape>
 
     <script type="module">
@@ -202,38 +173,36 @@
     <script type="text/javascript">
       // DOM Elements
       const connectionStatus = document.getElementById('connectionStatus');
-      const brokerSelect = document.getElementById('brokerSelect');
-      const createRoomBtn = document.getElementById('createRoomBtn');
-      const shareLink = document.getElementById('shareLink');
-      const txData = document.getElementById('txData');
+      const shareBtn = document.getElementById('shareBtn');
       const sendBtn = document.getElementById('sendBtn');
-      const joinLink = document.getElementById('joinLink');
-      const joinRoomBtn = document.getElementById('joinRoomBtn');
-      const rxData = document.getElementById('rxData');
-      const replyBtn = document.getElementById('replyBtn');
-      const hostLog = document.getElementById('hostLog');
-      const guestLog = document.getElementById('guestLog');
+      const messageInput = document.getElementById('messageInput');
+      const chatMessages = document.getElementById('chatMessages');
+      const connectionLog = document.getElementById('connectionLog');
 
       // MQTT client
       let mqttClient = null;
       let currentTopic = null;
       let isHost = false;
 
-      // Log functions
-      function logToHost(message, type = 'system') {
+      // Broker URLs - first one is the default, will try second if first fails
+      const brokerUrls = ['wss://broker.emqx.io:8084/mqtt', 'ws://test.mosquitto.org:8080'];
+
+      // Log function
+      function log(message, type = 'system') {
         const entry = document.createElement('div');
         entry.className = `log-entry ${type}`;
         entry.textContent = message;
-        hostLog.appendChild(entry);
-        hostLog.scrollTop = hostLog.scrollHeight;
+        connectionLog.appendChild(entry);
+        connectionLog.scrollTop = connectionLog.scrollHeight;
       }
 
-      function logToGuest(message, type = 'system') {
-        const entry = document.createElement('div');
-        entry.className = `log-entry ${type}`;
-        entry.textContent = message;
-        guestLog.appendChild(entry);
-        guestLog.scrollTop = guestLog.scrollHeight;
+      // Add message to chat
+      function addMessageToChat(message, isSent) {
+        const messageEl = document.createElement('div');
+        messageEl.className = `message ${isSent ? 'sent' : 'received'}`;
+        messageEl.textContent = message;
+        chatMessages.appendChild(messageEl);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
       }
 
       // Generate a random room ID
@@ -245,32 +214,54 @@
       async function connectToMQTT(brokerUrl) {
         return new Promise((resolve, reject) => {
           try {
-            connectionStatus.textContent = `Connecting to ${new URL(brokerUrl).hostname}...`;
+            connectionStatus.textContent = `Connecting...`;
+            log(`Connecting to MQTT broker: ${new URL(brokerUrl).hostname}...`);
+
+            // Connection options
+            const options = {
+              keepalive: 60,
+              connectTimeout: 10000, // 10 seconds
+              reconnectPeriod: 0, // We'll handle reconnection manually
+              clean: true,
+            };
 
             // Connect to the MQTT broker
-            const client = mqtt.connect(brokerUrl);
+            const client = mqtt.connect(brokerUrl, options);
 
             // Set up event handlers
             client.on('connect', () => {
-              connectionStatus.textContent = `Connected to ${new URL(brokerUrl).hostname}`;
+              connectionStatus.textContent = `Connected`;
+              log(`Connected to ${new URL(brokerUrl).hostname}`);
               resolve(client);
             });
 
             client.on('error', (err) => {
-              connectionStatus.textContent = 'Connection failed';
+              connectionStatus.textContent = `Connection failed`;
+              log(`Connection error: ${err.message}`, 'error');
               console.error('MQTT connection error:', err);
               reject(err);
+            });
+
+            client.on('close', () => {
+              connectionStatus.textContent = 'Disconnected';
+              log('Disconnected from broker');
+            });
+
+            client.on('offline', () => {
+              connectionStatus.textContent = 'Offline';
+              log('Connection offline');
             });
 
             // Set a timeout for connection
             setTimeout(() => {
               if (client.connected !== true) {
                 client.end();
-                reject(new Error('Connection timeout'));
+                reject(new Error('Connection timeout - trying next broker'));
               }
             }, 10000);
           } catch (error) {
-            connectionStatus.textContent = 'Connection failed';
+            connectionStatus.textContent = `Connection failed`;
+            log(`Setup error: ${error.message}`, 'error');
             console.error('MQTT setup error:', error);
             reject(error);
           }
@@ -278,21 +269,35 @@
       }
 
       // Create a room and generate share link
-      async function createRoom() {
+      async function createAndShareRoom() {
         try {
-          createRoomBtn.disabled = true;
-          const brokerUrl = brokerSelect.value;
-          logToHost(`Connecting to MQTT broker: ${new URL(brokerUrl).hostname}...`);
+          // Update button state
+          shareBtn.textContent = 'Generating...';
+          shareBtn.disabled = true;
 
-          // Connect to MQTT broker
-          mqttClient = await connectToMQTT(brokerUrl);
+          // Try to connect to the first broker
+          let brokerUrl = brokerUrls[0];
+
+          try {
+            // Connect to MQTT broker
+            mqttClient = await connectToMQTT(brokerUrl);
+          } catch (connectionError) {
+            log(`Failed to connect to ${new URL(brokerUrl).hostname}: ${connectionError.message}`);
+
+            // Try the second broker
+            brokerUrl = brokerUrls[1];
+            log(`Trying next broker: ${new URL(brokerUrl).hostname}...`);
+
+            // Try connecting to the next broker
+            mqttClient = await connectToMQTT(brokerUrl);
+          }
 
           // Generate a unique topic
           const roomId = generateRoomId();
           currentTopic = `folkcanvas/mqtt/${roomId}`;
           isHost = true;
 
-          logToHost(`Connected to broker, room created with ID: ${roomId}`);
+          log(`Room created with ID: ${roomId}`);
 
           // Subscribe to messages on this topic
           mqttClient.subscribe(`${currentTopic}/message`);
@@ -304,76 +309,30 @@
           // Generate share link
           const shareUrl = new URL(window.location.href);
           shareUrl.hash = `#broker=${encodeURIComponent(brokerUrl)}&room=${encodeURIComponent(roomId)}`;
-          shareLink.textContent = shareUrl.toString();
-          shareLink.style.display = 'block';
+
+          // Copy to clipboard
+          navigator.clipboard
+            .writeText(shareUrl.toString())
+            .then(() => {
+              log('Share link copied to clipboard');
+              shareBtn.textContent = 'Copied Link';
+            })
+            .catch((err) => {
+              log(`Failed to copy link: ${err.message}`, 'error');
+              shareBtn.textContent = 'Link Created (See Console)';
+              console.log('Share link:', shareUrl.toString());
+            });
 
           // Enable sending
-          txData.disabled = false;
+          messageInput.disabled = false;
           sendBtn.disabled = false;
 
-          logToHost('Waiting for someone to join...');
+          log('Waiting for someone to join...');
         } catch (error) {
-          createRoomBtn.disabled = false;
-          logToHost(`Error: ${error.message}`);
+          shareBtn.textContent = 'Create Link';
+          shareBtn.disabled = false;
+          log(`Error: ${error.message}`, 'error');
           console.error('Room creation error:', error);
-        }
-      }
-
-      // Join a room from share link
-      async function joinRoom() {
-        try {
-          joinRoomBtn.disabled = true;
-
-          // Parse broker URL and room ID from link
-          const linkText = joinLink.value.trim();
-          let brokerUrl, roomId;
-
-          if (linkText.includes('#broker=') && linkText.includes('&room=')) {
-            const hashPart = linkText.split('#')[1];
-            const params = new URLSearchParams(hashPart.replace('broker=', 'broker_url='));
-            brokerUrl = decodeURIComponent(params.get('broker_url'));
-            roomId = decodeURIComponent(params.get('room'));
-          } else {
-            throw new Error('Invalid share link');
-          }
-
-          if (!brokerUrl || !roomId) {
-            throw new Error('Invalid share link');
-          }
-
-          logToGuest(`Connecting to MQTT broker: ${new URL(brokerUrl).hostname}...`);
-
-          // Connect to MQTT broker
-          mqttClient = await connectToMQTT(brokerUrl);
-
-          // Set the current topic
-          currentTopic = `folkcanvas/mqtt/${roomId}`;
-
-          logToGuest(`Connected to broker, joining room: ${roomId}`);
-
-          // Subscribe to messages on this topic
-          mqttClient.subscribe(`${currentTopic}/message`);
-
-          // Set up message handler
-          setupMessageHandler();
-
-          // Enable reply
-          replyBtn.disabled = false;
-
-          // Send join notification
-          mqttClient.publish(
-            `${currentTopic}/join`,
-            JSON.stringify({
-              type: 'join',
-              timestamp: Date.now(),
-            }),
-          );
-
-          logToGuest('Joined room successfully');
-        } catch (error) {
-          joinRoomBtn.disabled = false;
-          logToGuest(`Error: ${error.message}`);
-          console.error('Room join error:', error);
         }
       }
 
@@ -394,7 +353,7 @@
             // Handle different message types
             if (topic === `${currentTopic}/join`) {
               if (isHost) {
-                logToHost('Someone joined the room', 'system');
+                log('Someone joined the room');
               }
               return;
             }
@@ -403,16 +362,15 @@
               // Handle regular messages
               const content = data.content || messageStr;
 
-              if (isHost) {
-                logToHost(`Received: ${content}`, 'received');
-                rxData.value = content;
-              } else {
-                logToGuest(`Received: ${content}`, 'received');
-                rxData.value = content;
-              }
+              // Add to chat
+              addMessageToChat(content, false);
+
+              // Log
+              log(`Received: ${content}`, 'received');
             }
           } catch (error) {
             console.error('Error processing message:', error);
+            log(`Error processing message: ${error.message}`, 'error');
           }
         });
       }
@@ -429,58 +387,102 @@
 
           mqttClient.publish(`${currentTopic}/message`, JSON.stringify(messageData));
 
-          if (isHost) {
-            logToHost(`Sent: ${message}`, 'sent');
-          } else {
-            logToGuest(`Sent: ${message}`, 'sent');
-          }
+          // Add to chat
+          addMessageToChat(message, true);
+
+          // Log
+          log(`Sent: ${message}`, 'sent');
+
+          // Clear input
+          messageInput.value = '';
 
           return true;
         } catch (error) {
+          log(`Send error: ${error.message}`, 'error');
           console.error('Send message error:', error);
           return false;
         }
       }
 
-      // Copy share link to clipboard
-      function copyShareLink() {
-        navigator.clipboard
-          .writeText(shareLink.textContent)
-          .then(() => {
-            logToHost('Share link copied to clipboard');
-          })
-          .catch((err) => {
-            logToHost('Failed to copy link: ' + err);
-          });
-      }
-
       // Event listeners
-      createRoomBtn.addEventListener('click', createRoom);
-      joinRoomBtn.addEventListener('click', joinRoom);
+      shareBtn.addEventListener('click', createAndShareRoom);
 
       sendBtn.addEventListener('click', () => {
-        const message = txData.value.trim();
+        const message = messageInput.value.trim();
         if (message) {
           sendMessage(message);
         }
       });
 
-      replyBtn.addEventListener('click', () => {
-        const message = txData.value.trim() || 'Reply from guest';
-        if (message) {
-          sendMessage(message);
+      // Allow sending with Enter key
+      messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          const message = messageInput.value.trim();
+          if (message && !sendBtn.disabled) {
+            sendMessage(message);
+          }
         }
       });
 
       // Check URL hash for room info on load
       window.addEventListener('load', () => {
         if (window.location.hash.includes('#broker=') && window.location.hash.includes('&room=')) {
-          joinLink.value = window.location.href;
+          // We're joining a room
+          const hashPart = window.location.hash.substring(1);
+          const params = new URLSearchParams(hashPart.replace('broker=', 'broker_url='));
+          const brokerUrl = decodeURIComponent(params.get('broker_url'));
+          const roomId = decodeURIComponent(params.get('room'));
+
+          if (brokerUrl && roomId) {
+            // Auto-join the room
+            joinRoom(brokerUrl, roomId);
+          }
         }
       });
 
-      // Make copyShareLink available globally
-      window.copyShareLink = copyShareLink;
+      // Join a room
+      async function joinRoom(brokerUrl, roomId) {
+        try {
+          shareBtn.disabled = true;
+          shareBtn.textContent = 'Joining...';
+
+          log(`Joining room: ${roomId}`);
+
+          // Connect to MQTT broker
+          mqttClient = await connectToMQTT(brokerUrl);
+
+          // Set the current topic
+          currentTopic = `folkcanvas/mqtt/${roomId}`;
+
+          // Subscribe to messages on this topic
+          mqttClient.subscribe(`${currentTopic}/message`);
+
+          // Set up message handler
+          setupMessageHandler();
+
+          // Enable messaging
+          messageInput.disabled = false;
+          sendBtn.disabled = false;
+          shareBtn.textContent = 'Connected';
+
+          // Send join notification
+          mqttClient.publish(
+            `${currentTopic}/join`,
+            JSON.stringify({
+              type: 'join',
+              timestamp: Date.now(),
+            }),
+          );
+
+          log('Joined room successfully');
+        } catch (error) {
+          shareBtn.textContent = 'Create Link';
+          shareBtn.disabled = false;
+          log(`Join error: ${error.message}`, 'error');
+          console.error('Room join error:', error);
+        }
+      }
     </script>
   </body>
 </html>
