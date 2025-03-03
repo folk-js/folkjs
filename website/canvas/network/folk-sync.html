@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
-    <title>Folk Sync - WebRTC over GunDB</title>
+    <title>Folk Sync</title>
     <style>
       * {
         box-sizing: border-box;
@@ -150,36 +150,22 @@
   <body>
     <!-- Connection Controls Shape -->
     <folk-shape x="50" y="50" width="350" height="220">
-      <div class="title">Folk Sync Connection</div>
+      <div class="title">webRTC Connection</div>
       <div class="status" id="connectionStatus">Not connected</div>
 
       <div style="margin-bottom: 12px">
         <button id="createRoomBtn">Create Room</button>
+        <button id="refreshConnBtn" style="background-color: #607d8b">Refresh Connection</button>
       </div>
 
       <div id="shareUrlContainer" style="display: none">
-        <div style="display: flex; margin-bottom: 8px">
-          <input
-            type="text"
-            id="shareUrlInput"
-            readonly
-            style="flex: 1; padding: 6px 12px; border-radius: 4px; border: 1px solid #ddd"
-          />
-          <button id="copyUrlBtn" style="margin-left: 8px">Copy</button>
-        </div>
-        <div class="client-info">Your client ID: <span id="clientIdDisplay">-</span></div>
+        <input type="text" id="shareUrlInput" readonly style="position: absolute; left: -9999px; opacity: 0" />
       </div>
     </folk-shape>
 
     <!-- Connection Log Shape -->
     <folk-shape x="50" y="290" width="350" height="300">
       <div class="title">Connection Log</div>
-      <div class="status">
-        <span>GunDB: </span>
-        <span class="connection-indicator" id="gunIndicator"></span>
-        <span>WebRTC: </span>
-        <span class="connection-indicator" id="rtcIndicator"></span>
-      </div>
       <div id="connectionLog" class="log-container"></div>
     </folk-shape>
 
@@ -194,29 +180,15 @@
         placeholder="Type a test message here to send over WebRTC..."
       ></textarea>
       <button id="sendTestBtn" disabled>Send Message</button>
-
-      <div class="test-controls">
-        <div>
-          <strong>Connected Peers:</strong>
-          <div id="connectedPeers">None</div>
-        </div>
-      </div>
     </folk-shape>
 
     <!-- Info Shape -->
-    <folk-shape x="420" y="370" width="350" height="220">
+    <folk-shape x="420" y="370" width="350">
       <div class="title">About</div>
       <p>
-        This demo establishes a WebRTC connection using GunDB as the signaling channel. The process works as follows:
+        This demo establishes a WebRTC connection using GunDB as the signaling channel. Create a room, copy the link,
+        and share it with others to connect.
       </p>
-      <ol style="font-size: 14px; margin-top: 8px; padding-left: 20px">
-        <li>Create or join a GunDB room</li>
-        <li>Each client announces its presence by setting its ready state</li>
-        <li>Clients compare IDs to determine initiator/receiver roles</li>
-        <li>The initiator creates and stores an offer</li>
-        <li>The receiver creates and stores an answer</li>
-        <li>A direct WebRTC connection is established</li>
-      </ol>
     </folk-shape>
 
     <!-- GunDB library -->
@@ -230,17 +202,13 @@
       // DOM Elements
       const connectionStatus = document.getElementById('connectionStatus');
       const createRoomBtn = document.getElementById('createRoomBtn');
+      const refreshConnBtn = document.getElementById('refreshConnBtn');
       const shareUrlContainer = document.getElementById('shareUrlContainer');
       const shareUrlInput = document.getElementById('shareUrlInput');
-      const copyUrlBtn = document.getElementById('copyUrlBtn');
-      const clientIdDisplay = document.getElementById('clientIdDisplay');
       const connectionLog = document.getElementById('connectionLog');
-      const gunIndicator = document.getElementById('gunIndicator');
-      const rtcIndicator = document.getElementById('rtcIndicator');
       const testStatus = document.getElementById('testStatus');
       const testMessageInput = document.getElementById('testMessageInput');
       const sendTestBtn = document.getElementById('sendTestBtn');
-      const connectedPeers = document.getElementById('connectedPeers');
 
       // Core state
       let gun = null;
@@ -284,39 +252,38 @@
         return Math.random().toString(36).substring(2, 7);
       }
 
+      // Determine initiator based on client IDs - using string comparison
+      function determineInitiator(id1, id2) {
+        return id1.localeCompare(id2) > 0 ? id1 : id2;
+      }
+
       // Update connection indicators
       function updateConnectionStatus() {
-        // Update GunDB indicator
-        if (gun) {
-          gunIndicator.className = 'connection-indicator gun';
-        } else {
-          gunIndicator.className = 'connection-indicator disconnected';
+        // Debug output to help diagnose connection issues
+        for (const peerId in rtcConnections) {
+          const rtc = rtcConnections[peerId];
+          debugLog(
+            `Connection state for peer ${peerId}: ${rtc.isConnected() ? 'connected' : 'not connected'}`,
+            'debug',
+          );
         }
 
         // Update WebRTC indicator
         const hasActiveRTC = Object.values(rtcConnections).some((conn) => conn.isConnected());
+        debugLog(`Has any active RTC connection: ${hasActiveRTC}`, 'debug');
+
         if (hasActiveRTC) {
-          rtcIndicator.className = 'connection-indicator rtc';
+          connectionStatus.textContent = 'WebRTC Connected';
+          connectionStatus.className = 'status success';
           testStatus.textContent = 'WebRTC Connected';
           testStatus.className = 'status success';
           sendTestBtn.disabled = false;
-          updateConnectedPeers();
         } else {
-          rtcIndicator.className = 'connection-indicator disconnected';
+          connectionStatus.textContent = 'WebRTC Not Connected';
+          connectionStatus.className = 'status';
           testStatus.textContent = 'WebRTC Not Connected';
           testStatus.className = 'status';
           sendTestBtn.disabled = true;
-          connectedPeers.textContent = 'None';
-        }
-      }
-
-      // Update the list of connected peers
-      function updateConnectedPeers() {
-        const peerIds = Object.keys(rtcConnections).filter((id) => rtcConnections[id].isConnected());
-        if (peerIds.length === 0) {
-          connectedPeers.textContent = 'None';
-        } else {
-          connectedPeers.innerHTML = peerIds.map((id) => `<div>${id}</div>`).join('');
         }
       }
 
@@ -333,11 +300,27 @@
 
         rtc.onStatusChange = (status) => {
           log(`RTC status with ${peerId}: ${status}`, 'rtc');
-          updateConnectionStatus();
+
+          // Delay updating the status slightly to allow connection to fully establish
+          setTimeout(() => {
+            updateConnectionStatus();
+
+            // Try sending a test message if we're connected
+            if (status === 'connected' && rtc.isConnected()) {
+              log(`Testing connection with ${peerId}...`, 'rtc');
+              rtc.sendMessage('connection-test');
+            }
+          }, 500);
         };
 
         rtc.onMessage = (message) => {
           log(`Received RTC message from ${peerId}: ${message}`, 'rtc');
+
+          // Connection received a message, make sure we update status
+          updateConnectionStatus();
+
+          // Don't display test messages in the UI
+          if (message === 'connection-test') return;
 
           const entry = document.createElement('div');
           entry.textContent = `${peerId}: ${message}`;
@@ -347,11 +330,6 @@
 
         rtcConnections[peerId] = rtc;
         return rtc;
-      }
-
-      // Determine initiator based on client IDs - using string comparison
-      function determineInitiator(id1, id2) {
-        return id1.localeCompare(id2) > 0 ? id1 : id2;
       }
 
       // Connect to GunDB room
@@ -372,7 +350,7 @@
           log(`Connected to room: ${roomId}`, 'gun');
 
           // Display client ID
-          clientIdDisplay.textContent = clientId;
+          log(`Your client ID: ${clientId}`, 'system');
 
           // Update connection indicator
           updateConnectionStatus();
@@ -608,11 +586,10 @@
           // Connect to the room
           if (connectToRoom(roomId)) {
             // Update UI
-            connectionStatus.textContent = 'Room Created';
+            connectionStatus.textContent = 'WebRTC Ready';
             connectionStatus.className = 'status success';
-            createRoomBtn.style.display = 'none';
 
-            // Generate and display share link
+            // Generate and store share link (hidden)
             const shareUrl = window.location.origin + window.location.pathname + '#r=' + roomId;
             shareUrlInput.value = shareUrl;
             shareUrlContainer.style.display = 'block';
@@ -624,14 +601,13 @@
             navigator.clipboard
               .writeText(shareUrl)
               .then(() => {
-                copyUrlBtn.textContent = 'Copied';
-                setTimeout(() => {
-                  copyUrlBtn.textContent = 'Copy';
-                }, 2000);
+                createRoomBtn.textContent = 'Copied Link';
                 log('Share link copied to clipboard', 'system');
+                log(`Your client ID: ${clientId}`, 'system');
               })
               .catch((err) => {
                 log(`Failed to copy link: ${err}`, 'error');
+                createRoomBtn.textContent = 'Copy Room URL';
               });
 
             log('Ready for WebRTC connections', 'gun');
@@ -647,18 +623,19 @@
       function joinRoom(roomId) {
         try {
           log(`Joining room: ${roomId}`, 'gun');
+          log(`Your client ID: ${clientId}`, 'system');
 
           // Connect to the room
           if (connectToRoom(roomId)) {
             // Update UI
-            connectionStatus.textContent = 'Room Joined';
+            connectionStatus.textContent = 'WebRTC Ready';
             connectionStatus.className = 'status success';
-            createRoomBtn.style.display = 'none';
 
-            // Display share link
+            // Store share link (hidden)
             const shareUrl = window.location.origin + window.location.pathname + '#r=' + roomId;
             shareUrlInput.value = shareUrl;
             shareUrlContainer.style.display = 'block';
+            createRoomBtn.textContent = 'Copy Room URL';
 
             log('Ready for WebRTC connections', 'gun');
           }
@@ -708,22 +685,28 @@
           if (roomId) {
             joinRoom(roomId);
           }
+        } else {
+          connectionStatus.textContent = 'Click "Create Room" to start';
         }
       }
 
       // Event listeners
-      createRoomBtn.addEventListener('click', createRoom);
-
-      copyUrlBtn.addEventListener('click', () => {
-        navigator.clipboard
-          .writeText(shareUrlInput.value)
-          .then(() => {
-            copyUrlBtn.textContent = 'Copied';
-            setTimeout(() => {
-              copyUrlBtn.textContent = 'Copy';
-            }, 2000);
-          })
-          .catch((err) => log(`Copy error: ${err}`, 'error'));
+      createRoomBtn.addEventListener('click', () => {
+        if (currentRoomId) {
+          // If already in a room, copy URL when clicked
+          navigator.clipboard
+            .writeText(shareUrlInput.value)
+            .then(() => {
+              createRoomBtn.textContent = 'Copied Link';
+              setTimeout(() => {
+                createRoomBtn.textContent = 'Copy Room URL';
+              }, 2000);
+            })
+            .catch((err) => log(`Copy error: ${err}`, 'error'));
+        } else {
+          // If not in a room, create one
+          createRoom();
+        }
       });
 
       sendTestBtn.addEventListener('click', sendTestMessage);
@@ -739,6 +722,23 @@
       window.addEventListener('load', () => {
         checkHashAndJoinRoom();
         log('Ready to create or join a room', 'system');
+
+        // Add refresh connection button handler
+        refreshConnBtn.addEventListener('click', () => {
+          log('Manually refreshing connection status...', 'system');
+          updateConnectionStatus();
+
+          // If we're connected to a room, try to ping peers
+          if (currentRoomId) {
+            for (const peerId in rtcConnections) {
+              const rtc = rtcConnections[peerId];
+              if (rtc.isConnected()) {
+                log(`Testing connection with ${peerId}...`, 'rtc');
+                rtc.sendMessage('connection-test');
+              }
+            }
+          }
+        });
       });
 
       window.addEventListener('hashchange', () => {
