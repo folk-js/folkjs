@@ -157,8 +157,8 @@
       <div class="title">About</div>
       <p>
         <a href="https://gun.eco/" target="_blank">GunDB</a> is a decentralized graph database that enables peer-to-peer
-        data synchronization. This demo uses GunDB to exchange messages between devices without requiring dedicated
-        infrastructure.
+        data synchronization. This demo uses a simplified GunDB wrapper to exchange messages between devices without
+        requiring dedicated infrastructure.
       </p>
       <p style="font-size: 12px; color: #666">
         Using public relay:
@@ -212,6 +212,63 @@
         return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       }
 
+      // Set up event listeners for FolkGunDB
+      function setupEventListeners() {
+        // Listen for messages
+        gunDB.onMessage((data, sender) => {
+          console.log('Received message data:', data);
+
+          // Handle different data formats
+          let content = 'undefined message';
+
+          if (data && typeof data === 'object') {
+            // If data is an object with content property
+            if (data.content !== undefined) {
+              content = data.content;
+            } else {
+              // Just use the whole object
+              content = JSON.stringify(data);
+            }
+          } else if (data !== undefined) {
+            // If data is a primitive value
+            content = String(data);
+          }
+
+          // Add to chat
+          addMessageToChat(content, false);
+
+          // Log
+          log(`Received: ${content}`, 'received');
+        });
+
+        // Note: peer events are no longer supported in the simplified class
+      }
+
+      // Send a message
+      function sendMessage(message) {
+        if (!gunDB) return;
+
+        try {
+          // Send the message using the simplified API
+          gunDB.send(message);
+
+          // Add to chat
+          addMessageToChat(message, true);
+
+          // Log
+          log(`Sent: ${message}`, 'sent');
+
+          // Clear input
+          messageInput.value = '';
+
+          return true;
+        } catch (error) {
+          log(`Send error: ${error.message}`, 'error');
+          console.error('Send message error:', error);
+          return false;
+        }
+      }
+
       // Create a room and generate share link
       async function createAndShareRoom() {
         try {
@@ -224,7 +281,7 @@
           log(`Creating room with ID: ${roomId}`);
 
           // Create FolkGunDB instance with debugging enabled
-          gunDB = new FolkGunDB(roomId, 'https://gun-manhattan.herokuapp.com/gun', true);
+          gunDB = new FolkGunDB(roomId, undefined, 'https://gun-manhattan.herokuapp.com/gun', true);
 
           // Connect to the room
           await gunDB.connect();
@@ -258,76 +315,12 @@
           messageInput.disabled = false;
           sendBtn.disabled = false;
 
-          log('Waiting for someone to join...');
+          log('Ready for messaging');
         } catch (error) {
           shareBtn.textContent = 'Create Link';
           shareBtn.disabled = false;
           log(`Error: ${error.message}`, 'error');
           console.error('Room creation error:', error);
-        }
-      }
-
-      // Set up event listeners for FolkGunDB
-      function setupEventListeners() {
-        // Listen for broadcast messages
-        gunDB.onBroadcast((data, sender) => {
-          console.log('Received broadcast data:', data);
-
-          // Handle different data formats
-          let content = 'undefined message';
-
-          if (data && typeof data === 'object') {
-            // If data is an object with content property
-            if (data.content !== undefined) {
-              content = data.content;
-            } else {
-              // Just use the whole object
-              content = JSON.stringify(data);
-            }
-          } else if (data !== undefined) {
-            // If data is a primitive value
-            content = String(data);
-          }
-
-          // Add to chat
-          addMessageToChat(content, false);
-
-          // Log
-          log(`Received: ${content}`, 'received');
-        });
-
-        // Listen for peer events
-        gunDB.onPeer((peerId, joined) => {
-          if (joined) {
-            log(`Peer ${peerId.substring(0, 8)} joined the room`);
-          } else {
-            log(`Peer ${peerId.substring(0, 8)} left the room`);
-          }
-        });
-      }
-
-      // Send a message
-      function sendMessage(message) {
-        if (!gunDB) return;
-
-        try {
-          // Broadcast the message directly - no wrapping in object
-          gunDB.broadcast(message);
-
-          // Add to chat
-          addMessageToChat(message, true);
-
-          // Log
-          log(`Sent: ${message}`, 'sent');
-
-          // Clear input
-          messageInput.value = '';
-
-          return true;
-        } catch (error) {
-          log(`Send error: ${error.message}`, 'error');
-          console.error('Send message error:', error);
-          return false;
         }
       }
 
@@ -337,7 +330,7 @@
           log(`Joining room: ${roomId}`);
 
           // Create FolkGunDB instance with debugging enabled
-          gunDB = new FolkGunDB(roomId, 'https://gun-manhattan.herokuapp.com/gun', true);
+          gunDB = new FolkGunDB(roomId, undefined, 'https://gun-manhattan.herokuapp.com/gun', true);
 
           // Connect to the room
           await gunDB.connect();
