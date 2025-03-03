@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>Data over GunDB</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        font-family: Arial, sans-serif;
+      }
+
+      folk-shape {
+        background: rgb(248, 248, 248);
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        padding: 12px;
+      }
+
+      .title {
+        font-size: 18px;
+        font-weight: bold;
+        margin-bottom: 12px;
+        color: #333;
+      }
+
+      .status {
+        color: #2196f3;
+        font-weight: bold;
+        display: block;
+        margin-top: 8px;
+        font-size: 14px;
+      }
+
+      textarea {
+        width: 100%;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        padding: 8px;
+        margin-bottom: 8px;
+        resize: none;
+      }
+
+      button {
+        padding: 6px 12px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-right: 8px;
+        margin-bottom: 8px;
+      }
+
+      button:hover {
+        background-color: #45a049;
+      }
+
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+
+      .log-container {
+        height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 8px;
+        font-family: monospace;
+        font-size: 12px;
+        background-color: #f9f9f9;
+      }
+
+      .log-entry {
+        margin-bottom: 4px;
+        line-height: 1.4;
+        color: #555;
+      }
+
+      .log-entry.received {
+        color: #2196f3;
+      }
+
+      .log-entry.sent {
+        color: #4caf50;
+      }
+
+      .log-entry.error {
+        color: #ff5722;
+      }
+
+      .chat-container {
+        height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 8px;
+        margin-bottom: 8px;
+        background-color: white;
+      }
+
+      .message {
+        padding: 6px 10px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+        max-width: 80%;
+        word-wrap: break-word;
+      }
+
+      .message.sent {
+        background-color: #e3f2fd;
+        margin-left: auto;
+        text-align: right;
+      }
+
+      .message.received {
+        background-color: #f1f1f1;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Chat Shape -->
+    <folk-shape x="50" y="50" width="350" height="400">
+      <div class="title">Data over GunDB</div>
+      <span class="status" id="connectionStatus">Not connected</span>
+
+      <div class="chat-container" id="chatMessages"></div>
+
+      <textarea id="messageInput" style="height: 60px" placeholder="Type a message..."></textarea>
+
+      <div>
+        <button id="shareBtn">Create Link</button>
+        <button id="sendBtn" disabled>Send</button>
+      </div>
+    </folk-shape>
+
+    <!-- Connection Log Shape -->
+    <folk-shape x="420" y="50" width="350" height="250">
+      <div class="title">Connection Log</div>
+      <div id="connectionLog" class="log-container"></div>
+    </folk-shape>
+
+    <!-- Info Shape -->
+    <folk-shape x="420" y="320" width="350" height="130">
+      <div class="title">About</div>
+      <p>
+        <a href="https://gun.eco/" target="_blank">GunDB</a> is a decentralized graph database that enables peer-to-peer
+        data synchronization. This demo uses GunDB to exchange messages between devices without requiring dedicated
+        infrastructure.
+      </p>
+      <p style="font-size: 12px; color: #666">
+        Using public relay:
+        <a href="https://gun-manhattan.herokuapp.com/gun" target="_blank">gun-manhattan.herokuapp.com</a>
+      </p>
+    </folk-shape>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+    </script>
+
+    <!-- GunDB library -->
+    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
+
+    <script type="text/javascript">
+      // DOM Elements
+      const connectionStatus = document.getElementById('connectionStatus');
+      const shareBtn = document.getElementById('shareBtn');
+      const sendBtn = document.getElementById('sendBtn');
+      const messageInput = document.getElementById('messageInput');
+      const chatMessages = document.getElementById('chatMessages');
+      const connectionLog = document.getElementById('connectionLog');
+
+      // GunDB initialization with public relay
+      const gun = Gun(['https://gun-manhattan.herokuapp.com/gun']);
+
+      // Room and peer tracking
+      let currentRoom = null;
+      let peerId = generatePeerId();
+
+      // Generate a unique peer ID
+      function generatePeerId() {
+        return 'peer_' + Math.random().toString(36).substring(2, 10);
+      }
+
+      // Log function
+      function log(message, type = 'system') {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.textContent = message;
+        connectionLog.appendChild(entry);
+        connectionLog.scrollTop = connectionLog.scrollHeight;
+      }
+
+      // Add message to chat
+      function addMessageToChat(message, isSent) {
+        const messageEl = document.createElement('div');
+        messageEl.className = `message ${isSent ? 'sent' : 'received'}`;
+        messageEl.textContent = message;
+        chatMessages.appendChild(messageEl);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      // Generate a random room ID
+      function generateRoomId() {
+        return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      }
+
+      // Create a room and generate share link
+      function createAndShareRoom() {
+        try {
+          // Update button state
+          shareBtn.textContent = 'Generating...';
+          shareBtn.disabled = true;
+
+          // Generate a unique room ID
+          const roomId = generateRoomId();
+          log(`Creating room with ID: ${roomId}`);
+
+          // Get reference to this room in GunDB
+          currentRoom = gun.get(`folkcanvas/gundb/${roomId}`);
+
+          // Initialize room metadata
+          currentRoom.get('meta').put({
+            created: Date.now(),
+            creator: peerId,
+          });
+
+          // Add ourselves to the peers list
+          currentRoom.get('peers').set({
+            id: peerId,
+            joined: Date.now(),
+          });
+
+          // Subscribe to messages
+          setupMessageHandler();
+
+          // Generate share link
+          const shareUrl = new URL(window.location.href);
+          shareUrl.hash = `#r=${roomId}`;
+
+          // Update the current URL hash
+          window.location.hash = shareUrl.hash;
+
+          // Copy to clipboard
+          navigator.clipboard
+            .writeText(shareUrl.toString())
+            .then(() => {
+              log('Share link copied to clipboard');
+              shareBtn.textContent = 'Copied Link';
+            })
+            .catch((err) => {
+              log(`Failed to copy link: ${err.message}`, 'error');
+              shareBtn.textContent = 'Link Created (See Console)';
+              console.log('Share link:', shareUrl.toString());
+            });
+
+          // Update status
+          connectionStatus.textContent = 'Room Created';
+
+          // Enable sending
+          messageInput.disabled = false;
+          sendBtn.disabled = false;
+
+          log('Waiting for someone to join...');
+
+          // Monitor peers
+          currentRoom
+            .get('peers')
+            .map()
+            .on((data) => {
+              if (data.id && data.id !== peerId && data.joined) {
+                log(`Peer ${data.id.substring(0, 8)} joined the room`);
+              }
+            });
+        } catch (error) {
+          shareBtn.textContent = 'Create Link';
+          shareBtn.disabled = false;
+          log(`Error: ${error.message}`, 'error');
+          console.error('Room creation error:', error);
+        }
+      }
+
+      // Set up handler for incoming messages
+      function setupMessageHandler() {
+        currentRoom
+          .get('messages')
+          .map()
+          .on((data) => {
+            // Skip if it's not a valid message or it's from us
+            if (!data || !data.content || data.sender === peerId) return;
+
+            // Add to chat
+            addMessageToChat(data.content, false);
+
+            // Log
+            log(`Received: ${data.content}`, 'received');
+          });
+      }
+
+      // Send a message
+      function sendMessage(message) {
+        if (!currentRoom) return;
+
+        try {
+          // Create message object
+          const messageData = {
+            content: message,
+            sender: peerId,
+            timestamp: Date.now(),
+          };
+
+          // Add message to the room
+          currentRoom.get('messages').set(messageData);
+
+          // Add to chat
+          addMessageToChat(message, true);
+
+          // Log
+          log(`Sent: ${message}`, 'sent');
+
+          // Clear input
+          messageInput.value = '';
+
+          return true;
+        } catch (error) {
+          log(`Send error: ${error.message}`, 'error');
+          console.error('Send message error:', error);
+          return false;
+        }
+      }
+
+      // Join an existing room
+      function joinRoom(roomId) {
+        try {
+          log(`Joining room: ${roomId}`);
+
+          // Get reference to the room
+          currentRoom = gun.get(`folkcanvas/gundb/${roomId}`);
+
+          // Add ourselves to the peers list
+          currentRoom.get('peers').set({
+            id: peerId,
+            joined: Date.now(),
+          });
+
+          // Subscribe to messages
+          setupMessageHandler();
+
+          // Update status
+          connectionStatus.textContent = 'Connected to Room';
+          shareBtn.textContent = 'Connected';
+
+          // Enable sending
+          messageInput.disabled = false;
+          sendBtn.disabled = false;
+
+          log('Joined room successfully');
+
+          // Check room metadata
+          currentRoom.get('meta').once((data) => {
+            if (data && data.created) {
+              const createdDate = new Date(data.created);
+              log(`Room was created on ${createdDate.toLocaleString()}`);
+            }
+          });
+        } catch (error) {
+          shareBtn.textContent = 'Create Link';
+          shareBtn.disabled = false;
+          log(`Join error: ${error.message}`, 'error');
+          console.error('Room join error:', error);
+        }
+      }
+
+      // Event listeners
+      shareBtn.addEventListener('click', createAndShareRoom);
+
+      sendBtn.addEventListener('click', () => {
+        const message = messageInput.value.trim();
+        if (message) {
+          sendMessage(message);
+        }
+      });
+
+      // Allow sending with Enter key
+      messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          const message = messageInput.value.trim();
+          if (message && !sendBtn.disabled) {
+            sendMessage(message);
+          }
+        }
+      });
+
+      // Check URL hash for room info on load
+      window.addEventListener('load', () => {
+        checkHashAndJoinRoom();
+
+        // Log connection to Gun
+        log('Connected to GunDB network');
+        connectionStatus.textContent = 'Connected to GunDB';
+      });
+
+      // Also check when hash changes (for when URL is updated in existing tab)
+      window.addEventListener('hashchange', () => {
+        checkHashAndJoinRoom();
+      });
+
+      // Function to check hash and join room if needed
+      function checkHashAndJoinRoom() {
+        if (window.location.hash.startsWith('#r=')) {
+          const roomId = window.location.hash.substring(3);
+
+          if (roomId) {
+            // Disable share button during join
+            shareBtn.disabled = true;
+
+            // Join the room
+            joinRoom(roomId);
+          }
+        }
+      }
+    </script>
+  </body>
+</html>
