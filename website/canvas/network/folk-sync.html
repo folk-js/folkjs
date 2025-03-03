@@ -33,6 +33,7 @@
         font-weight: bold;
         margin-bottom: 12px;
         color: #333;
+        display: inline-block;
       }
 
       .status {
@@ -41,6 +42,35 @@
         display: block;
         margin-top: 8px;
         font-size: 14px;
+      }
+
+      .connection-state {
+        font-size: 14px;
+        font-weight: bold;
+        margin-left: 10px;
+        padding: 4px 10px;
+        border-radius: 12px;
+        display: inline-block;
+      }
+
+      .state-waiting {
+        background-color: #ffeb3b;
+        color: #333;
+      }
+
+      .state-connecting {
+        background-color: #2196f3;
+        color: white;
+      }
+
+      .state-connected {
+        background-color: #4caf50;
+        color: white;
+      }
+
+      .state-failed {
+        background-color: #f44336;
+        color: white;
       }
 
       .status.error {
@@ -140,22 +170,43 @@
         margin-bottom: 8px;
       }
 
-      .test-controls {
-        margin-top: 12px;
-        border-top: 1px solid #eee;
-        padding-top: 12px;
+      .chat-container {
+        height: 120px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 8px;
+        margin-bottom: 8px;
+        background-color: #fff;
+      }
+
+      .chat-message {
+        margin-bottom: 8px;
+        padding: 5px;
+        border-radius: 4px;
+      }
+
+      .chat-message.sent {
+        text-align: right;
+        color: #4caf50;
+      }
+
+      .chat-message.received {
+        text-align: left;
+        color: #2196f3;
       }
     </style>
   </head>
   <body>
     <!-- Connection Controls Shape -->
-    <folk-shape x="50" y="50" width="350" height="220">
-      <div class="title">webRTC Connection</div>
-      <div class="status" id="connectionStatus">Not connected</div>
+    <folk-shape x="50" y="50" width="350">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px">
+        <div class="title">Folk Sync</div>
+        <div id="connectionStateIndicator" class="connection-state state-waiting">waiting</div>
+      </div>
 
       <div style="margin-bottom: 12px">
-        <button id="createRoomBtn">Create Room</button>
-        <button id="refreshConnBtn" style="background-color: #607d8b">Refresh Connection</button>
+        <button id="createRoomBtn">Create Link</button>
       </div>
 
       <div id="shareUrlContainer" style="display: none">
@@ -164,21 +215,18 @@
     </folk-shape>
 
     <!-- Connection Log Shape -->
-    <folk-shape x="50" y="290" width="350" height="300">
+    <folk-shape x="50" y="200" width="350">
       <div class="title">Connection Log</div>
       <div id="connectionLog" class="log-container"></div>
     </folk-shape>
 
-    <!-- Test Controls Shape -->
-    <folk-shape x="420" y="50" width="350" height="300">
-      <div class="title">Connection Test</div>
-      <div class="status" id="testStatus">Connection not established</div>
+    <!-- Chat Shape -->
+    <folk-shape x="420" y="50" width="350">
+      <div class="title">Chat</div>
 
-      <textarea
-        id="testMessageInput"
-        style="height: 100px"
-        placeholder="Type a test message here to send over WebRTC..."
-      ></textarea>
+      <div id="chatContainer" class="chat-container"></div>
+
+      <textarea id="testMessageInput" style="height: 60px" placeholder="Type a message here to send..."></textarea>
       <button id="sendTestBtn" disabled>Send Message</button>
     </folk-shape>
 
@@ -200,13 +248,12 @@
       import { FolkRTC } from '@labs/FolkRTC.ts';
 
       // DOM Elements
-      const connectionStatus = document.getElementById('connectionStatus');
+      const connectionStateIndicator = document.getElementById('connectionStateIndicator');
       const createRoomBtn = document.getElementById('createRoomBtn');
-      const refreshConnBtn = document.getElementById('refreshConnBtn');
       const shareUrlContainer = document.getElementById('shareUrlContainer');
       const shareUrlInput = document.getElementById('shareUrlInput');
       const connectionLog = document.getElementById('connectionLog');
-      const testStatus = document.getElementById('testStatus');
+      const chatContainer = document.getElementById('chatContainer');
       const testMessageInput = document.getElementById('testMessageInput');
       const sendTestBtn = document.getElementById('sendTestBtn');
 
@@ -224,6 +271,20 @@
 
       // Debug settings
       const DEBUG = true;
+
+      // Connection states
+      const CONNECTION_STATES = {
+        WAITING: 'waiting',
+        CONNECTING: 'connecting',
+        CONNECTED: 'connected',
+        FAILED: 'failed',
+      };
+
+      // Update connection state
+      function updateConnectionState(state) {
+        connectionStateIndicator.textContent = state;
+        connectionStateIndicator.className = `connection-state state-${state}`;
+      }
 
       // Log function
       function log(message, type = 'system') {
@@ -273,16 +334,19 @@
         debugLog(`Has any active RTC connection: ${hasActiveRTC}`, 'debug');
 
         if (hasActiveRTC) {
-          connectionStatus.textContent = 'WebRTC Connected';
-          connectionStatus.className = 'status success';
-          testStatus.textContent = 'WebRTC Connected';
-          testStatus.className = 'status success';
+          updateConnectionState(CONNECTION_STATES.CONNECTED);
           sendTestBtn.disabled = false;
+        } else if (Object.keys(rtcConnections).length > 0) {
+          // If we have connection attempts but none are connected
+          updateConnectionState(CONNECTION_STATES.CONNECTING);
+          sendTestBtn.disabled = true;
+        } else if (currentRoomId) {
+          // We're in a room but no connections
+          updateConnectionState(CONNECTION_STATES.WAITING);
+          sendTestBtn.disabled = true;
         } else {
-          connectionStatus.textContent = 'WebRTC Not Connected';
-          connectionStatus.className = 'status';
-          testStatus.textContent = 'WebRTC Not Connected';
-          testStatus.className = 'status';
+          // Not even in a room
+          updateConnectionState(CONNECTION_STATES.WAITING);
           sendTestBtn.disabled = true;
         }
       }
@@ -322,14 +386,28 @@
           // Don't display test messages in the UI
           if (message === 'connection-test') return;
 
-          const entry = document.createElement('div');
-          entry.textContent = `${peerId}: ${message}`;
-          entry.style.marginBottom = '4px';
-          testMessageInput.insertAdjacentElement('beforebegin', entry);
+          // Add to chat interface
+          addChatMessage(message, peerId);
         };
 
         rtcConnections[peerId] = rtc;
         return rtc;
+      }
+
+      // Add message to chat container
+      function addChatMessage(message, senderId) {
+        const entry = document.createElement('div');
+
+        if (senderId === 'self') {
+          entry.className = 'chat-message sent';
+          entry.textContent = `You: ${message}`;
+        } else {
+          entry.className = 'chat-message received';
+          entry.textContent = `${senderId}: ${message}`;
+        }
+
+        chatContainer.appendChild(entry);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
       }
 
       // Connect to GunDB room
@@ -434,8 +512,7 @@
         } catch (error) {
           log(`Error connecting to room: ${error.message}`, 'error');
           console.error('Full error:', error);
-          connectionStatus.textContent = 'Connection Error';
-          connectionStatus.className = 'status error';
+          updateConnectionState(CONNECTION_STATES.FAILED);
           return false;
         }
       }
@@ -449,6 +526,7 @@
         }
 
         log(`Handling peer discovery for ${peerId}`, 'rtc');
+        updateConnectionState(CONNECTION_STATES.CONNECTING);
 
         // Simple role determination - whoever has the "larger" ID initiates
         const initiatorId = determineInitiator(clientId, peerId);
@@ -508,6 +586,7 @@
         } catch (error) {
           log(`Error creating offer: ${error.message}`, 'error');
           console.error('Full error:', error);
+          updateConnectionState(CONNECTION_STATES.FAILED);
         }
       }
 
@@ -549,6 +628,7 @@
         } catch (error) {
           log(`Error creating answer: ${error.message}`, 'error');
           console.error('Full error:', error);
+          updateConnectionState(CONNECTION_STATES.FAILED);
         }
       }
 
@@ -573,6 +653,7 @@
         } catch (error) {
           log(`Error setting answer: ${error.message}`, 'error');
           console.error('Full error:', error);
+          updateConnectionState(CONNECTION_STATES.FAILED);
         }
       }
 
@@ -586,8 +667,7 @@
           // Connect to the room
           if (connectToRoom(roomId)) {
             // Update UI
-            connectionStatus.textContent = 'WebRTC Ready';
-            connectionStatus.className = 'status success';
+            updateConnectionState(CONNECTION_STATES.WAITING);
 
             // Generate and store share link (hidden)
             const shareUrl = window.location.origin + window.location.pathname + '#r=' + roomId;
@@ -614,8 +694,7 @@
           }
         } catch (error) {
           log(`Error creating room: ${error.message}`, 'error');
-          connectionStatus.textContent = 'Error: ' + error.message;
-          connectionStatus.className = 'status error';
+          updateConnectionState(CONNECTION_STATES.FAILED);
         }
       }
 
@@ -628,8 +707,7 @@
           // Connect to the room
           if (connectToRoom(roomId)) {
             // Update UI
-            connectionStatus.textContent = 'WebRTC Ready';
-            connectionStatus.className = 'status success';
+            updateConnectionState(CONNECTION_STATES.WAITING);
 
             // Store share link (hidden)
             const shareUrl = window.location.origin + window.location.pathname + '#r=' + roomId;
@@ -641,8 +719,7 @@
           }
         } catch (error) {
           log(`Error joining room: ${error.message}`, 'error');
-          connectionStatus.textContent = 'Error: ' + error.message;
-          connectionStatus.className = 'status error';
+          updateConnectionState(CONNECTION_STATES.FAILED);
         }
       }
 
@@ -664,12 +741,7 @@
 
         if (sentToAny) {
           // Add message to local display
-          const entry = document.createElement('div');
-          entry.textContent = `You: ${message}`;
-          entry.style.marginBottom = '4px';
-          entry.style.textAlign = 'right';
-          entry.style.color = '#4caf50';
-          testMessageInput.insertAdjacentElement('beforebegin', entry);
+          addChatMessage(message, 'self');
 
           // Clear input
           testMessageInput.value = '';
@@ -686,7 +758,7 @@
             joinRoom(roomId);
           }
         } else {
-          connectionStatus.textContent = 'Click "Create Room" to start';
+          updateConnectionState(CONNECTION_STATES.WAITING);
         }
       }
 
@@ -722,23 +794,6 @@
       window.addEventListener('load', () => {
         checkHashAndJoinRoom();
         log('Ready to create or join a room', 'system');
-
-        // Add refresh connection button handler
-        refreshConnBtn.addEventListener('click', () => {
-          log('Manually refreshing connection status...', 'system');
-          updateConnectionStatus();
-
-          // If we're connected to a room, try to ping peers
-          if (currentRoomId) {
-            for (const peerId in rtcConnections) {
-              const rtc = rtcConnections[peerId];
-              if (rtc.isConnected()) {
-                log(`Testing connection with ${peerId}...`, 'rtc');
-                rtc.sendMessage('connection-test');
-              }
-            }
-          }
-        });
       });
 
       window.addEventListener('hashchange', () => {
