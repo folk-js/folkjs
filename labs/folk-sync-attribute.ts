@@ -32,15 +32,9 @@ export class FolkSyncAttribute extends CustomAttribute {
   // Automerge document
   #doc: Automerge.Doc<SyncDoc> = Automerge.init<SyncDoc>();
 
-  // Map of DOM nodes to their corresponding CRDT nodes
-  // This helps us find nodes to update when mutations occur
-  #nodeMap = new WeakMap<
-    Node,
-    {
-      path: (string | number)[]; // Path to the node in the CRDT tree
-      node: DOMNode; // Reference to the node in the CRDT (updated after changes)
-    }
-  >();
+  // Store only paths in the node map - paths are index-based [childIndex, childIndex, ...]
+  // Empty array means root element
+  #nodeMap = new WeakMap<Element, number[]>();
 
   static define() {
     super.define();
@@ -78,15 +72,14 @@ export class FolkSyncAttribute extends CustomAttribute {
   #initializeDoc() {
     // Create the initial document with an empty root
     this.#doc = Automerge.change(this.#doc, (doc) => {
-      // We'll build the tree structure directly from the DOM
       doc.root = this.#createDOMNodeTree(this.ownerElement);
     });
 
-    console.log('initializing');
+    console.log('Initialized CRDT for element:', this.ownerElement);
   }
 
   // Create a DOM node tree recursively
-  #createDOMNodeTree(element: Element, path: (string | number)[] = ['root']): DOMNode {
+  #createDOMNodeTree(element: Element, path: number[] = []): DOMNode {
     // Only process element nodes
     if (element.nodeType !== Node.ELEMENT_NODE) {
       throw new Error('Only element nodes should be processed');
@@ -108,6 +101,9 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
     }
 
+    // Store the path in the node map
+    this.#nodeMap.set(element, path);
+
     const crdtNode: DOMNode = {
       tagName: element.tagName.toLowerCase(),
       attributes,
@@ -118,141 +114,290 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Process element children recursively
     const elementChildren = Array.from(element.children);
     elementChildren.forEach((child, index) => {
-      const childPath = [...path, 'children', index];
+      const childPath = [...path, index];
       const childNode = this.#createDOMNodeTree(child, childPath);
       crdtNode.children.push(childNode);
-    });
-
-    // Store the mapping from DOM node to CRDT node
-    this.#nodeMap.set(element, {
-      path,
-      node: crdtNode,
     });
 
     return crdtNode;
   }
 
   // Get a node from the CRDT by path
-  #getNodeByPath(doc: SyncDoc, path: (string | number)[]): any {
-    let current: any = doc;
+  #getNodeByPath(doc: SyncDoc, path: number[]): DOMNode {
+    // Start at the root
+    let node = doc.root;
 
-    for (const segment of path) {
-      if (current === undefined) return undefined;
-      current = current[segment];
+    // Navigate through the path
+    for (const index of path) {
+      if (!node.children || index >= node.children.length) {
+        throw new Error(`Invalid path: ${path.join(',')}`);
+      }
+      node = node.children[index];
     }
 
-    return current;
+    return node;
+  }
+
+  // Get the path for a DOM element
+  #getPathForElement(element: Element): number[] | undefined {
+    return this.#nodeMap.get(element);
+  }
+
+  // Update paths for an element and all its descendants
+  #updateElementPaths(element: Element) {
+    const path = this.#getPathForElement(element);
+    if (path === undefined) return;
+
+    // Update children paths
+    this.#updateElementChildPaths(element, path);
+  }
+
+  // Update an element's children paths
+  #updateElementChildPaths(element: Element, parentPath: number[]) {
+    const elementChildren = Array.from(element.children);
+    elementChildren.forEach((child, index) => {
+      const childPath = [...parentPath, index];
+
+      // Update this child's path
+      this.#nodeMap.set(child, childPath);
+
+      // Recursively update grandchildren
+      this.#updateElementChildPaths(child, childPath);
+    });
+  }
+
+  // Simplified logging of a DOM node and its CRDT counterpart
+  #logNodeComparison(element: Element, description: string) {
+    const path = this.#getPathForElement(element);
+    if (path === undefined) {
+      console.log(`${description} - Element has no path:`, element);
+      return;
+    }
+
+    try {
+      const crdtNode = this.#getNodeByPath(this.#doc, path);
+      console.log(`${description} - Path: [${path.join(',')}]`);
+      console.log('  DOM:', {
+        tagName: element.tagName.toLowerCase(),
+        attributes: Array.from(element.attributes).reduce(
+          (obj, attr) => {
+            obj[attr.name] = attr.value;
+            return obj;
+          },
+          {} as Record<string, string>,
+        ),
+        textContent: Array.from(element.childNodes)
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent)
+          .join(''),
+      });
+      console.log('  CRDT:', {
+        tagName: crdtNode.tagName,
+        attributes: crdtNode.attributes,
+        textContent: crdtNode.textContent,
+        childrenCount: crdtNode.children.length,
+      });
+    } catch (e) {
+      console.log(`${description} - Could not find CRDT node for path [${path.join(',')}]:`, e);
+    }
   }
 
   // Handle DOM mutations and update the CRDT
   #handleMutations(mutations: MutationRecord[]) {
     if (mutations.length === 0) return;
 
-    this.#doc = Automerge.change(this.#doc, (doc) => {
-      for (const mutation of mutations) {
-        if (mutation.type === 'childList') {
-          // Get the parent node's path
-          const parentMapping = this.#nodeMap.get(mutation.target);
-          if (!parentMapping) continue;
+    const affectedElements = new Set<Element>();
 
-          const parentPath = parentMapping.path;
-          const parentCrdtNode = this.#getNodeByPath(doc, parentPath);
-          if (!parentCrdtNode) continue;
-
-          // Handle removed nodes that are elements
-          for (const removedNode of Array.from(mutation.removedNodes)) {
-            // Skip non-element nodes
-            if (removedNode.nodeType !== Node.ELEMENT_NODE) continue;
-
-            const removedMapping = this.#nodeMap.get(removedNode);
-            if (!removedMapping) continue;
-
-            // Find the index of the removed child in the parent's children array
-            const childIndex = parentCrdtNode.children.findIndex((child: DOMNode) => child === removedMapping.node);
-
-            if (childIndex !== -1) {
-              // Simply remove the child - Automerge will handle the deletion of the entire subtree
-              parentCrdtNode.children.splice(childIndex, 1);
-            }
-          }
-
-          // Update the text content if text nodes were added or removed
-          this.#updateNodeTextContent(mutation.target as Element, parentCrdtNode);
-
-          // Handle added nodes that are elements
-          for (const addedNode of Array.from(mutation.addedNodes)) {
-            // Skip non-element nodes
-            if (addedNode.nodeType !== Node.ELEMENT_NODE) continue;
-
-            // Find the position to insert
-            let nextElementSibling = (addedNode as Element).nextElementSibling;
-            let position = parentCrdtNode.children.length; // Default to appending
-
-            // Find the correct position to insert
-            while (nextElementSibling) {
-              const siblingMapping = this.#nodeMap.get(nextElementSibling);
-              if (siblingMapping) {
-                const siblingIndex = parentCrdtNode.children.findIndex(
-                  (child: DOMNode) => child === siblingMapping.node,
-                );
-                if (siblingIndex !== -1) {
-                  position = siblingIndex;
-                  break;
-                }
-              }
-              nextElementSibling = nextElementSibling.nextElementSibling;
-            }
-
-            // Create the new node tree and insert it
-            const childPath = [...parentPath, 'children', position];
-            const newNode = this.#createDOMNodeTree(addedNode as Element, childPath);
-            parentCrdtNode.children.splice(position, 0, newNode);
-
-            // Update paths for all siblings after the insertion
-            this.#updatePathsAfterInsertion(parentCrdtNode.children, position);
-          }
-        } else if (mutation.type === 'attributes') {
-          // Find the node in the CRDT
-          const nodeMapping = this.#nodeMap.get(mutation.target);
-          if (!nodeMapping) continue;
-
-          const nodePath = nodeMapping.path;
-          const crdtNode = this.#getNodeByPath(doc, nodePath);
-          if (!crdtNode) continue;
-
-          const attrName = mutation.attributeName!;
-          const newValue = (mutation.target as Element).getAttribute(attrName);
-
-          if (newValue === null) {
-            // Attribute was removed
-            delete crdtNode.attributes[attrName];
-          } else {
-            // Attribute was added or modified
-            crdtNode.attributes[attrName] = newValue;
-          }
-        } else if (mutation.type === 'characterData') {
-          // Character data changes (text nodes)
-          // Find the parent element
-          const textNode = mutation.target;
-          const parentElement = textNode.parentElement;
-
-          if (!parentElement) continue;
-
-          // Get the parent node mapping
-          const parentMapping = this.#nodeMap.get(parentElement);
-          if (!parentMapping) continue;
-
-          // Update the text content for the parent element
-          const parentCrdtNode = this.#getNodeByPath(doc, parentMapping.path);
-          if (!parentCrdtNode) continue;
-
-          this.#updateNodeTextContent(parentElement, parentCrdtNode);
+    // Process each mutation
+    for (const mutation of mutations) {
+      if (mutation.type === 'childList') {
+        const parentElement = mutation.target as Element;
+        affectedElements.add(parentElement);
+        this.#processChildListMutation(mutation);
+      } else if (mutation.type === 'attributes') {
+        const element = mutation.target as Element;
+        affectedElements.add(element);
+        this.#processAttributeMutation(mutation);
+      } else if (mutation.type === 'characterData') {
+        const textNode = mutation.target;
+        const parentElement = textNode.parentElement;
+        if (parentElement) {
+          affectedElements.add(parentElement);
         }
+        this.#processCharacterDataMutation(mutation);
+      }
+    }
+
+    // Log the affected elements
+    console.log(`--- Synced ${affectedElements.size} elements ---`);
+    affectedElements.forEach((element) => {
+      this.#logNodeComparison(element, 'Affected element');
+    });
+  }
+
+  // Process a childList mutation (nodes added or removed)
+  #processChildListMutation(mutation: MutationRecord) {
+    // Get the parent element
+    const parentElement = mutation.target as Element;
+    if (!parentElement || parentElement.nodeType !== Node.ELEMENT_NODE) return;
+
+    // Get the parent path
+    const parentPath = this.#getPathForElement(parentElement);
+    if (parentPath === undefined) return;
+
+    // Update the CRDT
+    this.#doc = Automerge.change(this.#doc, (doc) => {
+      try {
+        // Get the parent CRDT node
+        const parentCrdtNode = this.#getNodeByPath(doc, parentPath);
+
+        // Handle removed nodes
+        if (mutation.removedNodes.length > 0) {
+          this.#processRemovedNodes(mutation.removedNodes, parentElement, parentCrdtNode);
+        }
+
+        // Update text content if needed
+        this.#updateNodeTextContent(parentElement, parentCrdtNode);
+
+        // Handle added nodes
+        if (mutation.addedNodes.length > 0) {
+          this.#processAddedNodes(mutation.addedNodes, parentElement, parentCrdtNode, parentPath);
+        }
+      } catch (e) {
+        console.error('Error processing childList mutation:', e);
       }
     });
 
-    // Update the node references in our map after changes
-    this.#updateNodeMapReferences();
+    // Update paths for affected elements
+    this.#updateElementPaths(parentElement);
+  }
+
+  // Process removed nodes
+  #processRemovedNodes(removedNodes: NodeList, parentElement: Element, parentCrdtNode: DOMNode) {
+    // Create a map of current children to their indices
+    const childrenMap = new Map<Element, number>();
+    Array.from(parentElement.children).forEach((child, index) => {
+      childrenMap.set(child, index);
+    });
+
+    // Find and remove each node from the CRDT
+    for (const removedNode of Array.from(removedNodes)) {
+      // Skip non-element nodes
+      if (removedNode.nodeType !== Node.ELEMENT_NODE) continue;
+
+      const removedElement = removedNode as Element;
+      const removedPath = this.#getPathForElement(removedElement);
+
+      if (removedPath) {
+        // Get the index of this node in its parent's children
+        const lastIndex = removedPath[removedPath.length - 1];
+
+        // Make sure the index is valid
+        if (lastIndex < parentCrdtNode.children.length) {
+          parentCrdtNode.children.splice(lastIndex, 1);
+        } else {
+          // Fall back to matching by tag name if the index is invalid
+          const removedTag = removedElement.tagName.toLowerCase();
+
+          // Find by tag name
+          for (let i = 0; i < parentCrdtNode.children.length; i++) {
+            if (parentCrdtNode.children[i].tagName.toLowerCase() === removedTag) {
+              // Check if this element is still in the DOM
+              let stillInDOM = false;
+              for (const [domChild] of childrenMap) {
+                const domChildPath = this.#getPathForElement(domChild);
+                if (domChildPath && domChildPath[domChildPath.length - 1] === i) {
+                  stillInDOM = true;
+                  break;
+                }
+              }
+
+              if (!stillInDOM) {
+                parentCrdtNode.children.splice(i, 1);
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Process added nodes
+  #processAddedNodes(addedNodes: NodeList, parentElement: Element, parentCrdtNode: DOMNode, parentPath: number[]) {
+    // Get the current DOM children
+    const currentChildren = Array.from(parentElement.children);
+
+    for (const addedNode of Array.from(addedNodes)) {
+      // Skip non-element nodes
+      if (addedNode.nodeType !== Node.ELEMENT_NODE) continue;
+
+      const addedElement = addedNode as Element;
+
+      // Find the position of this element in the current children
+      const position = currentChildren.indexOf(addedElement);
+      if (position === -1) continue; // Not found in current children (might have been removed)
+
+      // Create a path for this new node
+      const childPath = [...parentPath, position];
+
+      // Create the CRDT node for this element
+      const newNode = this.#createDOMNodeTree(addedElement, childPath);
+
+      // Insert at the correct position
+      parentCrdtNode.children.splice(position, 0, newNode);
+    }
+  }
+
+  // Process an attribute mutation
+  #processAttributeMutation(mutation: MutationRecord) {
+    const element = mutation.target as Element;
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
+
+    const elementPath = this.#getPathForElement(element);
+    if (elementPath === undefined) return;
+
+    this.#doc = Automerge.change(this.#doc, (doc) => {
+      try {
+        const crdtNode = this.#getNodeByPath(doc, elementPath);
+
+        const attrName = mutation.attributeName!;
+        const newValue = element.getAttribute(attrName);
+
+        if (newValue === null) {
+          // Attribute was removed
+          delete crdtNode.attributes[attrName];
+        } else {
+          // Attribute was added or modified
+          crdtNode.attributes[attrName] = newValue;
+        }
+      } catch (e) {
+        console.error('Error processing attribute mutation:', e);
+      }
+    });
+  }
+
+  // Process a characterData mutation (text content changed)
+  #processCharacterDataMutation(mutation: MutationRecord) {
+    // Find the parent element
+    const textNode = mutation.target;
+    const parentElement = textNode.parentElement;
+
+    if (!parentElement) return;
+
+    const parentPath = this.#getPathForElement(parentElement);
+    if (parentPath === undefined) return;
+
+    this.#doc = Automerge.change(this.#doc, (doc) => {
+      try {
+        const parentCrdtNode = this.#getNodeByPath(doc, parentPath);
+
+        // Update the text content
+        this.#updateNodeTextContent(parentElement, parentCrdtNode);
+      } catch (e) {
+        console.error('Error processing characterData mutation:', e);
+      }
+    });
   }
 
   // Update text content for a node by collecting all direct text node children
@@ -264,42 +409,6 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
     }
     crdtNode.textContent = textContent;
-  }
-
-  // Update path references for nodes after an insertion
-  #updatePathsAfterInsertion(children: DOMNode[], startIndex: number) {
-    // This updates path references in the nodeMap after insertions
-    // In a production implementation, you'd iterate through affected nodes and update their paths
-    // For simplicity, we're not implementing the full logic here
-  }
-
-  // Update node references in the nodeMap after a change
-  #updateNodeMapReferences() {
-    // After an Automerge change, the object references change
-    // We need to update our nodeMap with the new references
-    // In a production implementation, we would recursively walk the tree and update the references
-
-    // For now, let's just rebuild the mapping for the next round of mutations
-    // This is a simplification - a real implementation would be more efficient
-    this.#rebuildNodeMap(this.ownerElement, this.#doc.root, ['root']);
-  }
-
-  // Rebuild the node map by walking the DOM and CRDT trees in parallel
-  #rebuildNodeMap(domNode: Element, crdtNode: DOMNode, path: (string | number)[]) {
-    // Map this node
-    this.#nodeMap.set(domNode, {
-      path,
-      node: crdtNode,
-    });
-
-    // Map the children
-    const domChildren = Array.from(domNode.children);
-
-    // Map each child that exists in both DOM and CRDT
-    for (let i = 0; i < Math.min(domChildren.length, crdtNode.children.length); i++) {
-      const childPath = [...path, 'children', i];
-      this.#rebuildNodeMap(domChildren[i], crdtNode.children[i], childPath);
-    }
   }
 
   connectedCallback(): void {
