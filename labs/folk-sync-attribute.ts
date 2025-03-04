@@ -102,6 +102,13 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Get or create node ID
     const nodeId = this.#getOrCreateNodeId(element);
 
+    console.log(`📝 Updating attribute "${attributeName}" on element:`, {
+      element: element.tagName,
+      nodeId,
+      oldValue: mutation.oldValue,
+      newValue,
+    });
+
     // Update the attribute in the CRDT
     this.#doc = Automerge.change(this.#doc, (doc) => {
       // Ensure nodeId is properly typed
@@ -127,6 +134,8 @@ export class FolkSyncAttribute extends CustomAttribute {
         nodeAttributes[attributeName] = newValue;
       }
     });
+
+    console.log(`✅ Updated attribute in CRDT: ${attributeName} ${newValue === null ? 'removed' : `= "${newValue}"`}`);
   }
 
   /**
@@ -138,6 +147,13 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     // Get or create node ID
     const nodeId = this.#getOrCreateNodeId(textNode);
+
+    console.log(`📝 Updating text content:`, {
+      nodeId,
+      oldContent: mutation.oldValue,
+      newContent: newContent.length > 50 ? newContent.substring(0, 47) + '...' : newContent,
+      parentElement: textNode.parentElement?.tagName,
+    });
 
     // Update the text content in the CRDT
     this.#doc = Automerge.change(this.#doc, (doc) => {
@@ -161,6 +177,8 @@ export class FolkSyncAttribute extends CustomAttribute {
       //   Automerge.splice(doc.nodes[id], ['textContent'], index, deleteCount, insertedText);
       // }
     });
+
+    console.log(`✅ Updated text content in CRDT (${newContent.length} characters)`);
   }
 
   /**
@@ -172,6 +190,14 @@ export class FolkSyncAttribute extends CustomAttribute {
     if (!nodeId) {
       // Create a new UUID for this node
       nodeId = uuidv4();
+
+      // Log the node creation
+      const nodeType =
+        node.nodeType === Node.ELEMENT_NODE
+          ? `Element <${(node as Element).tagName.toLowerCase()}>`
+          : `Text "${(node.textContent || '').substring(0, 20)}${(node.textContent || '').length > 20 ? '...' : ''}"`;
+
+      console.log(`🆕 Creating new CRDT node for ${nodeType} with ID: ${nodeId}`);
 
       // Store mapping in both directions
       this.#nodeMap.set(node, nodeId);
@@ -195,10 +221,15 @@ export class FolkSyncAttribute extends CustomAttribute {
           // Ensure nodeId is properly typed
           const id: string = nodeId as string;
           doc.nodes[id] = { attributes };
+
+          console.log(`📊 Initialized element with ${Object.keys(attributes).length} attributes`);
         } else if (node.nodeType === Node.TEXT_NODE) {
           // For text nodes, initialize with text content
           const id: string = nodeId as string;
-          doc.nodes[id] = { textContent: node.textContent || '' };
+          const content = node.textContent || '';
+          doc.nodes[id] = { textContent: content };
+
+          console.log(`📝 Initialized text node with ${content.length} characters`);
         } else {
           throw new Error(`Unsupported node type: ${node.nodeType}`);
         }
@@ -217,6 +248,8 @@ export class FolkSyncAttribute extends CustomAttribute {
     const changes = Automerge.getChanges(this.#doc, remoteDoc);
     if (changes.length === 0) return;
 
+    console.log(`📥 Received ${changes.length} external changes`);
+
     // Merge the changes into our document
     this.#stopObserving(); // Pause observation to avoid cycles
     try {
@@ -225,6 +258,11 @@ export class FolkSyncAttribute extends CustomAttribute {
 
       // Merge the remote changes into our document
       this.#doc = Automerge.merge(this.#doc, remoteDoc);
+
+      console.log(`🔄 Merged changes into local document`);
+
+      let attributeUpdateCount = 0;
+      let textUpdateCount = 0;
 
       // Find what changed and apply to DOM
       // For each nodeId in the document
@@ -242,6 +280,13 @@ export class FolkSyncAttribute extends CustomAttribute {
               const newAttrs = this.#doc.nodes[nodeId].attributes || {};
               const oldAttrs = oldDoc.nodes[nodeId].attributes || {};
 
+              // Count the differences
+              const attributeDiffs = this.#countAttributeDiffs(oldAttrs, newAttrs);
+              if (attributeDiffs > 0) {
+                attributeUpdateCount += attributeDiffs;
+                console.log(`🔄 Applying ${attributeDiffs} attribute change(s) to ${element.tagName} element`);
+              }
+
               // Update attributes that changed
               this.#updateElementAttributes(element, oldAttrs, newAttrs);
             } else if (domNode.nodeType === Node.TEXT_NODE) {
@@ -251,14 +296,21 @@ export class FolkSyncAttribute extends CustomAttribute {
 
               // Update text content if it changed
               if (textNode.textContent !== newContent) {
+                textUpdateCount++;
+                const oldContent = textNode.textContent || '';
+                console.log(`🔄 Updating text content: ${oldContent.length} → ${newContent.length} characters`);
                 textNode.textContent = newContent;
               }
             }
+          } else {
+            console.warn(`⚠️ Could not find DOM node for nodeId: ${nodeId}`);
           }
         }
       }
 
-      console.log('Applied external changes to DOM');
+      console.log(
+        `✅ Applied external changes: ${attributeUpdateCount} attribute updates, ${textUpdateCount} text updates`,
+      );
     } finally {
       this.#startObserving(); // Resume observation
     }
@@ -330,7 +382,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   connectedCallback(): void {
-    console.log('FolkSync connected to', this.ownerElement);
+    console.log(`🔌 FolkSync connected to <${this.ownerElement.tagName.toLowerCase()}>`);
 
     // Initialize the CRDT document with an empty nodes map
     this.#doc = Automerge.init<SyncDoc>();
@@ -338,11 +390,19 @@ export class FolkSyncAttribute extends CustomAttribute {
       doc.nodes = {};
     });
 
+    console.log(`🏁 Initialized empty CRDT document`);
+
     // Scan and initialize all relevant nodes in the subtree
+    console.log(`🔍 Starting scan of DOM subtree...`);
     this.#scanAndInitializeSubtree(this.ownerElement);
+
+    // Log a summary of what was initialized
+    const nodeCount = Object.keys(this.#doc.nodes).length;
+    console.log(`✅ Initialized ${nodeCount} nodes in the CRDT document`);
 
     // Start observing mutations
     this.#startObserving();
+    console.log(`👀 Started observing DOM mutations`);
   }
 
   /**
@@ -384,12 +444,38 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Clean up resources when disconnected
    */
   disconnectedCallback(): void {
-    console.log('FolkSync disconnected from', this.ownerElement);
+    console.log(`🔌 FolkSync disconnected from <${this.ownerElement.tagName.toLowerCase()}>`);
 
     // Stop observing mutations
     this.#stopObserving();
+    console.log(`🛑 Stopped observing DOM mutations`);
 
     // Clean up the ID map (the WeakMap will be garbage collected automatically)
+    const nodeCount = this.#idToNodeMap.size;
     this.#idToNodeMap.clear();
+    console.log(`🧹 Cleared ${nodeCount} node mappings`);
+  }
+
+  /**
+   * Helper to count attribute differences between old and new
+   */
+  #countAttributeDiffs(oldAttrs: { [key: string]: string }, newAttrs: { [key: string]: string }): number {
+    let count = 0;
+
+    // Count attributes that were removed
+    for (const key in oldAttrs) {
+      if (!(key in newAttrs)) {
+        count++;
+      }
+    }
+
+    // Count attributes that were added or changed
+    for (const key in newAttrs) {
+      if (!(key in oldAttrs) || oldAttrs[key] !== newAttrs[key]) {
+        count++;
+      }
+    }
+
+    return count;
   }
 }
