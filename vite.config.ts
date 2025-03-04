@@ -2,6 +2,8 @@ import { existsSync, readdirSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import { defineConfig, IndexHtmlTransformContext, Plugin } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
+import topLevelAwait from 'vite-plugin-top-level-await';
+import wasm from 'vite-plugin-wasm';
 
 const websiteDir = resolve(__dirname, './website');
 const canvasWebsiteDir = resolve(__dirname, './website/canvas');
@@ -106,7 +108,7 @@ export default defineConfig({
       '@propagators': resolve(__dirname, './propagators'),
     },
   },
-  plugins: [fallback(websiteDir), linkGenerator(), mkcert()],
+  plugins: [fallback(websiteDir), linkGenerator(), mkcert(), wasm(), topLevelAwait()],
   build: {
     target: 'esnext',
     rollupOptions: {

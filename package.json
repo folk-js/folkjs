@@ -14,6 +14,7 @@
     "bench": "bun run lib/__tests__/bench.ts"
   },
   "dependencies": {
+    "@automerge/automerge": "^2.2.8",
     "@babel/parser": "^7.26.2",
     "@dimforge/rapier2d-compat": "^0.14.0",
     "@lit/reactive-element": "^2.0.4",
@@ -22,6 +23,7 @@
     "partysocket": "^1.0.3",
     "perfect-arrows": "^0.3.7",
     "perfect-freehand": "^1.2.2",
+    "vite-plugin-top-level-await": "^1.5.0",
     "vite-plugin-wasm": "^3.3.0",
     "webcola": "^3.4.0"
   },
