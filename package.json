@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:host": "vite --host",
+    "dev:host": "vite --host --port 5174",
     "dev:extension": "vite build web-extension -w",
     "build": "tsc --noEmit && vite build",
     "build:extension": "tsc --noEmit && vite build web-extension",
@@ -15,6 +15,9 @@
   },
   "dependencies": {
     "@automerge/automerge": "^2.2.8",
+    "@automerge/automerge-repo": "^1.2.1",
+    "@automerge/automerge-repo-network-broadcastchannel": "^1.2.1",
+    "@automerge/automerge-repo-storage-indexeddb": "^1.2.1",
     "@babel/parser": "^7.26.2",
     "@dimforge/rapier2d-compat": "^0.14.0",
     "@lit/reactive-element": "^2.0.4",
