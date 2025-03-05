@@ -7,10 +7,10 @@ import Gun, { type IGunInstance } from 'gun';
  * Peers send regular heartbeats to maintain their presence.
  * Stale peers are automatically removed.
  */
-export class PeerSpace {
+export class PeerSet {
   private gun: IGunInstance;
   private peerId: string;
-  private spaceId: string;
+  private setId: string;
   private gunServer: string = 'https://gun-manhattan.herokuapp.com/gun';
   private heartbeatInterval = 60000; // 1 minute
   private cleanupInterval = 180000; // 3 minutes
@@ -22,11 +22,11 @@ export class PeerSpace {
   /**
    * Create a new PeerSpace
    * @param peerId - Unique identifier for this peer
-   * @param spaceId - Identifier for the shared space
+   * @param setId - Identifier for the shared space
    */
-  constructor(peerId: string, spaceId: string) {
+  constructor(peerId: string, setId: string) {
     this.peerId = peerId;
-    this.spaceId = spaceId;
+    this.setId = setId;
 
     // Initialize Gun with the provided server or default
     this.gun = new Gun([this.gunServer]);
@@ -42,13 +42,13 @@ export class PeerSpace {
   connect(): void {
     if (this.isConnected) return;
 
-    console.log(`[PeerSpace] Connecting to space: ${this.spaceId} as peer: ${this.peerId}`);
+    console.log(`[PeerSet] Connecting to set: ${this.setId} as peer: ${this.peerId}`);
 
     // Get space data
-    const space = this.gun.get('peer-spaces').get(this.spaceId);
+    const set = this.gun.get(`peer-set-${this.setId}`);
 
     // Set up listener for peers
-    space
+    set
       .get('peers')
       .map()
       .on((data: any, key: string) => {
@@ -62,7 +62,7 @@ export class PeerSpace {
           this.peers.set(remotePeerId, timestamp);
 
           if (isNewPeer) {
-            console.log(`[PeerSpace] Peer joined: ${remotePeerId}`);
+            console.log(`[PeerSet] New peer joined: ${remotePeerId}`);
             this.onPeerJoinedCallbacks.forEach((cb) => cb(remotePeerId));
           }
         }
@@ -79,15 +79,15 @@ export class PeerSpace {
   disconnect(): void {
     if (!this.isConnected) return;
 
-    console.log(`[PeerSpace] Disconnecting from space: ${this.spaceId}`);
+    console.log(`[PeerSpace] Disconnecting from space: ${this.setId}`);
 
     // Clear intervals
     clearInterval(this.heartbeatInterval);
     clearInterval(this.cleanupInterval);
 
     // Remove our peer entry
-    const space = this.gun.get('peer-spaces').get(this.spaceId);
-    space.get('peers').get(this.peerId).put(null);
+    const set = this.gun.get(`peer-set-${this.setId}`);
+    set.get('peers').get(this.peerId).put(null);
 
     // Clear local state
     this.peers.clear();
@@ -101,9 +101,9 @@ export class PeerSpace {
     if (!this.isConnected) return;
 
     const timestamp = Date.now();
-    const space = this.gun.get('peer-spaces').get(this.spaceId);
+    const set = this.gun.get(`peer-set-${this.setId}`);
 
-    space.get('peers').get(this.peerId).put({
+    set.get('peers').get(this.peerId).put({
       peerId: this.peerId,
       timestamp: timestamp,
     });
@@ -151,7 +151,7 @@ export class PeerSpace {
    */
   generateShareableUrl(baseUrl: string = window.location.href): string {
     const url = new URL(baseUrl);
-    url.searchParams.set('space', this.spaceId);
+    url.searchParams.set('space', this.setId);
     return url.toString();
   }
 }

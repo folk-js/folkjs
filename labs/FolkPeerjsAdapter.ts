@@ -8,7 +8,7 @@ import {
 } from '@automerge/automerge-repo';
 import { PeerjsNetworkAdapter } from 'automerge-repo-network-peerjs';
 import { DataConnection, Peer } from 'peerjs';
-import { PeerSpace } from './PeerSpace';
+import { PeerSet } from './PeerSpace';
 
 /**
  * FolkPeerjsAdapter - Network adapter using PeerSpace for discovery and PeerJS for WebRTC connections
@@ -20,7 +20,7 @@ import { PeerSpace } from './PeerSpace';
  */
 export class FolkPeerjsAdapter extends NetworkAdapter {
   private peer: Peer;
-  private peerSpace: PeerSpace;
+  private peerSpace: PeerSet;
   private connections: Map<string, PeerjsNetworkAdapter> = new Map();
   private isPeerReady = false;
   private connectionListeners: ((peerId: string, connected: boolean) => void)[] = [];
@@ -47,7 +47,7 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
     this.peer = new Peer(this.localPeerId);
 
     // Initialize PeerSpace with the same IDs
-    this.peerSpace = new PeerSpace(this.localPeerId, this.roomId);
+    this.peerSpace = new PeerSet(this.localPeerId, this.roomId);
 
     // Set up event handlers
     this.setupPeerEvents();

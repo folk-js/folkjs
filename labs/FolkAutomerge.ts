@@ -1,5 +1,12 @@
 import * as Automerge from '@automerge/automerge';
-import { AnyDocumentId, Doc, DocHandle, DocHandleChangePayload, Repo } from '@automerge/automerge-repo';
+import {
+  AnyDocumentId,
+  Doc,
+  DocHandle,
+  DocHandleChangePayload,
+  generateAutomergeUrl,
+  Repo,
+} from '@automerge/automerge-repo';
 import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
 import { FolkPeerjsAdapter } from './FolkPeerjsAdapter';
 
@@ -14,13 +21,6 @@ export interface Todo {
 // Define the TodoList document interface
 export interface TodoListDoc {
   todos: Todo[];
-}
-
-/**
- * Generate a random ID
- */
-function generateRandomId(): string {
-  return `doc-${Math.floor(Math.random() * 1000000)}`;
 }
 
 /**
@@ -52,7 +52,7 @@ export class FolkAutomerge<T extends TodoListDoc> {
 
     // If no document ID is provided, create one
     if (!effectiveDocId) {
-      effectiveDocId = generateRandomId();
+      effectiveDocId = generateAutomergeUrl();
       console.log(`[Network] No document ID provided, created new ID: ${effectiveDocId}`);
     }
 
