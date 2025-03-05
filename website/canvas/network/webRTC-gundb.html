@@ -220,7 +220,7 @@
       }
     </style>
   </head>
-  <body folk-sync>
+  <body>
     <!-- Connection Controls Shape -->
     <folk-shape x="50" y="50" width="350">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px">
@@ -271,10 +271,6 @@
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
       import { FolkRTC } from '@labs/FolkRTC.ts';
-      import { FolkSyncAttribute } from '@labs/folk-sync-attribute.ts';
-
-      // Define the custom attribute
-      FolkSyncAttribute.define();
 
       // DOM Elements
       const connectionStateIndicator = document.getElementById('connectionStateIndicator');
