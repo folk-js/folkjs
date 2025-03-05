@@ -1,15 +1,7 @@
 import * as Automerge from '@automerge/automerge';
-import {
-  AnyDocumentId,
-  Doc,
-  DocHandle,
-  DocHandleChangePayload,
-  generateAutomergeUrl,
-  Repo,
-} from '@automerge/automerge-repo';
+import { AnyDocumentId, Doc, DocHandle, generateAutomergeUrl, Repo } from '@automerge/automerge-repo';
 import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
 import { FolkMultiPeerAdapter } from '@labs/FolkMultiPeerAdapter';
-import { FolkPeerjsAdapter } from './FolkPeerjsAdapter';
 
 // Define the Todo interface
 export interface Todo {
@@ -57,16 +49,43 @@ export class FolkAutomerge<T extends TodoListDoc> {
 
     this.networkAdapter = new FolkMultiPeerAdapter({ peerId: peerId, roomId: docId });
 
-    // Initialize the repo
+    // Initialize the repo with proper configuration
     this.repo = new Repo({
-      peerId: options.peerId as any,
+      peerId: peerId as any, // Use the same peerId consistently
       storage: new IndexedDBStorageAdapter(),
       network: [this.networkAdapter],
+      // Always share documents with other peers
+      sharePolicy: async (peerId) => {
+        console.log(`[FolkAutomerge] Share policy request for peer: ${peerId}`);
+        return true;
+      },
     });
+
+    console.log('[FolkAutomerge] Repo initialized with peers:', this.repo.peers);
 
     // Add listener for peer connections
     if (this.networkAdapter) {
+      // Log when adapter is ready
+      this.networkAdapter.on('ready', () => {
+        console.log('[FolkAutomerge] Network adapter is ready');
+      });
+
+      // Add debug for sync messages
+      this.networkAdapter.on('message', (message) => {
+        console.log('[FolkAutomerge] Network message received:', {
+          type: message.type,
+          hasData: 'data' in message && !!message.data,
+          dataLength: 'data' in message && message.data ? message.data.byteLength : 0,
+        });
+      });
+
+      // Monitor peer candidates
+      this.networkAdapter.on('peer-candidate', (info) => {
+        console.log('[FolkAutomerge] Peer candidate:', info);
+      });
+
       this.networkAdapter.addConnectionStatusListener((peerId, connected) => {
+        console.log(`[FolkAutomerge] Peer ${peerId} ${connected ? 'connected' : 'disconnected'}`);
         if (this.onPeerConnectionCallback) {
           this.onPeerConnectionCallback(this.networkAdapter?.getConnectedPeers().length || 0);
         }

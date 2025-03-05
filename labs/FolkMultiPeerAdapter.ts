@@ -1,14 +1,4 @@
-import * as Automerge from '@automerge/automerge';
-import {
-  Message,
-  NetworkAdapter,
-  NetworkAdapterEvents,
-  NetworkAdapterInterface,
-  PeerId,
-  PeerMetadata,
-  RepoMessage,
-  StorageId,
-} from '@automerge/automerge-repo';
+import { Message, NetworkAdapter, PeerId, PeerMetadata, RepoMessage, cbor } from '@automerge/automerge-repo';
 import { EventEmitter } from 'eventemitter3';
 import { DataConnection, Peer } from 'peerjs';
 import { PeerSet } from './PeerSet';
@@ -219,8 +209,46 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
     });
 
     conn.on('data', (data) => {
-      const msg = data as NetworkMessage;
-      console.log(`[FolkMultiPeerAdapter] Received message from ${remotePeerId}:`, msg);
+      try {
+        // Handle raw data
+        this.#receiveMessage(remotePeerId, data);
+      } catch (error) {
+        console.error(`[FolkMultiPeerAdapter] Error processing incoming data:`, error);
+      }
+    });
+
+    conn.on('close', () => {
+      this.#handleDisconnection(remotePeerId);
+    });
+
+    conn.on('error', (err) => {
+      console.error(`[FolkMultiPeerAdapter] Connection error with ${remotePeerId}:`, err);
+      this.#handleDisconnection(remotePeerId);
+    });
+  }
+
+  /**
+   * Process received message with proper decoding
+   */
+  #receiveMessage(remotePeerId: string, rawData: any): void {
+    let msg: NetworkMessage;
+
+    try {
+      // Special handling for binary data that might be CBOR encoded
+      if (rawData instanceof Uint8Array || rawData instanceof ArrayBuffer || ArrayBuffer.isView(rawData)) {
+        // Convert to Uint8Array if needed
+        const messageBytes = this.#toUint8Array(rawData);
+        // Decode using CBOR - this is crucial for Automerge's binary messages
+        msg = cbor.decode(messageBytes) as NetworkMessage;
+        console.log(`[FolkMultiPeerAdapter] Decoded CBOR binary message from ${remotePeerId}`, {
+          type: msg.type,
+          size: messageBytes.byteLength,
+        });
+      } else {
+        // Handle regular JSON messages (protocol messages like 'arrive' and 'welcome')
+        msg = rawData as NetworkMessage;
+        console.log(`[FolkMultiPeerAdapter] Received JSON message from ${remotePeerId}:`, msg);
+      }
 
       // Handle protocol messages
       if (msg.type === 'arrive') {
@@ -264,25 +292,33 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
 
       // Handle data messages
       let payload = msg as Message;
+
+      // Ensure binary data is properly handled
       if ('data' in msg && msg.data) {
-        payload = { ...payload, data: this.#toUint8Array(msg.data) };
+        // Binary data should already be decoded from CBOR at this point
+        // Just ensure it's a Uint8Array
+        payload = {
+          ...payload,
+          data: this.#toUint8Array(msg.data),
+        };
       }
+
+      // Log the message before passing to Automerge
+      console.log(`[FolkMultiPeerAdapter] Forwarding message to Automerge:`, {
+        type: payload.type,
+        dataLength: payload.data ? payload.data.byteLength : 0,
+        senderId: payload.senderId,
+        targetId: payload.targetId,
+      });
 
       // Forward message to Automerge
       this.emit('message', payload);
 
       // Alert for monitoring
       this.#alert('incoming', msg);
-    });
-
-    conn.on('close', () => {
-      this.#handleDisconnection(remotePeerId);
-    });
-
-    conn.on('error', (err) => {
-      console.error(`[FolkMultiPeerAdapter] Connection error with ${remotePeerId}:`, err);
-      this.#handleDisconnection(remotePeerId);
-    });
+    } catch (error) {
+      console.error(`[FolkMultiPeerAdapter] Error processing message:`, error, rawData);
+    }
   }
 
   /**
@@ -329,7 +365,32 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
    * Convert input to Uint8Array
    */
   #toUint8Array(input: any): Uint8Array {
-    return input instanceof Uint8Array ? input : new Uint8Array(input);
+    if (input instanceof Uint8Array) {
+      return input;
+    } else if (input instanceof ArrayBuffer) {
+      return new Uint8Array(input);
+    } else if (Array.isArray(input)) {
+      return new Uint8Array(input);
+    } else if (ArrayBuffer.isView(input)) {
+      return new Uint8Array(input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength));
+    } else if (
+      input &&
+      typeof input === 'object' &&
+      'type' in input &&
+      input.type === 'Buffer' &&
+      Array.isArray(input.data)
+    ) {
+      return new Uint8Array(input.data);
+    } else {
+      console.warn(`[FolkMultiPeerAdapter] Converting unknown type to Uint8Array:`, typeof input);
+      try {
+        return new Uint8Array(input);
+      } catch (error) {
+        console.error(`[FolkMultiPeerAdapter] Failed to convert to Uint8Array:`, error);
+        // Return empty array as fallback
+        return new Uint8Array();
+      }
+    }
   }
 
   /**
@@ -342,8 +403,42 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
       return;
     }
 
-    connectionInfo.conn.send(message);
-    this.#alert('outgoing', message);
+    try {
+      // Protocol messages ('arrive', 'welcome') are sent as plain JSON
+      if (message.type === 'arrive' || message.type === 'welcome') {
+        connectionInfo.conn.send(message);
+      }
+      // CRDT sync messages with binary data need CBOR encoding
+      else if ('data' in message && message.data) {
+        // Encode using CBOR
+        const encoded = cbor.encode(message);
+        console.log(`[FolkMultiPeerAdapter] Sending encoded message to ${peerId}:`, {
+          type: message.type,
+          encodedSize: encoded.byteLength,
+        });
+        connectionInfo.conn.send(encoded);
+      }
+      // Other messages sent as plain JSON
+      else {
+        connectionInfo.conn.send(message);
+      }
+
+      // Alert for monitoring
+      this.#alert('outgoing', message);
+    } catch (error) {
+      console.error(`[FolkMultiPeerAdapter] Error sending message to ${peerId}:`, error);
+    }
+  }
+
+  /**
+   * Send a message to all peers
+   */
+  #broadcastMessage(message: NetworkMessage): void {
+    for (const [peerId, connectionInfo] of this.#connections.entries()) {
+      if (connectionInfo.ready) {
+        this.#transmitToPeer(peerId, message);
+      }
+    }
   }
 
   /**
@@ -437,35 +532,13 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
     if (message.targetId) {
       const targetPeerId = message.targetId as string;
       if (this.#connections.has(targetPeerId)) {
-        // Convert Uint8Array if necessary
-        if ('data' in message && message.data) {
-          this.#transmitToPeer(targetPeerId, {
-            ...message,
-            data: this.#toUint8Array(message.data),
-          });
-        } else {
-          this.#transmitToPeer(targetPeerId, message as any);
-        }
+        this.#transmitToPeer(targetPeerId, message as any);
       } else {
         console.warn(`[FolkMultiPeerAdapter] Cannot send message to ${targetPeerId}: No connection`);
       }
     } else {
       // Otherwise, broadcast to all connected peers
-      for (const [peerId, connectionInfo] of this.#connections.entries()) {
-        if (connectionInfo.ready) {
-          // Convert Uint8Array if necessary
-          if ('data' in message && message.data) {
-            connectionInfo.conn.send({
-              ...message,
-              data: this.#toUint8Array(message.data),
-            });
-          } else {
-            connectionInfo.conn.send(message);
-          }
-
-          this.#alert('outgoing', message as any);
-        }
-      }
+      this.#broadcastMessage(message as any);
     }
   }
 
