@@ -54,14 +54,7 @@ export class FolkAutomerge<T extends TodoListDoc> {
       peerId: peerId as any, // Use the same peerId consistently
       storage: new IndexedDBStorageAdapter(),
       network: [this.networkAdapter],
-      // Always share documents with other peers
-      sharePolicy: async (peerId) => {
-        console.log(`[FolkAutomerge] Share policy request for peer: ${peerId}`);
-        return true;
-      },
     });
-
-    console.log('[FolkAutomerge] Repo initialized with peers:', this.repo.peers);
 
     // Add listener for peer connections
     if (this.networkAdapter) {
@@ -306,13 +299,5 @@ export class FolkAutomerge<T extends TodoListDoc> {
         });
       });
     });
-  }
-
-  /**
-   * Check if local storage is being used
-   */
-  public isUsingLocalStorage(): boolean {
-    // Check if the storage adapter is configured in the repo
-    return false; // Currently hardcoded to false since storage is commented out
   }
 }
