@@ -8,7 +8,7 @@ import {
 } from '@automerge/automerge-repo';
 import { PeerjsNetworkAdapter } from 'automerge-repo-network-peerjs';
 import { DataConnection, Peer } from 'peerjs';
-import { PeerSet } from './PeerSpace';
+import { PeerSet } from './PeerSet';
 
 /**
  * FolkPeerjsAdapter - Network adapter using PeerSpace for discovery and PeerJS for WebRTC connections
@@ -24,7 +24,6 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
   private connections: Map<string, PeerjsNetworkAdapter> = new Map();
   private isPeerReady = false;
   private connectionListeners: ((peerId: string, connected: boolean) => void)[] = [];
-  private localPeerId: string;
   private roomId: string;
   private isReady = false;
 
@@ -32,22 +31,20 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
    * Create a new FolkPeerjsAdapter
    * @param options - Configuration options
    */
-  constructor(options: { roomId?: string }) {
+  constructor(options: { peerId: string; roomId?: string }) {
     super();
 
-    // Generate a random peer ID if not provided
-    this.localPeerId = `peer-${Math.floor(Math.random() * 1_000_000)}`;
-
+    this.peerId = options.peerId as any;
     // Use the provided room ID or generate a random one
     this.roomId = options.roomId || this.generateRoomId();
 
-    console.log(`[FolkPeerjsAdapter] Initializing with room ID: ${this.roomId} and peer ID: ${this.localPeerId}`);
+    console.log(`[FolkPeerjsAdapter] Initializing with room ID: ${this.roomId} and peer ID: ${this.peerId}`);
 
     // Initialize PeerJS
-    this.peer = new Peer(this.localPeerId);
+    this.peer = new Peer(options.peerId);
 
     // Initialize PeerSpace with the same IDs
-    this.peerSpace = new PeerSet(this.localPeerId, this.roomId);
+    this.peerSpace = new PeerSet(options.peerId, this.roomId);
 
     // Set up event handlers
     this.setupPeerEvents();
@@ -87,7 +84,7 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
 
       // Connect to the new peer if we don't have a connection and our ID is "greater"
       // (to avoid both peers initiating connections to each other)
-      if (!this.connections.has(remotePeerId) && this.localPeerId > remotePeerId) {
+      if (!this.connections.has(remotePeerId) && (this.peerId as string) > remotePeerId) {
         this.connectToPeer(remotePeerId);
       }
     });
@@ -181,7 +178,7 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
       this.peerSpace.connect();
 
       // Notify that we're ready
-      this.emit('ready', { network: this });
+      this.emit('ready', { network: this } as any);
     }
   }
 
@@ -223,13 +220,6 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
    */
   public getConnectedPeers(): string[] {
     return Array.from(this.connections.keys());
-  }
-
-  /**
-   * Generate a shareable URL for this room
-   */
-  public generateShareableUrl(baseUrl: string = window.location.href): string {
-    return this.peerSpace.generateShareableUrl(baseUrl);
   }
 
   /**

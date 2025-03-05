@@ -145,13 +145,4 @@ export class PeerSet {
   onPeerLeft(callback: (peerId: string) => void): void {
     this.onPeerLeftCallbacks.push(callback);
   }
-
-  /**
-   * Generate a shareable URL for this space
-   */
-  generateShareableUrl(baseUrl: string = window.location.href): string {
-    const url = new URL(baseUrl);
-    url.searchParams.set('space', this.setId);
-    return url.toString();
-  }
 }

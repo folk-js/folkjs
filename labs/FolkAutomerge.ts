@@ -40,12 +40,12 @@ export class FolkAutomerge<T extends TodoListDoc> {
    * Create a new FolkAutomerge instance
    * @param options - Configuration options for the FolkAutomerge instance
    */
-  constructor(options: { docId?: string; initialState?: T; schema?: any; storeName?: string }) {
+  constructor(options: { peerId: string; docId?: string; initialState?: T; schema?: any; storeName?: string }) {
     this.localStorageKey = `folk-automerge-docid-${options.storeName || 'default'}`;
-
+    const peerId = options.peerId || this.#createPeerId();
     // Parse URL params to check for document ID
     const urlParams = new URLSearchParams(window.location.search);
-    const urlDocId = urlParams.get('doc');
+    const urlDocId = urlParams.get('space');
 
     // Use documentId from URL or from constructor parameter
     let effectiveDocId = urlDocId || options.docId;
@@ -56,23 +56,13 @@ export class FolkAutomerge<T extends TodoListDoc> {
       console.log(`[Network] No document ID provided, created new ID: ${effectiveDocId}`);
     }
 
-    // Generate a peer ID for this instance
-    const peerId = `peer-${Math.floor(Math.random() * 1000000)}`;
-
-    // Initialize the repo before creating the network adapter
-    const repoConfig: any = {
-      peerId: peerId as any,
-    };
+    this.networkAdapter = new FolkPeerjsAdapter({ peerId: peerId, roomId: effectiveDocId });
 
     // Initialize the repo
-    this.repo = new Repo(repoConfig);
-
-    // Now initialize network adapter
-    console.log(`[Doc] Initializing network adapter with document ID: ${effectiveDocId}`);
-    this.networkAdapter = new FolkPeerjsAdapter({ roomId: effectiveDocId });
-
-    // Add the network adapter to the repo
-    this.repo.networkSubsystem.addNetworkAdapter(this.networkAdapter);
+    this.repo = new Repo({
+      peerId: options.peerId as any,
+      network: [this.networkAdapter],
+    });
 
     // Add listener for peer connections
     if (this.networkAdapter) {
@@ -145,9 +135,13 @@ export class FolkAutomerge<T extends TodoListDoc> {
 
     // Connect to the network
     if (this.networkAdapter) {
-      console.log(`[Network] Connecting with peer ID: ${peerId}`);
-      this.networkAdapter.connect(peerId as any);
+      console.log(`[Network] Connecting with peer ID: ${options.peerId}`);
+      this.networkAdapter.connect(options.peerId as any);
     }
+  }
+
+  #createPeerId(): string {
+    return `peer-${Math.floor(Math.random() * 1_000_000)}`;
   }
 
   /**
@@ -207,12 +201,9 @@ export class FolkAutomerge<T extends TodoListDoc> {
    */
   generateShareableUrl(baseUrl: string = window.location.href): string {
     console.log(`[Doc] Generating shareable URL for document: ${this.documentId}`);
-    if (this.networkAdapter) {
-      return this.networkAdapter.generateShareableUrl(baseUrl);
-    }
     // Fallback to simple URL generation if no network adapter
     const url = new URL(baseUrl);
-    url.searchParams.set('doc', this.documentId);
+    url.searchParams.set('space', this.documentId);
     return url.toString();
   }
 
@@ -312,15 +303,5 @@ export class FolkAutomerge<T extends TodoListDoc> {
   public isUsingLocalStorage(): boolean {
     // Check if the storage adapter is configured in the repo
     return false; // Currently hardcoded to false since storage is commented out
-  }
-
-  /**
-   * Connect to another peer
-   */
-  connect(peerId: string): void {
-    console.log(`[Network] Connecting with peer ID: ${peerId}`);
-    if (this.networkAdapter) {
-      this.networkAdapter.connect(peerId as any);
-    }
   }
 }
