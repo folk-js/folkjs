@@ -353,16 +353,16 @@
       documentIdElement.textContent = `ID: ${automerge.getDocumentId()}`;
 
       // Update connection status
-      automerge.onPeerConnection((count) => {
-        if (count > 0) {
-          peerCount.textContent = `${count} peer${count !== 1 ? 's' : ''} connected`;
+      automerge.onPeersChanged((peers) => {
+        if (peers.length > 0) {
+          peerCount.textContent = `${peers.length} peer${peers.length !== 1 ? 's' : ''} connected`;
           peerIndicator.classList.remove('disconnected');
           peerIndicator.classList.add('connected');
           connectionStatus.textContent = 'Online';
           shareButton.disabled = false;
 
           // Show notification when a new peer connects
-          showNotification(`A peer has connected. Total peers: ${count}`);
+          showNotification(`A peer has connected. Total peers: ${peers.length}`);
         } else {
           peerCount.textContent = 'No peers connected';
           peerIndicator.classList.remove('connected');

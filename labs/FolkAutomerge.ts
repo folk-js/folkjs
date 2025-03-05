@@ -1,7 +1,7 @@
 import * as Automerge from '@automerge/automerge';
 import { AnyDocumentId, Doc, DocHandle, generateAutomergeUrl, Repo } from '@automerge/automerge-repo';
 import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
-import { FolkMultiPeerAdapter } from '@labs/FolkMultiPeerAdapter';
+import { FolkMultiPeerAdapter, type PeerNetwork } from '@labs/FolkMultiPeerAdapter';
 
 // Define the Todo interface
 export interface Todo {
@@ -20,13 +20,12 @@ export interface TodoListDoc {
  * FolkAutomerge class for managing automerge-repo with local storage
  * Provides methods for creating, reading, updating, and deleting todos
  */
-export class FolkAutomerge<T extends TodoListDoc> {
+export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
   private repo: Repo;
   private documentId: string = '';
   private handle: DocHandle<T>;
   private onChangesCallback: ((doc: T) => void) | null = null;
   private networkAdapter: FolkMultiPeerAdapter | null = null;
-  private onPeerConnectionCallback: ((count: number) => void) | null = null;
 
   /**
    * Create a new FolkAutomerge instance
@@ -75,13 +74,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
       // Monitor peer candidates
       this.networkAdapter.on('peer-candidate', (info) => {
         console.log('[FolkAutomerge] Peer candidate:', info);
-      });
-
-      this.networkAdapter.addConnectionStatusListener((peerId, connected) => {
-        console.log(`[FolkAutomerge] Peer ${peerId} ${connected ? 'connected' : 'disconnected'}`);
-        if (this.onPeerConnectionCallback) {
-          this.onPeerConnectionCallback(this.networkAdapter?.getConnectedPeers().length || 0);
-        }
       });
     }
 
@@ -157,6 +149,14 @@ export class FolkAutomerge<T extends TodoListDoc> {
     }
   }
 
+  onPeersChanged(listener: (peers: string[]) => void): void {
+    this.networkAdapter?.onPeersChanged(listener);
+  }
+
+  getPeers(): string[] {
+    return this.networkAdapter?.getPeers() || [];
+  }
+
   /**
    * Get the current state of the document
    */
@@ -189,18 +189,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
   }
 
   /**
-   * Register a callback to be called when peer connections change
-   */
-  onPeerConnection(callback: (connectedCount: number) => void): void {
-    this.onPeerConnectionCallback = callback;
-
-    // Immediately call with current number of peers
-    if (this.networkAdapter) {
-      callback(this.networkAdapter.getConnectedPeers().length);
-    }
-  }
-
-  /**
    * Generate a shareable URL for this document
    */
   generateShareableUrl(baseUrl: string = window.location.href): string {
@@ -209,16 +197,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
     const url = new URL(baseUrl);
     url.searchParams.set('space', this.documentId);
     return url.toString();
-  }
-
-  /**
-   * Get the number of connected peers
-   */
-  getConnectedPeerCount(): number {
-    if (!this.networkAdapter) {
-      return 0;
-    }
-    return this.networkAdapter.getConnectedPeers().length;
   }
 
   /**

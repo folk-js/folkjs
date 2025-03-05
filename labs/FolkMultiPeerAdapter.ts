@@ -46,11 +46,16 @@ type WelcomeMessage = {
 
 type EventTypes = { data: NetworkMessageAlert };
 
+export interface PeerNetwork {
+  onPeersChanged: (listener: (peers: string[]) => void) => void;
+  getPeers: () => string[];
+}
+
 /**
  * An Automerge repo network-adapter for WebRTC (P2P) that supports multiple connections
  * and peer discovery via PeerSet.
  */
-export class FolkMultiPeerAdapter extends NetworkAdapter {
+export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork {
   peerId?: PeerId;
   peerMetadata?: PeerMetadata;
 
@@ -58,7 +63,7 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
   #peerSet: PeerSet;
   #connections: Map<string, PeerConnectionInfo> = new Map();
   #events = new EventEmitter<EventTypes>();
-  #connectionListeners: ((peerId: string, connected: boolean) => void)[] = [];
+  #peerListeners: ((peers: string[]) => void)[] = [];
   #ready = false;
   #readyResolver?: () => void;
   #readyPromise: Promise<void> = new Promise<void>((resolve) => (this.#readyResolver = resolve));
@@ -196,7 +201,7 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
       });
 
       // Notify listeners of the new connection
-      this.#notifyConnectionStatus(remotePeerId, true);
+      this.#notifyPeersChanged();
     });
 
     conn.on('data', (data) => {
@@ -325,7 +330,7 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
     this.emit('peer-disconnected', { peerId: remotePeerId as unknown as PeerId });
 
     // Notify listeners
-    this.#notifyConnectionStatus(remotePeerId, false);
+    this.#notifyPeersChanged();
   }
 
   /**
@@ -444,13 +449,8 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
     this.#events.emit('data', payload);
   }
 
-  /**
-   * Notify connection status listeners
-   */
-  #notifyConnectionStatus(peerId: string, connected: boolean): void {
-    for (const listener of this.#connectionListeners) {
-      listener(peerId, connected);
-    }
+  #notifyPeersChanged(): void {
+    this.#peerListeners.forEach((listener) => listener(this.getPeers()));
   }
 
   /**
@@ -534,24 +534,14 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
   /**
    * Add a connection status listener
    */
-  addConnectionStatusListener(listener: (peerId: string, connected: boolean) => void): void {
-    this.#connectionListeners.push(listener);
+  onPeersChanged(listener: (peers: string[]) => void): void {
+    this.#peerListeners.push(listener);
   }
 
   /**
-   * Remove a connection status listener
+   * Get all currently connected peers
    */
-  removeConnectionStatusListener(listener: (peerId: string, connected: boolean) => void): void {
-    const index = this.#connectionListeners.indexOf(listener);
-    if (index !== -1) {
-      this.#connectionListeners.splice(index, 1);
-    }
-  }
-
-  /**
-   * Get all connected peers
-   */
-  getConnectedPeers(): string[] {
+  getPeers(): string[] {
     // Only return peers that have active, ready connections
     return Array.from(this.#connections.entries())
       .filter(([_, info]) => info.ready)
