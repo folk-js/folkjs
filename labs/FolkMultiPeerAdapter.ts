@@ -109,7 +109,6 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
 
     // Handle incoming connections
     this.#peer.on('connection', (conn) => {
-      console.log(`[FolkMultiPeerAdapter] Incoming connection from: ${conn.peer}`);
       this.#setupConnection(conn);
     });
 
@@ -131,7 +130,6 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
     this.#peerSet.onPeerHeartbeat((remotePeerId, timestamp) => {
       // Connect to the peer if it's new and we don't have a connection
       if (remotePeerId !== this.peerId && !this.#connections.has(remotePeerId)) {
-        console.log(`[FolkMultiPeerAdapter] New peer detected: ${remotePeerId}`);
         this.#connectToPeer(remotePeerId);
       }
     });
@@ -160,8 +158,6 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
     if (this.#connections.has(remotePeerId)) {
       return;
     }
-
-    console.log(`[FolkMultiPeerAdapter] Connecting to peer: ${remotePeerId}`);
 
     // Create a new PeerJS connection
     const conn = this.#peer.connect(remotePeerId, { reliable: true });
@@ -236,14 +232,9 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
         const messageBytes = this.#toUint8Array(rawData);
         // Decode using CBOR - this is crucial for Automerge's binary messages
         msg = cbor.decode(messageBytes) as NetworkMessage;
-        console.log(`[FolkMultiPeerAdapter] Decoded CBOR binary message from ${remotePeerId}`, {
-          type: msg.type,
-          size: messageBytes.byteLength,
-        });
       } else {
         // Handle regular JSON messages (protocol messages like 'arrive' and 'welcome')
         msg = rawData as NetworkMessage;
-        console.log(`[FolkMultiPeerAdapter] Received JSON message from ${remotePeerId}:`, msg);
       }
 
       // Handle protocol messages
@@ -299,14 +290,6 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
         };
       }
 
-      // Log the message before passing to Automerge
-      console.log(`[FolkMultiPeerAdapter] Forwarding message to Automerge:`, {
-        type: payload.type,
-        dataLength: payload.data ? payload.data.byteLength : 0,
-        senderId: payload.senderId,
-        targetId: payload.targetId,
-      });
-
       // Forward message to Automerge
       this.emit('message', payload);
 
@@ -339,7 +322,6 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
   #disconnectPeer(remotePeerId: string): void {
     const connectionInfo = this.#connections.get(remotePeerId);
     if (connectionInfo) {
-      console.log(`[FolkMultiPeerAdapter] Disconnecting from peer: ${remotePeerId}`);
       connectionInfo.conn.close();
       this.#handleDisconnection(remotePeerId);
       this.#connections.delete(remotePeerId);
@@ -409,10 +391,6 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
       else if ('data' in message && message.data) {
         // Encode using CBOR
         const encoded = cbor.encode(message);
-        console.log(`[FolkMultiPeerAdapter] Sending encoded message to ${peerId}:`, {
-          type: message.type,
-          encodedSize: encoded.byteLength,
-        });
         connectionInfo.conn.send(encoded);
       }
       // Other messages sent as plain JSON

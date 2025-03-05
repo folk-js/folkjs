@@ -61,20 +61,6 @@ export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
       this.networkAdapter.on('ready', () => {
         console.log('[FolkAutomerge] Network adapter is ready');
       });
-
-      // Add debug for sync messages
-      this.networkAdapter.on('message', (message) => {
-        console.log('[FolkAutomerge] Network message received:', {
-          type: message.type,
-          hasData: 'data' in message && !!message.data,
-          dataLength: 'data' in message && message.data ? message.data.byteLength : 0,
-        });
-      });
-
-      // Monitor peer candidates
-      this.networkAdapter.on('peer-candidate', (info) => {
-        console.log('[FolkAutomerge] Peer candidate:', info);
-      });
     }
 
     // Try to load document ID from URL or create a new one if not provided
