@@ -1,4 +1,4 @@
-import Gun, { type IGunInstance } from 'gun';
+import Gun, { type IGunInstance, type IGunInstanceRoot } from 'gun';
 
 /**
  * PeerSpace - A minimal peer presence tracking system
@@ -38,7 +38,6 @@ export class PeerSet {
 
     console.log(`[PeerSet] Connecting to set: ${this.#setId} as peer: ${this.#peerId}`);
 
-    // Get space data - directly use the root node
     const set = this.#getPeerSetRef();
 
     // Set up listener for peers - directly on the root node
@@ -91,7 +90,7 @@ export class PeerSet {
    * Get a reference to the peer set node
    */
   #getPeerSetRef(): any {
-    return `peerset-${this.#setId}`;
+    return this.#gun.get(`peerset-${this.#setId}`);
   }
 
   /**
