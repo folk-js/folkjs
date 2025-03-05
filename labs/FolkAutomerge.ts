@@ -1,7 +1,7 @@
 import * as Automerge from '@automerge/automerge';
 import { Doc, DocHandle, Repo } from '@automerge/automerge-repo';
 import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
-import { AutomergeRTCAdapter, MQTTBrokerOptions } from '@labs/AutomergeRTCAdapter';
+import { AutomergeRTCAdapter } from '@labs/AutomergeRTCAdapter';
 
 // Define the Todo interface
 export interface Todo {
@@ -33,25 +33,24 @@ export class FolkAutomerge {
    * Create a new FolkAutomerge instance
    * @param storageId - Identifier for the storage (used for indexedDB)
    * @param documentId - Optional document ID, if not provided a new one will be created or loaded from localStorage
-   * @param roomId - Optional room ID for sharing, if provided will try to connect to that room
    */
-  constructor(storageId: string, documentId?: string, roomId?: string) {
+  constructor(storageId: string, documentId?: string) {
     this.localStorageKey = `folk-automerge-docid-${storageId}`;
 
-    // Parse URL params to check for room ID
+    // Parse URL params to check for document ID
     const urlParams = new URLSearchParams(window.location.search);
-    const urlRoomId = urlParams.get('rtc-room');
+    const urlDocId = urlParams.get('doc');
 
-    // Use roomId from URL or from constructor parameter
-    const effectiveRoomId = urlRoomId || roomId;
+    // Use documentId from URL or from constructor parameter
+    const effectiveDocId = urlDocId || documentId;
 
-    // Initialize network adapter with MQTT options
-    const mqttOptions: MQTTBrokerOptions = {};
-    if (effectiveRoomId) {
-      mqttOptions.roomId = effectiveRoomId;
+    // Initialize network adapter with the document ID as the room ID
+    const networkOptions: { roomId?: string } = {};
+    if (effectiveDocId) {
+      networkOptions.roomId = effectiveDocId;
     }
 
-    this.networkAdapter = new AutomergeRTCAdapter(mqttOptions);
+    this.networkAdapter = new AutomergeRTCAdapter(networkOptions);
 
     // Add listener for peer connections
     this.networkAdapter.addConnectionStatusListener((peerId, connected) => {
@@ -65,47 +64,51 @@ export class FolkAutomerge {
 
     // Initialize the automerge repo with storage and network adapters
     this.repo = new Repo({
-      storage: new IndexedDBStorageAdapter(storageId),
+      // storage: new IndexedDBStorageAdapter(storageId),
       network: [this.networkAdapter],
       peerId: peerId as any,
     });
 
-    // If roomId is provided from URL and documentId is not specified, try to load from URL
-    if (urlRoomId && !documentId) {
-      // Check if there's a document ID in URL
-      const urlDocId = urlParams.get('doc');
+    // Try to load document ID from URL or localStorage if not provided
+    if (urlDocId) {
+      console.log(`Loading shared document from URL: ${urlDocId}`);
+      documentId = urlDocId;
+      localStorage.setItem(this.localStorageKey, urlDocId);
+    } else {
+      // Try to load document ID from localStorage if not provided
+      const savedDocId = !documentId && localStorage.getItem(this.localStorageKey);
 
-      if (urlDocId) {
-        console.log(`Loading shared document from URL: ${urlDocId}`);
-        documentId = urlDocId;
-
-        // Store this document ID
-        localStorage.setItem(this.localStorageKey, urlDocId);
+      if (savedDocId) {
+        // Use the saved document ID
+        console.log(`Loading existing document: ${savedDocId}`);
+        documentId = savedDocId;
+      } else if (!documentId) {
+        // Create a new document ID if none provided
+        documentId = `doc-${Math.floor(Math.random() * 1000000)}`;
+        console.log(`Creating new document: ${documentId}`);
+        localStorage.setItem(this.localStorageKey, documentId);
+      } else {
+        // Use the provided document ID
+        console.log(`Using provided document: ${documentId}`);
+        localStorage.setItem(this.localStorageKey, documentId);
       }
     }
 
-    // Try to load document ID from localStorage if not provided
-    const savedDocId = !documentId && localStorage.getItem(this.localStorageKey);
+    this.documentId = documentId;
 
-    if (savedDocId) {
-      // Use the saved document ID
-      console.log(`Loading existing document: ${savedDocId}`);
-      this.documentId = savedDocId;
-    } else if (documentId) {
-      // Use the provided document ID
-      console.log(`Using provided document: ${documentId}`);
-      this.documentId = documentId;
-      localStorage.setItem(this.localStorageKey, documentId);
-    } else {
-      // Create a new document
-      console.log('Creating a new document');
-      this.documentId = this.repo.create<TodoListDoc>().documentId;
+    // Find the document
+    try {
+      // Try to load the document
+      this.handle = this.repo.find<TodoListDoc>(this.documentId as any);
+    } catch (error) {
+      console.log('Document not found, creating a new one');
+      // Create a new document with the specified ID
+      this.handle = this.repo.create<TodoListDoc>();
+      // Update the document ID
+      this.documentId = this.handle.documentId;
       // Save the document ID to localStorage
       localStorage.setItem(this.localStorageKey, this.documentId);
     }
-
-    // Find the document
-    this.handle = this.repo.find<TodoListDoc>(this.documentId as any);
 
     // Initialize the document with empty todos array if it doesn't exist
     this.handle.update((doc: Doc<TodoListDoc>) => {
@@ -191,11 +194,8 @@ export class FolkAutomerge {
       throw new Error('Network adapter not initialized');
     }
 
-    // Generate base URL with room ID
-    const shareUrl = this.networkAdapter.generateShareableUrl();
-
-    // Add document ID
-    const url = new URL(shareUrl);
+    // Create URL with document ID (which is also the room ID)
+    const url = new URL(window.location.href);
     url.searchParams.set('doc', this.documentId);
 
     return url.toString();

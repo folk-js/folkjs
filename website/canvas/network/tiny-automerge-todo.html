@@ -340,13 +340,12 @@
       const connectionStatus = document.getElementById('connectionStatus');
       const notification = document.getElementById('notification');
 
-      // Check for room ID in URL
+      // Check for document ID in URL
       const urlParams = new URLSearchParams(window.location.search);
-      const urlRoomId = urlParams.get('rtc-room');
       const urlDocId = urlParams.get('doc');
 
       // Initialize FolkAutomerge with local storage
-      let automerge = new FolkAutomerge('folk-todo-list', urlDocId, urlRoomId);
+      let automerge = new FolkAutomerge('folk-todo-list', urlDocId);
 
       // Display document ID
       documentIdElement.textContent = `ID: ${automerge.getDocumentId().substring(0, 8)}...`;

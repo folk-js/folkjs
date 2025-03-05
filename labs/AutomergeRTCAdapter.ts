@@ -15,7 +15,7 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
   private _isReady = false;
   private connectedPeers: Set<string> = new Set();
   // Hardcoded MQTT broker URLs
-  private brokerUrls = ['wss://broker.emqx.io:8084/mqtt', 'ws://test.mosquitto.org:8080'];
+  private brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
   private currentBrokerIndex = 0;
 
   /**
@@ -28,7 +28,7 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
 
     // Set up MQTT signaling with the first broker URL
     this.setupMQTTSignaling({
-      url: this.brokerUrls[this.currentBrokerIndex],
+      url: this.brokerUrl,
       roomId: options?.roomId,
     });
   }
@@ -55,8 +55,7 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
 
       // Set connection timeout
       const connectionTimeout = setTimeout(() => {
-        console.warn(`Connection to MQTT broker ${options.url} timed out. Trying next broker.`);
-        this.tryNextBroker();
+        console.warn(`Connection to MQTT broker ${options.url} timed out.`);
       }, 7000);
 
       // Set up MQTT event handlers
@@ -102,7 +101,6 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
       this.mqttClient.on('error', (error: any) => {
         console.error('MQTT connection error:', error);
         clearTimeout(connectionTimeout);
-        this.tryNextBroker();
       });
 
       this.mqttClient.on('close', () => {
@@ -111,42 +109,17 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
 
       this.mqttClient.on('offline', () => {
         console.log('MQTT client is offline');
-        this.tryNextBroker();
       });
     } catch (error) {
       console.error('Error setting up MQTT signaling:', error);
-      this.tryNextBroker();
     }
-  }
-
-  /**
-   * Try the next broker in the list if the current one fails
-   */
-  private tryNextBroker(): void {
-    if (this.mqttClient) {
-      try {
-        this.mqttClient.end(true); // Force disconnect
-        this.mqttClient = null;
-      } catch (e) {
-        console.error('Error ending MQTT client:', e);
-      }
-    }
-
-    this.currentBrokerIndex = (this.currentBrokerIndex + 1) % this.brokerUrls.length;
-
-    // Try the next broker
-    setTimeout(() => {
-      this.setupMQTTSignaling({
-        url: this.brokerUrls[this.currentBrokerIndex],
-        roomId: this.mqttTopic?.split('/').pop(),
-      });
-    }, 1000);
   }
 
   /**
    * Announce this peer to others via MQTT
    */
   private announcePeer(): void {
+    console.log(`Announcing peer ${this.peerIdStr}`);
     if (!this.mqttClient || !this.mqttTopic) return;
 
     this.mqttClient.publish(
@@ -173,6 +146,7 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
    * Process an incoming WebRTC offer from a peer
    */
   private async processIncomingOffer(remotePeerId: string, offer: string): Promise<void> {
+    console.log(`Processing incoming offer from peer ${remotePeerId}`);
     if (this.connections.has(remotePeerId)) {
       console.log(`Already connected to peer ${remotePeerId}, ignoring offer`);
       return;
@@ -210,6 +184,7 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
    * Process an incoming WebRTC answer from a peer
    */
   private async processIncomingAnswer(remotePeerId: string, answer: string): Promise<void> {
+    console.log(`Processing incoming answer from peer ${remotePeerId}`);
     const rtcConnection = this.connections.get(remotePeerId);
     if (!rtcConnection) {
       console.error(`No pending connection for peer ${remotePeerId}`);
@@ -321,7 +296,7 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
   }
 
   /**
-   * Generate a shareable URL for connecting to this peer
+   * Generate a shareable URL with the room ID.
    */
   public generateShareableUrl(baseUrl: string = window.location.href): string {
     if (!this.mqttClient || !this.mqttTopic) {
@@ -333,7 +308,7 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
 
     // Create URL parameters
     const url = new URL(baseUrl);
-    url.searchParams.set('rtc-room', roomId as string);
+    url.searchParams.set('doc', roomId as string);
 
     return url.toString();
   }
