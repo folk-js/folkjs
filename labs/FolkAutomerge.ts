@@ -8,6 +8,7 @@ import {
   Repo,
 } from '@automerge/automerge-repo';
 import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
+import { FolkMultiPeerAdapter } from '@labs/FolkMultiPeerAdapter';
 import { FolkPeerjsAdapter } from './FolkPeerjsAdapter';
 
 // Define the Todo interface
@@ -32,14 +33,14 @@ export class FolkAutomerge<T extends TodoListDoc> {
   private documentId: string = '';
   private handle: DocHandle<T>;
   private onChangesCallback: ((doc: T) => void) | null = null;
-  private networkAdapter: FolkPeerjsAdapter | null = null;
+  private networkAdapter: FolkMultiPeerAdapter | null = null;
   private onPeerConnectionCallback: ((count: number) => void) | null = null;
 
   /**
    * Create a new FolkAutomerge instance
    * @param options - Configuration options for the FolkAutomerge instance
    */
-  constructor(options: { peerId: string; docId?: string; initialState?: T; schema?: any; storeName?: string }) {
+  constructor(options: { peerId?: string; docId?: string }) {
     const peerId = options.peerId || this.#createPeerId();
     // Parse URL params to check for document ID
     const urlParams = new URLSearchParams(window.location.search);
@@ -54,12 +55,12 @@ export class FolkAutomerge<T extends TodoListDoc> {
       console.log(`[Network] No document ID provided, created new ID: ${docId}`);
     }
 
-    this.networkAdapter = new FolkPeerjsAdapter({ peerId: peerId, roomId: docId });
+    this.networkAdapter = new FolkMultiPeerAdapter({ peerId: peerId, roomId: docId });
 
     // Initialize the repo
     this.repo = new Repo({
       peerId: options.peerId as any,
-      storage: new IndexedDBStorageAdapter('folk-automerge-repo', docId),
+      storage: new IndexedDBStorageAdapter(),
       network: [this.networkAdapter],
     });
 
@@ -76,18 +77,48 @@ export class FolkAutomerge<T extends TodoListDoc> {
     if (urlDocId) {
       console.log(`[Doc] Loading shared document from URL: ${urlDocId}`);
       this.documentId = urlDocId;
+    } else if (docId) {
+      this.documentId = docId;
     }
 
     // Find the document
     try {
-      // Try to load the document
+      // Try to load the document with proper error handling
       this.handle = this.repo.find<T>(this.documentId as unknown as AnyDocumentId);
+
+      // Set up change handler early so we can catch initialization
+      this.handle.on('change', () => {
+        if (this.onChangesCallback) {
+          const doc = this.handle.docSync();
+          if (doc) {
+            this.onChangesCallback(doc);
+          }
+        }
+      });
     } catch (error) {
-      console.log('Document not found, creating a new one');
-      // Create a new document with the specified ID
-      this.handle = this.repo.create<T>();
-      // Update the document ID
-      this.documentId = this.handle.documentId;
+      console.error('Error finding document:', error);
+
+      // If there's an IndexedDB error, we might need to create a new document
+      try {
+        // Create a new document with the specified ID
+        this.handle = this.repo.create<T>();
+        // Update the document ID
+        this.documentId = this.handle.documentId;
+        console.log(`[Doc] Created new document with ID: ${this.documentId}`);
+
+        // Set up change handler
+        this.handle.on('change', () => {
+          if (this.onChangesCallback) {
+            const doc = this.handle.docSync();
+            if (doc) {
+              this.onChangesCallback(doc);
+            }
+          }
+        });
+      } catch (createError) {
+        console.error('Error creating document:', createError);
+        throw createError; // Re-throw if we can't recover
+      }
     }
 
     // Initialize the document with empty todos array if it doesn't exist
@@ -98,16 +129,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
         });
       }
       return doc;
-    });
-
-    // Set up change handler
-    this.handle.on('change', () => {
-      if (this.onChangesCallback) {
-        const doc = this.handle.docSync();
-        if (doc) {
-          this.onChangesCallback(doc);
-        }
-      }
     });
   }
 

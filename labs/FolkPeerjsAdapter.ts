@@ -260,6 +260,7 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
    * Send a message to a peer
    */
   public send(message: RepoMessage): void {
+    console.log(`[FolkPeerjsAdapter] Sending message: ${message}`);
     // If message has a target peer ID, send only to that peer
     if (message.targetId) {
       const targetPeerId = message.targetId as string;

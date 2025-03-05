@@ -23,6 +23,7 @@
     "@lit/reactive-element": "^2.0.4",
     "@types/uuid": "^10.0.0",
     "automerge-repo-network-peerjs": "^1.2.3",
+    "eventemitter3": "^5.0.1",
     "gun": "^0.2020.1240",
     "ink-mde": "^0.34.0",
     "leaflet": "^1.9.4",
