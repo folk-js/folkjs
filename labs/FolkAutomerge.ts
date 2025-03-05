@@ -263,18 +263,8 @@ export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
   clearCompleted(): void {
     this.handle.update((doc: Doc<T>) => {
       return Automerge.change(doc, (d) => {
-        // Filter out completed todos and create a new array
-        const activeTodos = d.todos.filter((todo) => !todo.completed);
-
-        // Clear the array
-        while (d.todos.length > 0) {
-          d.todos.pop();
-        }
-
-        // Add all active todos back
-        activeTodos.forEach((todo) => {
-          d.todos.push(todo);
-        });
+        // Remove all todos that are completed
+        d.todos = d.todos.filter((todo) => !todo.completed);
       });
     });
   }
