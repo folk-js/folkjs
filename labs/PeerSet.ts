@@ -12,8 +12,8 @@ export class PeerSet {
   private peerId: string;
   private setId: string;
   private gunServer: string = 'https://gun-manhattan.herokuapp.com/gun';
-  private heartbeatInterval = 15000; // 15 seconds
-  private cleanupInterval = 60000; // 1 minute
+  private heartbeatInterval = 10000; // 10 seconds
+  private timeoutInterval = 30000; // 30 seconds
   private onPeerHeartbeatCallbacks: ((peerId: string, timestamp: number) => void)[] = [];
   private onPeerTimeoutCallbacks: ((peerId: string) => void)[] = [];
   private isConnected = false;
@@ -29,14 +29,10 @@ export class PeerSet {
 
     // Initialize Gun with the provided server or default
     this.gun = new Gun([this.gunServer]);
-
-    // Start heartbeat and cleanup intervals
-    this.heartbeatInterval = window.setInterval(() => this.sendHeartbeat(), this.heartbeatInterval);
-    this.cleanupInterval = window.setInterval(() => this.detectTimeouts(this.cleanupInterval), this.cleanupInterval);
   }
 
   /**
-   * Connect to the space and start tracking peers
+   * Connect to the peer set
    */
   connect(): void {
     if (this.isConnected) return;
@@ -61,9 +57,16 @@ export class PeerSet {
         }
       });
 
-    // Send initial heartbeat
-    this.sendHeartbeat();
     this.isConnected = true;
+
+    // Send an immediate heartbeat to announce our presence
+    this.sendHeartbeat();
+
+    // Start sending heartbeats periodically
+    setInterval(() => this.sendHeartbeat(), this.heartbeatInterval);
+
+    // Start checking for timeouts periodically
+    setInterval(() => this.detectTimeouts(), this.timeoutInterval);
   }
 
   /**
@@ -76,7 +79,7 @@ export class PeerSet {
 
     // Clear intervals
     clearInterval(this.heartbeatInterval);
-    clearInterval(this.cleanupInterval);
+    clearInterval(this.timeoutInterval);
 
     // Remove our peer entry
     const set = this.gun.get(`peer-set-${this.setId}`);
@@ -106,7 +109,7 @@ export class PeerSet {
   /**
    * Detect peer timeouts by checking timestamps in Gun and clean up stale entries
    */
-  private detectTimeouts(timeoutMs: number): void {
+  private detectTimeouts(): void {
     if (!this.isConnected) return;
 
     const now = Date.now();
@@ -121,7 +124,7 @@ export class PeerSet {
         const timestamp = data.timestamp;
         const remotePeerId = data.peerId;
 
-        if (remotePeerId && timestamp && now - timestamp > timeoutMs) {
+        if (remotePeerId && timestamp && now - timestamp > this.timeoutInterval) {
           console.log(`[PeerSet] Peer timeout: ${remotePeerId}, removing from database`);
 
           // Remove the peer data from Gun
