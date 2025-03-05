@@ -163,11 +163,104 @@
         background-color: #4caf50;
         margin-right: 8px;
       }
+
+      .share-section {
+        margin-top: 12px;
+        padding: 8px 12px;
+        background-color: #e3f2fd;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+
+      .share-section .peer-status {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .peer-status .peer-count {
+        display: flex;
+        align-items: center;
+      }
+
+      .peer-status .peer-indicator {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 8px;
+      }
+
+      .peer-status .peer-indicator.connected {
+        background-color: #4caf50;
+      }
+
+      .peer-status .peer-indicator.disconnected {
+        background-color: #bdbdbd;
+      }
+
+      .share-button {
+        width: 100%;
+        padding: 8px;
+        background-color: #2196f3;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .share-button:hover {
+        background-color: #1e88e5;
+      }
+
+      .share-button:disabled {
+        background-color: #bdbdbd;
+        cursor: not-allowed;
+      }
+
+      .shared-url {
+        display: none;
+        margin-top: 8px;
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 12px;
+        background-color: #f5f5f5;
+        color: #555;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .notification {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background-color: #323232;
+        color: white;
+        padding: 12px 24px;
+        border-radius: 4px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        opacity: 0;
+        transform: translateY(-20px);
+        transition: all 0.3s ease;
+        z-index: 1000;
+      }
+
+      .notification.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
     </style>
   </head>
   <body>
     <!-- Todo List Shape -->
-    <folk-shape x="50" y="50" width="400" height="400">
+    <folk-shape x="50" y="50" width="400" height="500">
       <h3>Automerge Todo List</h3>
 
       <!-- Todo Input -->
@@ -195,10 +288,23 @@
         </div>
         <div class="document-id" id="documentId"></div>
       </div>
+
+      <!-- Share Section -->
+      <div class="share-section">
+        <div class="peer-status">
+          <div class="peer-count">
+            <span class="peer-indicator disconnected" id="peerIndicator"></span>
+            <span id="peerCount">No peers connected</span>
+          </div>
+          <small id="connectionStatus">Connecting...</small>
+        </div>
+        <button class="share-button" id="shareButton" disabled> Share this Todo List </button>
+        <input type="text" class="shared-url" id="sharedUrl" readonly />
+      </div>
     </folk-shape>
 
     <!-- Explanation Shape -->
-    <folk-shape x="50" y="470" width="400">
+    <folk-shape x="50" y="570" width="400">
       <h3>About</h3>
       <p
         >This todo list uses Automerge to store and synchronize data. Your todos are automatically saved to your
@@ -209,8 +315,12 @@
         <li><strong>Complete:</strong> Click the checkbox next to a todo</li>
         <li><strong>Edit:</strong> Double-click on a todo to edit it</li>
         <li><strong>Delete:</strong> Click the × button on a todo</li>
+        <li><strong>Share:</strong> Click 'Share this Todo List' to collaborate in real-time</li>
       </ul>
     </folk-shape>
+
+    <!-- Notification -->
+    <div class="notification" id="notification"></div>
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
@@ -223,12 +333,77 @@
       const todoCounts = document.getElementById('todoCounts');
       const clearCompletedBtn = document.getElementById('clearCompletedBtn');
       const documentIdElement = document.getElementById('documentId');
+      const shareButton = document.getElementById('shareButton');
+      const sharedUrl = document.getElementById('sharedUrl');
+      const peerCount = document.getElementById('peerCount');
+      const peerIndicator = document.getElementById('peerIndicator');
+      const connectionStatus = document.getElementById('connectionStatus');
+      const notification = document.getElementById('notification');
+
+      // Check for room ID in URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlRoomId = urlParams.get('rtc-room');
+      const urlDocId = urlParams.get('doc');
 
       // Initialize FolkAutomerge with local storage
-      let automerge = new FolkAutomerge('folk-todo-list');
+      let automerge = new FolkAutomerge('folk-todo-list', urlDocId, urlRoomId);
 
       // Display document ID
       documentIdElement.textContent = `ID: ${automerge.getDocumentId().substring(0, 8)}...`;
+
+      // Update connection status
+      automerge.onPeerConnection((count) => {
+        if (count > 0) {
+          peerCount.textContent = `${count} peer${count !== 1 ? 's' : ''} connected`;
+          peerIndicator.classList.remove('disconnected');
+          peerIndicator.classList.add('connected');
+          connectionStatus.textContent = 'Online';
+          shareButton.disabled = false;
+
+          // Show notification when a new peer connects
+          showNotification(`A peer has connected. Total peers: ${count}`);
+        } else {
+          peerCount.textContent = 'No peers connected';
+          peerIndicator.classList.remove('connected');
+          peerIndicator.classList.add('disconnected');
+          connectionStatus.textContent = 'Ready to connect';
+          shareButton.disabled = false;
+        }
+      });
+
+      // Enable share button once network is ready
+      setTimeout(() => {
+        connectionStatus.textContent = 'Ready to connect';
+        shareButton.disabled = false;
+      }, 2000);
+
+      // Handle share button click
+      shareButton.addEventListener('click', () => {
+        try {
+          const url = automerge.generateShareableUrl();
+          sharedUrl.value = url;
+          sharedUrl.style.display = 'block';
+
+          // Copy to clipboard
+          sharedUrl.select();
+          document.execCommand('copy');
+
+          showNotification('Share link copied to clipboard!');
+        } catch (error) {
+          console.error('Error generating share URL:', error);
+          showNotification('Error generating share URL. Please try again.');
+        }
+      });
+
+      // Show notification function
+      function showNotification(message) {
+        notification.textContent = message;
+        notification.classList.add('show');
+
+        setTimeout(() => {
+          notification.classList.remove('show');
+        }, 3000);
+      }
 
       // Render the todo list
       function renderTodoList() {
