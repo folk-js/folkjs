@@ -14,9 +14,8 @@ export class PeerSet {
   private gunServer: string = 'https://gun-manhattan.herokuapp.com/gun';
   private heartbeatInterval = 15000; // 15 seconds
   private cleanupInterval = 60000; // 1 minute
-  private onPeerJoinedCallbacks: ((peerId: string) => void)[] = [];
-  private onPeerLeftCallbacks: ((peerId: string) => void)[] = [];
-  private peers: Map<string, number> = new Map(); // peerId -> timestamp
+  private onPeerHeartbeatCallbacks: ((peerId: string, timestamp: number) => void)[] = [];
+  private onPeerTimeoutCallbacks: ((peerId: string) => void)[] = [];
   private isConnected = false;
 
   /**
@@ -33,7 +32,7 @@ export class PeerSet {
 
     // Start heartbeat and cleanup intervals
     this.heartbeatInterval = window.setInterval(() => this.sendHeartbeat(), this.heartbeatInterval);
-    this.cleanupInterval = window.setInterval(() => this.cleanupStalePeers(this.cleanupInterval), this.cleanupInterval);
+    this.cleanupInterval = window.setInterval(() => this.detectTimeouts(this.cleanupInterval), this.cleanupInterval);
   }
 
   /**
@@ -58,13 +57,7 @@ export class PeerSet {
         const remotePeerId = data.peerId;
 
         if (remotePeerId && timestamp) {
-          const isNewPeer = !this.peers.has(remotePeerId);
-          this.peers.set(remotePeerId, timestamp);
-
-          if (isNewPeer) {
-            console.log(`[PeerSet] New peer joined: ${remotePeerId}`);
-            this.onPeerJoinedCallbacks.forEach((cb) => cb(remotePeerId));
-          }
+          this.onPeerHeartbeatCallbacks.forEach((cb) => cb(remotePeerId, timestamp));
         }
       });
 
@@ -90,7 +83,8 @@ export class PeerSet {
     set.get('peers').get(this.peerId).put(null);
 
     // Clear local state
-    this.peers.clear();
+    this.onPeerHeartbeatCallbacks.length = 0;
+    this.onPeerTimeoutCallbacks.length = 0;
     this.isConnected = false;
   }
 
@@ -110,41 +104,46 @@ export class PeerSet {
   }
 
   /**
-   * Clean up stale peers
+   * Detect peer timeouts by checking timestamps in Gun and clean up stale entries
    */
-  private cleanupStalePeers(timeoutMs: number): void {
+  private detectTimeouts(timeoutMs: number): void {
+    if (!this.isConnected) return;
+
     const now = Date.now();
+    const set = this.gun.get(`peer-set-${this.setId}`);
 
-    // Check each peer
-    for (const [peerId, timestamp] of this.peers.entries()) {
-      if (now - timestamp > timeoutMs) {
-        console.log(`[PeerSpace] Peer timed out: ${peerId}`);
-        this.peers.delete(peerId);
-        this.onPeerLeftCallbacks.forEach((cb) => cb(peerId));
-      }
-    }
+    set
+      .get('peers')
+      .map()
+      .once((data: any, key: string) => {
+        if (!data || key === this.peerId) return;
+
+        const timestamp = data.timestamp;
+        const remotePeerId = data.peerId;
+
+        if (remotePeerId && timestamp && now - timestamp > timeoutMs) {
+          console.log(`[PeerSet] Peer timeout: ${remotePeerId}, removing from database`);
+
+          // Remove the peer data from Gun
+          set.get('peers').get(remotePeerId).put(null);
+
+          // Notify listeners
+          this.onPeerTimeoutCallbacks.forEach((cb) => cb(remotePeerId));
+        }
+      });
   }
 
   /**
-   * Get all known peers
+   * Register a callback for peer heartbeats
    */
-  getPeers(): string[] {
-    const peers = Array.from(this.peers.keys());
-    console.log(`[PeerSet] getPeers: ${this.peers}`);
-    return peers;
+  onPeerHeartbeat(callback: (peerId: string, timestamp: number) => void): void {
+    this.onPeerHeartbeatCallbacks.push(callback);
   }
 
   /**
-   * Register a callback for when a peer joins
+   * Register a callback for peer timeouts
    */
-  onPeerJoined(callback: (peerId: string) => void): void {
-    this.onPeerJoinedCallbacks.push(callback);
-  }
-
-  /**
-   * Register a callback for when a peer leaves
-   */
-  onPeerLeft(callback: (peerId: string) => void): void {
-    this.onPeerLeftCallbacks.push(callback);
+  onPeerTimeout(callback: (peerId: string) => void): void {
+    this.onPeerTimeoutCallbacks.push(callback);
   }
 }

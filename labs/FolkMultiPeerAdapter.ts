@@ -73,6 +73,7 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
   #readyResolver?: () => void;
   #readyPromise: Promise<void> = new Promise<void>((resolve) => (this.#readyResolver = resolve));
   #roomId: string;
+  #peerLastSeen: Map<string, number> = new Map();
 
   /**
    * Create a new FolkMultiPeerAdapter
@@ -133,23 +134,29 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
    * Set up PeerSet event handlers
    */
   #setupPeerSetEvents(): void {
-    // Handle peers joining the space
-    this.#peerSet.onPeerJoined((remotePeerId) => {
-      console.log(`[FolkMultiPeerAdapter] Peer joined: ${remotePeerId}`);
+    // Handle peer heartbeats from the space
+    this.#peerSet.onPeerHeartbeat((remotePeerId, timestamp) => {
+      console.log(`[FolkMultiPeerAdapter] Peer heartbeat: ${remotePeerId}`);
 
-      // Connect to the new peer if we don't have a connection
-      if (!this.#connections.has(remotePeerId)) {
+      const isNewPeer = !this.#peerLastSeen.has(remotePeerId);
+      this.#peerLastSeen.set(remotePeerId, timestamp);
+
+      // Connect to the peer if it's new and we don't have a connection
+      if (isNewPeer && !this.#connections.has(remotePeerId)) {
+        console.log(`[FolkMultiPeerAdapter] New peer detected: ${remotePeerId}`);
         this.#connectToPeer(remotePeerId);
       }
     });
 
-    // Handle peers leaving the space
-    this.#peerSet.onPeerLeft((remotePeerId) => {
-      console.log(`[FolkMultiPeerAdapter] Peer left: ${remotePeerId}`);
+    // Handle peer timeouts from the space
+    this.#peerSet.onPeerTimeout((remotePeerId) => {
+      console.log(`[FolkMultiPeerAdapter] Peer timeout: ${remotePeerId}`);
 
-      // Clean up the connection
-      const connectionInfo = this.#connections.get(remotePeerId);
-      if (connectionInfo) {
+      // Remove from our last seen tracking
+      this.#peerLastSeen.delete(remotePeerId);
+
+      // Clean up the connection if it exists
+      if (this.#connections.has(remotePeerId)) {
         this.#disconnectPeer(remotePeerId);
       }
     });
@@ -161,6 +168,11 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
   #connectToPeer(remotePeerId: string): void {
     if (!this.#peer) {
       console.warn(`[FolkMultiPeerAdapter] Cannot connect to peer ${remotePeerId}: PeerJS not ready`);
+      return;
+    }
+
+    // If we already have a connection to this peer, do nothing
+    if (this.#connections.has(remotePeerId)) {
       return;
     }
 
@@ -415,6 +427,9 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
     // Clear connections map
     this.#connections.clear();
 
+    // Clear peer timestamps map
+    this.#peerLastSeen.clear();
+
     // Close PeerJS
     this.#peer.destroy();
 
@@ -492,5 +507,12 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
    */
   getConnectedPeers(): string[] {
     return Array.from(this.#connections.keys());
+  }
+
+  /**
+   * Get all known peers (connected or not)
+   */
+  getKnownPeers(): string[] {
+    return Array.from(this.#peerLastSeen.keys());
   }
 }
