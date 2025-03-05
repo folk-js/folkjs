@@ -79,14 +79,13 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
    * Create a new FolkMultiPeerAdapter
    * @param options - Configuration options
    */
-  constructor(options: { peerId: string; roomId?: string; peerMetadata?: PeerMetadata }) {
+  constructor(options: { peerId: string; roomId: string; peerMetadata?: PeerMetadata }) {
     super();
 
     this.peerId = options.peerId as any;
     this.peerMetadata = options.peerMetadata || {};
 
-    // Use the provided room ID or generate a random one
-    this.#roomId = options.roomId || this.#generateRoomId();
+    this.#roomId = options.roomId;
 
     console.log(`[FolkMultiPeerAdapter] Initializing with room ID: ${this.#roomId} and peer ID: ${this.peerId}`);
 
@@ -327,13 +326,6 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
   }
 
   /**
-   * Generate a random room ID
-   */
-  #generateRoomId(): string {
-    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-  }
-
-  /**
    * Convert input to Uint8Array
    */
   #toUint8Array(input: any): Uint8Array {
@@ -435,14 +427,6 @@ export class FolkMultiPeerAdapter extends NetworkAdapter {
 
     // Reset state
     this.#ready = false;
-  }
-
-  /**
-   * Register a data listener
-   */
-  onData(fn: (e: NetworkMessageAlert) => void): () => void {
-    this.#events.on('data', fn);
-    return () => this.#events.off('data', fn);
   }
 
   /**
