@@ -135,7 +135,6 @@
       }
 
       .document-id {
-        margin-top: 12px;
         font-size: 12px;
         color: #666;
       }
@@ -286,10 +285,6 @@
 
       <!-- Storage Info -->
       <div class="storage-info">
-        <div class="status">
-          <span class="indicator"></span>
-          <span>Saved to local storage</span>
-        </div>
         <div class="document-id" id="documentId"></div>
       </div>
 
@@ -355,19 +350,7 @@
       });
 
       // Display document ID
-      documentIdElement.textContent = `ID: ${automerge.getDocumentId().substring(0, 8)}...`;
-
-      // Update storage status
-      const storageStatusElement = document.querySelector('.storage-info .status span:last-child');
-      if (storageStatusElement) {
-        if (automerge.isUsingLocalStorage()) {
-          storageStatusElement.textContent = 'Saved to local storage';
-        } else {
-          storageStatusElement.textContent = 'In-memory only (not saved)';
-          document.querySelector('.storage-info .indicator').classList.add('disconnected');
-          document.querySelector('.storage-info .indicator').classList.remove('connected');
-        }
-      }
+      documentIdElement.textContent = `ID: ${automerge.getDocumentId()}`;
 
       // Update connection status
       automerge.onPeerConnection((count) => {

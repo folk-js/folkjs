@@ -46,19 +46,20 @@ export class FolkAutomerge<T extends TodoListDoc> {
     const urlDocId = urlParams.get('space');
 
     // Use documentId from URL or from constructor parameter
-    let effectiveDocId = urlDocId || options.docId;
+    let docId = urlDocId || options.docId;
 
     // If no document ID is provided, create one
-    if (!effectiveDocId) {
-      effectiveDocId = generateAutomergeUrl();
-      console.log(`[Network] No document ID provided, created new ID: ${effectiveDocId}`);
+    if (!docId) {
+      docId = generateAutomergeUrl();
+      console.log(`[Network] No document ID provided, created new ID: ${docId}`);
     }
 
-    this.networkAdapter = new FolkPeerjsAdapter({ peerId: peerId, roomId: effectiveDocId });
+    this.networkAdapter = new FolkPeerjsAdapter({ peerId: peerId, roomId: docId });
 
     // Initialize the repo
     this.repo = new Repo({
       peerId: options.peerId as any,
+      storage: new IndexedDBStorageAdapter('folk-automerge-repo', docId),
       network: [this.networkAdapter],
     });
 
