@@ -70,7 +70,11 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
 
     // Handle errors
     this.peer.on('error', (err) => {
-      console.error(`[FolkPeerjsAdapter] PeerJS error:`, err);
+      if (err.message.includes('Could not connect to peer')) {
+        console.warn(`[FolkPeerjsAdapter] ${err.message}`);
+      } else {
+        console.error(`[FolkPeerjsAdapter] PeerJS error:`, err);
+      }
     });
   }
 
