@@ -26,7 +26,7 @@ export class FolkAutomerge {
   private handle: DocHandle<TodoListDoc>;
   private onChangesCallback: ((doc: TodoListDoc) => void) | null = null;
   private localStorageKey: string;
-  private networkAdapter: AutomergeRTCAdapter;
+  private networkAdapter: AutomergeRTCAdapter | null = null;
   private onPeerConnectionCallback: ((count: number) => void) | null = null;
 
   /**
@@ -42,36 +42,40 @@ export class FolkAutomerge {
     const urlDocId = urlParams.get('doc');
 
     // Use documentId from URL or from constructor parameter
-    const effectiveDocId = urlDocId || documentId;
+    let effectiveDocId = urlDocId || documentId;
 
-    // Initialize network adapter with the document ID as the room ID
-    const networkOptions: { roomId?: string } = {};
-    if (effectiveDocId) {
-      networkOptions.roomId = effectiveDocId;
+    // If no document ID is provided, create one
+    if (!effectiveDocId) {
+      effectiveDocId = `doc-${Math.floor(Math.random() * 1000000)}`;
+      console.log(`[Network] No document ID provided, created new ID: ${effectiveDocId}`);
     }
-
-    this.networkAdapter = new AutomergeRTCAdapter(networkOptions);
-
-    // Add listener for peer connections
-    this.networkAdapter.addConnectionStatusListener((peerId, connected) => {
-      if (this.onPeerConnectionCallback) {
-        this.onPeerConnectionCallback(this.networkAdapter.getConnectedPeers().length);
-      }
-    });
 
     // Generate a peer ID for this instance
     const peerId = `peer-${Math.floor(Math.random() * 1000000)}`;
 
-    // Initialize the automerge repo with storage and network adapters
-    this.repo = new Repo({
-      // storage: new IndexedDBStorageAdapter(storageId),
-      network: [this.networkAdapter],
-      peerId: peerId as any,
+    // Initialize network adapter with the document ID as the room ID
+    console.log(`[Network] Initializing network adapter with document ID: ${effectiveDocId}`);
+    this.networkAdapter = new AutomergeRTCAdapter({ roomId: effectiveDocId });
+
+    // Add listener for peer connections
+    this.networkAdapter.addConnectionStatusListener((peerId, connected) => {
+      if (this.onPeerConnectionCallback) {
+        this.onPeerConnectionCallback(this.networkAdapter?.getConnectedPeers().length || 0);
+      }
     });
+
+    // Initialize the automerge repo with network adapters
+    const repoConfig: any = {
+      peerId: peerId as any,
+      network: [this.networkAdapter],
+    };
+
+    // Initialize the repo
+    this.repo = new Repo(repoConfig);
 
     // Try to load document ID from URL or localStorage if not provided
     if (urlDocId) {
-      console.log(`Loading shared document from URL: ${urlDocId}`);
+      console.log(`[Doc] Loading shared document from URL: ${urlDocId}`);
       documentId = urlDocId;
       localStorage.setItem(this.localStorageKey, urlDocId);
     } else {
@@ -80,16 +84,16 @@ export class FolkAutomerge {
 
       if (savedDocId) {
         // Use the saved document ID
-        console.log(`Loading existing document: ${savedDocId}`);
+        console.log(`[Doc] Loading existing document: ${savedDocId}`);
         documentId = savedDocId;
       } else if (!documentId) {
-        // Create a new document ID if none provided
-        documentId = `doc-${Math.floor(Math.random() * 1000000)}`;
-        console.log(`Creating new document: ${documentId}`);
+        // Use the generated document ID
+        documentId = effectiveDocId;
+        console.log(`[Doc] Using generated document ID: ${documentId}`);
         localStorage.setItem(this.localStorageKey, documentId);
       } else {
         // Use the provided document ID
-        console.log(`Using provided document: ${documentId}`);
+        console.log(`[Doc] Using provided document ID: ${documentId}`);
         localStorage.setItem(this.localStorageKey, documentId);
       }
     }
@@ -131,7 +135,10 @@ export class FolkAutomerge {
     });
 
     // Connect to the network
-    this.networkAdapter.connect(peerId as any);
+    if (this.networkAdapter) {
+      console.log(`[Network] Connecting with peer ID: ${peerId}`);
+      this.networkAdapter.connect(peerId as any);
+    }
   }
 
   /**
@@ -190,14 +197,11 @@ export class FolkAutomerge {
    * Generate a shareable URL for this document
    */
   generateShareableUrl(): string {
-    if (!this.networkAdapter) {
-      throw new Error('Network adapter not initialized');
-    }
-
     // Create URL with document ID (which is also the room ID)
     const url = new URL(window.location.href);
     url.searchParams.set('doc', this.documentId);
 
+    console.log(`[Share] Generated shareable URL with document ID: ${this.documentId}`);
     return url.toString();
   }
 
@@ -208,7 +212,6 @@ export class FolkAutomerge {
     if (!this.networkAdapter) {
       return 0;
     }
-
     return this.networkAdapter.getConnectedPeers().length;
   }
 
@@ -290,5 +293,13 @@ export class FolkAutomerge {
         });
       });
     });
+  }
+
+  /**
+   * Check if local storage is being used
+   */
+  public isUsingLocalStorage(): boolean {
+    // Check if the storage adapter is configured in the repo
+    return false; // Currently hardcoded to false since storage is commented out
   }
 }

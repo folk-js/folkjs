@@ -42,7 +42,8 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
       const roomId = options.roomId || this.generateRoomId();
       this.mqttTopic = `folkcanvas/automerge/${roomId}`;
 
-      console.log(`Connecting to MQTT broker: ${options.url} with topic ${this.mqttTopic}`);
+      console.log(`[MQTT] Setting up signaling with topic ${this.mqttTopic}`);
+      console.log(`[MQTT] Room ID: ${roomId}`);
 
       // Connect to the MQTT broker
       this.mqttClient = mqtt.connect(options.url, {
@@ -55,46 +56,55 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
 
       // Set connection timeout
       const connectionTimeout = setTimeout(() => {
-        console.warn(`Connection to MQTT broker ${options.url} timed out.`);
+        console.warn(`[MQTT] Connection to broker ${options.url} timed out.`);
       }, 7000);
 
-      // Set up MQTT event handlers
+      // Handle connection
       this.mqttClient.on('connect', () => {
+        console.log(`[MQTT] Connected to broker: ${options.url}`);
         clearTimeout(connectionTimeout);
-        console.log(`Connected to MQTT broker: ${options.url}`);
-
-        // Subscribe to WebRTC signaling topics
-        this.mqttClient?.subscribe(`${this.mqttTopic}/offer`, { qos: 0 });
-        this.mqttClient?.subscribe(`${this.mqttTopic}/answer`, { qos: 0 });
-        this.mqttClient?.subscribe(`${this.mqttTopic}/peer-discovery`, { qos: 0 });
-
-        // Announce ourselves to other peers
-        this.announcePeer();
-
-        // Mark the adapter as ready
         this._isReady = true;
-        this.emit('ready', { network: this });
+
+        // Subscribe to the topic for this room
+        if (this.mqttClient && this.mqttTopic) {
+          console.log(`[MQTT] Subscribing to topics: ${this.mqttTopic}/#`);
+          this.mqttClient.subscribe(`${this.mqttTopic}/#`, (err) => {
+            if (err) {
+              console.error(`[MQTT] Subscription error:`, err);
+            } else {
+              console.log(`[MQTT] Successfully subscribed to ${this.mqttTopic}/#`);
+              // Announce this peer to the room
+              this.announcePeer();
+            }
+          });
+        }
       });
 
-      this.mqttClient.on('message', (topic: string, message: Buffer) => {
+      this.mqttClient.on('message', (topic, message) => {
         try {
-          const data = JSON.parse(message.toString());
+          // Parse the message
+          const payload = JSON.parse(message.toString());
 
-          // Skip messages from ourselves
-          if (data.from === this.peerIdStr) return;
+          console.log(`[MQTT] Received message on topic: ${topic}`);
 
-          if (topic === `${this.mqttTopic}/offer` && data.to === this.peerIdStr) {
-            // Process incoming connection offer
-            this.processIncomingOffer(data.from, data.offer);
-          } else if (topic === `${this.mqttTopic}/answer` && data.to === this.peerIdStr) {
-            // Process incoming connection answer
-            this.processIncomingAnswer(data.from, data.answer);
-          } else if (topic === `${this.mqttTopic}/peer-discovery`) {
-            // Try to connect to new peers
-            this.handlePeerDiscovery(data.peerId);
+          // Handle different message types based on the topic
+          if (topic.endsWith('/announce')) {
+            // Handle peer announcement
+            console.log(`[MQTT] Peer announcement from: ${payload.peerId}`);
+            if (payload.peerId !== this.peerIdStr) {
+              this.handlePeerDiscovery(payload.peerId);
+            }
+          } else if (topic.endsWith('/offer') && payload.to === this.peerIdStr) {
+            // Handle WebRTC offer
+            console.log(`[MQTT] Received offer from: ${payload.from}`);
+            this.processIncomingOffer(payload.from, payload.offer);
+          } else if (topic.endsWith('/answer') && payload.to === this.peerIdStr) {
+            // Handle WebRTC answer
+            console.log(`[MQTT] Received answer from: ${payload.from}`);
+            this.processIncomingAnswer(payload.from, payload.answer);
           }
         } catch (error) {
-          console.error('Error processing MQTT message:', error);
+          console.error(`[MQTT] Error processing message:`, error);
         }
       });
 
@@ -116,14 +126,19 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
   }
 
   /**
-   * Announce this peer to others via MQTT
+   * Announce this peer to the room via MQTT
    */
   private announcePeer(): void {
-    console.log(`Announcing peer ${this.peerIdStr}`);
-    if (!this.mqttClient || !this.mqttTopic) return;
+    if (!this.mqttClient || !this.mqttTopic) {
+      console.warn('[MQTT] Cannot announce peer: MQTT not connected');
+      return;
+    }
 
+    console.log(`[MQTT] Announcing peer ${this.peerIdStr} to topic ${this.mqttTopic}/announce`);
+
+    // Publish an announcement message
     this.mqttClient.publish(
-      `${this.mqttTopic}/peer-discovery`,
+      `${this.mqttTopic}/announce`,
       JSON.stringify({
         peerId: this.peerIdStr,
         timestamp: Date.now(),
@@ -133,38 +148,49 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
   }
 
   /**
-   * Handle peer discovery - initiate connection to new peers
+   * Handle peer discovery via MQTT announcement
    */
   private handlePeerDiscovery(remotePeerId: string): void {
-    // Only initiate connection if we're not already connected and our peerId is "greater" to avoid duplicate connections
-    if (!this.connections.has(remotePeerId) && this.peerIdStr > remotePeerId) {
-      this.initiateConnection(remotePeerId);
+    // Skip if it's our own peer ID
+    if (remotePeerId === this.peerIdStr) {
+      return;
     }
+
+    console.log(`[MQTT] Discovered peer: ${remotePeerId}`);
+
+    // Initiate a connection to the remote peer
+    this.initiateConnection(remotePeerId);
   }
 
   /**
-   * Process an incoming WebRTC offer from a peer
+   * Process an incoming WebRTC offer
    */
   private async processIncomingOffer(remotePeerId: string, offer: string): Promise<void> {
-    console.log(`Processing incoming offer from peer ${remotePeerId}`);
+    console.log(`[RTC] Processing offer from peer: ${remotePeerId}`);
+
+    // Skip if we already have a connection to this peer
     if (this.connections.has(remotePeerId)) {
-      console.log(`Already connected to peer ${remotePeerId}, ignoring offer`);
+      console.log(`[RTC] Already connected to peer: ${remotePeerId}, ignoring offer`);
       return;
     }
 
     try {
-      // Create new WebRTC connection
+      // Create a new WebRTC connection
       const rtcConnection = new FolkRTC();
+
+      // Set up event handlers for the connection
       this.setupRTCEventHandlers(rtcConnection, remotePeerId);
 
-      // Create answer for the offer
+      // Process the offer and create an answer
       const answer = await rtcConnection.createAnswer(offer);
+      console.log(`[RTC] Created answer for peer: ${remotePeerId}`);
 
       // Store the connection
       this.connections.set(remotePeerId, rtcConnection);
 
-      // Send the answer back via MQTT
+      // Send the answer via MQTT
       if (this.mqttClient && this.mqttTopic) {
+        console.log(`[MQTT] Sending answer to peer: ${remotePeerId}`);
         this.mqttClient.publish(
           `${this.mqttTopic}/answer`,
           JSON.stringify({
@@ -174,28 +200,33 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
           }),
           { qos: 0, retain: false },
         );
+      } else {
+        console.error(`[MQTT] Cannot send answer: MQTT not connected`);
       }
     } catch (error) {
-      console.error(`Error processing offer from peer ${remotePeerId}:`, error);
+      console.error(`[RTC] Error processing offer from peer ${remotePeerId}:`, error);
     }
   }
 
   /**
-   * Process an incoming WebRTC answer from a peer
+   * Process an incoming WebRTC answer
    */
   private async processIncomingAnswer(remotePeerId: string, answer: string): Promise<void> {
-    console.log(`Processing incoming answer from peer ${remotePeerId}`);
+    console.log(`[RTC] Processing answer from peer: ${remotePeerId}`);
+
+    // Get the connection for this peer
     const rtcConnection = this.connections.get(remotePeerId);
     if (!rtcConnection) {
-      console.error(`No pending connection for peer ${remotePeerId}`);
+      console.error(`[RTC] No connection found for peer: ${remotePeerId}`);
       return;
     }
 
     try {
-      // Set the remote answer to complete the connection
+      // Process the answer
       await rtcConnection.setAnswer(answer);
+      console.log(`[RTC] Successfully processed answer from peer: ${remotePeerId}`);
     } catch (error) {
-      console.error(`Error processing answer from peer ${remotePeerId}:`, error);
+      console.error(`[RTC] Error processing answer from peer ${remotePeerId}:`, error);
     }
   }
 
@@ -204,19 +235,23 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
    */
   private setupRTCEventHandlers(rtcConnection: FolkRTC, remotePeerId: string): void {
     rtcConnection.onStatusChange = (status: string) => {
+      console.log(`[RTC] Connection state changed for peer ${remotePeerId}: ${status}`);
+
       if (status === 'connected') {
-        console.log(`Connected to peer: ${remotePeerId}`);
+        console.log(`[RTC] Connected to peer: ${remotePeerId}`);
         this.connectedPeers.add(remotePeerId);
         this.notifyConnectionStatusListeners(remotePeerId, true);
       } else if (status === 'disconnected' || status === 'failed' || status === 'closed') {
-        console.log(`Disconnected from peer: ${remotePeerId}`);
-        this.connections.delete(remotePeerId);
+        console.log(`[RTC] Disconnected from peer: ${remotePeerId}`);
         this.connectedPeers.delete(remotePeerId);
+        this.connections.delete(remotePeerId);
         this.notifyConnectionStatusListeners(remotePeerId, false);
       }
     };
 
     rtcConnection.onMessage = (message: string) => {
+      console.log(`[RTC] Received message from peer: ${remotePeerId} (${message.length} bytes)`);
+
       try {
         // Convert the message to a Uint8Array for Automerge
         const binaryData = this.stringToUint8Array(message);
@@ -232,7 +267,7 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
         // Emit message event
         this.emit('message', msg);
       } catch (error) {
-        console.error('Error processing sync message:', error);
+        console.error(`[RTC] Error processing message from peer ${remotePeerId}:`, error);
       }
     };
   }
@@ -241,24 +276,31 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
    * Initiate a WebRTC connection to a remote peer
    */
   public async initiateConnection(remotePeerId: string): Promise<void> {
+    console.log(`[RTC] Initiating connection to peer: ${remotePeerId}`);
+
+    // Skip if we already have a connection to this peer
     if (this.connections.has(remotePeerId)) {
-      console.log(`Already connected or connecting to peer ${remotePeerId}`);
+      console.log(`[RTC] Already connected to peer: ${remotePeerId}`);
       return;
     }
 
-    // Create new WebRTC connection
+    // Create a new WebRTC connection
     const rtcConnection = new FolkRTC();
+
+    // Set up event handlers for the connection
     this.setupRTCEventHandlers(rtcConnection, remotePeerId);
 
     try {
       // Create an offer for the connection
       const offer = await rtcConnection.createOffer();
+      console.log(`[RTC] Created offer for peer: ${remotePeerId}`);
 
       // Store the connection
       this.connections.set(remotePeerId, rtcConnection);
 
       // Send the offer via MQTT
       if (this.mqttClient && this.mqttTopic) {
+        console.log(`[MQTT] Sending offer to peer: ${remotePeerId}`);
         this.mqttClient.publish(
           `${this.mqttTopic}/offer`,
           JSON.stringify({
@@ -268,9 +310,11 @@ export class AutomergeRTCAdapter extends NetworkAdapter {
           }),
           { qos: 0, retain: false },
         );
+      } else {
+        console.error(`[MQTT] Cannot send offer: MQTT not connected`);
       }
     } catch (error) {
-      console.error(`Error initiating connection to peer ${remotePeerId}:`, error);
+      console.error(`[RTC] Error initiating connection to peer ${remotePeerId}:`, error);
     }
   }
 

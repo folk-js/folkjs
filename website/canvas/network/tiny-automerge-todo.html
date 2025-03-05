@@ -164,6 +164,10 @@
         margin-right: 8px;
       }
 
+      .storage-info .indicator.disconnected {
+        background-color: #bdbdbd;
+      }
+
       .share-section {
         margin-top: 12px;
         padding: 8px 12px;
@@ -350,6 +354,18 @@
       // Display document ID
       documentIdElement.textContent = `ID: ${automerge.getDocumentId().substring(0, 8)}...`;
 
+      // Update storage status
+      const storageStatusElement = document.querySelector('.storage-info .status span:last-child');
+      if (storageStatusElement) {
+        if (automerge.isUsingLocalStorage()) {
+          storageStatusElement.textContent = 'Saved to local storage';
+        } else {
+          storageStatusElement.textContent = 'In-memory only (not saved)';
+          document.querySelector('.storage-info .indicator').classList.add('disconnected');
+          document.querySelector('.storage-info .indicator').classList.remove('connected');
+        }
+      }
+
       // Update connection status
       automerge.onPeerConnection((count) => {
         if (count > 0) {
@@ -365,20 +381,33 @@
           peerCount.textContent = 'No peers connected';
           peerIndicator.classList.remove('connected');
           peerIndicator.classList.add('disconnected');
-          connectionStatus.textContent = 'Ready to connect';
+
+          // Check if URL has a doc parameter
+          if (urlDocId) {
+            connectionStatus.textContent = 'Waiting for peers...';
+          } else {
+            connectionStatus.textContent = 'Ready to connect';
+          }
+
           shareButton.disabled = false;
         }
       });
 
-      // Enable share button once network is ready
-      setTimeout(() => {
-        connectionStatus.textContent = 'Ready to connect';
-        shareButton.disabled = false;
-      }, 2000);
+      // Initialize connection status
+      if (urlDocId) {
+        connectionStatus.textContent = 'Waiting for peers...';
+      } else {
+        // Enable share button after a short delay to ensure network is ready
+        setTimeout(() => {
+          connectionStatus.textContent = 'Ready to connect';
+          shareButton.disabled = false;
+        }, 1000);
+      }
 
       // Handle share button click
       shareButton.addEventListener('click', () => {
         try {
+          // Generate shareable URL
           const url = automerge.generateShareableUrl();
           sharedUrl.value = url;
           sharedUrl.style.display = 'block';
@@ -387,10 +416,16 @@
           sharedUrl.select();
           document.execCommand('copy');
 
+          // Show success notification
           showNotification('Share link copied to clipboard!');
+
+          // Update UI to indicate sharing is active
+          if (connectionStatus.textContent === 'Ready to connect') {
+            connectionStatus.textContent = 'Waiting for peers...';
+          }
         } catch (error) {
           console.error('Error generating share URL:', error);
-          showNotification('Error generating share URL. Please try again.');
+          showNotification('Error generating share URL: ' + error.message);
         }
       });
 
