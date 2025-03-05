@@ -28,6 +28,7 @@
     "leaflet": "^1.9.4",
     "mqtt": "^5.10.4",
     "partysocket": "^1.0.3",
+    "peerjs": "^1.5.4",
     "perfect-arrows": "^0.3.7",
     "perfect-freehand": "^1.2.2",
     "uuid": "^11.1.0",

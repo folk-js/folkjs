@@ -349,7 +349,10 @@
       const urlDocId = urlParams.get('doc');
 
       // Initialize FolkAutomerge with local storage
-      let automerge = new FolkAutomerge('folk-todo-list', urlDocId);
+      let automerge = new FolkAutomerge({
+        docId: urlDocId,
+        storeName: 'folk-todo-list',
+      });
 
       // Display document ID
       documentIdElement.textContent = `ID: ${automerge.getDocumentId().substring(0, 8)}...`;
