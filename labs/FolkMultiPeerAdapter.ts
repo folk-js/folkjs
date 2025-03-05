@@ -450,7 +450,9 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
   }
 
   #notifyPeersChanged(): void {
-    this.#peerListeners.forEach((listener) => listener(this.getPeers()));
+    // Check actual connection status before notifying
+    const activePeers = this.getPeers();
+    this.#peerListeners.forEach((listener) => listener(activePeers));
   }
 
   /**
@@ -542,9 +544,12 @@ export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork 
    * Get all currently connected peers
    */
   getPeers(): string[] {
-    // Only return peers that have active, ready connections
+    // Only return peers that have active, ready connections AND check actual WebRTC connection state
     return Array.from(this.#connections.entries())
-      .filter(([_, info]) => info.ready)
+      .filter(([_, info]) => {
+        // Check both our ready flag and the actual WebRTC connection state
+        return info.ready && info.conn.open && info.conn.dataChannel && info.conn.dataChannel.readyState === 'open';
+      })
       .map(([peerId, _]) => peerId);
   }
 }
