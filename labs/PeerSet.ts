@@ -12,8 +12,8 @@ export class PeerSet {
   private peerId: string;
   private setId: string;
   private gunServer: string = 'https://gun-manhattan.herokuapp.com/gun';
-  private heartbeatInterval = 60000; // 1 minute
-  private cleanupInterval = 180000; // 3 minutes
+  private heartbeatInterval = 15000; // 15 seconds
+  private cleanupInterval = 60000; // 1 minute
   private onPeerJoinedCallbacks: ((peerId: string) => void)[] = [];
   private onPeerLeftCallbacks: ((peerId: string) => void)[] = [];
   private peers: Map<string, number> = new Map(); // peerId -> timestamp
@@ -129,7 +129,9 @@ export class PeerSet {
    * Get all known peers
    */
   getPeers(): string[] {
-    return Array.from(this.peers.keys());
+    const peers = Array.from(this.peers.keys());
+    console.log(`[PeerSet] getPeers: ${this.peers}`);
+    return peers;
   }
 
   /**

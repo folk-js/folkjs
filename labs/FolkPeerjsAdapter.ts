@@ -11,16 +11,16 @@ import { DataConnection, Peer } from 'peerjs';
 import { PeerSet } from './PeerSet';
 
 /**
- * FolkPeerjsAdapter - Network adapter using PeerSpace for discovery and PeerJS for WebRTC connections
+ * FolkPeerjsAdapter - Network adapter using PeerSet for discovery and PeerJS for WebRTC connections
  *
  * This adapter:
- * 1. Uses PeerSpace to discover peers
+ * 1. Uses PeerSet to discover peers
  * 2. Automatically creates and manages PeerJS connections to all discovered peers
  * 3. Presents a single NetworkAdapter interface to Automerge, hiding the complexity of multiple connections
  */
 export class FolkPeerjsAdapter extends NetworkAdapter {
   private peer: Peer;
-  private peerSpace: PeerSet;
+  private peerSet: PeerSet;
   private connections: Map<string, PeerjsNetworkAdapter> = new Map();
   private isPeerReady = false;
   private connectionListeners: ((peerId: string, connected: boolean) => void)[] = [];
@@ -43,12 +43,21 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
     // Initialize PeerJS
     this.peer = new Peer(options.peerId);
 
-    // Initialize PeerSpace with the same IDs
-    this.peerSpace = new PeerSet(options.peerId, this.roomId);
+    // Initialize PeerSet with the same IDs
+    this.peerSet = new PeerSet(options.peerId, this.roomId);
 
     // Set up event handlers
     this.setupPeerEvents();
-    this.setupPeerSpace();
+    this.setupPeerSpaceEvents();
+    this.connectToInitialPeers();
+  }
+
+  private connectToInitialPeers(): void {
+    // Get all connected peers from PeerSet
+    const connectedPeers = this.peerSet.getPeers();
+
+    // Connect to each connected peer
+    connectedPeers.forEach((peerId) => this.connectToPeer(peerId));
   }
 
   /**
@@ -79,22 +88,21 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
   }
 
   /**
-   * Set up PeerSpace event handlers
+   * Set up PeerSet event handlers
    */
-  private setupPeerSpace(): void {
+  private setupPeerSpaceEvents(): void {
     // Handle peers joining the space
-    this.peerSpace.onPeerJoined((remotePeerId) => {
+    this.peerSet.onPeerJoined((remotePeerId) => {
       console.log(`[FolkPeerjsAdapter] Peer joined: ${remotePeerId}`);
 
-      // Connect to the new peer if we don't have a connection and our ID is "greater"
-      // (to avoid both peers initiating connections to each other)
-      if (!this.connections.has(remotePeerId) && (this.peerId as string) > remotePeerId) {
+      // Connect to the new peer if we don't have a connection
+      if (!this.connections.has(remotePeerId)) {
         this.connectToPeer(remotePeerId);
       }
     });
 
     // Handle peers leaving the space
-    this.peerSpace.onPeerLeft((remotePeerId) => {
+    this.peerSet.onPeerLeft((remotePeerId) => {
       console.log(`[FolkPeerjsAdapter] Peer left: ${remotePeerId}`);
 
       // Clean up the connection
@@ -179,7 +187,7 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
       this.isReady = true;
 
       // Connect the PeerSpace to start discovering peers
-      this.peerSpace.connect();
+      this.peerSet.connect();
 
       // Notify that we're ready
       this.emit('ready', { network: this } as any);
@@ -275,7 +283,7 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
    */
   public connect(peerId: PeerId, peerMetadata?: PeerMetadata): void {
     console.log(`[FolkPeerjsAdapter] Connect called with peer ID: ${peerId}`);
-    // Nothing more to do here as PeerSpace handles peer discovery
+    // Nothing more to do here as PeerSet handles peer discovery
   }
 
   /**
@@ -285,7 +293,7 @@ export class FolkPeerjsAdapter extends NetworkAdapter {
     console.log(`[FolkPeerjsAdapter] Disconnecting`);
 
     // Disconnect PeerSpace
-    this.peerSpace.disconnect();
+    this.peerSet.disconnect();
 
     // Close all connections
     for (const [peerId, adapter] of this.connections.entries()) {

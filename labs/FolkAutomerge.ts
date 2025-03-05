@@ -32,7 +32,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
   private documentId: string = '';
   private handle: DocHandle<T>;
   private onChangesCallback: ((doc: T) => void) | null = null;
-  private localStorageKey: string;
   private networkAdapter: FolkPeerjsAdapter | null = null;
   private onPeerConnectionCallback: ((count: number) => void) | null = null;
 
@@ -41,7 +40,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
    * @param options - Configuration options for the FolkAutomerge instance
    */
   constructor(options: { peerId: string; docId?: string; initialState?: T; schema?: any; storeName?: string }) {
-    this.localStorageKey = `folk-automerge-docid-${options.storeName || 'default'}`;
     const peerId = options.peerId || this.#createPeerId();
     // Parse URL params to check for document ID
     const urlParams = new URLSearchParams(window.location.search);
@@ -73,30 +71,10 @@ export class FolkAutomerge<T extends TodoListDoc> {
       });
     }
 
-    // Try to load document ID from URL or localStorage if not provided
+    // Try to load document ID from URL or create a new one if not provided
     if (urlDocId) {
       console.log(`[Doc] Loading shared document from URL: ${urlDocId}`);
       this.documentId = urlDocId;
-      localStorage.setItem(this.localStorageKey, urlDocId);
-    } else {
-      // Try to load document ID from localStorage if not provided
-      const savedDocId = !options.docId && localStorage.getItem(this.localStorageKey);
-
-      if (savedDocId) {
-        // Use the saved document ID
-        console.log(`[Doc] Loading existing document: ${savedDocId}`);
-        this.documentId = savedDocId;
-      } else if (!options.docId) {
-        // Use the generated document ID
-        this.documentId = effectiveDocId;
-        console.log(`[Doc] Using generated document ID: ${this.documentId}`);
-        localStorage.setItem(this.localStorageKey, this.documentId);
-      } else {
-        // Use the provided document ID
-        this.documentId = options.docId;
-        console.log(`[Doc] Using provided document ID: ${this.documentId}`);
-        localStorage.setItem(this.localStorageKey, this.documentId);
-      }
     }
 
     // Find the document
@@ -109,8 +87,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
       this.handle = this.repo.create<T>();
       // Update the document ID
       this.documentId = this.handle.documentId;
-      // Save the document ID to localStorage
-      localStorage.setItem(this.localStorageKey, this.documentId);
     }
 
     // Initialize the document with empty todos array if it doesn't exist
@@ -132,12 +108,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
         }
       }
     });
-
-    // Connect to the network
-    if (this.networkAdapter) {
-      console.log(`[Network] Connecting with peer ID: ${options.peerId}`);
-      this.networkAdapter.connect(options.peerId as any);
-    }
   }
 
   #createPeerId(): string {
