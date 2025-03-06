@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebLLM Demo with In-Browser Model</title>
+    <style>
+      html {
+        height: 100%;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+      }
+
+      folk-shape {
+        border: 1px solid black;
+        border-radius: 4px;
+      }
+
+      folk-webllm {
+        display: block;
+        width: 100%;
+        height: 100%;
+        min-height: 1lh;
+        padding: 0.5rem;
+      }
+
+      folk-timer {
+        padding: 0.5rem;
+      }
+
+      p {
+        font-style: italic;
+        font-size: 1rem;
+        text-align: center;
+        margin: 0;
+        padding: 8px;
+        background-color: #f8f9fa;
+      }
+
+      .model-info {
+        font-size: 0.8rem;
+        margin-top: 0.5rem;
+        text-align: center;
+        color: #666;
+      }
+
+      .model-status {
+        position: absolute;
+        top: 0;
+        right: 0;
+        padding: 4px 8px;
+        font-size: 0.7rem;
+        background-color: #eee;
+        border-radius: 0 0 0 4px;
+        color: #555;
+      }
+
+      .model-selector {
+        margin-top: 10px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <p>
+      Note: This demo requires WebGPU support in your browser. It works best in Chrome 113+ with a GPU. The model will
+      take some time to download on first use.
+    </p>
+    <folk-shape x="100" y="100" width="250">
+      <ul id="recipe" class="wprm-recipe-ingredients">
+        <li class="wprm-recipe-ingredient" style="list-style-type: disc" data-uid="0">
+          <span class="wprm-recipe-ingredient-amount">500</span>
+          <span class="wprm-recipe-ingredient-unit">g</span>
+          <span class="wprm-recipe-ingredient-name">all purpose flour King Arthur brand is recommended</span>
+          <span class="wprm-recipe-ingredient-notes wprm-recipe-ingredient-notes-faded"
+            >about 3 1/2 cups, using 'scoop and swipe' method</span
+          >
+        </li>
+        <li class="wprm-recipe-ingredient" style="list-style-type: disc" data-uid="1">
+          <span class="wprm-recipe-ingredient-amount">360</span>
+          <span class="wprm-recipe-ingredient-unit">g</span>
+          <span class="wprm-recipe-ingredient-name">water</span>
+          <span class="wprm-recipe-ingredient-notes wprm-recipe-ingredient-notes-faded">about 1 1/2 cups + 1 Tbsp</span>
+        </li>
+        <li class="wprm-recipe-ingredient" style="list-style-type: disc" data-uid="2">
+          <span class="wprm-recipe-ingredient-amount">10</span> <span class="wprm-recipe-ingredient-unit">g</span>
+          <span class="wprm-recipe-ingredient-name">salt</span>
+          <span class="wprm-recipe-ingredient-notes wprm-recipe-ingredient-notes-faded">about 2 tsp</span>
+        </li>
+        <li class="wprm-recipe-ingredient" style="list-style-type: disc" data-uid="3">
+          <span class="wprm-recipe-ingredient-amount">3</span> <span class="wprm-recipe-ingredient-unit">g</span>
+          <span class="wprm-recipe-ingredient-name">instant yeast</span>
+          <span class="wprm-recipe-ingredient-notes wprm-recipe-ingredient-notes-faded"
+            >about 1 tsp; also known as Quick Rise or Rapid Rise yeast</span
+          >
+        </li>
+        <li class="wprm-recipe-ingredient" style="list-style-type: disc" data-uid="4">
+          <span class="wprm-recipe-ingredient-amount">25</span> <span class="wprm-recipe-ingredient-unit">g</span>
+          <span class="wprm-recipe-ingredient-name">honey</span>
+          <span class="wprm-recipe-ingredient-notes wprm-recipe-ingredient-notes-faded">about 1 Tbsp</span>
+        </li>
+      </ul>
+    </folk-shape>
+
+    <folk-shape x="400" y="100" width="450" height="400">
+      <div class="model-status" id="model-status">Initializing...</div>
+      <folk-webllm></folk-webllm>
+      <div class="model-info" id="model-info">Model information will appear here</div>
+    </folk-shape>
+
+    <folk-shape x="700" y="470">
+      <folk-timer></folk-timer>
+    </folk-shape>
+
+    <folk-event-propagator
+      source="#recipe"
+      target="folk-webllm"
+      trigger="click"
+      expression="prompt: `Double this list of ingredients and format it nicely as HTML with the measurements and notes preserved. Format the output as a clean list. Here are the ingredients:\n${from.innerHTML}`"
+    ></folk-event-propagator>
+
+    <folk-event-propagator source="folk-webllm" target="folk-timer" trigger="started" expression="restart(): true">
+    </folk-event-propagator>
+
+    <folk-event-propagator
+      source="folk-webllm"
+      target="folk-timer"
+      trigger="finished"
+      expression="stop(): true"
+    ></folk-event-propagator>
+
+    <script type="module">
+      import '../src/folk-timer.ts';
+      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-event-propagator.ts';
+
+      // Import WebLLM directly from CDN
+      import * as webllm from 'https://esm.run/@mlc-ai/web-llm';
+
+      // Define the folk-webllm component
+      class FolkWebLLM extends HTMLElement {
+        constructor() {
+          super();
+
+          // Property to store prompt
+          this._prompt = '';
+
+          this.attachShadow({ mode: 'open' });
+          this.shadowRoot.innerHTML = `
+            <style>
+              :host {
+                display: block;
+                width: 100%;
+                height: 100%;
+                overflow: auto;
+              }
+              .output {
+                white-space: pre-wrap;
+                font-family: system-ui, sans-serif;
+                line-height: 1.5;
+                padding: 8px;
+              }
+              .loading {
+                color: #666;
+                font-style: italic;
+              }
+              .progress {
+                margin-top: 12px;
+                width: 100%;
+                height: 8px;
+                background-color: #eee;
+                border-radius: 4px;
+                overflow: hidden;
+              }
+              .progress-bar {
+                height: 100%;
+                background-color: #4caf50;
+                width: 0%;
+                transition: width 0.3s;
+              }
+              .model-selector {
+                margin-top: 16px;
+                padding: 8px;
+                background-color: #f5f5f5;
+                border-radius: 4px;
+              }
+              .model-selector select {
+                width: 100%;
+                padding: 4px;
+              }
+              .model-selector button {
+                margin-top: 8px;
+                padding: 4px 8px;
+                background-color: #4caf50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+              }
+            </style>
+            <div class="output">
+              <div class="loading">Checking available models...</div>
+              <div class="progress">
+                <div class="progress-bar" id="progress-bar"></div>
+              </div>
+              <div class="model-selector" id="model-selector"></div>
+            </div>
+          `;
+
+          this.outputEl = this.shadowRoot.querySelector('.output');
+          this.progressBar = this.shadowRoot.querySelector('#progress-bar');
+          this.modelSelectorEl = this.shadowRoot.querySelector('#model-selector');
+          this.statusEl = document.getElementById('model-status');
+          this.modelInfoEl = document.getElementById('model-info');
+
+          // Initialize by checking available models
+          this.checkAvailableModels();
+        }
+
+        // Define the prompt property that can be set by the propagator
+        get prompt() {
+          return this._prompt;
+        }
+
+        set prompt(value) {
+          this._prompt = value;
+          // Process the prompt when it's set
+          this.processPrompt(value);
+        }
+
+        updateProgress(progress, stage) {
+          if (this.progressBar) {
+            this.progressBar.style.width = `${progress * 100}%`;
+          }
+          if (this.statusEl) {
+            this.statusEl.textContent = stage;
+          }
+        }
+
+        async checkAvailableModels() {
+          try {
+            // Access the model list from appConfig
+            console.log('WebLLM appConfig:', webllm.prebuiltAppConfig);
+
+            const modelList = webllm.prebuiltAppConfig.model_list || [];
+            console.log('Available WebLLM models:', modelList);
+
+            if (!modelList || Object.keys(modelList).length === 0) {
+              this.outputEl.innerHTML = `<div class="output">
+                No models found in WebLLM configuration. Please check the console for details.
+              </div>`;
+              return;
+            }
+
+            // Filter models by size
+            let smallModels = [];
+            let largeModels = [];
+
+            for (const modelId in modelList) {
+              const model = modelList[modelId];
+              console.log(`Model ${modelId}:`, model);
+              if (model.model_size_in_b && model.model_size_in_b <= 3) {
+                smallModels.push(model);
+              } else {
+                largeModels.push(model);
+              }
+            }
+
+            // Combine small and large models, prioritizing small models first
+            const availableModels = [...smallModels, ...largeModels];
+
+            if (availableModels.length === 0) {
+              this.outputEl.innerHTML = `<div class="output">
+                No models found in WebLLM configuration. Please check the console for details.
+              </div>`;
+              return;
+            }
+
+            // Create a model selector using model_id for both display and value
+            this.modelSelectorEl.innerHTML = `
+              <p>Select a model to load:</p>
+              <select id="model-select">
+                ${availableModels
+                  .map((model) => {
+                    const modelId = model.model_id;
+                    let displayName = modelId;
+                    if (model.model_size_in_b) {
+                      displayName += ` (${model.model_size_in_b}B)`;
+                    }
+                    return `<option value="${modelId}">${displayName}</option>`;
+                  })
+                  .join('')}
+              </select>
+              <button id="load-model-btn">Load Model</button>
+            `;
+
+            // Add event listener to the load button
+            const loadBtn = this.shadowRoot.querySelector('#load-model-btn');
+            loadBtn.addEventListener('click', () => {
+              const selectEl = this.shadowRoot.querySelector('#model-select');
+              const selectedModel = selectEl.value;
+              this.initializeModel(selectedModel);
+            });
+
+            // If we have at least one small model, preselect it
+            if (smallModels.length > 0) {
+              const selectEl = this.shadowRoot.querySelector('#model-select');
+              selectEl.value = smallModels[0].model_id;
+            }
+          } catch (error) {
+            console.error('Error checking models:', error);
+            this.outputEl.innerHTML = `<div class="output">
+              Error checking available models: ${error.message}
+            </div>`;
+          }
+        }
+
+        async initializeModel(modelId) {
+          try {
+            // Hide the model selector
+            this.modelSelectorEl.style.display = 'none';
+
+            this.outputEl.innerHTML = `
+              <div class="loading">Initializing ${modelId} model...</div>
+              <div class="progress">
+                <div class="progress-bar" id="progress-bar"></div>
+              </div>
+            `;
+            this.progressBar = this.shadowRoot.querySelector('#progress-bar');
+
+            // Progress callback to update UI
+            const initProgressCallback = (progress) => {
+              this.updateProgress(progress.progress, progress.text);
+            };
+
+            console.log(`Attempting to load model with ID: ${modelId}`);
+
+            // Initialize engine with the selected model from CDN
+            this.engine = await webllm.CreateMLCEngine(modelId, {
+              initProgressCallback,
+            });
+
+            // Update model info
+            const modelInfo = webllm.prebuiltAppConfig.model_list[modelId];
+            let infoText = `Using ${modelId}`;
+            if (modelInfo && modelInfo.model_size_in_b) {
+              infoText += `, a ${modelInfo.model_size_in_b}B parameter model`;
+            }
+            infoText += ` running in your browser`;
+            this.modelInfoEl.textContent = infoText;
+
+            this.outputEl.innerHTML = `<div class="output">
+              Model loaded! Click on the recipe to double the ingredients.
+            </div>`;
+            this.statusEl.textContent = 'Ready';
+            this.statusEl.style.backgroundColor = '#d4edda';
+            this.statusEl.style.color = '#155724';
+          } catch (error) {
+            this.outputEl.innerHTML = `<div class="output">
+              Error loading model: ${error.message}
+              
+              You may need to try a different browser with WebGPU support.
+              <div class="model-selector">
+                <button id="back-to-models-btn">Back to Model Selection</button>
+              </div>
+            </div>`;
+
+            // Add back button listener
+            const backBtn = this.shadowRoot.querySelector('#back-to-models-btn');
+            if (backBtn) {
+              backBtn.addEventListener('click', () => {
+                this.checkAvailableModels();
+              });
+            }
+
+            this.statusEl.textContent = 'Error';
+            this.statusEl.style.backgroundColor = '#f8d7da';
+            this.statusEl.style.color = '#721c24';
+            console.error(error);
+          }
+        }
+
+        // Handle prompt input
+        async processPrompt(prompt) {
+          if (!prompt || !this.engine) return;
+
+          try {
+            this.dispatchEvent(new CustomEvent('started'));
+
+            this.outputEl.innerHTML = '<div class="loading">Generating response...</div>';
+            this.statusEl.textContent = 'Generating';
+            this.statusEl.style.backgroundColor = '#fff3cd';
+            this.statusEl.style.color = '#856404';
+
+            const messages = [
+              {
+                role: 'system',
+                content: 'You are a helpful assistant that formats recipes. Output your response as well-formed HTML.',
+              },
+              { role: 'user', content: prompt },
+            ];
+
+            // Use streaming for real-time output
+            let generatedText = '';
+            const chunks = await this.engine.chat.completions.create({
+              messages,
+              temperature: 0.1,
+              stream: true,
+            });
+
+            // Process streaming response
+            for await (const chunk of chunks) {
+              const content = chunk.choices[0]?.delta?.content || '';
+              generatedText += content;
+              this.outputEl.innerHTML = generatedText;
+            }
+
+            this.statusEl.textContent = 'Done';
+            this.statusEl.style.backgroundColor = '#d4edda';
+            this.statusEl.style.color = '#155724';
+
+            this.dispatchEvent(new CustomEvent('finished'));
+          } catch (error) {
+            this.outputEl.innerHTML = `Error generating response: ${error.message}`;
+            this.statusEl.textContent = 'Error';
+            this.statusEl.style.backgroundColor = '#f8d7da';
+            this.statusEl.style.color = '#721c24';
+            console.error(error);
+            this.dispatchEvent(new CustomEvent('finished'));
+          }
+        }
+      }
+
+      // Register the component
+      customElements.define('folk-webllm', FolkWebLLM);
+
+      // The propagator will now set the prompt property directly,
+      // so we don't need to handle the propagate event manually
+    </script>
+  </body>
+</html>

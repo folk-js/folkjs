@@ -15,4 +15,13 @@ export class Experimental {
     }
     return enabled;
   }
+
+  static canWebGPU() {
+    const enabled = !!(window as any).WebGPU;
+    if (!enabled) {
+      console.warn('WebGPU is not supported in this browser');
+      alert('WebGPU is not supported/enabled in this browser');
+    }
+    return enabled;
+  }
 }
