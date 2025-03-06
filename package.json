@@ -20,6 +20,7 @@
     "@babel/parser": "^7.26.2",
     "@dimforge/rapier2d-compat": "^0.14.0",
     "@lit/reactive-element": "^2.0.4",
+    "@mlc-ai/web-llm": "^0.2.78",
     "@types/uuid": "^10.0.0",
     "eventemitter3": "^5.0.1",
     "gun": "^0.2020.1240",

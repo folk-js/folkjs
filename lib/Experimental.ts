@@ -17,7 +17,7 @@ export class Experimental {
   }
 
   static canWebGPU() {
-    const enabled = !!(window as any).WebGPU;
+    const enabled = !!(navigator as any).gpu;
     if (!enabled) {
       console.warn('WebGPU is not supported in this browser');
       alert('WebGPU is not supported/enabled in this browser');
