@@ -94,17 +94,20 @@ export class FolkTransformedSpace extends FolkElement {
     const translateX = Math.random() * (max - min) + min;
     const translateY = Math.random() * (max - min) + min;
     const scaleFactor = Math.random() * 1.5 + 0.5; // Random scale between 0.5 and 2
-    const rotationAngle = Math.random() * 90; // Random rotation up to 90 degrees
+    const rotationAngle = Math.random() * 45; // Random rotation up to 90 degrees
 
     this.#matrix = new DOMMatrix()
       .translate(translateX, translateY)
       .scale(scaleFactor, scaleFactor)
-      .rotateAxisAngle(1, 0, 0, rotationAngle);
-
+      .rotateAxisAngle(1, 0, 0, rotationAngle * Math.random())
+      .rotateAxisAngle(0, 1, 0, rotationAngle * Math.random())
+      .rotateAxisAngle(0, 0, 1, rotationAngle * Math.random());
     const space = this.shadowRoot?.querySelector('.space');
     if (space instanceof HTMLElement) {
       space.style.transform = this.#matrix.toString();
     }
+
+    Gizmos.clear();
   }
 
   static projectPoint(point: Point, space: FolkTransformedSpace): Point {
