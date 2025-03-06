@@ -13,6 +13,10 @@
         background: rgb(134, 37, 37);
         border: 1px solid rgba(0, 0, 0, 0.5);
       }
+
+      folk-gizmos {
+        opacity: 0.5;
+      }
     </style>
   </head>
   <body>
@@ -43,8 +47,8 @@
         if (!isPointerDown) return;
 
         const point = {
-          x: event.clientX,
-          y: event.clientY,
+          x: event.pageX,
+          y: event.pageY,
         };
 
         const transformedPoint = FolkTransformedSpace.projectPoint(point, space);
@@ -54,12 +58,14 @@
         isPointerDown = false;
       });
 
-      document.addEventListener('click', (event) => {
+      document.addEventListener('dblclick', (event) => {
         if (event.target !== space) return;
-        const min = -50;
-        const max = 50;
-        const randomRotation = Math.random() * (max - min) + min;
-        space.rotate(randomRotation);
+        const min = -200;
+        const max = 200;
+        const translation = Math.random() * (max - min) + min;
+        space.translate2D(translation, translation);
+        space.scale(Math.random() * 2);
+        // space.rotate(45);
       });
     </script>
   </body>

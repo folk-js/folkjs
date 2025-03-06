@@ -48,6 +48,30 @@ export class FolkTransformedSpace extends FolkElement {
     Gizmos.clear();
   }
 
+  translate2D(x: number, y: number) {
+    this.#matrix = new DOMMatrix().translate(x, y);
+
+    const space = this.shadowRoot?.querySelector('.space');
+    if (space instanceof HTMLElement) {
+      space.style.transform = this.#matrix.toString();
+    }
+
+    Gizmos.clear();
+  }
+
+  scale(factor: number) {
+    this.#matrix = new DOMMatrix().scale(factor, factor);
+
+    const space = this.shadowRoot?.querySelector('.space');
+    if (space instanceof HTMLElement) {
+      space.style.transform = this.#matrix.toString();
+    }
+
+    this.translate;
+
+    Gizmos.clear();
+  }
+
   static projectPoint(point: Point, space: FolkTransformedSpace): Point {
     // Visualize the click location in screen space
     Gizmos.point(point, { color: 'red', size: 2 });
@@ -59,7 +83,7 @@ export class FolkTransformedSpace extends FolkElement {
     const pointOnTransformedSpace = inverseMatrix.transformPoint(point);
 
     // Visualize where we'll place the point on the transformed plane
-    Gizmos.point(pointOnTransformedSpace, { color: 'blue', size: 4, layer: 'transformed' });
+    Gizmos.point(pointOnTransformedSpace, { color: 'blue', size: 2, layer: 'transformed' });
 
     return pointOnTransformedSpace;
   }
