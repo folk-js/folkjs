@@ -122,10 +122,6 @@ export class FolkTransformedSpace extends FolkElement {
     const matrix = space.#matrix;
     const matrixElements = matrix.toFloat32Array();
 
-    // Extract the matrix components
-    // For a proper plane normal when scaling is involved, we need to use the adjugate of the
-    // upper-left 3x3 submatrix transposed, to get the correct normal transformation
-
     // To transform normals correctly with a matrix that includes scaling,
     // we need to use the inverse transpose of the upper 3x3 portion of the matrix
     // Fortunately, for plane normals, we can extract this directly from the inverse matrix
