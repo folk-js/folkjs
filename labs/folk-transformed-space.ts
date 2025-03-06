@@ -66,10 +66,45 @@ export class FolkTransformedSpace extends FolkElement {
     if (space instanceof HTMLElement) {
       space.style.transform = this.#matrix.toString();
     }
+  }
 
-    this.translate;
+  randomize2D() {
+    const min = -200;
+    const max = 200;
+    const translateX = Math.random() * (max - min) + min;
+    const translateY = Math.random() * (max - min) + min;
+    const scaleFactor = Math.random() * 1.5 + 0.5; // Random scale between 0.5 and 2
+    const rotationAngle = Math.random() * 90; // Random rotation up to 90 degrees
+    this.#matrix = new DOMMatrix()
+      .translate(translateX, translateY)
+      .scale(scaleFactor, scaleFactor)
+      .rotateAxisAngle(0, 0, 1, rotationAngle);
+
+    const space = this.shadowRoot?.querySelector('.space');
+    if (space instanceof HTMLElement) {
+      space.style.transform = this.#matrix.toString();
+    }
 
     Gizmos.clear();
+  }
+
+  randomize3D() {
+    const min = -200;
+    const max = 200;
+    const translateX = Math.random() * (max - min) + min;
+    const translateY = Math.random() * (max - min) + min;
+    const scaleFactor = Math.random() * 1.5 + 0.5; // Random scale between 0.5 and 2
+    const rotationAngle = Math.random() * 90; // Random rotation up to 90 degrees
+
+    this.#matrix = new DOMMatrix()
+      .translate(translateX, translateY)
+      .scale(scaleFactor, scaleFactor)
+      .rotateAxisAngle(1, 0, 0, rotationAngle);
+
+    const space = this.shadowRoot?.querySelector('.space');
+    if (space instanceof HTMLElement) {
+      space.style.transform = this.#matrix.toString();
+    }
   }
 
   static projectPoint(point: Point, space: FolkTransformedSpace): Point {
@@ -83,7 +118,7 @@ export class FolkTransformedSpace extends FolkElement {
     const pointOnTransformedSpace = inverseMatrix.transformPoint(point);
 
     // Visualize where we'll place the point on the transformed plane
-    Gizmos.point(pointOnTransformedSpace, { color: 'blue', size: 2, layer: 'transformed' });
+    Gizmos.point(pointOnTransformedSpace, { color: 'black', size: 2, layer: 'transformed' });
 
     return pointOnTransformedSpace;
   }

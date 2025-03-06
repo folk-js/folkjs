@@ -60,12 +60,7 @@
 
       document.addEventListener('dblclick', (event) => {
         if (event.target !== space) return;
-        const min = -200;
-        const max = 200;
-        const translation = Math.random() * (max - min) + min;
-        space.translate2D(translation, translation);
-        space.scale(Math.random() * 2);
-        // space.rotate(45);
+        space.randomize2D();
       });
     </script>
   </body>
