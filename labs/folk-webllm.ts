@@ -123,11 +123,7 @@ export class FolkWebLLM extends HTMLElement {
           white-space: nowrap;
         }
         .output {
-          padding: 8px;
-          white-space: pre-wrap;
-          line-height: 1.5;
-          overflow: auto;
-          min-height: calc(100% - 40px);
+          padding: 1em;
         }
         .loading {
           color: #666;
@@ -328,6 +324,7 @@ export class FolkWebLLM extends HTMLElement {
       ];
 
       let generatedText = '';
+
       const chunks = await this.engine.chat.completions.create({
         messages,
         temperature: 0.1,
@@ -337,11 +334,16 @@ export class FolkWebLLM extends HTMLElement {
       for await (const chunk of chunks) {
         const content = chunk.choices[0]?.delta?.content || '';
         generatedText += content;
-        this.outputEl.innerHTML = generatedText;
+
+        const processedContent = this.processMarkdownCodeBlocks(generatedText);
+        const cleanContent = this.simpleSanitizeHtml(processedContent);
+
+        this.outputEl.innerHTML = cleanContent;
       }
 
       this.updateStatus('Done', 'success');
       console.log('generatedText', generatedText);
+
       this.dispatchEvent(new CustomEvent('finished'));
     } catch (error) {
       console.error(error);
@@ -351,6 +353,61 @@ export class FolkWebLLM extends HTMLElement {
       );
       this.dispatchEvent(new CustomEvent('finished'));
     }
+  }
+
+  private processMarkdownCodeBlocks(text: string): string {
+    // More flexible regex to capture code blocks with different formatting
+    const codeBlockRegex = /```(?:html|)?\s*([\s\S]*?)\s*```/g;
+
+    let result = text;
+
+    // Check if there are any code blocks
+    if (text.includes('```')) {
+      // First try to find HTML code blocks
+      const htmlMatches = text.match(/```(?:html)?\s*([\s\S]*?)\s*```/);
+      if (htmlMatches && htmlMatches[1]) {
+        // We found an HTML code block, use just its contents
+        result = htmlMatches[1].trim();
+      } else {
+        // No HTML block, use general code block extractor
+        result = text.replace(codeBlockRegex, (_, codeContent) => {
+          return codeContent.trim();
+        });
+
+        // If we still have backticks in the result, remove them
+        if (result.includes('```')) {
+          result = result.replace(/```/g, '');
+        }
+      }
+
+      // Remove any "Note:" or additional commentary after the code
+      const noteIndex = result.indexOf('Note:');
+      if (noteIndex > 0) {
+        result = result.substring(0, noteIndex).trim();
+      }
+    }
+
+    return result;
+  }
+
+  private simpleSanitizeHtml(html: string): string {
+    const lastLtIndex = html.lastIndexOf('<');
+    const lastGtIndex = html.lastIndexOf('>');
+
+    // If there's a < character after the last > character, it's an incomplete tag
+    if (lastLtIndex > lastGtIndex) {
+      return html.substring(0, lastLtIndex);
+    }
+
+    // Also check for incomplete HTML entities
+    const lastAmpIndex = html.lastIndexOf('&');
+    const lastSemiIndex = html.lastIndexOf(';');
+
+    if (lastAmpIndex > lastSemiIndex) {
+      return html.substring(0, lastAmpIndex);
+    }
+
+    return html;
   }
 }
 
