@@ -32,7 +32,6 @@
         width: 100%;
         height: 100%;
         min-height: 1lh;
-        padding: 0.5rem;
       }
 
       folk-timer {
@@ -54,28 +53,11 @@
         text-align: center;
         color: #666;
       }
-
-      .model-status {
-        position: absolute;
-        top: 0;
-        right: 0;
-        padding: 4px 8px;
-        font-size: 0.7rem;
-        background-color: #eee;
-        border-radius: 0 0 0 4px;
-        color: #555;
-      }
-
-      .model-selector {
-        margin-top: 10px;
-        text-align: center;
-      }
     </style>
   </head>
   <body>
     <p>
-      Note: This demo requires WebGPU support in your browser. It works best in Chrome 113+ with a GPU. The model will
-      take some time to download on first use.
+      Note: This demo requires WebGPU support in your browser. The model will take some time to download on first use.
     </p>
     <folk-shape x="100" y="100" width="250">
       <ul id="recipe" class="wprm-recipe-ingredients">
@@ -114,13 +96,11 @@
     </folk-shape>
 
     <folk-shape x="400" y="100" width="450" height="400">
-      <div class="model-status" id="model-status">Initializing...</div>
       <folk-webllm
         system-prompt="You are a helpful assistant that formats recipes. Output your response as well-formed HTML."
       ></folk-webllm>
-      <div class="model-info" id="model-info">Model information will appear here</div>
+      <div class="model-info" id="model-info"></div>
     </folk-shape>
-
 
     <folk-event-propagator
       source="#recipe"
@@ -128,9 +108,6 @@
       trigger="click"
       expression="prompt: `Double this list of ingredients and format it nicely as HTML with the measurements and notes preserved. Format the output as a clean list. Here are the ingredients:\n${from.innerHTML}`"
     ></folk-event-propagator>
-
-    </folk-event-propagator>
-
 
     <script type="module">
       import '../src/folk-timer.ts';

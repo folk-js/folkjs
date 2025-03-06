@@ -1,5 +1,4 @@
-// Import WebLLM directly from module with proper named imports
-import { CreateMLCEngine } from '@mlc-ai/web-llm';
+import { CreateMLCEngine, prebuiltAppConfig } from '@mlc-ai/web-llm';
 import { Experimental } from '../lib/Experimental';
 
 export type RolePrompt = {
@@ -27,17 +26,15 @@ export class FolkWebLLM extends HTMLElement {
     customElements.define(this.tagName, this);
   }
 
-  // UI Elements
   private outputEl!: HTMLElement;
   private progressBar!: HTMLElement;
-  private modelSelectorEl!: HTMLElement;
-  private statusEl: HTMLElement | null = null;
-  private modelInfoEl: HTMLElement | null = null;
+  private statusEl!: HTMLElement;
+  private controlsEl!: HTMLElement;
 
-  // Engine and model data
   private engine: any;
   private _systemPrompt = 'You are a helpful assistant.';
   private _prompt = '';
+  private _model = '';
 
   constructor() {
     super();
@@ -50,23 +47,33 @@ export class FolkWebLLM extends HTMLElement {
           width: 100%;
           height: 100%;
           overflow: auto;
-        }
-        .output {
-          white-space: pre-wrap;
           font-family: system-ui, sans-serif;
-          line-height: 1.5;
-          padding: 8px;
         }
-        .loading {
-          color: #666;
-          font-style: italic;
+        .controls {
+          display: flex;
+          align-items: center;
+          flex-wrap: nowrap;
+          padding: 4px 8px;
+          background: #f5f5f5;
+          border-bottom: 1px solid #ddd;
+          font-size: 12px;
+          min-height: 24px;
+        }
+        .status {
+          flex: 0 0 auto;
+          margin-right: 8px;
+          padding: 2px 6px;
+          border-radius: 3px;
+          background-color: #eee;
+          color: #555;
+          white-space: nowrap;
         }
         .progress {
-          margin-top: 12px;
-          width: 100%;
-          height: 8px;
+          flex: 1 1 40px;
+          min-width: 40px;
+          height: 4px;
           background-color: #eee;
-          border-radius: 4px;
+          border-radius: 2px;
           overflow: hidden;
         }
         .progress-bar {
@@ -75,76 +82,101 @@ export class FolkWebLLM extends HTMLElement {
           width: 0%;
           transition: width 0.3s;
         }
-        .model-selector {
-          margin-top: 16px;
-          padding: 8px;
-          background-color: #f5f5f5;
-          border-radius: 4px;
+        #model-controls {
+          display: flex;
+          flex: 0 0 auto;
+          flex-wrap: nowrap;
+          align-items: center;
         }
-        .model-selector select {
-          width: 100%;
+        .model-select {
+          flex: 0 1 auto;
+          margin-left: 8px;
+          max-width: 150px;
+          min-width: 80px;
+          font-size: 12px;
+          padding: 2px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-family: monospace;
+        }
+        .model-select option {
+          font-size: 12px;
           padding: 4px;
+          white-space: nowrap;
+          font-family: monospace;
         }
-        .model-selector button {
-          margin-top: 8px;
-          padding: 4px 8px;
+        .model-select option.low-resource {
+          color: #155724;
+          background-color: #f7fff9;
+        }
+        .load-btn {
+          flex: 0 0 auto;
+          margin-left: 4px;
+          padding: 2px 6px;
           background-color: #4caf50;
           color: white;
           border: none;
-          border-radius: 4px;
+          border-radius: 3px;
           cursor: pointer;
+          font-size: 12px;
+          white-space: nowrap;
+        }
+        .output {
+          padding: 8px;
+          white-space: pre-wrap;
+          line-height: 1.5;
+          overflow: auto;
+          min-height: calc(100% - 40px);
+        }
+        .loading {
+          color: #666;
+          font-style: italic;
+        }
+        .error {
+          color: #721c24;
+          background-color: #f8d7da;
+          padding: 8px;
+          border-radius: 4px;
+          margin-top: 8px;
         }
       </style>
-      <div class="output">
-        <div class="loading">Initializing WebLLM...</div>
+      <div class="controls">
+        <div class="status" id="status">Initializing...</div>
         <div class="progress">
           <div class="progress-bar" id="progress-bar"></div>
         </div>
-        <div class="model-selector" id="model-selector"></div>
+        <div id="model-controls"></div>
       </div>
+      <div class="output" id="output"></div>
     `;
 
-    const outputEl = this.shadowRoot!.querySelector('.output');
-    const progressBar = this.shadowRoot!.querySelector('#progress-bar');
-    const modelSelectorEl = this.shadowRoot!.querySelector('#model-selector');
-
-    if (outputEl) this.outputEl = outputEl as HTMLElement;
-    if (progressBar) this.progressBar = progressBar as HTMLElement;
-    if (modelSelectorEl) this.modelSelectorEl = modelSelectorEl as HTMLElement;
-
-    // Get external elements by ID
-    this.statusEl = document.getElementById('model-status');
-    this.modelInfoEl = document.getElementById('model-info');
+    this.outputEl = this.shadowRoot!.querySelector('#output') as HTMLElement;
+    this.progressBar = this.shadowRoot!.querySelector('#progress-bar') as HTMLElement;
+    this.statusEl = this.shadowRoot!.querySelector('#status') as HTMLElement;
+    this.controlsEl = this.shadowRoot!.querySelector('#model-controls') as HTMLElement;
   }
 
   connectedCallback() {
-    // Set system prompt from attribute if provided
     if (this.hasAttribute('system-prompt')) {
       this._systemPrompt = this.getAttribute('system-prompt') || this._systemPrompt;
     }
 
-    // Check WebGPU support before showing model selection
+    if (this.hasAttribute('model')) {
+      this._model = this.getAttribute('model') || '';
+    }
+
     if (Experimental.canWebGPU()) {
-      // Initialize by showing model selection
-      this.showDirectModelSelection();
-    } else {
-      // Show error message if WebGPU is not supported
-      this.outputEl.innerHTML = `
-        <div class="output">
-          <div style="color: #721c24; background-color: #f8d7da; padding: 10px; border-radius: 4px;">
-            WebGPU is not supported in this browser. WebLLM requires a browser with WebGPU support, such as Chrome 113+ or Edge 113+.
-          </div>
-        </div>
-      `;
-      if (this.statusEl) {
-        this.statusEl.textContent = 'Error: WebGPU not supported';
-        this.statusEl.style.backgroundColor = '#f8d7da';
-        this.statusEl.style.color = '#721c24';
+      if (this._model) {
+        this.initializeModel(this._model);
+      } else {
+        this.fetchAvailableModels();
       }
+    } else {
+      this.updateStatus('Error: WebGPU not supported', 'error');
     }
   }
 
-  // System prompt property
   get systemPrompt() {
     return this._systemPrompt;
   }
@@ -156,40 +188,83 @@ export class FolkWebLLM extends HTMLElement {
     }
   }
 
-  // User prompt property
+  get model() {
+    return this._model;
+  }
+
+  set model(value) {
+    if (this._model !== value) {
+      this._model = value;
+      if (this.isConnected) {
+        this.setAttribute('model', value);
+        if (value) {
+          this.initializeModel(value);
+        }
+      }
+    }
+  }
+
   get prompt() {
     return this._prompt;
   }
 
   set prompt(value) {
     this._prompt = value;
-    // Process the prompt when it's set
+
     this.processPrompt(value);
+  }
+
+  updateStatus(text: string, type = 'normal') {
+    if (this.statusEl) {
+      this.statusEl.textContent = text;
+
+      this.statusEl.style.backgroundColor = '#eee';
+      this.statusEl.style.color = '#555';
+
+      if (type === 'error') {
+        this.statusEl.style.backgroundColor = '#f8d7da';
+        this.statusEl.style.color = '#721c24';
+      } else if (type === 'success') {
+        this.statusEl.style.backgroundColor = '#d4edda';
+        this.statusEl.style.color = '#155724';
+      } else if (type === 'warning') {
+        this.statusEl.style.backgroundColor = '#fff3cd';
+        this.statusEl.style.color = '#856404';
+      }
+    }
   }
 
   updateProgress(progress: any) {
     if (this.progressBar && progress && typeof progress.progress === 'number') {
       this.progressBar.style.width = `${progress.progress * 100}%`;
     }
-    if (this.statusEl && progress && progress.text) {
-      this.statusEl.textContent = progress.text;
+    if (progress && progress.text) {
+      this.updateStatus(progress.text);
     }
   }
 
-  showDirectModelSelection() {
-    // Provide a direct selection of models known to work with WebLLM
-    this.modelSelectorEl.innerHTML = `
-      <p>Select a model to load:</p>
-      <select id="model-select">
-        <option value="Llama-3.2-1B-Instruct-q4f32_1-MLC">Llama-3.2-1B-Instruct (1B)</option>
-        <option value="Phi-2-3B-4bit-MLC">Phi-2 (3B)</option>
-        <option value="Gemma-2B-Instruct-Q4_0-WASM-MLC">Gemma-2B-Instruct (2B)</option>
-        <option value="Llama-3.1-8B-Instruct-q4f32_1-MLC">Llama-3.1-8B-Instruct (8B)</option>
+  async fetchAvailableModels() {
+    try {
+      this.updateStatus('Fetching models...', 'warning');
+
+      const modelList = prebuiltAppConfig.model_list || {};
+
+      this.showModelSelector(modelList.map((model) => model.model_id));
+      this.updateStatus('Select a model', 'normal');
+    } catch (error) {
+      console.error('Error fetching models:', error);
+      this.updateStatus('Error fetching models', 'warning');
+    }
+  }
+
+  showModelSelector(models: string[]) {
+    this.controlsEl.innerHTML = `
+      <select class="model-select" id="model-select" title="Select a model to load">
+        ${models.map((model) => `<option value="${model}">${model}</option>`).join('')}
       </select>
-      <button id="load-model-btn">Load Model</button>
+      <button class="load-btn" id="load-model-btn">Load</button>
     `;
 
-    // Add event listener to the load button
     const loadBtn = this.shadowRoot!.querySelector('#load-model-btn');
     if (loadBtn) {
       loadBtn.addEventListener('click', () => {
@@ -197,6 +272,9 @@ export class FolkWebLLM extends HTMLElement {
         if (selectEl) {
           const selectedModel = selectEl.value;
           this.initializeModel(selectedModel);
+
+          this._model = selectedModel;
+          this.setAttribute('model', selectedModel);
         }
       });
     }
@@ -204,101 +282,42 @@ export class FolkWebLLM extends HTMLElement {
 
   async initializeModel(modelId: string) {
     try {
-      // Hide the model selector
-      this.modelSelectorEl.style.display = 'none';
-
-      this.outputEl.innerHTML = `
-        <div class="loading">Initializing ${modelId} model...</div>
-        <div class="progress">
-          <div class="progress-bar" id="progress-bar"></div>
-        </div>
-      `;
-      const progressBarElement = this.shadowRoot!.querySelector('#progress-bar');
-      if (progressBarElement) {
-        this.progressBar = progressBarElement as HTMLElement;
-      }
+      this.controlsEl.innerHTML = '';
+      this.outputEl.innerHTML = '';
+      this.updateStatus(`Loading ${modelId}...`, 'warning');
+      this.progressBar.style.width = '0%';
 
       console.log(`Attempting to load model: ${modelId}`);
 
-      // Progress callback to update UI
       const initProgressCallback = (progress: any) => {
         this.updateProgress(progress);
       };
 
-      // Initialize engine with the selected model using CreateMLCEngine directly
       this.engine = await CreateMLCEngine(modelId, {
         initProgressCallback,
       });
 
-      // Update model info based on the model ID
-      let infoText = `Using ${modelId}`;
-      let sizeMatch = modelId.match(/(\d+(?:\.\d+)?)B/);
-      if (sizeMatch) {
-        infoText += `, a ${sizeMatch[1]}B parameter model`;
-      }
-      infoText += ` running in your browser`;
-
-      if (this.modelInfoEl) {
-        this.modelInfoEl.textContent = infoText;
-      }
-
-      this.outputEl.innerHTML = `<div class="output">
-        Model loaded! Click on the recipe to double the ingredients.
-      </div>`;
-
-      if (this.statusEl) {
-        this.statusEl.textContent = 'Ready';
-        this.statusEl.style.backgroundColor = '#d4edda';
-        this.statusEl.style.color = '#155724';
-      }
-
-      // Dispatch event when model is loaded
-      this.dispatchEvent(new CustomEvent('modelLoaded', { detail: { modelId } }));
+      this.updateStatus(`Model: ${modelId}`, 'success');
     } catch (error) {
-      this.outputEl.innerHTML = `<div class="output">
-        Error loading model: ${error instanceof Error ? error.message : String(error)}
-        
-        You may need to try a different browser with WebGPU support.
-        <div class="model-selector">
-          <button id="back-to-models-btn">Back to Model Selection</button>
-        </div>
-      </div>`;
+      console.error('Model loading error:', error);
 
-      // Add back button listener
-      const backBtn = this.shadowRoot!.querySelector('#back-to-models-btn');
-      if (backBtn) {
-        backBtn.addEventListener('click', () => {
-          this.showDirectModelSelection();
-        });
-      }
+      this.updateStatus(
+        `Error loading model: ${error instanceof Error ? error.message.split('.')[0] : 'Unknown error'}`,
+        'error',
+      );
 
-      if (this.statusEl) {
-        this.statusEl.textContent = 'Error';
-        this.statusEl.style.backgroundColor = '#f8d7da';
-        this.statusEl.style.color = '#721c24';
-      }
-
-      console.error(error);
-
-      // Dispatch error event
-      this.dispatchEvent(new CustomEvent('error', { detail: { error } }));
+      this.fetchAvailableModels();
+      this.updateStatus('Error loading model', 'error');
     }
   }
 
-  // Handle prompt input
   async processPrompt(prompt: string) {
     if (!prompt || !this.engine) return;
 
     try {
       this.dispatchEvent(new CustomEvent('started'));
-
-      this.outputEl.innerHTML = '<div class="loading">Generating response...</div>';
-
-      if (this.statusEl) {
-        this.statusEl.textContent = 'Generating';
-        this.statusEl.style.backgroundColor = '#fff3cd';
-        this.statusEl.style.color = '#856404';
-      }
+      this.outputEl.innerHTML = '';
+      this.updateStatus('Generating...', 'warning');
 
       const messages = [
         {
@@ -308,7 +327,6 @@ export class FolkWebLLM extends HTMLElement {
         { role: 'user', content: prompt },
       ];
 
-      // Use streaming for real-time output
       let generatedText = '';
       const chunks = await this.engine.chat.completions.create({
         messages,
@@ -316,34 +334,24 @@ export class FolkWebLLM extends HTMLElement {
         stream: true,
       });
 
-      // Process streaming response
       for await (const chunk of chunks) {
         const content = chunk.choices[0]?.delta?.content || '';
         generatedText += content;
         this.outputEl.innerHTML = generatedText;
       }
 
-      if (this.statusEl) {
-        this.statusEl.textContent = 'Done';
-        this.statusEl.style.backgroundColor = '#d4edda';
-        this.statusEl.style.color = '#155724';
-      }
-
+      this.updateStatus('Done', 'success');
+      console.log('generatedText', generatedText);
       this.dispatchEvent(new CustomEvent('finished'));
     } catch (error) {
-      this.outputEl.innerHTML = `Error generating response: ${error instanceof Error ? error.message : String(error)}`;
-
-      if (this.statusEl) {
-        this.statusEl.textContent = 'Error';
-        this.statusEl.style.backgroundColor = '#f8d7da';
-        this.statusEl.style.color = '#721c24';
-      }
-
       console.error(error);
+      this.updateStatus(
+        `Error: ${error instanceof Error ? error.message.split('.')[0] : 'Generation failed'}`,
+        'error',
+      );
       this.dispatchEvent(new CustomEvent('finished'));
     }
   }
 }
 
-// Register the component
 FolkWebLLM.define();
