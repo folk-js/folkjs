@@ -98,7 +98,7 @@ export class FolkTransformedSpace extends FolkElement {
 
     this.#matrix = new DOMMatrix()
       .translate(translateX, translateY)
-      // .scale(scaleFactor, scaleFactor)
+      .scale(scaleFactor, scaleFactor)
       .rotateAxisAngle(1, 0, 0, rotationAngle * Math.random())
       .rotateAxisAngle(0, 1, 0, rotationAngle * Math.random())
       .rotateAxisAngle(0, 0, 1, rotationAngle * Math.random());
@@ -119,13 +119,25 @@ export class FolkTransformedSpace extends FolkElement {
     const rayDirection = { x: 0, y: 0, z: 1 }; // Pointing forward along z-axis
 
     // Extract plane information from the transformation matrix
-    const matrixElements = space.#matrix.toFloat32Array();
+    const matrix = space.#matrix;
+    const matrixElements = matrix.toFloat32Array();
 
-    // The plane normal is the transformed z-axis (third column of rotation part)
+    // Extract the matrix components
+    // For a proper plane normal when scaling is involved, we need to use the adjugate of the
+    // upper-left 3x3 submatrix transposed, to get the correct normal transformation
+
+    // To transform normals correctly with a matrix that includes scaling,
+    // we need to use the inverse transpose of the upper 3x3 portion of the matrix
+    // Fortunately, for plane normals, we can extract this directly from the inverse matrix
+    const inverseMatrix = matrix.inverse();
+    const invMatrixElements = inverseMatrix.toFloat32Array();
+
+    // The transformed plane normal is the third row of the inverse matrix (for the Z-normal)
+    // Note: We take the 3rd row (not column) of the inverse because of how normals transform
     const planeNormal = {
-      x: matrixElements[8],
-      y: matrixElements[9],
-      z: matrixElements[10],
+      x: invMatrixElements[2], // Element [0,2]
+      y: invMatrixElements[6], // Element [1,2]
+      z: invMatrixElements[10], // Element [2,2]
     };
 
     // Normalize the normal vector
@@ -136,9 +148,7 @@ export class FolkTransformedSpace extends FolkElement {
     if (normalLength < 0.0001) {
       console.warn('Plane normal is too small, defaulting to simple inverse transform');
       // Fall back to the original method if the normal is degenerate
-      const inverseMatrix = space.#matrix.inverse();
       const pointOnTransformedSpace = inverseMatrix.transformPoint(point);
-      // Gizmos.point(pointOnTransformedSpace, { color: 'black', size: 2, layer: 'transformed' });
       return pointOnTransformedSpace;
     }
 
@@ -178,7 +188,6 @@ export class FolkTransformedSpace extends FolkElement {
     };
 
     // Transform the world intersection point to plane local coordinates
-    const inverseMatrix = space.#matrix.inverse();
     const localPoint = inverseMatrix.transformPoint(
       new DOMPoint(intersectionPoint.x, intersectionPoint.y, intersectionPoint.z),
     );
