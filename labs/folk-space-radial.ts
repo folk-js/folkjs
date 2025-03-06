@@ -1,4 +1,4 @@
-import { DOMRectTransform, Experimental, TransformEvent, Vector } from '@lib';
+import { CanIUse, TransformEvent, Vector } from '@lib';
 import { css, type PropertyValues } from '@lit/reactive-element';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
@@ -62,7 +62,7 @@ export class FolkSpaceRadial extends FolkBaseSet {
   }
 
   #handleMoveBefore(event: Event) {
-    if (!Experimental.canMoveBefore()) return;
+    if (!CanIUse.moveBefore()) return;
 
     const shapeElement = event.target as HTMLElement;
 

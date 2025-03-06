@@ -1,5 +1,5 @@
-export class Experimental {
-  static canMoveBefore() {
+export class CanIUse {
+  static moveBefore() {
     const enabled = !!(Element.prototype as any).moveBefore;
     if (!enabled) {
       console.warn('moveBefore() API requires Chrome Canary with chrome://flags/#atomic-move enabled');
@@ -8,7 +8,7 @@ export class Experimental {
     return enabled;
   }
 
-  static canViewTransition() {
+  static viewTransition() {
     const enabled = !!(document as any).startViewTransition;
     if (!enabled) {
       console.warn('View Transition API is not supported in this browser');
@@ -16,7 +16,7 @@ export class Experimental {
     return enabled;
   }
 
-  static canWebGPU() {
+  static webGPU() {
     const enabled = !!(navigator as any).gpu;
     if (!enabled) {
       console.warn('WebGPU is not supported in this browser');

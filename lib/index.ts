@@ -34,4 +34,4 @@ export * from './indexeddb';
 export * from './custom-attribute-registry';
 
 // Experimental features
-export * from './Experimental';
+export * from './CanIUse';

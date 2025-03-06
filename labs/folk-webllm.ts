@@ -1,5 +1,5 @@
 import { CreateMLCEngine, prebuiltAppConfig } from '@mlc-ai/web-llm';
-import { Experimental } from '../lib/Experimental';
+import { CanIUse } from '../lib/CanIUse';
 
 export type RolePrompt = {
   role: string;
@@ -162,7 +162,7 @@ export class FolkWebLLM extends HTMLElement {
       this._model = this.getAttribute('model') || '';
     }
 
-    if (Experimental.canWebGPU()) {
+    if (CanIUse.webGPU()) {
       if (this._model) {
         this.initializeModel(this._model);
       } else {
