@@ -115,6 +115,12 @@
         font-size: 0.75rem;
         font-style: italic;
       }
+
+      iframe {
+        display: block;
+        margin: auto;
+        border-radius: 5px;
+      }
     </style>
     <script type="module">
       import '@labs/standalone/folk-sand.ts';
@@ -122,13 +128,11 @@
       const alchemicalSymbols =
         '🜁🜂🜃🜄🜅🜆🜇🜈🜉🜊🜋🜌🜍🜎🜏🜐🜑🜒🜓🜔🜕🜖🜗🜘🜙🜚🜛🜜🜝🜞🜟🜠🜡🜢🜣🜤🜥🜦🜧🜨🜩🜪🜫🜬🜭🜮🜯🜰🜱🜲🜳🜴🜵🜶🜸🜹🜺🜻🜼🜾🜿🝀🝁🝂🝃🝄🝅🝆🝈🝉🝊🝋🝌🝍🝎🝏🝐🝑🝒🝓🝔🝕🝖🝗🝘🝙🝚🝛🝜🝝🝞🝟🝠🝡🝢🝣🝤🝥🝦🝧🝩🝪🝬🝭🝮🝯🝰🝲🝳';
 
-      document.addEventListener('DOMContentLoaded', () => {
-        const questionItems = document.querySelectorAll('#questions li');
-        questionItems.forEach((li) => {
-          const symbols = [...alchemicalSymbols];
-          const randomSymbol = symbols[Math.floor(Math.random() * symbols.length)];
-          li.setAttribute('data-symbol', randomSymbol);
-        });
+      const questionItems = document.querySelectorAll('#questions li');
+      questionItems.forEach((li) => {
+        const symbols = [...alchemicalSymbols];
+        const randomSymbol = symbols[Math.floor(Math.random() * symbols.length)];
+        li.setAttribute('data-symbol', randomSymbol);
       });
     </script>
   </head>
@@ -136,6 +140,7 @@
     <folk-sand initial-sand="0"></folk-sand>
     <main>
       <h1> Folk Canvas [<a href="https://github.com/folk-canvas/folk-canvas">Github</a>] </h1>
+
       <ul id="questions">
         <li>How do we make the web feel more alive and less rigid and closed off?</li>
         <li>How can we more easily compose web pages and their data together?</li>
@@ -151,6 +156,19 @@
           websites to communicate with each other?</li
         >
       </ul>
+
+      <p>For a quick overview and more context please watch this presentation by Chris:</p>
+
+      <iframe
+        width="560"
+        height="315"
+        src="https://www.youtube.com/embed/mz1F55UoVQs?si=K8Gz3YBoi9ZBaKQl&amp;start=2182"
+        title="YouTube video player"
+        frameborder="0"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        referrerpolicy="strict-origin-when-cross-origin"
+        allowfullscreen
+      ></iframe>
 
       <h2>Experiments from the lab</h2>
       <p id="disclaimer">
