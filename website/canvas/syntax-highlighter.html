@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HTML Syntax Highlighter</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      #editor {
+        color: #fff;
+        font-family: monospace;
+        white-space: pre-wrap;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 10px;
+        min-height: 300px;
+        background-color: #2e3136;
+        overflow: auto;
+        outline: none;
+      }
+
+      /* Highlight styles */
+      ::highlight(tag) {
+        color: #42a9e9;
+        font-weight: bold;
+      }
+
+      ::highlight(attribute) {
+        color: #9edaec;
+      }
+
+      ::highlight(attribute-value) {
+        color: #de904c;
+      }
+
+      ::highlight(comment) {
+        color: #808080;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>HTML Syntax Highlighter</h1>
+    <p>Uses the CSS Highlight API to highlight HTML tags, attributes, and values. With a tiny, terrible HTML parser.</p>
+
+    <div id="editor" contenteditable="true"></div>
+
+    <script>
+      // Initialize highlight instances for different syntax elements
+      const tagHighlight = new Highlight();
+      const attributeHighlight = new Highlight();
+      const attributeValueHighlight = new Highlight();
+      const commentHighlight = new Highlight();
+      const doctypeHighlight = new Highlight();
+
+      // DOM elements
+      const editor = document.getElementById('editor');
+
+      // Set initial content with a placeholder
+      const html = `&lt;body&gt;\n  &lt;folk-shape x=&quot;100&quot; y=&quot;100&quot; width=&quot;50&quot; height=&quot;50&quot;&gt;&lt;/folk-shape&gt;\n  &lt;folk-shape x=&quot;200&quot; y=&quot;200&quot; width=&quot;50&quot; height=&quot;50&quot;&gt;&lt;/folk-shape&gt;\n  &lt;folk-shape x=&quot;100&quot; y=&quot;300&quot; width=&quot;50&quot; height=&quot;50&quot; rotation=&quot;45&quot;&gt;&lt;/folk-shape&gt;\n  &lt;p&gt;Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos.&lt;/p&gt;\n  &lt;pre style=&quot;background: #f0f0f0; padding: 10px; border-radius: 5px;&quot;&gt;\n    howdy there\n  &lt;/pre&gt;\n  &lt;script type=&quot;module&quot;&gt;\n    import '@labs/standalone/folk-shape.ts';\n  &lt;/script&gt;\n&lt;/body&gt;`;
+
+      function unescapeHTML(html) {
+        const textarea = document.createElement('textarea');
+        textarea.innerHTML = html;
+        return textarea.value;
+      }
+      editor.textContent = unescapeHTML(html);
+
+      // Apply initial highlighting
+      applySyntaxHighlighting();
+
+      // Function to apply syntax highlighting
+      function applySyntaxHighlighting() {
+        // Save cursor position if there is one
+        const selection = window.getSelection();
+        let savedRange = null;
+
+        if (selection.rangeCount > 0) {
+          savedRange = selection.getRangeAt(0).cloneRange();
+        }
+
+        // Clear previous highlights
+        CSS.highlights.clear();
+        tagHighlight.clear();
+        attributeHighlight.clear();
+        attributeValueHighlight.clear();
+        commentHighlight.clear();
+        doctypeHighlight.clear();
+
+        // Get the HTML code
+        const htmlCode = editor.textContent;
+        if (!htmlCode.trim()) return;
+
+        // Single-pass tokenizer with state machine
+        let pos = 0;
+        let state = 'text'; // Possible states: text, tag, attribute, value, comment
+
+        while (pos < htmlCode.length) {
+          if (state === 'text') {
+            // Look for tag start, comment start, or continue as text
+            if (htmlCode[pos] === '<') {
+              if (htmlCode.substring(pos, pos + 4) === '<!--') {
+                // Found comment start
+                const commentEnd = htmlCode.indexOf('-->', pos + 4);
+                if (commentEnd !== -1) {
+                  createHighlight(pos, commentEnd + 3, commentHighlight);
+                  pos = commentEnd + 3;
+                } else {
+                  // Unclosed comment, treat rest as comment
+                  createHighlight(pos, htmlCode.length, commentHighlight);
+                  pos = htmlCode.length;
+                }
+              } else if (htmlCode.substring(pos, pos + 9).toUpperCase() === '<!DOCTYPE') {
+                // Found doctype
+                const doctypeEnd = htmlCode.indexOf('>', pos);
+                if (doctypeEnd !== -1) {
+                  createHighlight(pos, doctypeEnd + 1, doctypeHighlight);
+                  pos = doctypeEnd + 1;
+                } else {
+                  pos++;
+                }
+              } else {
+                // Found tag start
+                const tagEnd = findTagEnd(htmlCode, pos);
+                if (tagEnd !== -1) {
+                  // Process the tag content
+                  processTag(htmlCode.substring(pos, tagEnd + 1), pos);
+                  pos = tagEnd + 1;
+                } else {
+                  pos++;
+                }
+              }
+            } else {
+              pos++;
+            }
+          }
+        }
+
+        // Register all highlights
+        CSS.highlights.set('tag', tagHighlight);
+        CSS.highlights.set('attribute', attributeHighlight);
+        CSS.highlights.set('attribute-value', attributeValueHighlight);
+        CSS.highlights.set('comment', commentHighlight);
+        CSS.highlights.set('doctype', doctypeHighlight);
+
+        // Restore cursor position
+        if (savedRange) {
+          try {
+            selection.removeAllRanges();
+            selection.addRange(savedRange);
+          } catch (e) {
+            console.error('Error restoring selection:', e);
+          }
+        }
+      }
+
+      // Helper function to find the end of a tag
+      function findTagEnd(text, startPos) {
+        let depth = 0;
+        for (let i = startPos; i < text.length; i++) {
+          if (text[i] === '<') depth++;
+          if (text[i] === '>') {
+            depth--;
+            if (depth === 0) return i;
+          }
+        }
+        return -1; // No matching end found
+      }
+
+      // Process a tag and its attributes
+      function processTag(tagText, offset) {
+        // Highlight the tag name
+        const tagNameMatch = tagText.match(/<\/?([a-z0-9-]+)/i);
+        if (tagNameMatch) {
+          const tagStart = offset;
+          const tagNameEnd = offset + tagNameMatch[0].length;
+          createHighlight(tagStart, tagNameEnd, tagHighlight);
+
+          // Also highlight the closing bracket
+          const closingPos = tagText.lastIndexOf('>');
+          if (closingPos !== -1) {
+            createHighlight(offset + closingPos, offset + closingPos + 1, tagHighlight);
+          }
+
+          // If self-closing, highlight the slash too
+          const selfClosingPos = tagText.lastIndexOf('/>');
+          if (selfClosingPos !== -1 && selfClosingPos === tagText.length - 2) {
+            createHighlight(offset + selfClosingPos, offset + selfClosingPos + 2, tagHighlight);
+          }
+        }
+
+        // Find attributes
+        const attrRegex = /\s+([a-z0-9_-]+)(?=\s|=|\/?>)/gi;
+        let attrMatch;
+        while ((attrMatch = attrRegex.exec(tagText)) !== null) {
+          createHighlight(offset + attrMatch.index, offset + attrMatch.index + attrMatch[0].length, attributeHighlight);
+
+          // Check for attribute value after this attribute
+          const attrName = attrMatch[1];
+          const afterAttr = tagText.substring(attrMatch.index + attrMatch[0].length);
+          const valueMatch = afterAttr.match(/^\s*=\s*(['"])(.*?)\1/);
+          if (valueMatch) {
+            const valueStart = attrMatch.index + attrMatch[0].length + valueMatch.index;
+            const valueEnd = valueStart + valueMatch[0].length;
+            createHighlight(offset + valueStart, offset + valueEnd, attributeValueHighlight);
+          }
+        }
+      }
+
+      // Helper function to create a highlight range
+      function createHighlight(start, end, highlightObj) {
+        try {
+          // Find the text node containing this content
+          let currentNode = editor.firstChild;
+          let currentOffset = 0;
+
+          // Skip nodes until we find the one containing our match
+          while (currentNode && currentOffset + currentNode.textContent.length <= start) {
+            currentOffset += currentNode.textContent.length;
+            currentNode = currentNode.nextSibling;
+          }
+
+          if (currentNode) {
+            const nodeStart = start - currentOffset;
+            const nodeEnd = Math.min(end - currentOffset, currentNode.textContent.length);
+
+            const range = new Range();
+            range.setStart(currentNode, nodeStart);
+            range.setEnd(currentNode, nodeEnd);
+            highlightObj.add(range);
+          }
+        } catch (e) {
+          console.error('Error creating range:', e);
+        }
+      }
+
+      // Add event listener for input
+      let debounceTimer;
+      editor.addEventListener('input', () => {
+        // Remove debounce and apply highlighting immediately
+        applySyntaxHighlighting();
+      });
+
+      // Focus the editor on page load
+      window.addEventListener('load', () => {
+        // Set initial content if not already set
+        if (!editor.textContent.trim()) {
+          editor.textContent = '<!-- Type your HTML here -->\n<div class="example">\n  <h1>Hello World</h1>\n</div>';
+        }
+
+        // Apply highlighting before setting focus
+        // This avoids the need for a selection to exist
+        try {
+          // Temporarily clear selection to avoid the error during initial highlighting
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+
+          applySyntaxHighlighting();
+
+          // Now set focus and cursor position
+          editor.focus();
+
+          // Place cursor at the end
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          range.collapse(false);
+          selection.addRange(range);
+        } catch (e) {
+          console.error('Error during initialization:', e);
+        }
+      });
+    </script>
+  </body>
+</html>
