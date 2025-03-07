@@ -129,8 +129,8 @@
       let canvasSize = setupCanvas();
 
       // Graph properties
-      const nodeCount = 15;
-      const edgeProbability = 0.05;
+      const nodeCount = 30;
+      const cycleCount = 3;
       const nodeRadius = 15;
 
       // Display settings
@@ -186,7 +186,12 @@
       let nodes = [];
       let edges = [];
 
-      // Generate a random directed graph
+      // Initialize UI elements
+      function initializeControls() {
+        // Empty function - parameters are now hardcoded
+      }
+
+      // Generate a graph with controlled structure
       function generateRandomGraph() {
         nodes = [];
         edges = [];
@@ -202,94 +207,164 @@
           });
         }
 
-        // Create edges with probability
-        for (let i = 0; i < nodeCount; i++) {
-          for (let j = 0; j < nodeCount; j++) {
-            if (i !== j && Math.random() < edgeProbability) {
-              edges.push({ source: i, target: j });
+        // Track existing edges to prevent duplicates
+        const edgeSet = new Set();
+
+        // First, create a connected tree-like structure (ensures connectivity)
+        // Start with a random root node
+        const connectedNodes = new Set([Math.floor(Math.random() * nodeCount)]);
+        const remainingNodes = new Set(nodes.map((node) => node.id).filter((id) => !connectedNodes.has(id)));
+
+        // Connect all nodes in a tree-like structure
+        while (remainingNodes.size > 0) {
+          // Select a random connected node as source
+          const sourceArray = Array.from(connectedNodes);
+          const sourceId = sourceArray[Math.floor(Math.random() * sourceArray.length)];
+
+          // Select a random unconnected node as target
+          const targetArray = Array.from(remainingNodes);
+          const targetId = targetArray[Math.floor(Math.random() * targetArray.length)];
+
+          // Add edge
+          edges.push({ source: sourceId, target: targetId });
+          edgeSet.add(`${sourceId}-${targetId}`);
+
+          // Update sets
+          connectedNodes.add(targetId);
+          remainingNodes.delete(targetId);
+        }
+
+        // Add additional branching edges based on branching factor
+        // The tree already has n-1 edges, we need to add more to reach desired branching
+        const desiredEdges = Math.min(nodeCount, nodeCount * (nodeCount - 1));
+        const additionalEdges = Math.max(0, desiredEdges - (nodeCount - 1));
+
+        for (let i = 0; i < additionalEdges; i++) {
+          let attempts = 0;
+          let edgeAdded = false;
+
+          while (!edgeAdded && attempts < 50) {
+            const sourceId = Math.floor(Math.random() * nodeCount);
+            const targetId = Math.floor(Math.random() * nodeCount);
+
+            // Ensure we don't add self-loops or duplicate edges
+            if (sourceId !== targetId && !edgeSet.has(`${sourceId}-${targetId}`)) {
+              edges.push({ source: sourceId, target: targetId });
+              edgeSet.add(`${sourceId}-${targetId}`);
+              edgeAdded = true;
             }
+
+            attempts++;
           }
         }
 
-        // Check for orphan nodes and connect them
-        connectOrphanNodes();
+        // More reliable cycle generation algorithm
+        let cyclesCreated = 0;
+        let cycleAttempts = 0;
+        const maxCycleAttempts = 50; // Prevent infinite loops
+
+        // Helper function to check if a cycle already exists between nodes
+        function cycleExists(nodeA, nodeB) {
+          // Direct edge from B back to A would create a cycle
+          if (edgeSet.has(`${nodeB}-${nodeA}`)) {
+            return true;
+          }
+
+          // Check for 2-node cycle (A -> B -> A)
+          const outFromA = new Set(edges.filter((e) => e.source === nodeA).map((e) => e.target));
+          const outFromB = new Set(edges.filter((e) => e.source === nodeB).map((e) => e.target));
+
+          if (outFromA.has(nodeB) && outFromB.has(nodeA)) {
+            return true;
+          }
+
+          return false;
+        }
+
+        while (cyclesCreated < cycleCount && cycleAttempts < maxCycleAttempts) {
+          cycleAttempts++;
+
+          // Strategy 1: Find existing paths and close them
+          if (cycleAttempts % 2 === 0) {
+            // Select a random node to start
+            const startNode = Math.floor(Math.random() * nodeCount);
+
+            // Find nodes that are 2 or 3 steps away but not directly connected back
+            const visited = new Set();
+            const queue = [{ node: startNode, path: [startNode], dist: 0 }];
+            let cycleFound = false;
+
+            while (queue.length > 0 && !cycleFound) {
+              const { node, path, dist } = queue.shift();
+
+              if (visited.has(node)) continue;
+              visited.add(node);
+
+              // We've found a potential cycle path of length 3+
+              if (dist >= 2 && path.length >= 3 && !cycleExists(startNode, node)) {
+                // Add the closing edge
+                edges.push({ source: node, target: startNode });
+                edgeSet.add(`${node}-${startNode}`);
+                cyclesCreated++;
+                cycleFound = true;
+                break;
+              }
+
+              // Continue exploring if distance is still manageable
+              if (dist < 3) {
+                const outgoingEdges = edges.filter((e) => e.source === node).map((e) => e.target);
+                for (const next of outgoingEdges) {
+                  if (!path.includes(next)) {
+                    queue.push({
+                      node: next,
+                      path: [...path, next],
+                      dist: dist + 1,
+                    });
+                  }
+                }
+              }
+            }
+
+            if (cycleFound) continue;
+          }
+
+          // Strategy 2: Create a new cycle with 3 random nodes
+          const cycleSize = 3; // Fixed size for simplicity
+          const availableNodes = Array.from({ length: nodeCount }, (_, i) => i);
+
+          // Shuffle to get random selection
+          availableNodes.sort(() => Math.random() - 0.5);
+          const cycleNodes = availableNodes.slice(0, cycleSize);
+
+          // Check if any of these nodes already form a cycle
+          let alreadyCyclic = false;
+          for (let i = 0; i < cycleSize; i++) {
+            const current = cycleNodes[i];
+            const next = cycleNodes[(i + 1) % cycleSize];
+            if (cycleExists(current, next)) {
+              alreadyCyclic = true;
+              break;
+            }
+          }
+
+          if (!alreadyCyclic) {
+            // Create a cycle by connecting these nodes in sequence
+            for (let i = 0; i < cycleSize; i++) {
+              const current = cycleNodes[i];
+              const next = cycleNodes[(i + 1) % cycleSize];
+
+              // Add edge if it doesn't exist
+              if (!edgeSet.has(`${current}-${next}`)) {
+                edges.push({ source: current, target: next });
+                edgeSet.add(`${current}-${next}`);
+              }
+            }
+            cyclesCreated++;
+          }
+        }
 
         // Apply force-directed layout
         applyForceDirectedLayout();
-      }
-
-      // Connect orphan nodes to ensure no isolated nodes
-      function connectOrphanNodes() {
-        // Create arrays to track nodes with connections
-        const nodesWithOutgoing = new Set();
-        const nodesWithIncoming = new Set();
-
-        // Identify nodes with existing connections
-        edges.forEach((edge) => {
-          nodesWithOutgoing.add(edge.source);
-          nodesWithIncoming.add(edge.target);
-        });
-
-        // Find orphan nodes (no incoming or outgoing connections)
-        const orphans = [];
-        for (let i = 0; i < nodes.length; i++) {
-          if (!nodesWithOutgoing.has(i) && !nodesWithIncoming.has(i)) {
-            orphans.push(i);
-          }
-        }
-
-        // Connect orphans to random nodes
-        orphans.forEach((orphanId) => {
-          // Connect to a random non-orphan node if possible
-          const nonOrphans = Array.from(new Set([...nodesWithOutgoing, ...nodesWithIncoming])).filter(
-            (id) => id !== orphanId,
-          );
-
-          if (nonOrphans.length > 0) {
-            // Add both incoming and outgoing connections
-            const randomNode = nonOrphans[Math.floor(Math.random() * nonOrphans.length)];
-
-            // Add outgoing edge from orphan
-            edges.push({ source: orphanId, target: randomNode });
-            nodesWithOutgoing.add(orphanId);
-
-            // Add incoming edge to orphan
-            edges.push({ source: randomNode, target: orphanId });
-            nodesWithIncoming.add(orphanId);
-          } else if (orphans.length > 1) {
-            // If only orphans exist, connect them to each other
-            const otherOrphans = orphans.filter((id) => id !== orphanId);
-            const targetOrphan = otherOrphans[Math.floor(Math.random() * otherOrphans.length)];
-
-            edges.push({ source: orphanId, target: targetOrphan });
-            edges.push({ source: targetOrphan, target: orphanId });
-          }
-        });
-
-        // Check for nodes with only outgoing or only incoming edges
-        const outgoingOnly = [...nodesWithOutgoing].filter((id) => !nodesWithIncoming.has(id));
-        const incomingOnly = [...nodesWithIncoming].filter((id) => !nodesWithOutgoing.has(id));
-
-        // Add reciprocal connections where needed
-        outgoingOnly.forEach((nodeId) => {
-          // Find a node this connects to and add a return connection
-          const targets = edges.filter((edge) => edge.source === nodeId).map((edge) => edge.target);
-
-          if (targets.length > 0) {
-            const randomTarget = targets[Math.floor(Math.random() * targets.length)];
-            edges.push({ source: randomTarget, target: nodeId });
-          }
-        });
-
-        incomingOnly.forEach((nodeId) => {
-          // Find a node that connects to this and add outgoing connection
-          const sources = edges.filter((edge) => edge.target === nodeId).map((edge) => edge.source);
-
-          if (sources.length > 0) {
-            const randomSource = sources[Math.floor(Math.random() * sources.length)];
-            edges.push({ source: nodeId, target: randomSource });
-          }
-        });
       }
 
       // Apply force-directed layout
@@ -716,6 +791,7 @@
       });
 
       // Initialize
+      initializeControls();
       generateRandomGraph();
       createColorLegend();
 
