@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Graph Distance</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #f9f9f9;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      #info-container {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: white;
+        padding: 8px 10px;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        z-index: 2000;
+        max-width: 300px;
+        font-size: 12px;
+        line-height: 1.4;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .controls {
+        display: flex;
+        gap: 10px;
+        margin-top: 5px;
+      }
+
+      .button {
+        display: inline-block;
+        background-color: rgba(0, 0, 0, 0.08);
+        border-radius: 3px;
+        padding: 4px 8px;
+        cursor: pointer;
+        user-select: none;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+
+      .button:hover {
+        background-color: rgba(0, 0, 0, 0.15);
+      }
+
+      #distance-info {
+        margin-top: 5px;
+        font-size: 11px;
+        color: #666;
+      }
+
+      #color-legend {
+        display: flex;
+        flex-direction: row;
+        align-items: flex-start;
+        gap: 12px;
+        margin-top: 8px;
+        font-size: 11px;
+      }
+
+      .legend-horizontal {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+      }
+
+      .legend-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .color-swatch {
+        width: 16px;
+        height: 12px;
+        border-radius: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="graph-canvas"></canvas>
+
+    <div id="info-container">
+      <div>Graph Distance</div>
+      <div>How far could you "see" from a point in a zoomable hypertext graph.</div>
+      <div id="distance-info">No edge hovered</div>
+      <div class="controls">
+        <div id="regenerate" class="button">New Graph</div>
+        <div id="relayout" class="button">Layout</div>
+      </div>
+      <div id="color-legend" style="display: none">
+        <div>Distance Legend:</div>
+      </div>
+    </div>
+
+    <script>
+      // Canvas setup
+      const canvas = document.getElementById('graph-canvas');
+      const ctx = canvas.getContext('2d');
+      const distanceInfo = document.getElementById('distance-info');
+
+      // For high DPI displays
+      function setupCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+        return { width: rect.width, height: rect.height };
+      }
+
+      let canvasSize = setupCanvas();
+
+      // Graph properties
+      const nodeCount = 15;
+      const edgeProbability = 0.05;
+      const nodeRadius = 15;
+
+      // Display settings
+      let showLabels = true;
+      let hoveredEdge = null;
+      let mousePos = { x: 0, y: 0 };
+
+      // Dragging state
+      let draggedNode = null;
+      let isDragging = false;
+
+      // Color scheme for distance levels
+      const maxDistance = 5; // Maximum distance to display
+      const distanceColors = [
+        '#d73027', // Distance 0 (source) - Dark Red
+        '#fc8d59', // Distance 1 - Light Red/Orange
+        '#fee090', // Distance 2 - Yellow
+        '#e0f3f8', // Distance 3 - Light Blue
+        '#91bfdb', // Distance 4 - Medium Blue
+        '#4575b4', // Distance 5 - Dark Blue
+      ];
+
+      // Create color legend
+      function createColorLegend() {
+        const legend = document.getElementById('color-legend');
+        legend.innerHTML = ''; // Remove the legend text
+
+        // Create horizontal container
+        const container = document.createElement('div');
+        container.className = 'legend-horizontal';
+
+        // Add all distances in a horizontal layout
+        for (let i = 0; i <= maxDistance; i++) {
+          const item = document.createElement('div');
+          item.className = 'legend-item';
+
+          const swatch = document.createElement('div');
+          swatch.className = 'color-swatch';
+          swatch.style.backgroundColor = distanceColors[i];
+
+          const label = document.createElement('span');
+          label.textContent = i.toString();
+
+          item.appendChild(swatch);
+          item.appendChild(label);
+          container.appendChild(item);
+        }
+
+        legend.appendChild(container);
+      }
+
+      // Graph data
+      let nodes = [];
+      let edges = [];
+
+      // Generate a random directed graph
+      function generateRandomGraph() {
+        nodes = [];
+        edges = [];
+
+        // Create nodes
+        for (let i = 0; i < nodeCount; i++) {
+          nodes.push({
+            id: i,
+            x: Math.random() * (canvasSize.width - 100) + 50,
+            y: Math.random() * (canvasSize.height - 100) + 50,
+            vx: 0,
+            vy: 0,
+          });
+        }
+
+        // Create edges with probability
+        for (let i = 0; i < nodeCount; i++) {
+          for (let j = 0; j < nodeCount; j++) {
+            if (i !== j && Math.random() < edgeProbability) {
+              edges.push({ source: i, target: j });
+            }
+          }
+        }
+
+        // Check for orphan nodes and connect them
+        connectOrphanNodes();
+
+        // Apply force-directed layout
+        applyForceDirectedLayout();
+      }
+
+      // Connect orphan nodes to ensure no isolated nodes
+      function connectOrphanNodes() {
+        // Create arrays to track nodes with connections
+        const nodesWithOutgoing = new Set();
+        const nodesWithIncoming = new Set();
+
+        // Identify nodes with existing connections
+        edges.forEach((edge) => {
+          nodesWithOutgoing.add(edge.source);
+          nodesWithIncoming.add(edge.target);
+        });
+
+        // Find orphan nodes (no incoming or outgoing connections)
+        const orphans = [];
+        for (let i = 0; i < nodes.length; i++) {
+          if (!nodesWithOutgoing.has(i) && !nodesWithIncoming.has(i)) {
+            orphans.push(i);
+          }
+        }
+
+        // Connect orphans to random nodes
+        orphans.forEach((orphanId) => {
+          // Connect to a random non-orphan node if possible
+          const nonOrphans = Array.from(new Set([...nodesWithOutgoing, ...nodesWithIncoming])).filter(
+            (id) => id !== orphanId,
+          );
+
+          if (nonOrphans.length > 0) {
+            // Add both incoming and outgoing connections
+            const randomNode = nonOrphans[Math.floor(Math.random() * nonOrphans.length)];
+
+            // Add outgoing edge from orphan
+            edges.push({ source: orphanId, target: randomNode });
+            nodesWithOutgoing.add(orphanId);
+
+            // Add incoming edge to orphan
+            edges.push({ source: randomNode, target: orphanId });
+            nodesWithIncoming.add(orphanId);
+          } else if (orphans.length > 1) {
+            // If only orphans exist, connect them to each other
+            const otherOrphans = orphans.filter((id) => id !== orphanId);
+            const targetOrphan = otherOrphans[Math.floor(Math.random() * otherOrphans.length)];
+
+            edges.push({ source: orphanId, target: targetOrphan });
+            edges.push({ source: targetOrphan, target: orphanId });
+          }
+        });
+
+        // Check for nodes with only outgoing or only incoming edges
+        const outgoingOnly = [...nodesWithOutgoing].filter((id) => !nodesWithIncoming.has(id));
+        const incomingOnly = [...nodesWithIncoming].filter((id) => !nodesWithOutgoing.has(id));
+
+        // Add reciprocal connections where needed
+        outgoingOnly.forEach((nodeId) => {
+          // Find a node this connects to and add a return connection
+          const targets = edges.filter((edge) => edge.source === nodeId).map((edge) => edge.target);
+
+          if (targets.length > 0) {
+            const randomTarget = targets[Math.floor(Math.random() * targets.length)];
+            edges.push({ source: randomTarget, target: nodeId });
+          }
+        });
+
+        incomingOnly.forEach((nodeId) => {
+          // Find a node that connects to this and add outgoing connection
+          const sources = edges.filter((edge) => edge.target === nodeId).map((edge) => edge.source);
+
+          if (sources.length > 0) {
+            const randomSource = sources[Math.floor(Math.random() * sources.length)];
+            edges.push({ source: nodeId, target: randomSource });
+          }
+        });
+      }
+
+      // Apply force-directed layout
+      function applyForceDirectedLayout() {
+        const iterations = 500;
+        const repulsionForce = 50000;
+        const attractionForce = 0.1;
+        const centeringForce = 0.03; // Strength of pull toward center (small value for subtle effect)
+
+        // Calculate center of the canvas
+        const centerX = canvasSize.width / 2;
+        const centerY = canvasSize.height / 2;
+
+        for (let iter = 0; iter < iterations; iter++) {
+          // Apply repulsion forces between all nodes
+          for (let a = 0; a < nodes.length; a++) {
+            for (let b = a + 1; b < nodes.length; b++) {
+              const dx = nodes[b].x - nodes[a].x;
+              const dy = nodes[b].y - nodes[a].y;
+              const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+              const force = repulsionForce / (distance * distance);
+              const fx = (dx / distance) * force;
+              const fy = (dy / distance) * force;
+
+              nodes[a].x -= fx;
+              nodes[a].y -= fy;
+              nodes[b].x += fx;
+              nodes[b].y += fy;
+            }
+          }
+
+          // Apply attraction forces along edges
+          for (const edge of edges) {
+            const source = nodes[edge.source];
+            const target = nodes[edge.target];
+            const dx = target.x - source.x;
+            const dy = target.y - source.y;
+
+            source.x += dx * attractionForce;
+            source.y += dy * attractionForce;
+            target.x -= dx * attractionForce;
+            target.y -= dy * attractionForce;
+          }
+
+          // Apply centering force - pull nodes toward the center
+          for (const node of nodes) {
+            // Vector from node to center
+            const dx = centerX - node.x;
+            const dy = centerY - node.y;
+
+            // Add a small force proportional to distance from center
+            node.x += dx * centeringForce;
+            node.y += dy * centeringForce;
+          }
+        }
+
+        // Keep nodes within bounds
+        nodes.forEach((node) => {
+          node.x = Math.max(nodeRadius, Math.min(canvasSize.width - nodeRadius, node.x));
+          node.y = Math.max(nodeRadius, Math.min(canvasSize.height - nodeRadius, node.y));
+        });
+      }
+
+      // Check if mouse is near an edge or node
+      function checkEdgeHover(mouseX, mouseY) {
+        // First check if we're hovering over a node
+        const node = getNodeAtPosition(mouseX, mouseY);
+        if (node) {
+          // Create a "virtual" edge that starts from this node
+          // This will make the node the source of illumination
+          return {
+            isNode: true,
+            nodeId: node.id,
+            edge: { source: node.id, target: -1 }, // -1 as dummy target
+            point: { x: node.x, y: node.y },
+          };
+        }
+
+        // If not hovering a node, check for edge hover
+        const hoverThreshold = 10;
+        let closestEdge = null;
+        let closestDistance = hoverThreshold;
+        let closestPoint = null;
+
+        for (const edge of edges) {
+          const source = nodes[edge.source];
+          const target = nodes[edge.target];
+
+          // Distance from point to line segment
+          const distance = distToSegment(
+            { x: mouseX, y: mouseY },
+            { x: source.x, y: source.y },
+            { x: target.x, y: target.y },
+          );
+
+          if (distance.distance < closestDistance) {
+            closestDistance = distance.distance;
+            closestEdge = edge;
+            closestPoint = distance.point;
+          }
+        }
+
+        return closestEdge ? { isNode: false, edge: closestEdge, point: closestPoint } : null;
+      }
+
+      // Calculate distances in the graph (BFS)
+      function calculateGraphDistances(hoverInfo) {
+        // If it's a node hover, we start directly from the node
+        let startNodeId;
+
+        if (hoverInfo.isNode) {
+          startNodeId = hoverInfo.nodeId;
+        } else {
+          // Otherwise determine which node of the edge to start from
+          const source = nodes[hoverInfo.edge.source];
+          const target = nodes[hoverInfo.edge.target];
+
+          // Simple distance check to determine closest node
+          const sourceDistance = distance(source.x, source.y, hoverInfo.point.x, hoverInfo.point.y);
+          const targetDistance = distance(target.x, target.y, hoverInfo.point.x, hoverInfo.point.y);
+
+          if (sourceDistance < targetDistance) {
+            // Closer to source node - start from source
+            startNodeId = hoverInfo.edge.source;
+          } else {
+            // Closer to target node - start from target
+            startNodeId = hoverInfo.edge.target;
+          }
+        }
+
+        // Calculate hop distances using BFS
+        const distances = {};
+        const visited = new Set();
+        const queue = [];
+
+        // Initialize all distances to Infinity
+        nodes.forEach((node) => {
+          distances[node.id] = Infinity;
+        });
+
+        // Set starting node distance to 0
+        distances[startNodeId] = 0;
+        queue.push({ id: startNodeId, hops: 0 });
+
+        // BFS traversal - only follow outgoing edges
+        while (queue.length > 0) {
+          const current = queue.shift();
+
+          if (visited.has(current.id)) continue;
+          visited.add(current.id);
+
+          // Find all outgoing edges (respecting direction)
+          for (const edge of edges) {
+            if (edge.source === current.id) {
+              const newHops = current.hops + 1;
+
+              if (newHops < distances[edge.target]) {
+                distances[edge.target] = newHops;
+                queue.push({ id: edge.target, hops: newHops });
+              }
+            }
+          }
+        }
+
+        return distances;
+      }
+
+      // Draw graph
+      function drawGraph() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw edges first (under nodes)
+        edges.forEach((edge) => {
+          const source = nodes[edge.source];
+          const target = nodes[edge.target];
+
+          // Draw edge
+          ctx.beginPath();
+          ctx.moveTo(source.x, source.y);
+          ctx.lineTo(target.x, target.y);
+          ctx.strokeStyle = '#aaa';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Draw arrow
+          drawArrow(source.x, source.y, target.x, target.y);
+        });
+
+        // Draw illumination if edge is hovered
+        if (hoveredEdge) {
+          const distances = calculateGraphDistances(hoveredEdge);
+
+          // Show the color legend when hovering
+          document.getElementById('color-legend').style.display = 'flex';
+
+          // Draw illuminated edges - only in the forward direction
+          edges.forEach((edge) => {
+            const source = nodes[edge.source];
+            const target = nodes[edge.target];
+            const sourceDistance = distances[edge.source];
+            const targetDistance = distances[edge.target];
+
+            // Only illuminate if source node is reachable and target is one step further
+            // This ensures we only follow the directed edges
+            if (sourceDistance <= maxDistance && targetDistance === sourceDistance + 1) {
+              const colorIndex = sourceDistance;
+              const color = distanceColors[colorIndex];
+
+              ctx.beginPath();
+              ctx.moveTo(source.x, source.y);
+              ctx.lineTo(target.x, target.y);
+              ctx.strokeStyle = color;
+              ctx.lineWidth = 3;
+              ctx.stroke();
+
+              // Draw illuminated arrow
+              drawArrow(source.x, source.y, target.x, target.y, color);
+            }
+          });
+
+          // Draw illumination source point (if hovering over edge)
+          if (!hoveredEdge.isNode) {
+            ctx.beginPath();
+            ctx.arc(hoveredEdge.point.x, hoveredEdge.point.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = distanceColors[0]; // Use source color
+            ctx.fill();
+          }
+
+          // Update distance info display
+          let reachableCount = 0;
+          for (const id in distances) {
+            if (distances[id] <= maxDistance) reachableCount++;
+          }
+
+          distanceInfo.textContent = `Illuminating ${reachableCount} nodes within ${maxDistance} steps.`;
+        } else {
+          // Hide legend when not hovering
+          document.getElementById('color-legend').style.display = 'none';
+          distanceInfo.textContent = 'Hover over an edge to see distance.';
+        }
+
+        // Draw nodes with hop distances when hovering
+        nodes.forEach((node) => {
+          // Basic node drawing
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, nodeRadius, 0, Math.PI * 2);
+
+          // Color nodes by hop distance if hovering
+          if (hoveredEdge) {
+            const hopDistance = calculateGraphDistances(hoveredEdge)[node.id];
+            if (hopDistance <= maxDistance) {
+              // Fill based on hop distance
+              const colorIndex = Math.min(hopDistance, maxDistance);
+              ctx.fillStyle = distanceColors[colorIndex];
+            } else {
+              ctx.fillStyle = '#fff'; // Default white for unreachable
+            }
+          } else {
+            ctx.fillStyle = '#fff'; // Default white when not hovering
+          }
+
+          ctx.fill();
+          ctx.strokeStyle = '#666';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          if (showLabels) {
+            ctx.fillStyle = '#000';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.id.toString(), node.x, node.y);
+          }
+        });
+      }
+
+      // Draw an arrow at the end of an edge
+      function drawArrow(fromX, fromY, toX, toY, color = '#aaa') {
+        const headLen = 10;
+        const angle = Math.atan2(toY - fromY, toX - fromX);
+
+        // Calculate endpoint at the edge of the target node
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const unitX = dx / distance;
+        const unitY = dy / distance;
+
+        const adjustedToX = toX - unitX * nodeRadius;
+        const adjustedToY = toY - unitY * nodeRadius;
+
+        // Draw the arrow head
+        ctx.beginPath();
+        ctx.moveTo(adjustedToX, adjustedToY);
+        ctx.lineTo(
+          adjustedToX - headLen * Math.cos(angle - Math.PI / 6),
+          adjustedToY - headLen * Math.sin(angle - Math.PI / 6),
+        );
+        ctx.lineTo(
+          adjustedToX - headLen * Math.cos(angle + Math.PI / 6),
+          adjustedToY - headLen * Math.sin(angle + Math.PI / 6),
+        );
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+
+      // Helper functions
+      function distance(x1, y1, x2, y2) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+
+      // Distance from point to line segment
+      function distToSegment(p, v, w) {
+        const l2 = dist2(v, w);
+        if (l2 === 0) return { distance: dist(p, v), point: v };
+
+        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+        t = Math.max(0, Math.min(1, t));
+
+        const point = {
+          x: v.x + t * (w.x - v.x),
+          y: v.y + t * (w.y - v.y),
+        };
+
+        return { distance: dist(p, point), point };
+      }
+
+      function dist2(v, w) {
+        return (v.x - w.x) * (v.x - w.x) + (v.y - w.y) * (v.y - w.y);
+      }
+
+      function dist(v, w) {
+        return Math.sqrt(dist2(v, w));
+      }
+
+      // Check if mouse is over a node
+      function getNodeAtPosition(x, y) {
+        for (let i = nodes.length - 1; i >= 0; i--) {
+          const node = nodes[i];
+          const dist = distance(x, y, node.x, node.y);
+          if (dist <= nodeRadius) {
+            return node;
+          }
+        }
+        return null;
+      }
+
+      // Event handlers
+      function handleResize() {
+        canvasSize = setupCanvas();
+        // Adjust node positions to fit new canvas size
+        nodes.forEach((node) => {
+          node.x = Math.min(node.x, canvasSize.width - nodeRadius);
+          node.y = Math.min(node.y, canvasSize.height - nodeRadius);
+        });
+      }
+
+      function handleMouseMove(e) {
+        const rect = canvas.getBoundingClientRect();
+        mousePos = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+
+        if (isDragging && draggedNode) {
+          // Move the dragged node
+          draggedNode.x = mousePos.x;
+          draggedNode.y = mousePos.y;
+
+          // Keep node within bounds
+          draggedNode.x = Math.max(nodeRadius, Math.min(canvasSize.width - nodeRadius, draggedNode.x));
+          draggedNode.y = Math.max(nodeRadius, Math.min(canvasSize.height - nodeRadius, draggedNode.y));
+        } else {
+          // Only check for hovered edges when not dragging
+          hoveredEdge = checkEdgeHover(mousePos.x, mousePos.y);
+        }
+      }
+
+      function handleMouseDown(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const node = getNodeAtPosition(x, y);
+        if (node) {
+          draggedNode = node;
+          isDragging = true;
+          canvas.style.cursor = 'grabbing';
+        }
+      }
+
+      function handleMouseUp() {
+        isDragging = false;
+        draggedNode = null;
+        canvas.style.cursor = 'default';
+      }
+
+      // Event listeners
+      window.addEventListener('resize', handleResize);
+      canvas.addEventListener('mousemove', handleMouseMove);
+      canvas.addEventListener('mousedown', handleMouseDown);
+      canvas.addEventListener('mouseup', handleMouseUp);
+      canvas.addEventListener('mouseout', handleMouseUp);
+
+      // Update cursor when hovering over nodes
+      canvas.addEventListener('mousemove', (e) => {
+        if (!isDragging) {
+          const rect = canvas.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+
+          const node = getNodeAtPosition(x, y);
+          canvas.style.cursor = node ? 'grab' : 'default';
+        }
+      });
+
+      document.getElementById('regenerate').addEventListener('click', generateRandomGraph);
+      document.getElementById('relayout').addEventListener('click', () => {
+        // Apply force-directed layout to the existing graph
+        applyForceDirectedLayout();
+      });
+
+      // Initialize
+      generateRandomGraph();
+      createColorLegend();
+
+      // Animation loop
+      function animate() {
+        drawGraph();
+        requestAnimationFrame(animate);
+      }
+
+      animate();
+    </script>
+  </body>
+</html>
