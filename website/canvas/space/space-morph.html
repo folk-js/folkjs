@@ -2,25 +2,44 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Folk Space Demo</title>
+    <title>3D Wobbling Planes Demo</title>
     <style>
       html,
       body {
         margin: 0;
         height: 100%;
+        overflow: hidden;
       }
 
-      folk-space {
+      #space1,
+      #space2 {
+        position: absolute;
         width: 100%;
         height: 100%;
+        transform-origin: 0 0;
+        backface-visibility: hidden;
+        pointer-events: none;
+      }
+
+      #space1 {
+        background-color: rgba(200, 200, 200, 0.3);
+        border: 1px solid rgba(0, 0, 0, 0.5);
+        background-size: 40px 40px;
+      }
+
+      #space2 {
+        background-color: rgba(150, 150, 150, 0.3);
+        border: 1px solid rgba(0, 0, 0, 0.5);
+        background-size: 40px 40px;
       }
 
       folk-shape {
         background: rgb(134, 37, 37);
         border: 1px solid rgba(0, 0, 0, 0.5);
+        pointer-events: auto;
       }
 
-      [slot='front'] folk-shape {
+      #space1 folk-shape {
         background: rgb(187, 178, 178);
       }
 
@@ -28,76 +47,293 @@
         position: absolute;
         inset: 0;
         pointer-events: none;
+        z-index: 1000;
+      }
+
+      #info-container {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: white;
+        padding: 8px 10px;
+        border-radius: 4px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        z-index: 2000;
+        max-width: 200px;
+        font-size: 10px;
+        line-height: 1.3;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .button {
+        display: inline-block;
+        background-color: rgba(0, 0, 0, 0.08);
+        border-radius: 3px;
+        padding: 3px 6px;
+        margin-right: 5px;
+        cursor: pointer;
+        user-select: none;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+
+      .button:hover {
+        background-color: rgba(0, 0, 0, 0.15);
+      }
+
+      #controls {
+        display: flex;
+        gap: 5px;
       }
     </style>
   </head>
   <body>
-    <folk-rope id="rope"></folk-rope>
-    <folk-space id="space">
-      <div slot="front">
-        <folk-shape id="source" x="250" y="100" width="50" height="50"></folk-shape>
-        <folk-shape x="200" y="200" width="75" height="75" rotation="90"></folk-shape>
-        <folk-shape x="50" y="250" width="25" height="25" rotation="180"></folk-shape>
-        <folk-shape x="350" y="50" width="100" height="100" rotation="270"></folk-shape>
-        <folk-shape x="500" y="500" width="150" height="150" rotation="360"></folk-shape>
-        <folk-shape x="600" y="600" width="200" height="200" rotation="450"></folk-shape>
-        <folk-shape x="700" y="700" width="250" height="250" rotation="540"></folk-shape>
+    <div id="space1">
+      <folk-shape id="source1" x="250" y="100" width="50" height="50"></folk-shape>
+      <folk-shape id="source2" x="400" y="300" width="75" height="75" rotation="45"></folk-shape>
+      <folk-shape id="source3" x="150" y="400" width="100" height="100" rotation="90"></folk-shape>
+    </div>
+    <div id="space2">
+      <folk-shape id="target1" x="550" y="150" width="50" height="50" rotation="45"></folk-shape>
+      <folk-shape id="target2" x="300" y="400" width="75" height="75" rotation="90"></folk-shape>
+      <folk-shape id="target3" x="250" y="250" width="100" height="100" rotation="135"></folk-shape>
+    </div>
+
+    <div id="info-container">
+      <div>Testing utilities for transforming points between coordinate spaces. All transforms are in simple CSS.</div>
+      <div id="controls">
+        <div id="toggle-grid" class="button">Dot Grid</div>
+        <div id="toggle-animation" class="button">Pause</div>
       </div>
-      <div slot="back">
-        <folk-shape id="target" x="550" y="150" width="50" height="50" rotation="45"></folk-shape>
-        <folk-shape x="300" y="400" width="150" height="50" rotation="45"></folk-shape>
-        <folk-shape x="250" y="350" width="100" height="100" rotation="135"></folk-shape>
-        <folk-shape x="400" y="200" width="75" height="75" rotation="225"></folk-shape>
-        <folk-shape x="200" y="450" width="50" height="50" rotation="315"></folk-shape>
-        <folk-shape x="600" y="600" width="200" height="200" rotation="405"></folk-shape>
-        <folk-shape x="700" y="700" width="250" height="250" rotation="495"></folk-shape>
-      </div>
-    </folk-space>
+    </div>
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
-      import '@labs/standalone/folk-space.ts';
       import '@labs/standalone/folk-rope.ts';
+      import { Matrix } from '@lib/Matrix.ts';
 
-      const space = document.getElementById('space');
+      // Create ropes for each shape pair
+      const shapePairs = [
+        { source: 'source1', target: 'target1' },
+        { source: 'source2', target: 'target2' },
+        { source: 'source3', target: 'target3' },
+      ];
 
-      // Create multiple ropes
-      const ropes = Array.from({ length: 1 }, () => {
+      // Create ropes
+      const ropes = shapePairs.map((pair) => {
         const rope = document.createElement('folk-rope');
         document.body.appendChild(rope);
-        return rope;
+        return {
+          rope,
+          sourceId: pair.source,
+          targetId: pair.target,
+        };
       });
 
-      // Get all shapes from both front and back
-      const frontShapes = Array.from(document.querySelectorAll('[slot="front"] folk-shape'));
-      const backShapes = Array.from(document.querySelectorAll('[slot="back"] folk-shape'));
+      // Get plane elements
+      const frontPlane = document.getElementById('space1');
+      const backPlane = document.getElementById('space2');
 
-      function updateRopePoints() {
-        // Connect shapes in various patterns
-        ropes.forEach((rope, index) => {
-          const sourceShape = frontShapes[index % frontShapes.length];
-          const targetShape = backShapes[index % backShapes.length];
+      // Animation parameters
+      const frontPlaneAnimation = {
+        rotationX: 0,
+        rotationY: 0,
+        rotationZ: 0,
+        scaleX: 1,
+        scaleY: 1,
+        translateX: 0,
+        translateY: 0,
+        translateZ: 0,
+      };
 
-          if (sourceShape && targetShape) {
-            const sourceRect = space.getElementScreenRect(sourceShape);
-            const targetRect = space.getElementScreenRect(targetShape);
+      const backPlaneAnimation = {
+        rotationX: 0,
+        rotationY: 0,
+        rotationZ: 0,
+        scaleX: 1,
+        scaleY: 1,
+        translateX: 0,
+        translateY: 0,
+        translateZ: -1000,
+      };
 
-            if (sourceRect && targetRect) {
-              rope.sourceRect = sourceRect;
-              rope.targetRect = targetRect;
-            }
+      // Animation speeds (now using integer values)
+      const speeds = {
+        frontRotationX: 5,
+        frontRotationY: 8,
+        frontRotationZ: 4,
+        frontScaleX: 3,
+        frontScaleY: 4,
+        frontTranslateX: 12,
+        frontTranslateY: 9,
+
+        backRotationX: 7,
+        backRotationY: 4,
+        backRotationZ: 6,
+        backScaleX: 5,
+        backScaleY: 3,
+        backTranslateX: 10,
+        backTranslateY: 11,
+      };
+
+      // Animation limits
+      const limits = {
+        rotation: 0.8, // Increased rotation limit for less parallel movement
+        scale: 0.4, // Increased scale range
+        translate: 15, // Reduced from 30 to 15 for less movement
+      };
+
+      // Animation control
+      let isAnimating = true;
+      let lastTimestamp = 0;
+
+      // Animation loop
+      function animate(timestamp) {
+        if (isAnimating) {
+          updatePlaneTransforms(timestamp);
+          updateRopeConnections();
+        }
+        requestAnimationFrame(animate);
+      }
+
+      // Start animation
+      requestAnimationFrame(animate);
+
+      // Grid toggle functionality
+      const toggleGridBtn = document.getElementById('toggle-grid');
+      let gridVisible = false;
+
+      toggleGridBtn.addEventListener('click', () => {
+        gridVisible = !gridVisible;
+
+        // Toggle grid visibility
+        if (gridVisible) {
+          frontPlane.style.backgroundImage = 'radial-gradient(circle, rgba(0, 0, 0, 0.2) 2px, transparent 1px)';
+          backPlane.style.backgroundImage = 'radial-gradient(circle, rgba(0, 0, 0, 0.2) 2px, transparent 1px)';
+        } else {
+          frontPlane.style.backgroundImage = 'none';
+          backPlane.style.backgroundImage = 'none';
+        }
+      });
+
+      // Animation toggle functionality
+      const toggleAnimationBtn = document.getElementById('toggle-animation');
+
+      toggleAnimationBtn.addEventListener('click', () => {
+        isAnimating = !isAnimating;
+        toggleAnimationBtn.textContent = isAnimating ? 'Pause' : 'Play';
+      });
+
+      // Update plane transforms
+      function updatePlaneTransforms(timestamp) {
+        // Divide timestamp by a large value to work with integer speeds
+        const time = timestamp / 1000;
+
+        // Update front plane animation parameters
+        frontPlaneAnimation.rotationX = Math.sin((time * speeds.frontRotationX) / 10) * limits.rotation;
+        frontPlaneAnimation.rotationY = Math.sin((time * speeds.frontRotationY) / 10) * limits.rotation;
+        frontPlaneAnimation.rotationZ = Math.sin((time * speeds.frontRotationZ) / 10) * limits.rotation;
+        // Make planes tend to be smaller by using 0.8 instead of 1 as base scale
+        frontPlaneAnimation.scaleX = 0.8 + Math.sin((time * speeds.frontScaleX) / 10) * limits.scale;
+        frontPlaneAnimation.scaleY = 0.8 + Math.sin((time * speeds.frontScaleY) / 10) * limits.scale;
+        frontPlaneAnimation.translateX = Math.sin((time * speeds.frontTranslateX) / 10) * limits.translate;
+        frontPlaneAnimation.translateY = Math.sin((time * speeds.frontTranslateY) / 10) * limits.translate;
+
+        // Update back plane animation parameters with different phase to ensure non-parallel movement
+        backPlaneAnimation.rotationX = Math.sin((time * speeds.backRotationX) / 10 + 0.7) * limits.rotation;
+        backPlaneAnimation.rotationY = Math.sin((time * speeds.backRotationY) / 10 + 0.5) * limits.rotation;
+        backPlaneAnimation.rotationZ = Math.sin((time * speeds.backRotationZ) / 10 + 0.3) * limits.rotation;
+        // Make planes tend to be smaller
+        backPlaneAnimation.scaleX = 0.3 + Math.sin((time * speeds.backScaleX) / 10) * limits.scale;
+        backPlaneAnimation.scaleY = 0.3 + Math.sin((time * speeds.backScaleY) / 10) * limits.scale;
+        backPlaneAnimation.translateX = Math.sin((time * speeds.backTranslateX) / 10) * limits.translate;
+        backPlaneAnimation.translateY = Math.sin((time * speeds.backTranslateY) / 10) * limits.translate;
+
+        // Create front plane matrix
+        const frontMatrix = new DOMMatrix();
+        frontMatrix.translateSelf(
+          window.innerWidth / 2 + frontPlaneAnimation.translateX,
+          window.innerHeight / 2 + frontPlaneAnimation.translateY,
+          frontPlaneAnimation.translateZ,
+        );
+        frontMatrix.rotateSelf(
+          frontPlaneAnimation.rotationX * (180 / Math.PI),
+          frontPlaneAnimation.rotationY * (180 / Math.PI),
+          frontPlaneAnimation.rotationZ * (180 / Math.PI),
+        );
+        frontMatrix.scaleSelf(frontPlaneAnimation.scaleX, frontPlaneAnimation.scaleY, 1);
+        frontMatrix.translateSelf(-window.innerWidth / 2, -window.innerHeight / 2, 0);
+
+        // Create back plane matrix
+        const backMatrix = new DOMMatrix();
+        backMatrix.translateSelf(
+          window.innerWidth / 2 + backPlaneAnimation.translateX,
+          window.innerHeight / 2 + backPlaneAnimation.translateY,
+          backPlaneAnimation.translateZ,
+        );
+        backMatrix.rotateSelf(
+          backPlaneAnimation.rotationX * (180 / Math.PI),
+          backPlaneAnimation.rotationY * (180 / Math.PI),
+          backPlaneAnimation.rotationZ * (180 / Math.PI),
+        );
+        backMatrix.scaleSelf(backPlaneAnimation.scaleX, backPlaneAnimation.scaleY, 1);
+        backMatrix.translateSelf(-window.innerWidth / 2, -window.innerHeight / 2, 0);
+
+        // Apply matrices directly
+        frontPlane.style.transform = frontMatrix.toString();
+        backPlane.style.transform = backMatrix.toString();
+      }
+
+      // Update rope connections
+      function updateRopeConnections() {
+        // Get computed transforms for both planes
+        const frontMatrix = new DOMMatrix(window.getComputedStyle(frontPlane).transform);
+        const backMatrix = new DOMMatrix(window.getComputedStyle(backPlane).transform);
+
+        let _sourceId;
+        ropes.forEach(({ rope, sourceId, targetId }) => {
+          const sourceElement = document.getElementById(sourceId);
+          const targetElement = document.getElementById(targetId);
+
+          if (sourceElement && targetElement) {
+            const sourcePos = {
+              x: sourceElement.x + sourceElement.width / 2,
+              y: sourceElement.y + sourceElement.height / 2,
+            };
+            const targetPos = {
+              x: targetElement.x + targetElement.width / 2,
+              y: targetElement.y + targetElement.height / 2,
+            };
+
+            // Project points onto their respective planes
+            const projectedSourcePoint = Matrix.projectPointFromPlane(sourcePos, frontMatrix);
+            const projectedTargetPoint = Matrix.projectPointFromPlane(targetPos, backMatrix);
+
+            // Create zero-width/height rects at the projected points
+            const sourceRectForRope = {
+              x: projectedSourcePoint.x,
+              y: projectedSourcePoint.y,
+              width: 0,
+              height: 0,
+            };
+
+            const targetRectForRope = {
+              x: projectedTargetPoint.x,
+              y: projectedTargetPoint.y,
+              width: 0,
+              height: 0,
+            };
+
+            // Update rope connection points
+            rope.sourceRect = sourceRectForRope;
+            rope.targetRect = targetRectForRope;
           }
         });
       }
-
-      function animate() {
-        updateRopePoints();
-        requestAnimationFrame(animate);
-      }
-      animate();
-
-      // Handle transition
-      document.addEventListener('click', () => space.transition());
     </script>
   </body>
 </html>
