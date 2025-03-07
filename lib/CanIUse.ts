@@ -12,6 +12,7 @@ export class CanIUse {
     const enabled = !!(document as any).startViewTransition;
     if (!enabled) {
       console.warn('View Transition API is not supported in this browser');
+      alert('View Transition API is not supported in this browser');
     }
     return enabled;
   }
@@ -24,4 +25,6 @@ export class CanIUse {
     }
     return enabled;
   }
+
+  static highlightAPI() {}
 }

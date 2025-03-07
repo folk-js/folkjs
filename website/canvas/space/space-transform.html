@@ -13,29 +13,47 @@
         background: rgb(134, 37, 37);
         border: 1px solid rgba(0, 0, 0, 0.5);
       }
-
-      folk-gizmos {
-        opacity: 0.5;
+      #space {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        transform-origin: 0 0;
+        backface-visibility: hidden;
+        border: 1px solid red;
       }
     </style>
   </head>
   <body>
     <folk-gizmos></folk-gizmos>
-    <folk-transformed-space>
+    <div id="space">
       <folk-gizmos layer="transformed"></folk-gizmos>
       <folk-shape x="250" y="100" width="50" height="50"></folk-shape>
       <folk-shape x="200" y="200" width="75" height="75" rotation="90"></folk-shape>
       <folk-shape x="50" y="250" width="25" height="25" rotation="180"></folk-shape>
       <folk-shape x="350" y="50" width="100" height="100" rotation="270"></folk-shape>
-      <folk-shape x="500" y="500" width="150" height="150" rotation="360"></folk-shape>
-    </folk-transformed-space>
+      <folk-shape id="trace" x="500" y="500" width="150" height="150" rotation="360"></folk-shape>
+    </div>
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
-      import '@labs/standalone/folk-transformed-space.ts';
-      import { FolkTransformedSpace } from '@labs/folk-transformed-space';
+      import { Matrix } from '@lib/Matrix';
+      import { Gizmos } from '@lib/folk-gizmos';
 
-      const space = document.querySelector('folk-transformed-space');
+      const space = document.querySelector('#space');
+      const trace = document.querySelector('#trace');
+
+      let matrix = new DOMMatrix();
+
+      setInterval(() => {
+        const point = Matrix.projectPointFromPlane({ x: trace.x, y: trace.y }, matrix);
+        Gizmos.point(point, { color: 'green', size: 10 });
+      }, 500);
+
+      // Apply the matrix to the space element
+      const applyMatrix = () => {
+        space.style.transform = matrix.toString();
+        Gizmos.clear();
+      };
 
       let isPointerDown = false;
 
@@ -51,7 +69,14 @@
           y: event.pageY,
         };
 
-        const transformedPoint = FolkTransformedSpace.projectPoint(point, space);
+        // Visualize the click location in screen space
+        Gizmos.point(point, { color: 'red', size: 4 });
+
+        // Project the point onto the transformed plane
+        const transformedPoint = Matrix.projectPointOntoPlane(point, matrix);
+
+        // Draw the point onto the transformed plane in its local x/y coordinates
+        Gizmos.point(transformedPoint, { color: 'blue', size: 10, layer: 'transformed' });
       });
 
       document.addEventListener('pointerup', () => {
@@ -59,8 +84,22 @@
       });
 
       document.addEventListener('dblclick', (event) => {
-        if (event.target !== space) return;
-        space.randomize3D();
+        // Create a random 3D transformation
+        const min = -200;
+        const max = 200;
+        const translateX = Math.random() * (max - min) + min;
+        const translateY = Math.random() * (max - min) + min;
+        const scaleFactor = Math.random() * 1.5 + 0.5; // Random scale between 0.5 and 2
+        const rotationAngle = Math.random() * 45; // Random rotation up to 45 degrees
+
+        matrix = new DOMMatrix()
+          .translate(translateX, translateY)
+          .scale(scaleFactor, scaleFactor)
+          .rotateAxisAngle(1, 0, 0, rotationAngle * Math.random())
+          .rotateAxisAngle(0, 1, 0, rotationAngle * Math.random())
+          .rotateAxisAngle(0, 0, 1, rotationAngle * Math.random());
+
+        applyMatrix();
       });
     </script>
   </body>

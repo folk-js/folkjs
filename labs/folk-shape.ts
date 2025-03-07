@@ -232,6 +232,15 @@ export class FolkShape extends FolkElement {
     this.requestUpdate('x');
   }
 
+  get position(): Point {
+    return { x: this.#rect.x, y: this.#rect.y };
+  }
+
+  set position(position: Point) {
+    this.x = position.x;
+    this.y = position.y;
+  }
+
   get width(): number {
     return this.#rect.width;
   }
