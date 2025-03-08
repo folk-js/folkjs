@@ -369,13 +369,12 @@
           const label = document.createElement('div');
           label.className = 'node-label';
           label.textContent = node.id;
-          label.style.fontSize = `${10 / context.scale}px`;
-          label.style.padding = `${5 / context.scale}px`;
-          element.appendChild(label);
 
-          // Apply the node's dimensions
-          element.style.width = `${node.width}px`;
-          element.style.height = `${node.height}px`;
+          // Use fixed font size instead of scaling inversely
+          // This will maintain consistent label size relative to viewport
+          label.style.fontSize = '10px';
+          label.style.padding = '5px';
+          element.appendChild(label);
 
           // Calculate position relative to base node
           let relX, relY;
@@ -391,8 +390,16 @@
             relY = relPos.y;
           }
 
-          // Apply transform with the correct relative position and view offset
-          element.style.transform = `translate(${(relX + context.x) * context.scale}px, ${(relY + context.y) * context.scale}px) scale(${context.scale})`;
+          // Apply actual dimensions based on scale instead of using CSS transform scale
+          const scaledWidth = node.width * context.scale;
+          const scaledHeight = node.height * context.scale;
+          element.style.width = `${scaledWidth}px`;
+          element.style.height = `${scaledHeight}px`;
+
+          // Position the element using translated coordinates without scaling
+          const posX = (relX + context.x) * context.scale;
+          const posY = (relY + context.y) * context.scale;
+          element.style.transform = `translate(${posX}px, ${posY}px)`;
 
           // Add to DOM
           this.container.appendChild(element);
