@@ -39,7 +39,6 @@ export class FloatingOriginGraph<T = any> {
   #edges: EdgeMap; // Directed edges from source to target
   #referenceNodeId: string;
   #viewportTransform: DOMMatrix;
-  #lastTargetNodeId: string | null = null; // Track last targeted node for zooming context
 
   /**
    * Create a new FloatingOriginGraph
@@ -191,23 +190,11 @@ export class FloatingOriginGraph<T = any> {
 
   /**
    * Get the best next node to follow when zooming in
-   * For now, just returns the first outgoing edge, but could be more sophisticated
-   * by checking which node is most centered in the view
    * @param nodeId - The current node ID
    * @returns The next node ID or undefined if none found
    */
   getBestNextNodeId(nodeId: string): string | undefined {
     const edges = this.getEdgesFrom(nodeId);
-
-    // If we've previously targeted a node, prefer that direction
-    if (this.#lastTargetNodeId) {
-      const targetEdge = edges.find((edge) => edge.target === this.#lastTargetNodeId);
-      if (targetEdge) {
-        return targetEdge.target;
-      }
-    }
-
-    // Otherwise return the first available edge
     return edges.length > 0 ? edges[0].target : undefined;
   }
 
@@ -218,15 +205,6 @@ export class FloatingOriginGraph<T = any> {
    */
   getBestPrevNodeId(nodeId: string): string | undefined {
     const prevNodeIds = this.getPrevNodeIds(nodeId);
-
-    // If we've previously targeted a node, prefer that direction
-    if (this.#lastTargetNodeId) {
-      if (prevNodeIds.includes(this.#lastTargetNodeId)) {
-        return this.#lastTargetNodeId;
-      }
-    }
-
-    // Otherwise return the first available previous node
     return prevNodeIds.length > 0 ? prevNodeIds[0] : undefined;
   }
 
@@ -256,16 +234,6 @@ export class FloatingOriginGraph<T = any> {
       }
     }
     return result;
-  }
-
-  /**
-   * Set the target node for contextual zooming
-   * @param nodeId - The target node ID
-   */
-  setTargetNode(nodeId: string): void {
-    if (this.#nodes[nodeId]) {
-      this.#lastTargetNodeId = nodeId;
-    }
   }
 
   /**
@@ -522,9 +490,6 @@ export class FloatingOriginGraph<T = any> {
     const nextNodeId = this.getBestNextNodeId(this.#referenceNodeId);
     if (!nextNodeId) return false;
 
-    // Update the last target to help with continuity
-    this.#lastTargetNodeId = this.#referenceNodeId;
-
     // Calculate the visual transform of the next node before changing reference
     const transform = this.getAccumulatedTransform(nextNodeId);
     if (!transform) return false;
@@ -553,9 +518,6 @@ export class FloatingOriginGraph<T = any> {
   moveReferenceBackward(): boolean {
     const prevNodeId = this.getBestPrevNodeId(this.#referenceNodeId);
     if (!prevNodeId) return false;
-
-    // Update the last target to help with continuity
-    this.#lastTargetNodeId = this.#referenceNodeId;
 
     // Get the edge from previous node to reference node
     const prevToRefEdge = this.getEdge(prevNodeId, this.#referenceNodeId);
@@ -598,7 +560,6 @@ export class FloatingOriginGraph<T = any> {
   resetView(initialNodeId?: string): void {
     this.#referenceNodeId = initialNodeId || Object.keys(this.#nodes)[0];
     this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
-    this.#lastTargetNodeId = null; // Reset the target node
   }
 
   /**
