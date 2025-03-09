@@ -245,83 +245,144 @@
         const nodeWidth = nextNode.data.width;
         const nodeHeight = nextNode.data.height;
 
-        // Calculate the corners of the node in its own coordinate system
-        const corners = [
-          { x: -nodeWidth / 2, y: -nodeHeight / 2 }, // top-left
-          { x: nodeWidth / 2, y: -nodeHeight / 2 }, // top-right
-          { x: nodeWidth / 2, y: nodeHeight / 2 }, // bottom-right
-          { x: -nodeWidth / 2, y: nodeHeight / 2 }, // bottom-left
-        ];
-
-        // Transform the corners to screen coordinates
-        const transformedCorners = corners.map((corner) => {
-          // Apply the combined transform to each corner
-          const pt = new DOMPoint(corner.x, corner.y);
-          const transformedPt = pt.matrixTransform(combinedTransform);
-
-          // Convert to screen coordinates (viewport is centered on canvas)
-          return {
-            x: transformedPt.x + canvasWidth / 2,
-            y: transformedPt.y + canvasHeight / 2,
-          };
-        });
-
-        // Calculate the bounding box of the transformed corners
-        const minX = Math.min(...transformedCorners.map((c) => c.x));
-        const maxX = Math.max(...transformedCorners.map((c) => c.x));
-        const minY = Math.min(...transformedCorners.map((c) => c.y));
-        const maxY = Math.max(...transformedCorners.map((c) => c.y));
-
-        // Check if the node FULLY covers the screen (with a small margin)
-        // The margin helps ensure we don't miss edges due to floating point imprecision
-        const margin = -5; // negative margin means it must exceed the screen bounds
-        return minX <= margin && minY <= margin && maxX >= canvasWidth - margin && maxY >= canvasHeight - margin;
+        // Check if screen is completely covered by the node
+        return isScreenCoveredByRectangle(
+          -nodeWidth / 2,
+          -nodeHeight / 2,
+          nodeWidth,
+          nodeHeight,
+          combinedTransform,
+          canvasWidth,
+          canvasHeight,
+        );
       }
 
       function shouldZoomOutToPrevNode(graph, canvasWidth, canvasHeight, prevNodeId) {
         const currentNode = graph.referenceNode;
         if (!currentNode) return false;
 
-        // When zooming out, we need to check if the current reference node no longer fully covers the screen
-        // Similar to shouldZoomInToNextNode but with the inverse condition
-
         // Get the node's dimensions
         const nodeWidth = currentNode.data.width;
         const nodeHeight = currentNode.data.height;
 
-        // Calculate the corners of the node in its own coordinate system
-        const corners = [
-          { x: -nodeWidth / 2, y: -nodeHeight / 2 }, // top-left
-          { x: nodeWidth / 2, y: -nodeHeight / 2 }, // top-right
-          { x: nodeWidth / 2, y: nodeHeight / 2 }, // bottom-right
-          { x: -nodeWidth / 2, y: nodeHeight / 2 }, // bottom-left
+        // For zooming out, we check if the current reference node no longer covers the screen
+        return !isScreenCoveredByRectangle(
+          -nodeWidth / 2,
+          -nodeHeight / 2,
+          nodeWidth,
+          nodeHeight,
+          graph.viewportTransform,
+          canvasWidth,
+          canvasHeight,
+        );
+      }
+
+      /**
+       * Checks if a rectangle completely covers the screen, even when transformed (rotated/scaled)
+       * @param rectX - The x coordinate of the top-left of the rectangle (in its own coordinate system)
+       * @param rectY - The y coordinate of the top-left of the rectangle (in its own coordinate system)
+       * @param width - The width of the rectangle
+       * @param height - The height of the rectangle
+       * @param transform - The transformation to apply to the rectangle
+       * @param canvasWidth - The width of the canvas/screen
+       * @param canvasHeight - The height of the canvas/screen
+       * @returns True if the rectangle completely covers the screen
+       */
+      function isScreenCoveredByRectangle(rectX, rectY, width, height, transform, canvasWidth, canvasHeight) {
+        // We'll check multiple points along the screen edges to see if they're all inside the transformed rectangle
+        // For better accuracy, we sample more points for larger screens
+        const numPointsToCheck = Math.max(5, Math.min(20, Math.floor(Math.max(canvasWidth, canvasHeight) / 50)));
+
+        // Create test points along the screen edges and interior
+        const testPoints = [];
+
+        // Add the four corners of the screen
+        testPoints.push({ x: 0, y: 0 }); // Top-left
+        testPoints.push({ x: canvasWidth, y: 0 }); // Top-right
+        testPoints.push({ x: canvasWidth, y: canvasHeight }); // Bottom-right
+        testPoints.push({ x: 0, y: canvasHeight }); // Bottom-left
+
+        // Add points along the edges of the screen
+        for (let i = 1; i < numPointsToCheck - 1; i++) {
+          const t = i / (numPointsToCheck - 1);
+          // Top edge
+          testPoints.push({ x: t * canvasWidth, y: 0 });
+          // Right edge
+          testPoints.push({ x: canvasWidth, y: t * canvasHeight });
+          // Bottom edge
+          testPoints.push({ x: (1 - t) * canvasWidth, y: canvasHeight });
+          // Left edge
+          testPoints.push({ x: 0, y: (1 - t) * canvasHeight });
+        }
+
+        // Add some interior points
+        for (let i = 1; i < numPointsToCheck - 1; i++) {
+          for (let j = 1; j < numPointsToCheck - 1; j++) {
+            const x = (i / (numPointsToCheck - 1)) * canvasWidth;
+            const y = (j / (numPointsToCheck - 1)) * canvasHeight;
+            testPoints.push({ x, y });
+          }
+        }
+
+        // Calculate the corners of the rectangle in its local coordinate system
+        const rectCorners = [
+          { x: rectX, y: rectY }, // Top-left
+          { x: rectX + width, y: rectY }, // Top-right
+          { x: rectX + width, y: rectY + height }, // Bottom-right
+          { x: rectX, y: rectY + height }, // Bottom-left
         ];
 
-        // Transform the corners to screen coordinates
-        const transformedCorners = corners.map((corner) => {
-          // For the current node, we only need to apply the viewport transform
+        // Transform the rectangle corners to screen space
+        const transformedRectCorners = rectCorners.map((corner) => {
           const pt = new DOMPoint(corner.x, corner.y);
-          const transformedPt = pt.matrixTransform(graph.viewportTransform);
-
-          // Convert to screen coordinates (viewport is centered on canvas)
+          const transformedPt = pt.matrixTransform(transform);
           return {
             x: transformedPt.x + canvasWidth / 2,
             y: transformedPt.y + canvasHeight / 2,
           };
         });
 
-        // Calculate the bounding box of the transformed corners
-        const minX = Math.min(...transformedCorners.map((c) => c.x));
-        const maxX = Math.max(...transformedCorners.map((c) => c.x));
-        const minY = Math.min(...transformedCorners.map((c) => c.y));
-        const maxY = Math.max(...transformedCorners.map((c) => c.y));
+        // Calculate the edges of the transformed rectangle
+        const edges = [];
+        for (let i = 0; i < 4; i++) {
+          const start = transformedRectCorners[i];
+          const end = transformedRectCorners[(i + 1) % 4];
+          edges.push({
+            x1: start.x,
+            y1: start.y,
+            x2: end.x,
+            y2: end.y,
+          });
+        }
 
-        // Check if the node no longer FULLY covers the screen
-        // We use a small positive margin to avoid flickering due to floating-point precision
-        const margin = 5; // small positive margin for stability
+        // Verify that all test points are inside the transformed rectangle
+        for (const point of testPoints) {
+          if (!isPointInPolygon(point, transformedRectCorners)) {
+            return false;
+          }
+        }
 
-        // Return true when the node no longer fully covers the screen
-        return minX > margin || minY > margin || maxX < canvasWidth - margin || maxY < canvasHeight - margin;
+        return true;
+      }
+
+      /**
+       * Checks if a point is inside a polygon using the ray casting algorithm
+       * @param point - The point to check
+       * @param polygon - Array of points forming the polygon
+       * @returns True if the point is inside the polygon
+       */
+      function isPointInPolygon(point, polygon) {
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+          const xi = polygon[i].x,
+            yi = polygon[i].y;
+          const xj = polygon[j].x,
+            yj = polygon[j].y;
+
+          const intersect = yi > point.y !== yj > point.y && point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
+          if (intersect) inside = !inside;
+        }
+        return inside;
       }
 
       // Setup canvas
