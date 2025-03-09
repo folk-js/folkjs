@@ -59,11 +59,11 @@
     </div>
 
     <div id="buttons-container">
-      <button onclick="changeReferenceNode('node1')">Node 1</button>
-      <button onclick="changeReferenceNode('node2')">Node 2</button>
-      <button onclick="changeReferenceNode('node3')">Node 3</button>
-      <button onclick="changeReferenceNode('node4')">Node 4</button>
-      <button onclick="changeReferenceNode('node5')">Node 5</button>
+      <button onclick="changeReferenceNodeBackward()">◀ Previous</button>
+      <button onclick="changeReferenceNodeForward()">Next ▶</button>
+      <div style="margin-top: 8px">
+        <button onclick="resetView()">Reset View</button>
+      </div>
     </div>
 
     <canvas id="zui-canvas"></canvas>
@@ -73,40 +73,79 @@
       const nodes = {
         node1: {
           id: 'node1',
-          prev: null,
+          prev: 'node8',
           next: 'node2',
           data: 'red',
-          transform: new DOMMatrix().scale(0.8),
+          width: 150,
+          height: 100,
+          transform: new DOMMatrix().scale(0.5),
         },
         node2: {
           id: 'node2',
           prev: 'node1',
           next: 'node3',
           data: 'blue',
-          transform: new DOMMatrix().scale(0.8),
+          width: 150,
+          height: 100,
+          transform: new DOMMatrix().scale(0.5),
         },
         node3: {
           id: 'node3',
           prev: 'node2',
           next: 'node4',
           data: 'green',
-          transform: new DOMMatrix().scale(0.8),
+          width: 150,
+          height: 100,
+          transform: new DOMMatrix().scale(0.6),
         },
         node4: {
           id: 'node4',
           prev: 'node3',
           next: 'node5',
           data: 'grey',
-          transform: new DOMMatrix().scale(0.8),
+          width: 150,
+          height: 100,
+          transform: new DOMMatrix().scale(0.6),
         },
         node5: {
           id: 'node5',
           prev: 'node4',
-          next: 'node1',
+          next: 'node6',
           data: 'purple',
-          transform: new DOMMatrix().scale(0.8),
+          width: 150,
+          height: 100,
+          transform: new DOMMatrix().scale(0.7),
+        },
+        node6: {
+          id: 'node6',
+          prev: 'node5',
+          next: 'node7',
+          data: 'orange',
+          width: 180,
+          height: 90,
+          transform: new DOMMatrix().scale(0.65),
+        },
+        node7: {
+          id: 'node7',
+          prev: 'node6',
+          next: 'node8',
+          data: 'teal',
+          width: 150,
+          height: 100,
+          transform: new DOMMatrix().scale(0.4),
+        },
+        node8: {
+          id: 'node8',
+          prev: 'node7',
+          next: 'node1',
+          data: 'magenta',
+          width: 150,
+          height: 100,
+          transform: new DOMMatrix().scale(0.5),
         },
       };
+
+      const VISIBLE_DISTANCE = 4;
 
       // Reference node ID
       let referenceNodeId = 'node1';
@@ -128,118 +167,8 @@
       window.addEventListener('resize', resizeCanvas);
       resizeCanvas();
 
-      // Function to change the reference node
-      function changeReferenceNode(newReferenceNodeId) {
-        if (newReferenceNodeId === referenceNodeId) return; // No change needed
-
-        console.log(`Changing reference node from ${referenceNodeId} to ${newReferenceNodeId}`);
-
-        // Calculate the transform from old reference node to new reference node
-        const transformPath = findTransformPath(referenceNodeId, newReferenceNodeId);
-
-        // Apply this transform to the viewport transform
-        // This ensures visual continuity - everything stays in the same place
-        viewportTransform = transformPath.multiply(viewportTransform);
-
-        // Update reference node
-        referenceNodeId = newReferenceNodeId;
-
-        // Update the info panel
-        document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
-
-        // Redraw
-        draw();
-      }
-
-      // Function to find the transform path between two nodes
-      function findTransformPath(fromNodeId, toNodeId) {
-        // If nodes are the same, return identity transform
-        if (fromNodeId === toNodeId) return new DOMMatrix();
-
-        // Try to find a path going forward
-        let path = findForwardPath(fromNodeId, toNodeId);
-        if (path) {
-          return path;
-        }
-
-        // Try to find a path going backward
-        path = findBackwardPath(fromNodeId, toNodeId);
-        if (path) {
-          return path;
-        }
-
-        // If we need a more complex path (going backward then forward)
-        // Find a common ancestor and combine paths
-        return findComplexPath(fromNodeId, toNodeId);
-      }
-
-      // Find transform going forward through next links
-      function findForwardPath(fromNodeId, toNodeId) {
-        let currentNodeId = fromNodeId;
-        let transform = new DOMMatrix();
-
-        while (currentNodeId !== toNodeId) {
-          const currentNode = nodes[currentNodeId];
-          if (!currentNode.next) return null; // Can't go further
-
-          // Accumulate transform
-          transform = nodes[currentNode.next].transform.multiply(transform);
-          currentNodeId = currentNode.next;
-
-          if (currentNodeId === toNodeId) {
-            return transform;
-          }
-        }
-
-        return transform;
-      }
-
-      // Find transform going backward through prev links
-      function findBackwardPath(fromNodeId, toNodeId) {
-        let currentNodeId = fromNodeId;
-        let transform = new DOMMatrix();
-
-        while (currentNodeId !== toNodeId) {
-          const currentNode = nodes[currentNodeId];
-          if (!currentNode.prev) return null; // Can't go further
-
-          // For backward movement, we need to invert the transform
-          const prevNode = nodes[currentNode.prev];
-          const inverseTransform = invertTransform(prevNode.transform);
-          transform = inverseTransform.multiply(transform);
-          currentNodeId = currentNode.prev;
-
-          if (currentNodeId === toNodeId) {
-            return transform;
-          }
-        }
-
-        return transform;
-      }
-
-      // Find a complex path that might require going backward then forward
-      function findComplexPath(fromNodeId, toNodeId) {
-        // This is a simplified approach - in a real implementation
-        // you might need a more sophisticated graph traversal algorithm
-
-        // For this demo, we'll just try all nodes as potential common ancestors
-        for (const potentialAncestorId in nodes) {
-          const pathToAncestor = findBackwardPath(fromNodeId, potentialAncestorId);
-          const pathFromAncestor = findForwardPath(potentialAncestorId, toNodeId);
-
-          if (pathToAncestor && pathFromAncestor) {
-            return pathFromAncestor.multiply(pathToAncestor);
-          }
-        }
-
-        // If no path found, return identity (shouldn't happen in a connected graph)
-        console.error('No path found between nodes');
-        return new DOMMatrix();
-      }
-
       // Helper function to invert a transform
       function invertTransform(transform) {
-        // DOMMatrix has an inverse() method we can use
         return transform.inverse();
       }
 
@@ -264,8 +193,7 @@
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         // Get visible nodes (only next nodes)
-        const visibleDistance = 2;
-        const visibleNodes = getNextNodes(referenceNodeId, visibleDistance);
+        const visibleNodes = getNextNodes(referenceNodeId, VISIBLE_DISTANCE);
 
         // Save current state
         ctx.save();
@@ -321,16 +249,18 @@
         const node = nodes[nodeId];
         if (!node) return;
 
-        const nodeSize = 100; // Size of the node
+        // Use node's width and height
+        const width = node.width || 100;
+        const height = node.height || 100;
 
-        // Draw a simple rectangle for now
+        // Draw a rectangle with the node's dimensions
         ctx.fillStyle = node.data;
-        ctx.fillRect(-nodeSize / 2, -nodeSize / 2, nodeSize, nodeSize);
+        ctx.fillRect(-width / 2, -height / 2, width, height);
 
         // Add a border
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 2;
-        ctx.strokeRect(-nodeSize / 2, -nodeSize / 2, nodeSize, nodeSize);
+        ctx.strokeRect(-width / 2, -height / 2, width, height);
 
         // Add node ID text
         ctx.fillStyle = 'white';
@@ -394,15 +324,77 @@
 
       canvas.addEventListener('click', (e) => {
         if (e.shiftKey) {
-          // go to the next node
-          const nextNodeId = nodes[referenceNodeId].next;
-          changeReferenceNode(nextNodeId);
+          // go to the next node using our direct function
+          changeReferenceNodeForward();
         }
       });
 
+      // Functions for forward/backward navigation
+      function changeReferenceNodeForward() {
+        const nextNodeId = nodes[referenceNodeId].next;
+        if (nextNodeId) {
+          // Get the transform of the next node
+          const nextNodeTransform = nodes[nextNodeId].transform;
+
+          // Apply this transform to the viewport
+          viewportTransform = nextNodeTransform.multiply(viewportTransform);
+
+          // Update reference node
+          referenceNodeId = nextNodeId;
+
+          // Update the info panel
+          document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
+
+          console.log(`Changed reference node forward to ${referenceNodeId}`);
+          console.log(`Applied transform: scale(${nextNodeTransform.a.toFixed(2)})`);
+
+          // Redraw
+          draw();
+        }
+      }
+
+      function changeReferenceNodeBackward() {
+        const prevNodeId = nodes[referenceNodeId].prev;
+        if (prevNodeId) {
+          // Get the inverse transform of the current node relative to its previous node
+          const currentNodeTransform = nodes[referenceNodeId].transform;
+          const inverseTransform = invertTransform(currentNodeTransform);
+
+          // Apply this inverse transform to the viewport
+          viewportTransform = inverseTransform.multiply(viewportTransform);
+
+          // Update reference node
+          referenceNodeId = prevNodeId;
+
+          // Update the info panel
+          document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
+
+          console.log(`Changed reference node backward to ${referenceNodeId}`);
+          console.log(`Applied inverse transform: scale(${inverseTransform.a.toFixed(2)})`);
+
+          // Redraw
+          draw();
+        }
+      }
+
+      function resetView() {
+        // Reset to node1 and reset viewport transform
+        referenceNodeId = 'node1';
+        viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
+
+        // Update the info panel
+        document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
+
+        console.log('View reset to node1');
+
+        // Redraw
+        draw();
+      }
+
       // Make globally accessible for the buttons
-      window.changeReferenceNode = changeReferenceNode;
-      window.getNextNodes = getNextNodes;
+      window.changeReferenceNodeForward = changeReferenceNodeForward;
+      window.changeReferenceNodeBackward = changeReferenceNodeBackward;
+      window.resetView = resetView;
 
       // Initial draw
       draw();
