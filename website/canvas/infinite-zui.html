@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Infinite ZUI</title>
+    <title>Infinite ZUI with RelativeScaleTree</title>
     <style>
       html,
       body {
@@ -74,30 +74,131 @@
   </head>
   <body>
     <div id="info-container">
-      <div>Infinite ZUI</div>
-      <div>A zoomable UI with infinite tree-like structure.</div>
+      <div>Infinite ZUI with RelativeScaleTree</div>
+      <div>A zoomable UI with infinite tree-like structure using the RelativeScaleTree implementation.</div>
       <div>Scroll to zoom, drag to pan.</div>
     </div>
 
     <div id="zui-container"></div>
     <div class="debug-info"></div>
 
-    <script>
-      class ZUINode {
-        constructor(id, width, height, color, children = []) {
+    <script type="module">
+      // Store any errors for debugging
+      window._zuiErrors = [];
+
+      // Try importing the RelativeScaleTree implementation
+      let RelativeScaleTree;
+      let ScaleNode;
+
+      try {
+        // Dynamic import to catch errors
+        const module = await import('@labs/RelativeScaleTree.ts');
+        RelativeScaleTree = module.RelativeScaleTree;
+        ScaleNode = module.ScaleNode;
+        console.log('Successfully imported RelativeScaleTree');
+      } catch (e) {
+        console.error('Error importing RelativeScaleTree:', e);
+        window._zuiErrors.push(`Import error: ${e.message}`);
+        // We'll use the fallback implementation instead
+      }
+
+      // Fallback implementation in case of import errors
+      class SimpleScaleNode {
+        constructor(id, parentId, x, y, width, height, color) {
           this.id = id;
-          this.width = width;
-          this.height = height;
-          this.color = color;
-          this.children = children;
-          this.x = 0;
-          this.y = 0;
-          this.element = null;
+          this.parentId = parentId;
+          this.bounds = { x, y, width, height };
+          this.data = { color };
+        }
+      }
+
+      class SimpleScaleTree {
+        constructor(rootNode) {
+          this.nodes = new Map();
+          this.nodes.set(rootNode.id, rootNode);
+          this.currentNodeId = rootNode.id;
+          this.scale = 1;
+          this.offset = { x: 0, y: 0 };
+          console.log('Created SimpleScaleTree fallback');
         }
 
-        addChild(child) {
-          this.children.push(child);
-          return child;
+        addNode(node) {
+          this.nodes.set(node.id, node);
+        }
+
+        getNode(nodeId) {
+          return this.nodes.get(nodeId);
+        }
+
+        getViewState() {
+          return {
+            currentNodeId: this.currentNodeId,
+            scale: this.scale,
+            offset: { ...this.offset },
+          };
+        }
+
+        zoom(factor, focalPointX, focalPointY) {
+          this.scale *= factor;
+          console.log('SimpleScaleTree zoom', this.scale);
+        }
+
+        pan(deltaX, deltaY) {
+          this.offset.x += deltaX / this.scale;
+          this.offset.y += deltaY / this.scale;
+        }
+
+        getCoordinateTransform(nodeId) {
+          const node = this.nodes.get(nodeId);
+          if (!node) return { x: 0, y: 0, width: 0, height: 0, visible: false };
+
+          // Simple transform for fallback implementation
+          if (nodeId === this.currentNodeId) {
+            // Current node
+            return {
+              x: this.offset.x * this.scale,
+              y: this.offset.y * this.scale,
+              width: node.bounds.width * this.scale,
+              height: node.bounds.height * this.scale,
+              visible: true,
+            };
+          } else if (node.parentId === this.currentNodeId) {
+            // Direct child of current node
+            const parent = this.nodes.get(this.currentNodeId);
+            return {
+              x: (node.bounds.x + this.offset.x) * this.scale,
+              y: (node.bounds.y + this.offset.y) * this.scale,
+              width: node.bounds.width * this.scale,
+              height: node.bounds.height * this.scale,
+              visible: true,
+            };
+          } else if (node.parentId) {
+            // Other nodes with parents
+            const parent = this.nodes.get(node.parentId);
+            if (parent) {
+              const parentTransform = this.getCoordinateTransform(parent.id);
+              if (parentTransform.visible) {
+                return {
+                  x: parentTransform.x + node.bounds.x * this.scale,
+                  y: parentTransform.y + node.bounds.y * this.scale,
+                  width: node.bounds.width * this.scale,
+                  height: node.bounds.height * this.scale,
+                  visible: true,
+                };
+              }
+            }
+          }
+
+          // Root node or no parent
+          const rootTransform = {
+            x: node.bounds.x * this.scale,
+            y: node.bounds.y * this.scale,
+            width: node.bounds.width * this.scale,
+            height: node.bounds.height * this.scale,
+            visible: true,
+          };
+
+          return rootTransform;
         }
       }
 
@@ -107,29 +208,112 @@
           this.container = document.getElementById(containerId);
           this.debugInfo = document.querySelector('.debug-info');
 
-          // View state
-          this.scale = 1;
-          this.offsetX = 0;
-          this.offsetY = 0;
-          this.baseNodeId = 'root'; // Current base node for coordinate rebasing
-
-          // Node management
-          this.nodes = new Map();
-          this.rootNode = null;
+          // Constants
+          this.ZOOM_SENSITIVITY = 0.001;
 
           // Interaction state
           this.isDragging = false;
           this.lastMouseX = 0;
           this.lastMouseY = 0;
 
-          // Constants
-          this.ZOOM_SENSITIVITY = 0.001;
-          this.MAX_SCALE = 1000000;
-          this.MIN_SCALE = 0.00001;
-          this.REBASE_THRESHOLD_MAX = 100;
-          this.REBASE_THRESHOLD_MIN = 0.01;
+          // Node visualization mappings
+          this.nodeElements = new Map();
+          this.nodeColors = new Map();
 
+          console.log('Initializing InfiniteZUI');
+          // Create tree data structure
+          this.initializeTree();
           this.setupEventListeners();
+          this.updateDebugInfo();
+          this.render();
+
+          // Update debug info with any initialization errors
+          if (window._zuiErrors && window._zuiErrors.length > 0) {
+            this.debugInfo.innerHTML += `<br>Errors: ${window._zuiErrors.join('<br>')}`;
+          }
+        }
+
+        initializeTree() {
+          try {
+            // Create root node
+            const rootNode = {
+              id: 'root',
+              bounds: { x: 0, y: 0, width: 800, height: 600 },
+              data: { color: '#f0f0f0' },
+            };
+
+            console.log('Creating RelativeScaleTree with root', rootNode);
+            // Initialize the RelativeScaleTree with root node
+            this.tree = new RelativeScaleTree(rootNode);
+            console.log('RelativeScaleTree created successfully');
+          } catch (err) {
+            console.error('Error creating RelativeScaleTree:', err);
+            console.log('Falling back to SimpleScaleTree');
+
+            // Create fallback implementation
+            const rootNode = new SimpleScaleNode('root', null, 0, 0, 800, 600, '#f0f0f0');
+            this.tree = new SimpleScaleTree(rootNode);
+          }
+
+          // Set colors
+          this.nodeColors.set('root', '#f0f0f0');
+
+          try {
+            // Add children
+            this.tree.addNode({
+              id: 'child1',
+              parentId: 'root',
+              bounds: { x: 50, y: 50, width: 300, height: 200 },
+              data: { color: '#ffcccc' },
+            });
+            this.nodeColors.set('child1', '#ffcccc');
+
+            this.tree.addNode({
+              id: 'child2',
+              parentId: 'root',
+              bounds: { x: 400, y: 150, width: 250, height: 250 },
+              data: { color: '#ccffcc' },
+            });
+            this.nodeColors.set('child2', '#ccffcc');
+
+            this.tree.addNode({
+              id: 'child3',
+              parentId: 'root',
+              bounds: { x: 200, y: 300, width: 200, height: 300 },
+              data: { color: '#ccccff' },
+            });
+            this.nodeColors.set('child3', '#ccccff');
+
+            // Add nested children
+            this.tree.addNode({
+              id: 'subchild1',
+              parentId: 'child1',
+              bounds: { x: 50, y: 30, width: 100, height: 80 },
+              data: { color: '#ffaaaa' },
+            });
+            this.nodeColors.set('subchild1', '#ffaaaa');
+
+            this.tree.addNode({
+              id: 'subchild2',
+              parentId: 'child2',
+              bounds: { x: 30, y: 50, width: 80, height: 80 },
+              data: { color: '#aaffaa' },
+            });
+            this.nodeColors.set('subchild2', '#aaffaa');
+
+            // Create deeper nesting
+            this.tree.addNode({
+              id: 'subsubchild',
+              parentId: 'subchild1',
+              bounds: { x: 20, y: 20, width: 40, height: 30 },
+              data: { color: '#ff8888' },
+            });
+            this.nodeColors.set('subsubchild', '#ff8888');
+
+            console.log('Tree initialized with nodes', this.tree);
+          } catch (err) {
+            console.error('Error adding nodes:', err);
+          }
         }
 
         setupEventListeners() {
@@ -148,7 +332,9 @@
               const zoomFactor = 1 - e.deltaY * this.ZOOM_SENSITIVITY;
 
               // Apply zoom centered at mouse position
-              this.zoom(zoomFactor, mouseX, mouseY);
+              this.tree.zoom(zoomFactor, mouseX, mouseY);
+              this.render();
+              this.updateDebugInfo();
             },
             { passive: false },
           );
@@ -167,13 +353,13 @@
             const dx = e.clientX - this.lastMouseX;
             const dy = e.clientY - this.lastMouseY;
 
-            this.offsetX += dx / this.scale;
-            this.offsetY += dy / this.scale;
+            this.tree.pan(dx, dy);
 
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
 
             this.render();
+            this.updateDebugInfo();
           });
 
           document.addEventListener('mouseup', () => {
@@ -182,427 +368,90 @@
           });
         }
 
-        zoom(factor, centerX, centerY) {
-          // Calculate world coordinates of zoom center
-          const worldX = centerX / this.scale - this.offsetX;
-          const worldY = centerY / this.scale - this.offsetY;
-
-          // Apply zoom factor
-          const newScale = Math.max(this.MIN_SCALE, Math.min(this.MAX_SCALE, this.scale * factor));
-
-          // Adjust offset to keep the point under mouse fixed
-          this.offsetX = -(worldX - centerX / newScale);
-          this.offsetY = -(worldY - centerY / newScale);
-
-          this.scale = newScale;
-
-          // Check if we need to rebase coordinates
-          this.checkAndRebaseCoordinates();
-
-          this.render();
-          this.updateDebugInfo();
-        }
-
-        checkAndRebaseCoordinates() {
-          const baseNode = this.nodes.get(this.baseNodeId);
-          if (!baseNode) return;
-
-          // Zooming in: Check if any child node fills the screen
-          for (const child of baseNode.children) {
-            if (this.nodeCoversScreen(child.id)) {
-              this.rebaseToChild(child.id);
-              return;
-            }
-          }
-
-          // Zooming out: Check if current base node no longer covers most of the screen
-          // and we're not already at the root
-          if (this.baseNodeId !== 'root' && !this.nodeCoversScreenSignificantly(this.baseNodeId)) {
-            console.log(`Base node ${this.baseNodeId} no longer covers screen, rebasing to parent`);
-            this.rebaseToParent();
-            return;
-          }
-        }
-
-        rebaseToChild(childId) {
-          // Find child node to rebase to
-          const baseNode = this.nodes.get(this.baseNodeId);
-          if (!baseNode) return;
-
-          // If specific child ID is provided, use it, otherwise use first child
-          const targetChildId = childId || (baseNode.children.length > 0 ? baseNode.children[0].id : null);
-          if (!targetChildId) return;
-
-          const childNode = this.nodes.get(targetChildId);
-          if (!childNode) return;
-
-          // Track the node's screen position and size before rebasing
-          const nodeScreenPos = this.getNodeScreenPosition(targetChildId);
-
-          // Temporarily store the old base node ID
-          const oldBaseId = this.baseNodeId;
-
-          // Update base node ID
-          this.baseNodeId = targetChildId;
-
-          // Calculate new scale that preserves the visual size
-          this.scale = nodeScreenPos.width / childNode.width;
-
-          // Set new offsets to maintain the node position on screen
-          this.offsetX = nodeScreenPos.x / this.scale;
-          this.offsetY = nodeScreenPos.y / this.scale;
-
-          console.log(`Rebased from ${oldBaseId} to child: ${targetChildId}`);
-          this.render();
-          this.updateDebugInfo();
-        }
-
-        rebaseToParent() {
-          // Find the parent of current base node
-          const baseNode = this.nodes.get(this.baseNodeId);
-          if (!baseNode || this.baseNodeId === 'root') return;
-
-          // Find parent node
-          let parentNode = null;
-          for (const node of this.nodes.values()) {
-            if (node.children.some((child) => child.id === this.baseNodeId)) {
-              parentNode = node;
-              break;
-            }
-          }
-
-          if (!parentNode) return;
-
-          // Get current base node's position on screen
-          const baseScreenPos = this.getNodeScreenPosition(this.baseNodeId);
-
-          // Store old base ID
-          const oldBaseId = this.baseNodeId;
-
-          // Update base node to parent
-          this.baseNodeId = parentNode.id;
-
-          // Calculate new scale to maintain the same visual size of node
-          this.scale = baseScreenPos.width / baseNode.width;
-
-          // Calculate new offsets that maintain the position of the child
-          this.offsetX = baseScreenPos.x / this.scale - baseNode.x;
-          this.offsetY = baseScreenPos.y / this.scale - baseNode.y;
-
-          console.log(`Rebased from ${oldBaseId} to parent: ${parentNode.id}`);
-          this.render();
-          this.updateDebugInfo();
-        }
-
-        createTree() {
-          // Create root node
-          const root = new ZUINode('root', 800, 600, '#f0f0f0');
-          this.nodes.set(root.id, root);
-          this.rootNode = root;
-
-          // Create some children
-          const child1 = root.addChild(new ZUINode('child1', 300, 200, '#ffcccc'));
-          child1.x = 50;
-          child1.y = 50;
-          this.nodes.set(child1.id, child1);
-
-          const child2 = root.addChild(new ZUINode('child2', 250, 250, '#ccffcc'));
-          child2.x = 400;
-          child2.y = 150;
-          this.nodes.set(child2.id, child2);
-
-          const child3 = root.addChild(new ZUINode('child3', 200, 300, '#ccccff'));
-          child3.x = 200;
-          child3.y = 300;
-          this.nodes.set(child3.id, child3);
-
-          // Add nested children
-          const subchild1 = child1.addChild(new ZUINode('subchild1', 100, 80, '#ffaaaa'));
-          subchild1.x = 50;
-          subchild1.y = 30;
-          this.nodes.set(subchild1.id, subchild1);
-
-          const subchild2 = child2.addChild(new ZUINode('subchild2', 80, 80, '#aaffaa'));
-          subchild2.x = 30;
-          subchild2.y = 50;
-          this.nodes.set(subchild2.id, subchild2);
-
-          // Create deeper nesting
-          const subsubchild = subchild1.addChild(new ZUINode('subsubchild', 40, 30, '#ff8888'));
-          subsubchild.x = 20;
-          subsubchild.y = 20;
-          this.nodes.set(subsubchild.id, subsubchild);
-        }
-
         render() {
           // Clear container
           this.container.innerHTML = '';
+          this.nodeElements.clear();
 
-          // Get base node for coordinate transformation
-          const baseNode = this.nodes.get(this.baseNodeId);
-          if (!baseNode) return;
+          // Get all node IDs by iterating through tree
+          const viewState = this.tree.getViewState();
+          console.log('Rendering with view state:', viewState);
 
-          // Render the tree starting from the root
-          this.renderNode(this.rootNode, {
-            x: this.offsetX,
-            y: this.offsetY,
-            scale: this.scale,
-            parent: null,
-            baseNodeId: this.baseNodeId,
-          });
+          // Start with the root and render all nodes
+          this.renderNode('root');
+          this.renderNode('child1');
+          this.renderNode('child2');
+          this.renderNode('child3');
+          this.renderNode('subchild1');
+          this.renderNode('subchild2');
+          this.renderNode('subsubchild');
         }
 
-        renderNode(node, context) {
-          // Create or update DOM element for this node
-          const element = document.createElement('div');
-          element.className = 'zui-node';
-          element.id = `node-${node.id}`;
+        renderNode(nodeId) {
+          const node = this.tree.getNode(nodeId);
+          if (!node) {
+            console.warn(`Node ${nodeId} not found`);
+            return;
+          }
+          console.log(`Rendering node ${nodeId}:`, node);
 
-          // Apply node properties
-          element.style.backgroundColor = node.color;
+          // Get node's transform relative to current view
+          const transform = this.tree.getCoordinateTransform(nodeId);
+          console.log(`Transform for ${nodeId}:`, transform);
 
-          // Scale border inversely to keep consistent visual width
-          const borderWidth = 1 / context.scale;
-          element.style.borderWidth = `${borderWidth}px`;
-
-          // Add a label showing node ID for debugging
-          const label = document.createElement('div');
-          label.className = 'node-label';
-          label.textContent = node.id;
-
-          // Use fixed font size instead of scaling inversely
-          // This will maintain consistent label size relative to viewport
-          label.style.fontSize = '10px';
-          label.style.padding = '5px';
-          element.appendChild(label);
-
-          // Calculate position relative to base node
-          let relX, relY;
-
-          if (node.id === this.baseNodeId) {
-            // Base node is at the view offset
-            relX = 0;
-            relY = 0;
-          } else {
-            // Get relative position to base node
-            const relPos = this.getRelativePosition(node.id, this.baseNodeId);
-            relX = relPos.x;
-            relY = relPos.y;
+          if (!transform.visible) {
+            console.log(`Node ${nodeId} is not visible`);
+            return;
           }
 
-          // Apply actual dimensions based on scale instead of using CSS transform scale
-          const scaledWidth = node.width * context.scale;
-          const scaledHeight = node.height * context.scale;
-          element.style.width = `${scaledWidth}px`;
-          element.style.height = `${scaledHeight}px`;
+          // Create element
+          const element = document.createElement('div');
+          element.className = 'zui-node';
+          element.id = `node-${nodeId}`;
 
-          // Position the element using translated coordinates without scaling
-          const posX = (relX + context.x) * context.scale;
-          const posY = (relY + context.y) * context.scale;
-          element.style.transform = `translate(${posX}px, ${posY}px)`;
+          // Apply node properties
+          element.style.backgroundColor = this.nodeColors.get(nodeId) || '#dddddd';
+          element.style.width = `${transform.width}px`;
+          element.style.height = `${transform.height}px`;
+          element.style.transform = `translate(${transform.x}px, ${transform.y}px)`;
+
+          // Add logging for element styling
+          console.log(`Styled element for ${nodeId}:`, {
+            width: `${transform.width}px`,
+            height: `${transform.height}px`,
+            transform: `translate(${transform.x}px, ${transform.y}px)`,
+            backgroundColor: this.nodeColors.get(nodeId) || '#dddddd',
+          });
+
+          // Add a label showing node ID
+          const label = document.createElement('div');
+          label.className = 'node-label';
+          label.textContent = nodeId;
+          element.appendChild(label);
 
           // Add to DOM
           this.container.appendChild(element);
-          node.element = element;
-
-          // Render children with same context
-          for (const child of node.children) {
-            this.renderNode(child, context);
-          }
+          this.nodeElements.set(nodeId, element);
+          console.log(`Added element for ${nodeId} to DOM`);
         }
 
         updateDebugInfo() {
-          this.debugInfo.textContent = `Scale: ${this.scale.toFixed(6)} | Base Node: ${this.baseNodeId} | Offset: (${this.offsetX.toFixed(2)}, ${this.offsetY.toFixed(2)})`;
-        }
-
-        // Calculate the position of a node on screen
-        getNodeScreenPosition(nodeId) {
-          const node = this.nodes.get(nodeId);
-          if (!node) return { x: 0, y: 0, width: 0, height: 0 };
-
-          // Special case for base node
-          if (nodeId === this.baseNodeId) {
-            return {
-              x: this.offsetX * this.scale,
-              y: this.offsetY * this.scale,
-              width: node.width * this.scale,
-              height: node.height * this.scale,
-            };
-          }
-
-          // Get relative position to base node
-          const relPos = this.getRelativePosition(nodeId, this.baseNodeId);
-
-          // Calculate screen position
-          return {
-            x: (relPos.x + this.offsetX) * this.scale,
-            y: (relPos.y + this.offsetY) * this.scale,
-            width: node.width * this.scale,
-            height: node.height * this.scale,
-          };
-        }
-
-        // Get the relative position between two nodes
-        getRelativePosition(nodeId, referenceNodeId) {
-          if (nodeId === referenceNodeId) return { x: 0, y: 0 };
-
-          // Get absolute positions
-          const nodePos = this.getAbsolutePosition(nodeId);
-          const refPos = this.getAbsolutePosition(referenceNodeId);
-
-          // Calculate relative position
-          return {
-            x: nodePos.x - refPos.x,
-            y: nodePos.y - refPos.y,
-          };
-        }
-
-        // Get absolute position of a node (relative to coordinate space origin)
-        getAbsolutePosition(nodeId) {
-          const node = this.nodes.get(nodeId);
-          if (!node) return { x: 0, y: 0 };
-
-          if (nodeId === 'root') return { x: 0, y: 0 };
-
-          // Find the path from root to this node
-          const path = this.getPathToNode(nodeId);
-          if (!path) return { x: 0, y: 0 };
-
-          // Calculate position by adding all offsets along the path
-          let x = 0;
-          let y = 0;
-
-          // Skip root (index 0) since it's at origin
-          for (let i = 1; i < path.length; i++) {
-            const pathNode = this.nodes.get(path[i]);
-            if (pathNode) {
-              x += pathNode.x;
-              y += pathNode.y;
-            }
-          }
-
-          return { x, y };
-        }
-
-        // Check if a node covers a significant portion of the screen (used for zoom-in)
-        nodeCoversScreen(nodeId) {
-          const node = this.nodes.get(nodeId);
-          if (!node) return false;
-
-          // Get screen dimensions
-          const screenWidth = this.container.clientWidth;
-          const screenHeight = this.container.clientHeight;
-
-          // Get node's position on screen
-          const nodeScreen = this.getNodeScreenPosition(nodeId);
-
-          // Calculate coverage percentage
-          const visibleWidth = Math.min(nodeScreen.x + nodeScreen.width, screenWidth) - Math.max(nodeScreen.x, 0);
-          const visibleHeight = Math.min(nodeScreen.y + nodeScreen.height, screenHeight) - Math.max(nodeScreen.y, 0);
-
-          // Node is visible
-          if (visibleWidth <= 0 || visibleHeight <= 0) return false;
-
-          const visibleArea = visibleWidth * visibleHeight;
-          const screenArea = screenWidth * screenHeight;
-          const coverage = visibleArea / screenArea;
-
-          // Debug coverage for zoom in
-          console.log(`Zoom-in check: Node ${nodeId} covers ${(coverage * 100).toFixed(2)}% of screen`);
-
-          // Node must cover at least 99% of the screen for zooming in
-          // A very strict threshold that requires the node to fully cover the screen
-          return coverage > 0.99;
-        }
-
-        // Check if a node still covers a significant portion of the screen (used for zoom-out)
-        nodeCoversScreenSignificantly(nodeId) {
-          const node = this.nodes.get(nodeId);
-          if (!node) return false;
-
-          // Get screen dimensions
-          const screenWidth = this.container.clientWidth;
-          const screenHeight = this.container.clientHeight;
-
-          // Get node's position on screen
-          const nodeScreen = this.getNodeScreenPosition(nodeId);
-
-          // Calculate coverage percentage
-          const visibleWidth = Math.min(nodeScreen.x + nodeScreen.width, screenWidth) - Math.max(nodeScreen.x, 0);
-          const visibleHeight = Math.min(nodeScreen.y + nodeScreen.height, screenHeight) - Math.max(nodeScreen.y, 0);
-
-          // Node is visible
-          if (visibleWidth <= 0 || visibleHeight <= 0) return false;
-
-          const visibleArea = visibleWidth * visibleHeight;
-          const screenArea = screenWidth * screenHeight;
-          const coverage = visibleArea / screenArea;
-
-          // Debug coverage for zoom out
-          console.log(`Zoom-out check: Node ${nodeId} covers ${(coverage * 100).toFixed(2)}% of screen`);
-
-          // For zoom out, node must still cover at least 98% of screen
-          // Slightly lower than zoom-in threshold to prevent jitter
-          return coverage > 0.98;
-        }
-
-        // Get path from root to node
-        getPathToNode(nodeId) {
-          if (nodeId === 'root') return ['root'];
-
-          const findPath = (currentNodeId, path = []) => {
-            const currentNode = this.nodes.get(currentNodeId);
-            if (!currentNode) return null;
-
-            const newPath = [...path, currentNodeId];
-
-            // Found the target node
-            if (currentNodeId === nodeId) return newPath;
-
-            // Check children
-            for (const child of currentNode.children) {
-              const result = findPath(child.id, newPath);
-              if (result) return result;
-            }
-
-            return null;
-          };
-
-          return findPath('root');
-        }
-
-        // Get the world position of a node (coordinates relative to root)
-        getNodeWorldPosition(nodeId) {
-          const path = this.getPathToNode(nodeId);
-          if (!path) return { x: 0, y: 0 };
-
-          let worldX = 0;
-          let worldY = 0;
-
-          // Skip the root node (first in path) when accumulating offsets
-          for (let i = 0; i < path.length; i++) {
-            const node = this.nodes.get(path[i]);
-            if (node) {
-              worldX += node.x;
-              worldY += node.y;
-            }
-          }
-
-          return { x: worldX, y: worldY };
-        }
-
-        init() {
-          this.createTree();
-          this.container.style.cursor = 'grab';
-          this.render();
-          this.updateDebugInfo();
+          const viewState = this.tree.getViewState();
+          this.debugInfo.textContent = `Scale: ${viewState.scale.toFixed(6)} | Base Node: ${viewState.currentNodeId} | Offset: (${viewState.offset.x.toFixed(2)}, ${viewState.offset.y.toFixed(2)})`;
         }
       }
 
       // Initialize the ZUI when the page loads
       window.addEventListener('DOMContentLoaded', () => {
-        const zui = new InfiniteZUI('zui-container');
-        zui.init();
+        // Use a timeout to ensure the module is loaded
+        setTimeout(() => {
+          try {
+            const zui = new InfiniteZUI('zui-container');
+          } catch (e) {
+            console.error('Error initializing ZUI:', e);
+            document.querySelector('.debug-info').textContent = `Error: ${e.message}`;
+          }
+        }, 100);
       });
     </script>
   </body>

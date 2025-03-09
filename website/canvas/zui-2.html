@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Infinite ZUI with RelativeScaleTree</title>
+    <title>Infinite ZUI with ZoomableGraph</title>
     <style>
       html,
       body {
@@ -51,8 +51,8 @@
   </head>
   <body>
     <div id="info-container">
-      <div>Infinite ZUI with RelativeScaleTree</div>
-      <div>A zoomable UI with infinite tree-like structure using the RelativeScaleTree implementation.</div>
+      <div>Infinite ZUI with ZoomableGraph</div>
+      <div>A zoomable UI using the ZoomableGraph implementation with a single node.</div>
       <div>Scroll to zoom, drag to pan.</div>
     </div>
 
@@ -61,50 +61,75 @@
     </div>
 
     <script type="module">
+      // Try a different import approach
+      import * as ZoomableGraphModule from '@labs/ZoomableGraph.ts';
+
+      // Log the imported module to see what's available
+      console.log('Imported module:', ZoomableGraphModule);
+
+      // Use the ZoomableGraph class from the module
+      const ZoomableGraph = ZoomableGraphModule.ZoomableGraph;
+
       // Canvas setup
       const canvas = document.getElementById('canvas');
       const ctx = canvas.getContext('2d');
 
-      // Viewport state
-      const viewport = {
-        scale: 1,
-        offsetX: 0,
-        offsetY: 0,
-        isDragging: false,
-        lastX: 0,
-        lastY: 0,
+      // Create nodes for the graph
+      const rootNode = {
+        id: 'root',
+        data: {
+          color: '#3498db',
+        },
       };
 
-      // Test rectangle in world coordinates
-      const testRect = {
-        x: 0,
-        y: 0,
-        width: 200,
-        height: 150,
-        color: '#3498db',
+      const secondNode = {
+        id: 'node2',
+        data: {
+          color: '#e74c3c',
+        },
       };
 
-      // Resize handler
-      function resizeCanvas() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+      let graph;
+
+      // Event handlers
+      function handlePointerDown(e) {
+        canvas.setPointerCapture(e.pointerId);
+        lastX = e.clientX;
+        lastY = e.clientY;
+        isDragging = true;
+      }
+
+      function handlePointerMove(e) {
+        if (!isDragging) return;
+
+        const deltaX = e.clientX - lastX;
+        const deltaY = e.clientY - lastY;
+
+        // Use ZoomableGraph's pan method
+        graph.pan(deltaX, deltaY);
+
+        lastX = e.clientX;
+        lastY = e.clientY;
+
         draw();
       }
 
-      // Transform from world to screen coordinates
-      function worldToScreen(x, y) {
-        return {
-          x: x * viewport.scale + viewport.offsetX,
-          y: y * viewport.scale + viewport.offsetY,
-        };
+      function handlePointerUp(e) {
+        isDragging = false;
+        canvas.releasePointerCapture(e.pointerId);
       }
 
-      // Transform from screen to world coordinates
-      function screenToWorld(x, y) {
-        return {
-          x: (x - viewport.offsetX) / viewport.scale,
-          y: (y - viewport.offsetY) / viewport.scale,
-        };
+      function handleWheel(e) {
+        e.preventDefault();
+
+        // Calculate zoom factor based on wheel direction
+        const zoomSensitivity = 0.03;
+        const zoomFactor = e.deltaY < 0 ? 1 + zoomSensitivity : 1 - zoomSensitivity;
+
+        // Use ZoomableGraph's zoom method with the mouse position as focal point
+        graph.zoom(zoomFactor, e.clientX, e.clientY);
+
+        draw();
       }
 
       // Draw function
@@ -112,73 +137,162 @@
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Draw test rectangle
-        const { x, y } = worldToScreen(testRect.x, testRect.y);
-        ctx.fillStyle = testRect.color;
-        ctx.fillRect(x, y, testRect.width * viewport.scale, testRect.height * viewport.scale);
+        try {
+          if (!graph) {
+            console.error('Graph is undefined in draw function');
+            return;
+          }
 
-        // Draw rectangle border
-        ctx.strokeStyle = '#2980b9';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x, y, testRect.width * viewport.scale, testRect.height * viewport.scale);
+          // Get the current view state
+          const viewState = graph.getViewState();
+
+          // Base size for nodes
+          const nodeBaseSize = 200;
+
+          // Draw the reference frame node first
+          const refFrameId = viewState.referenceFrameId;
+          const refFrameNode = graph.getNode(refFrameId);
+          const refFramePosition = graph.getNodeViewportPosition(refFrameId);
+
+          if (refFramePosition.visible && refFrameNode) {
+            // For the reference frame node, we need to apply a base size
+            const x = refFramePosition.x;
+            const y = refFramePosition.y;
+            const width = refFramePosition.width * nodeBaseSize;
+            const height = refFramePosition.height * nodeBaseSize;
+
+            // Draw the node
+            ctx.fillStyle = refFrameNode.data.color;
+            ctx.fillRect(x, y, width, height);
+
+            // Draw border
+            ctx.strokeStyle = '#2980b9';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, width, height);
+
+            // Draw node ID text
+            ctx.fillStyle = 'white';
+            ctx.font = '16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(refFrameNode.id, x + width / 2, y + height / 2);
+
+            // Draw position indicator
+            ctx.fillStyle = 'black';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(`(${x.toFixed(0)}, ${y.toFixed(0)})`, x + width / 2, y - 5);
+          }
+
+          // Get connected nodes from the current reference frame
+          const connectedNodes = graph.getConnectedNodes();
+          console.log('Connected nodes:', connectedNodes);
+
+          // Draw all connected nodes
+          for (const { node, position } of connectedNodes) {
+            if (position.visible) {
+              // Apply the base size to make nodes larger
+              const x = position.x;
+              const y = position.y;
+              const width = position.width * nodeBaseSize;
+              const height = position.height * nodeBaseSize;
+
+              ctx.fillStyle = node.data.color;
+              ctx.fillRect(x, y, width, height);
+
+              // Draw border
+              ctx.strokeStyle = '#2980b9';
+              ctx.lineWidth = 2;
+              ctx.strokeRect(x, y, width, height);
+
+              // Draw node ID text
+              ctx.fillStyle = 'white';
+              ctx.font = '16px sans-serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(node.id, x + width / 2, y + height / 2);
+
+              // Draw position indicator
+              ctx.fillStyle = 'black';
+              ctx.font = '12px sans-serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'bottom';
+              ctx.fillText(`(${x.toFixed(0)}, ${y.toFixed(0)})`, x + width / 2, y - 5);
+            }
+          }
+
+          // Display current view state for debugging
+          ctx.fillStyle = 'black';
+          ctx.font = '12px sans-serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          ctx.fillText(`Reference Frame: ${viewState.referenceFrameId}`, 10, canvas.height - 60);
+          ctx.fillText(`Scale: ${viewState.viewportScale.toFixed(2)}`, 10, canvas.height - 40);
+          ctx.fillText(
+            `Offset: (${viewState.viewportOffset.x.toFixed(2)}, ${viewState.viewportOffset.y.toFixed(2)})`,
+            10,
+            canvas.height - 20,
+          );
+        } catch (error) {
+          console.error('Error in draw function:', error);
+        }
       }
 
-      // Event handlers
-      function handlePointerDown(e) {
-        viewport.isDragging = true;
-        viewport.lastX = e.clientX;
-        viewport.lastY = e.clientY;
-      }
+      // Resize handler
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
 
-      function handlePointerMove(e) {
-        if (!viewport.isDragging) return;
-
-        const deltaX = e.clientX - viewport.lastX;
-        const deltaY = e.clientY - viewport.lastY;
-
-        viewport.offsetX += deltaX;
-        viewport.offsetY += deltaY;
-
-        viewport.lastX = e.clientX;
-        viewport.lastY = e.clientY;
-
-        draw();
-      }
-
-      function handlePointerUp() {
-        viewport.isDragging = false;
-      }
-
-      function handleWheel(e) {
-        e.preventDefault();
-
-        // Get mouse position in world coordinates before zoom
-        const mouseX = e.clientX;
-        const mouseY = e.clientY;
-        const worldPos = screenToWorld(mouseX, mouseY);
-
-        // Adjust scale based on wheel direction with a smaller zoom factor
-        const zoomSensitivity = 0.03; // Reduced from the implicit 0.1/0.1 in the original
-        const zoomFactor = e.deltaY < 0 ? 1 + zoomSensitivity : 1 - zoomSensitivity;
-        viewport.scale *= zoomFactor;
-
-        // Limit zoom levels if needed
-        viewport.scale = Math.min(Math.max(viewport.scale, 0.1), 10);
-
-        // Adjust offset to zoom toward mouse position
-        viewport.offsetX = mouseX - worldPos.x * viewport.scale;
-        viewport.offsetY = mouseY - worldPos.y * viewport.scale;
-
-        draw();
+        // Update the graph's viewport dimensions
+        if (graph) {
+          graph.setViewportDimensions(canvas.width, canvas.height);
+          draw();
+        } else {
+          console.log('Graph not initialized yet in resizeCanvas');
+        }
       }
 
       // Initialize
-      function init() {
-        resizeCanvas();
+      let isDragging = false;
+      let lastX = 0;
+      let lastY = 0;
 
-        // Center the viewport initially
-        viewport.offsetX = canvas.width / 2;
-        viewport.offsetY = canvas.height / 2;
+      function init() {
+        // Set up canvas dimensions first
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        console.log('Canvas dimensions:', canvas.width, canvas.height);
+
+        // Initialize the graph with viewport dimensions
+        try {
+          console.log('Creating ZoomableGraph instance...');
+          console.log('Root node:', rootNode);
+
+          // Initialize with the root node
+          graph = new ZoomableGraph(rootNode, canvas.width, canvas.height);
+          console.log('ZoomableGraph instance created successfully:', graph);
+
+          // Add the second node
+          graph.addNode(secondNode);
+
+          // Add an edge from root to the second node
+          // The bounds define how the target node appears when viewed from the source node
+          // x, y: position (relative to the source node)
+          // width, height: size (relative to the source node)
+          graph.addEdge('root', 'node2', {
+            x: 0, // Position to the right of the root node
+            y: 0, // Position slightly below the root node
+            width: 0.5, // Half the size of the root node
+            height: 1, // Half the size of the root node
+          });
+
+          // Only draw after graph is successfully created
+          draw();
+        } catch (error) {
+          console.error('Error creating ZoomableGraph instance:', error);
+        }
 
         // Add event listeners
         canvas.addEventListener('pointerdown', handlePointerDown);
@@ -186,8 +300,6 @@
         window.addEventListener('pointerup', handlePointerUp);
         canvas.addEventListener('wheel', handleWheel, { passive: false });
         window.addEventListener('resize', resizeCanvas);
-
-        draw();
       }
 
       // Start the application
