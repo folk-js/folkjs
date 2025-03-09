@@ -217,7 +217,7 @@
         },
       ];
 
-      const VISIBLE_DISTANCE = 40;
+      const MAX_VISIBLE_NODES = 40;
 
       /**
        * @typedef {Object} NodeData
@@ -282,19 +282,46 @@
         const currentNode = graph.referenceNode;
         if (!currentNode) return false;
 
-        // Calculate effective scale from viewport transform
-        const effectiveScale = Math.hypot(graph.viewportTransform.a, graph.viewportTransform.b);
+        // When zooming out, we need to check if the current reference node no longer fully covers the screen
+        // Similar to shouldZoomInToNextNode but with the inverse condition
 
-        // Calculate current node dimensions after transform
-        const transformedWidth = currentNode.data.width * effectiveScale;
-        const transformedHeight = currentNode.data.height * effectiveScale;
+        // Get the node's dimensions
+        const nodeWidth = currentNode.data.width;
+        const nodeHeight = currentNode.data.height;
 
-        // Calculate the ratio of the node's size to the canvas size
-        const widthRatio = transformedWidth / canvasWidth;
-        const heightRatio = transformedHeight / canvasHeight;
+        // Calculate the corners of the node in its own coordinate system
+        const corners = [
+          { x: -nodeWidth / 2, y: -nodeHeight / 2 }, // top-left
+          { x: nodeWidth / 2, y: -nodeHeight / 2 }, // top-right
+          { x: nodeWidth / 2, y: nodeHeight / 2 }, // bottom-right
+          { x: -nodeWidth / 2, y: nodeHeight / 2 }, // bottom-left
+        ];
 
-        // When zooming out, we want to switch reference when current node becomes too small
-        return widthRatio < 0.4 || heightRatio < 0.4;
+        // Transform the corners to screen coordinates
+        const transformedCorners = corners.map((corner) => {
+          // For the current node, we only need to apply the viewport transform
+          const pt = new DOMPoint(corner.x, corner.y);
+          const transformedPt = pt.matrixTransform(graph.viewportTransform);
+
+          // Convert to screen coordinates (viewport is centered on canvas)
+          return {
+            x: transformedPt.x + canvasWidth / 2,
+            y: transformedPt.y + canvasHeight / 2,
+          };
+        });
+
+        // Calculate the bounding box of the transformed corners
+        const minX = Math.min(...transformedCorners.map((c) => c.x));
+        const maxX = Math.max(...transformedCorners.map((c) => c.x));
+        const minY = Math.min(...transformedCorners.map((c) => c.y));
+        const maxY = Math.max(...transformedCorners.map((c) => c.y));
+
+        // Check if the node no longer FULLY covers the screen
+        // We use a small positive margin to avoid flickering due to floating-point precision
+        const margin = 5; // small positive margin for stability
+
+        // Return true when the node no longer fully covers the screen
+        return minX > margin || minY > margin || maxX < canvasWidth - margin || maxY < canvasHeight - margin;
       }
 
       // Setup canvas
@@ -346,7 +373,7 @@
         );
 
         // Get and draw all visible nodes with their accumulated transforms
-        for (const { nodeId, transform } of graph.getVisibleNodesWithTransforms(VISIBLE_DISTANCE)) {
+        for (const { nodeId, transform } of graph.getVisibleNodesWithTransforms(MAX_VISIBLE_NODES)) {
           // Save the current state before applying node transform
           ctx.save();
 

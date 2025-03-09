@@ -557,11 +557,20 @@ export class FloatingOriginGraph<T = any> {
     const prevToRefEdge = this.getEdge(prevNodeId, this.#referenceNodeId);
     if (!prevToRefEdge) return false;
 
+    // Calculate the visual position of the current reference node
+    const currentVisualtransform = this.#viewportTransform;
+
+    // Calculate the exact visual transform to maintain after changing reference
+    // First get the transform from the new reference node to the old one
+    const edgeTransform = prevToRefEdge.transform;
+
     // Update reference node
     this.#referenceNodeId = prevNodeId;
 
-    // Apply the inverse of the edge transform to maintain visual position
-    this.#viewportTransform = this.#viewportTransform.multiply(this.invertTransform(prevToRefEdge.transform));
+    // Calculate the new viewport transform that maintains the exact same visual state
+    // by applying the inverse of the edge transform
+    const invertedEdgeTransform = this.invertTransform(edgeTransform);
+    this.#viewportTransform = currentVisualtransform.multiply(invertedEdgeTransform);
 
     return true;
   }
