@@ -138,6 +138,48 @@
       // Create the floating origin graph
       const graph = new FloatingOriginGraph(nodes, 'node1');
 
+      // Define zoom threshold callbacks
+      function shouldZoomInToNextNode(graph, canvasWidth, canvasHeight) {
+        const nextNodeId = nodes[graph.referenceNodeId]?.next;
+        if (!nextNodeId) return false;
+
+        const nextNode = nodes[nextNodeId];
+        if (!nextNode) return false;
+
+        // Get the transform from reference node to next node
+        const nextNodeTransform = graph.getAccumulatedTransform(nextNodeId);
+
+        // Calculate effective scale from combined viewport and node transform
+        const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
+        const effectiveScale = Math.hypot(combinedTransform.a, combinedTransform.b);
+
+        // Calculate next node dimensions after transform
+        const transformedWidth = nextNode.width * effectiveScale;
+        const transformedHeight = nextNode.height * effectiveScale;
+
+        // Check if next node covers the screen (with some buffer)
+        return transformedWidth > canvasWidth * 1.2 && transformedHeight > canvasHeight * 1.2;
+      }
+
+      function shouldZoomOutToPrevNode(graph, canvasWidth, canvasHeight) {
+        const node = nodes[graph.referenceNodeId];
+        if (!node) return false;
+
+        // Get the previous node ID
+        const prevNodeId = node.prev;
+        if (!prevNodeId) return false;
+
+        // Calculate effective scale from viewport transform
+        const effectiveScale = Math.hypot(graph.viewportTransform.a, graph.viewportTransform.b);
+
+        // Calculate current node dimensions after transform
+        const transformedWidth = node.width * effectiveScale;
+        const transformedHeight = node.height * effectiveScale;
+
+        // Check if current node is too small on screen (with buffer)
+        return transformedWidth < canvasWidth || transformedHeight < canvasHeight;
+      }
+
       // Setup canvas
       const canvas = document.getElementById('zui-canvas');
       const ctx = canvas.getContext('2d');
@@ -288,7 +330,15 @@
         const mouseY = e.clientY - canvas.height / 2;
 
         // Apply zoom centered on mouse position and check if reference node changed
-        const referenceChanged = graph.zoomAtPoint(mouseX, mouseY, zoomFactor, canvas.width, canvas.height);
+        const referenceChanged = graph.zoomAtPoint(
+          mouseX,
+          mouseY,
+          zoomFactor,
+          canvas.width,
+          canvas.height,
+          shouldZoomInToNextNode,
+          shouldZoomOutToPrevNode,
+        );
 
         // Update the reference node info if needed
         if (referenceChanged) {
@@ -345,7 +395,15 @@
         const mouseY = currentMouseY - canvas.height / 2;
 
         // Apply zoom centered on mouse position and check if reference node changed
-        const referenceChanged = graph.zoomAtPoint(mouseX, mouseY, zoomFactor, canvas.width, canvas.height);
+        const referenceChanged = graph.zoomAtPoint(
+          mouseX,
+          mouseY,
+          zoomFactor,
+          canvas.width,
+          canvas.height,
+          shouldZoomInToNextNode,
+          shouldZoomOutToPrevNode,
+        );
 
         // Update the reference node info if needed
         if (referenceChanged) {
