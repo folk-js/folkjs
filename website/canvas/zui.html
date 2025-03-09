@@ -61,7 +61,7 @@
       <div> Zoom in/out forever using a <em>floating origin graph.</em> </div>
       <div>Hold <kbd>shift</kbd> to zoom in, <kbd>alt+shift</kbd> to zoom out.</div>
       <div id="reference-node-info">Reference frame: node1</div>
-      <div class="node-info">Zoom follows automatic paths based on graph structure</div>
+      <div class="node-info">Zoom navigates to nodes that fully cover your screen</div>
       <div class="controls">
         <button id="reset-view">Reset View</button>
       </div>
@@ -238,31 +238,63 @@
         const nextNodeTransform = graph.getAccumulatedTransform(nextNodeId);
         if (!nextNodeTransform) return false;
 
-        // Calculate effective scale from combined viewport and node transform
+        // Calculate effective transform from combined viewport and node transform
         const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
-        const effectiveScale = Math.hypot(combinedTransform.a, combinedTransform.b);
 
-        // Calculate next node dimensions after transform
-        const transformedWidth = nextNode.data.width * effectiveScale;
-        const transformedHeight = nextNode.data.height * effectiveScale;
+        // Get the node's dimensions
+        const nodeWidth = nextNode.data.width;
+        const nodeHeight = nextNode.data.height;
 
-        // Check if next node covers the screen (with some buffer)
-        return transformedWidth > canvasWidth * 1.2 && transformedHeight > canvasHeight * 1.2;
+        // Calculate the corners of the node in its own coordinate system
+        const corners = [
+          { x: -nodeWidth / 2, y: -nodeHeight / 2 }, // top-left
+          { x: nodeWidth / 2, y: -nodeHeight / 2 }, // top-right
+          { x: nodeWidth / 2, y: nodeHeight / 2 }, // bottom-right
+          { x: -nodeWidth / 2, y: nodeHeight / 2 }, // bottom-left
+        ];
+
+        // Transform the corners to screen coordinates
+        const transformedCorners = corners.map((corner) => {
+          // Apply the combined transform to each corner
+          const pt = new DOMPoint(corner.x, corner.y);
+          const transformedPt = pt.matrixTransform(combinedTransform);
+
+          // Convert to screen coordinates (viewport is centered on canvas)
+          return {
+            x: transformedPt.x + canvasWidth / 2,
+            y: transformedPt.y + canvasHeight / 2,
+          };
+        });
+
+        // Calculate the bounding box of the transformed corners
+        const minX = Math.min(...transformedCorners.map((c) => c.x));
+        const maxX = Math.max(...transformedCorners.map((c) => c.x));
+        const minY = Math.min(...transformedCorners.map((c) => c.y));
+        const maxY = Math.max(...transformedCorners.map((c) => c.y));
+
+        // Check if the node FULLY covers the screen (with a small margin)
+        // The margin helps ensure we don't miss edges due to floating point imprecision
+        const margin = -5; // negative margin means it must exceed the screen bounds
+        return minX <= margin && minY <= margin && maxX >= canvasWidth - margin && maxY >= canvasHeight - margin;
       }
 
       function shouldZoomOutToPrevNode(graph, canvasWidth, canvasHeight, prevNodeId) {
-        const node = graph.referenceNode;
-        if (!node) return false;
+        const currentNode = graph.referenceNode;
+        if (!currentNode) return false;
 
         // Calculate effective scale from viewport transform
         const effectiveScale = Math.hypot(graph.viewportTransform.a, graph.viewportTransform.b);
 
         // Calculate current node dimensions after transform
-        const transformedWidth = node.data.width * effectiveScale;
-        const transformedHeight = node.data.height * effectiveScale;
+        const transformedWidth = currentNode.data.width * effectiveScale;
+        const transformedHeight = currentNode.data.height * effectiveScale;
 
-        // Check if current node is too small on screen (with buffer)
-        return transformedWidth < canvasWidth || transformedHeight < canvasHeight;
+        // Calculate the ratio of the node's size to the canvas size
+        const widthRatio = transformedWidth / canvasWidth;
+        const heightRatio = transformedHeight / canvasHeight;
+
+        // When zooming out, we want to switch reference when current node becomes too small
+        return widthRatio < 0.4 || heightRatio < 0.4;
       }
 
       // Setup canvas

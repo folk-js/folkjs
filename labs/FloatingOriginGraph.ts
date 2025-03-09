@@ -394,10 +394,36 @@ export class FloatingOriginGraph<T = any> {
         return this.moveReferenceBackward();
       }
     } else if (!isZoomingOut && shouldZoomIn) {
-      // Check if next node fills the screen
-      const nextNodeId = this.getBestNextNodeId(this.#referenceNodeId);
-      if (nextNodeId && shouldZoomIn(this, canvasWidth, canvasHeight, nextNodeId)) {
-        return this.moveReferenceForward();
+      // Check all connected nodes to see if any fully cover the screen
+      const nextNodeIds = this.getNextNodeIds(this.#referenceNodeId);
+
+      // First, check if any nodes fully cover the screen according to shouldZoomIn callback
+      const coveringNodes = nextNodeIds.filter((nodeId) => shouldZoomIn(this, canvasWidth, canvasHeight, nodeId));
+
+      if (coveringNodes.length > 0) {
+        // If multiple nodes cover the screen, determine which is closest to the center of view
+        let bestNodeId = coveringNodes[0];
+
+        if (coveringNodes.length > 1) {
+          let bestDistance = Infinity;
+          const centerX = canvasWidth / 2;
+          const centerY = canvasHeight / 2;
+
+          for (const nodeId of coveringNodes) {
+            const position = this.getNodeScreenPosition(nodeId, canvasWidth, canvasHeight);
+            if (position) {
+              const distance = Math.hypot(position.x - centerX, position.y - centerY);
+
+              if (distance < bestDistance) {
+                bestDistance = distance;
+                bestNodeId = nodeId;
+              }
+            }
+          }
+        }
+
+        // Move reference to the best fully-covering node
+        return this.moveReferenceForward(bestNodeId);
       }
     }
     return false;
@@ -483,12 +509,18 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
-   * Move the reference node to the best next node
+   * Move the reference node to a specified next node
+   * @param targetNodeId - The target node ID to move to (if undefined, will use best next node)
    * @returns Boolean indicating if the operation was successful
    */
-  moveReferenceForward(): boolean {
-    const nextNodeId = this.getBestNextNodeId(this.#referenceNodeId);
+  moveReferenceForward(targetNodeId?: string): boolean {
+    // If no specific target is provided, use the best next node
+    const nextNodeId = targetNodeId || this.getBestNextNodeId(this.#referenceNodeId);
     if (!nextNodeId) return false;
+
+    // Verify that the next node is actually connected to the current reference node
+    const edge = this.getEdge(this.#referenceNodeId, nextNodeId);
+    if (!edge) return false;
 
     // Calculate the visual transform of the next node before changing reference
     const transform = this.getAccumulatedTransform(nextNodeId);
@@ -512,11 +544,13 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
-   * Move the reference node to the best previous node
+   * Move the reference node to a specified previous node
+   * @param targetNodeId - The target node ID to move to (if undefined, will use best previous node)
    * @returns Boolean indicating if the operation was successful
    */
-  moveReferenceBackward(): boolean {
-    const prevNodeId = this.getBestPrevNodeId(this.#referenceNodeId);
+  moveReferenceBackward(targetNodeId?: string): boolean {
+    // If no specific target is provided, use the best previous node
+    const prevNodeId = targetNodeId || this.getBestPrevNodeId(this.#referenceNodeId);
     if (!prevNodeId) return false;
 
     // Get the edge from previous node to reference node
