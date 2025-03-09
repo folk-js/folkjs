@@ -3,17 +3,25 @@
  * by changing the reference node.
  */
 
-// Define the node structure
+// Define the node structure - simplified, no longer contains connections or transform
 export interface Node<T = any> {
   id: string;
-  prev?: string;
-  next?: string;
   data: T;
-  transform: DOMMatrix;
 }
 
-// Define node map type
+// Define the edge structure - connects nodes and contains transform information
+export interface Edge<T = any> {
+  id: string;
+  source: string; // Source node ID
+  target: string; // Target node ID
+  transform: DOMMatrix; // Transform to apply when going from source to target
+  type: string; // Relationship type (e.g., 'next', 'prev', 'parent', 'child')
+  metadata?: T; // Optional metadata for the edge
+}
+
+// Define node and edge map types
 export type NodeMap<T = any> = Record<string, Node<T>>;
+export type EdgeMap<T = any> = Record<string, Edge<T>>;
 
 // Define zoom checking callback types
 export type ShouldZoomInCallback = <T>(
@@ -27,18 +35,27 @@ export type ShouldZoomOutCallback = <T>(
   canvasHeight: number,
 ) => boolean;
 
-export class FloatingOriginGraph<T = any> {
+// Connection types constants
+export const CONNECTION_TYPES = {
+  NEXT: 'next',
+  PREV: 'prev',
+};
+
+export class FloatingOriginGraph<T = any, E = any> {
   #nodes: NodeMap<T>;
+  #edges: EdgeMap<E>;
   #referenceNodeId: string;
   #viewportTransform: DOMMatrix;
 
   /**
    * Create a new FloatingOriginGraph
    * @param nodes - Object mapping node IDs to node objects
+   * @param edges - Object mapping edge IDs to edge objects
    * @param initialReferenceNodeId - The ID of the initial reference node
    */
-  constructor(nodes: NodeMap<T>, initialReferenceNodeId: string = Object.keys(nodes)[0]) {
+  constructor(nodes: NodeMap<T>, edges: EdgeMap<E>, initialReferenceNodeId: string = Object.keys(nodes)[0]) {
     this.#nodes = nodes;
+    this.#edges = edges;
     this.#referenceNodeId = initialReferenceNodeId;
     this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
@@ -89,6 +106,71 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
+   * Get all edges in the graph
+   */
+  get edges(): EdgeMap<E> {
+    return this.#edges;
+  }
+
+  /**
+   * Get edges by type and source node ID
+   * @param sourceNodeId - The source node ID
+   * @param type - The edge type to filter by
+   * @returns Array of matching edges
+   */
+  getEdgesFrom(sourceNodeId: string, type?: string): Edge<E>[] {
+    return Object.values(this.#edges).filter(
+      (edge) => edge.source === sourceNodeId && (type === undefined || edge.type === type),
+    );
+  }
+
+  /**
+   * Get edges by type and target node ID
+   * @param targetNodeId - The target node ID
+   * @param type - The edge type to filter by
+   * @returns Array of matching edges
+   */
+  getEdgesTo(targetNodeId: string, type?: string): Edge<E>[] {
+    return Object.values(this.#edges).filter(
+      (edge) => edge.target === targetNodeId && (type === undefined || edge.type === type),
+    );
+  }
+
+  /**
+   * Helper method to get the next node ID for the current node
+   * @param nodeId - The current node ID
+   * @returns The next node ID or undefined if not found
+   */
+  getNextNodeId(nodeId: string): string | undefined {
+    const nextEdges = this.getEdgesFrom(nodeId, CONNECTION_TYPES.NEXT);
+    return nextEdges.length > 0 ? nextEdges[0].target : undefined;
+  }
+
+  /**
+   * Helper method to get the previous node ID for the current node
+   * @param nodeId - The current node ID
+   * @returns The previous node ID or undefined if not found
+   */
+  getPrevNodeId(nodeId: string): string | undefined {
+    const prevEdges = this.getEdgesFrom(nodeId, CONNECTION_TYPES.PREV);
+    return prevEdges.length > 0 ? prevEdges[0].target : undefined;
+  }
+
+  /**
+   * Get the edge connecting two nodes
+   * @param sourceNodeId - The source node ID
+   * @param targetNodeId - The target node ID
+   * @param type - Optional edge type to filter by
+   * @returns The edge or undefined if not found
+   */
+  getEdge(sourceNodeId: string, targetNodeId: string, type?: string): Edge<E> | undefined {
+    return Object.values(this.#edges).find(
+      (edge) =>
+        edge.source === sourceNodeId && edge.target === targetNodeId && (type === undefined || edge.type === type),
+    );
+  }
+
+  /**
    * Iterate through visible nodes with their accumulated transforms
    * This provides both the node and its transform relative to the reference node
    * @param distance - Maximum number of nodes to include
@@ -111,16 +193,19 @@ export class FloatingOriginGraph<T = any> {
     let currentTransform = new DOMMatrix(); // Start with identity matrix
     let count = 0;
 
-    while (this.#nodes[currentNodeId]?.next && count < distance) {
-      const nextNodeId = this.#nodes[currentNodeId].next;
+    while (count < distance) {
+      const nextNodeId = this.getNextNodeId(currentNodeId);
       if (!nextNodeId) break;
 
       // Move to the next node
+      const edge = this.getEdge(currentNodeId, nextNodeId);
+      if (!edge) break;
+
       currentNodeId = nextNodeId;
       const node = this.#nodes[currentNodeId];
 
-      // Accumulate the transform
-      currentTransform = currentTransform.multiply(node.transform);
+      // Accumulate the transform from the edge
+      currentTransform = currentTransform.multiply(edge.transform);
 
       // Yield the node with its accumulated transform
       yield {
@@ -225,15 +310,13 @@ export class FloatingOriginGraph<T = any> {
 
     let currentNodeId = this.#referenceNodeId;
     let count = 0;
-    while (this.#nodes[currentNodeId]?.next && count < distance) {
-      const nextNodeId = this.#nodes[currentNodeId].next;
-      if (nextNodeId) {
-        visibleNodes.push(nextNodeId);
-        currentNodeId = nextNodeId;
-        count++;
-      } else {
-        break;
-      }
+    while (count < distance) {
+      const nextNodeId = this.getNextNodeId(currentNodeId);
+      if (!nextNodeId) break;
+
+      visibleNodes.push(nextNodeId);
+      currentNodeId = nextNodeId;
+      count++;
     }
 
     return visibleNodes;
@@ -249,11 +332,14 @@ export class FloatingOriginGraph<T = any> {
     let currentNodeId = this.#referenceNodeId;
 
     while (currentNodeId !== toNodeId) {
-      const nextNodeId = this.#nodes[currentNodeId]?.next;
+      const nextNodeId = this.getNextNodeId(currentNodeId);
       if (!nextNodeId) break;
 
+      const edge = this.getEdge(currentNodeId, nextNodeId);
+      if (!edge) break;
+
       currentNodeId = nextNodeId;
-      transform = this.#nodes[currentNodeId].transform.multiply(transform);
+      transform = edge.transform.multiply(transform);
     }
 
     return transform;
@@ -264,7 +350,7 @@ export class FloatingOriginGraph<T = any> {
    * @returns Boolean indicating if the operation was successful
    */
   moveReferenceForward(): boolean {
-    const nextNodeId = this.#nodes[this.#referenceNodeId]?.next;
+    const nextNodeId = this.getNextNodeId(this.#referenceNodeId);
     if (!nextNodeId) return false;
 
     // Calculate the visual transform of the next node before changing reference
@@ -290,17 +376,18 @@ export class FloatingOriginGraph<T = any> {
    * @returns Boolean indicating if the operation was successful
    */
   moveReferenceBackward(): boolean {
-    const prevNodeId = this.#nodes[this.#referenceNodeId]?.prev;
+    const prevNodeId = this.getPrevNodeId(this.#referenceNodeId);
     if (!prevNodeId) return false;
 
-    // Get the transform from previous node to current node
-    const nodeTransform = this.#nodes[this.#referenceNodeId].transform;
+    // Get the edge from previous node to current node
+    const forwardEdge = this.getEdge(prevNodeId, this.#referenceNodeId);
+    if (!forwardEdge) return false;
 
     // Update reference node
     this.#referenceNodeId = prevNodeId;
 
-    // Apply the inverse of the node transform to maintain visual position
-    this.#viewportTransform = this.#viewportTransform.multiply(this.invertTransform(nodeTransform));
+    // Apply the inverse of the edge transform to maintain visual position
+    this.#viewportTransform = this.#viewportTransform.multiply(this.invertTransform(forwardEdge.transform));
 
     return true;
   }
@@ -314,15 +401,17 @@ export class FloatingOriginGraph<T = any> {
    */
   getNodeScreenPosition(nodeId: string, canvasWidth: number, canvasHeight: number): { x: number; y: number } {
     let transform = new DOMMatrix();
-
-    // Accumulate transforms from reference node to target node
     let currentNodeId = this.#referenceNodeId;
+
     while (currentNodeId !== nodeId) {
-      const nextNodeId = this.#nodes[currentNodeId]?.next;
+      const nextNodeId = this.getNextNodeId(currentNodeId);
       if (!nextNodeId) break;
 
+      const edge = this.getEdge(currentNodeId, nextNodeId);
+      if (!edge) break;
+
       currentNodeId = nextNodeId;
-      transform = this.#nodes[currentNodeId].transform.multiply(transform);
+      transform = edge.transform.multiply(transform);
     }
 
     // Apply viewport transform
