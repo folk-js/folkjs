@@ -192,14 +192,16 @@
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Get visible nodes (only next nodes)
+        // Get visible nodes
         const visibleNodes = getNextNodes(referenceNodeId, VISIBLE_DISTANCE);
 
         // Save current state
         ctx.save();
 
-        // Apply viewport transform (centered in viewport)
+        // Center the viewport
         ctx.translate(canvas.width / 2, canvas.height / 2);
+
+        // Apply viewport transform
         ctx.transform(
           viewportTransform.a,
           viewportTransform.b,
@@ -209,7 +211,7 @@
           viewportTransform.f,
         );
 
-        // Draw the reference node first
+        // Draw the reference node first (at the origin)
         drawNode(referenceNodeId);
 
         // Draw next nodes with accumulated transforms
@@ -219,12 +221,12 @@
           const nodeId = visibleNodes[i];
           const node = nodes[nodeId];
 
-          // Apply the node's transform relative to its previous node
           ctx.save();
 
-          // Apply the current node's transform
+          // Accumulate transform for this node
           currentTransform = node.transform.multiply(currentTransform);
 
+          // Apply the accumulated transform
           ctx.transform(
             currentTransform.a,
             currentTransform.b,
@@ -329,24 +331,64 @@
         }
       });
 
-      // Functions for forward/backward navigation
+      // Helper function to get the current screen position of a node
+      function getNodeScreenPosition(nodeId) {
+        let transform = new DOMMatrix();
+
+        // Accumulate transforms from reference node to target node
+        let currentNodeId = referenceNodeId;
+        while (currentNodeId !== nodeId) {
+          currentNodeId = nodes[currentNodeId].next;
+          if (!currentNodeId) break;
+          transform = nodes[currentNodeId].transform.multiply(transform);
+        }
+
+        // Apply viewport transform
+        transform = viewportTransform.multiply(transform);
+
+        // The node is drawn at the canvas center, so apply canvas center offset
+        const screenX = canvas.width / 2 + transform.e;
+        const screenY = canvas.height / 2 + transform.f;
+
+        return { x: screenX, y: screenY };
+      }
+
+      // Helper function to get the accumulated transform from reference node to target node
+      function getAccumulatedTransform(fromNodeId, toNodeId) {
+        let transform = new DOMMatrix();
+        let currentNodeId = fromNodeId;
+
+        while (currentNodeId !== toNodeId) {
+          currentNodeId = nodes[currentNodeId].next;
+          if (!currentNodeId) break;
+          transform = nodes[currentNodeId].transform.multiply(transform);
+        }
+
+        return transform;
+      }
+
       function changeReferenceNodeForward() {
         const nextNodeId = nodes[referenceNodeId].next;
         if (nextNodeId) {
-          // Get the transform of the next node
-          const nextNodeTransform = nodes[nextNodeId].transform;
-
-          // Apply this transform to the viewport
-          viewportTransform = nextNodeTransform.multiply(viewportTransform);
+          // Calculate the visual transform of the next node before changing reference
+          const visualTransformBefore = viewportTransform.multiply(
+            getAccumulatedTransform(referenceNodeId, nextNodeId),
+          );
 
           // Update reference node
           referenceNodeId = nextNodeId;
 
+          // After changing reference, the next node is now at the origin (identity transform)
+          const visualTransformAfter = new DOMMatrix();
+
+          // Calculate the difference between before and after transforms
+          const compensationTransform = visualTransformBefore.multiply(visualTransformAfter.inverse());
+
+          // Adjust viewport transform to compensate exactly for the difference
+          viewportTransform = compensationTransform;
+
           // Update the info panel
           document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
-
-          console.log(`Changed reference node forward to ${referenceNodeId}`);
-          console.log(`Applied transform: scale(${nextNodeTransform.a.toFixed(2)})`);
 
           // Redraw
           draw();
@@ -356,21 +398,23 @@
       function changeReferenceNodeBackward() {
         const prevNodeId = nodes[referenceNodeId].prev;
         if (prevNodeId) {
-          // Get the inverse transform of the current node relative to its previous node
-          const currentNodeTransform = nodes[referenceNodeId].transform;
-          const inverseTransform = invertTransform(currentNodeTransform);
+          // Calculate the visual transform of the current node relative to the previous node
+          const visualTransformBefore = viewportTransform;
 
-          // Apply this inverse transform to the viewport
-          viewportTransform = inverseTransform.multiply(viewportTransform);
+          // After changing reference, the current node will have a transform relative to the new reference node
+          const visualTransformAfter = viewportTransform.multiply(nodes[referenceNodeId].transform);
+
+          // Calculate the difference between before and after transforms
+          const compensationTransform = visualTransformAfter.multiply(visualTransformBefore.inverse());
+
+          // Adjust viewport transform to compensate exactly for the difference
+          viewportTransform = compensationTransform;
 
           // Update reference node
           referenceNodeId = prevNodeId;
 
           // Update the info panel
           document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
-
-          console.log(`Changed reference node backward to ${referenceNodeId}`);
-          console.log(`Applied inverse transform: scale(${inverseTransform.a.toFixed(2)})`);
 
           // Redraw
           draw();
