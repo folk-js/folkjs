@@ -58,13 +58,10 @@
   <body>
     <div id="info-container">
       <div>Infinite ZUI</div>
-      <div> Zoom in/out forever using a <em>floating origin graph.</em> </div>
+      <div> Zoom in/out forever using a <em>floating origin graph.</em> which allows zooming in cyclic graphs. </div>
+      <br />
       <div>Hold <kbd>shift</kbd> to zoom in, <kbd>alt+shift</kbd> to zoom out.</div>
-      <div id="reference-node-info">Reference frame: node1</div>
-      <div class="node-info">Zoom navigates to nodes that fully cover your screen</div>
-      <div class="controls">
-        <button id="reset-view">Reset View</button>
-      </div>
+      <div id="reference-node-info">coordinate frame: node1</div>
     </div>
 
     <canvas id="zui-canvas"></canvas>
@@ -101,7 +98,7 @@
         {
           id: 'node4',
           data: {
-            color: 'grey',
+            color: 'cyan',
             width: 150,
             height: 100,
           },
@@ -141,7 +138,7 @@
         {
           id: 'nodeA',
           data: {
-            color: '#ff00ff', // Bright magenta
+            color: '#d3d3d3', // Light grey
             width: 180,
             height: 120,
           },
@@ -149,7 +146,15 @@
         {
           id: 'nodeB',
           data: {
-            color: '#cc33cc', // Different shade of magenta
+            color: '#A9A9A9', // Darker grey
+            width: 160,
+            height: 110,
+          },
+        },
+        {
+          id: 'nodeC',
+          data: {
+            color: '#808080', // Darker grey
             width: 160,
             height: 110,
           },
@@ -167,7 +172,7 @@
         {
           source: 'node1',
           target: 'nodeA',
-          transform: new DOMMatrix().translate(-50, 35).scale(0.4),
+          transform: new DOMMatrix().translate(-40, 23).scale(0.3),
         },
         {
           source: 'node2',
@@ -208,10 +213,15 @@
         {
           source: 'nodeA',
           target: 'nodeB',
-          transform: new DOMMatrix().scale(0.7).rotate(30),
+          transform: new DOMMatrix().scale(0.6).rotate(30),
         },
         {
           source: 'nodeB',
+          target: 'nodeC',
+          transform: new DOMMatrix().scale(0.5).rotate(30),
+        },
+        {
+          source: 'nodeC',
           target: 'node1',
           transform: new DOMMatrix().scale(0.6).translate(60, -20),
         },
@@ -389,16 +399,9 @@
       const canvas = document.getElementById('zui-canvas');
       const ctx = canvas.getContext('2d');
 
-      // Setup reset button
-      document.getElementById('reset-view').addEventListener('click', () => {
-        graph.resetView('node1');
-        updateReferenceNodeInfo();
-        draw();
-      });
-
       // Update reference node info
       function updateReferenceNodeInfo() {
-        document.getElementById('reference-node-info').textContent = `Reference frame: ${graph.referenceNodeId}`;
+        document.getElementById('reference-node-info').textContent = `coordinate frame: ${graph.referenceNodeId}`;
       }
 
       // Resize canvas to window size
