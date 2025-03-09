@@ -125,8 +125,8 @@
         },
       };
 
-      // Define next edges - mapping from source node to edge
-      const nextEdges = {
+      // Define edges - mapping from source node to edge
+      const edges = {
         node1: {
           source: 'node1',
           target: 'node2',
@@ -169,50 +169,6 @@
         },
       };
 
-      // Define prev edges - mapping from source node to edge
-      const prevEdges = {
-        node2: {
-          source: 'node2',
-          target: 'node1',
-          transform: new DOMMatrix(), // Transform is in the next direction
-        },
-        node3: {
-          source: 'node3',
-          target: 'node2',
-          transform: new DOMMatrix(),
-        },
-        node4: {
-          source: 'node4',
-          target: 'node3',
-          transform: new DOMMatrix(),
-        },
-        node5: {
-          source: 'node5',
-          target: 'node4',
-          transform: new DOMMatrix(),
-        },
-        node6: {
-          source: 'node6',
-          target: 'node5',
-          transform: new DOMMatrix(),
-        },
-        node7: {
-          source: 'node7',
-          target: 'node6',
-          transform: new DOMMatrix(),
-        },
-        node8: {
-          source: 'node8',
-          target: 'node7',
-          transform: new DOMMatrix(),
-        },
-        node1: {
-          source: 'node1',
-          target: 'node8',
-          transform: new DOMMatrix(),
-        },
-      };
-
       const VISIBLE_DISTANCE = 12;
 
       /**
@@ -223,7 +179,7 @@
        */
 
       // Create the floating origin graph with our specific data type
-      const graph = new FloatingOriginGraph(nodes, nextEdges, prevEdges, 'node1');
+      const graph = new FloatingOriginGraph(nodes, edges, 'node1');
 
       // Define zoom threshold callbacks
       function shouldZoomInToNextNode(graph, canvasWidth, canvasHeight) {

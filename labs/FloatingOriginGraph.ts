@@ -18,8 +18,7 @@ export interface Edge {
 
 // Define node and edge map types
 export type NodeMap<T = any> = Record<string, Node<T>>;
-export type NextEdgeMap = Record<string, Edge>; // Maps source node ID to next edge
-export type PrevEdgeMap = Record<string, Edge>; // Maps source node ID to prev edge
+export type EdgeMap = Record<string, Edge>; // Maps source node ID to edge
 
 // Define zoom checking callback types
 export type ShouldZoomInCallback = <T>(
@@ -35,27 +34,19 @@ export type ShouldZoomOutCallback = <T>(
 
 export class FloatingOriginGraph<T = any> {
   #nodes: NodeMap<T>;
-  #nextEdges: NextEdgeMap; // Edges for next connections
-  #prevEdges: PrevEdgeMap; // Edges for prev connections
+  #edges: EdgeMap; // Directed edges from source to target
   #referenceNodeId: string;
   #viewportTransform: DOMMatrix;
 
   /**
    * Create a new FloatingOriginGraph
    * @param nodes - Object mapping node IDs to node objects
-   * @param nextEdges - Object mapping source node IDs to next edges
-   * @param prevEdges - Object mapping source node IDs to prev edges
+   * @param edges - Object mapping source node IDs to edges
    * @param initialReferenceNodeId - The ID of the initial reference node
    */
-  constructor(
-    nodes: NodeMap<T>,
-    nextEdges: NextEdgeMap,
-    prevEdges: PrevEdgeMap,
-    initialReferenceNodeId: string = Object.keys(nodes)[0],
-  ) {
+  constructor(nodes: NodeMap<T>, edges: EdgeMap, initialReferenceNodeId: string = Object.keys(nodes)[0]) {
     this.#nodes = nodes;
-    this.#nextEdges = nextEdges;
-    this.#prevEdges = prevEdges;
+    this.#edges = edges;
     this.#referenceNodeId = initialReferenceNodeId;
     this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
@@ -106,17 +97,10 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
-   * Get the next edges map
+   * Get all edges in the graph
    */
-  get nextEdges(): NextEdgeMap {
-    return this.#nextEdges;
-  }
-
-  /**
-   * Get the prev edges map
-   */
-  get prevEdges(): PrevEdgeMap {
-    return this.#prevEdges;
+  get edges(): EdgeMap {
+    return this.#edges;
   }
 
   /**
@@ -125,36 +109,47 @@ export class FloatingOriginGraph<T = any> {
    * @returns The next node ID or undefined if not found
    */
   getNextNodeId(nodeId: string): string | undefined {
-    const edge = this.#nextEdges[nodeId];
+    const edge = this.#edges[nodeId];
     return edge?.target;
   }
 
   /**
    * Helper method to get the previous node ID for the current node
+   * (a node that has an edge pointing to the current node)
    * @param nodeId - The current node ID
    * @returns The previous node ID or undefined if not found
    */
   getPrevNodeId(nodeId: string): string | undefined {
-    const edge = this.#prevEdges[nodeId];
-    return edge?.target;
+    // Find nodes that have an edge targeting the current node
+    for (const [sourceId, edge] of Object.entries(this.#edges)) {
+      if (edge.target === nodeId) {
+        return sourceId;
+      }
+    }
+    return undefined;
   }
 
   /**
-   * Get the next edge from a node
+   * Get the edge from a source node
    * @param sourceNodeId - The source node ID
    * @returns The edge or undefined if not found
    */
-  getNextEdge(sourceNodeId: string): Edge | undefined {
-    return this.#nextEdges[sourceNodeId];
+  getEdge(sourceNodeId: string): Edge | undefined {
+    return this.#edges[sourceNodeId];
   }
 
   /**
-   * Get the prev edge from a node
-   * @param sourceNodeId - The source node ID
+   * Find the edge connecting to the target node
+   * @param targetNodeId - The target node ID
    * @returns The edge or undefined if not found
    */
-  getPrevEdge(sourceNodeId: string): Edge | undefined {
-    return this.#prevEdges[sourceNodeId];
+  findEdgeToNode(targetNodeId: string): Edge | undefined {
+    for (const edge of Object.values(this.#edges)) {
+      if (edge.target === targetNodeId) {
+        return edge;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -181,16 +176,16 @@ export class FloatingOriginGraph<T = any> {
     let count = 0;
 
     while (count < distance) {
-      const nextEdge = this.getNextEdge(currentNodeId);
-      if (!nextEdge) break;
+      const edge = this.getEdge(currentNodeId);
+      if (!edge) break;
 
       // Move to the next node
-      currentNodeId = nextEdge.target;
+      currentNodeId = edge.target;
       const node = this.#nodes[currentNodeId];
       if (!node) break;
 
       // Accumulate the transform from the edge
-      currentTransform = currentTransform.multiply(nextEdge.transform);
+      currentTransform = currentTransform.multiply(edge.transform);
 
       // Yield the node with its accumulated transform
       yield {
@@ -317,11 +312,11 @@ export class FloatingOriginGraph<T = any> {
     let currentNodeId = this.#referenceNodeId;
 
     while (currentNodeId !== toNodeId) {
-      const nextEdge = this.getNextEdge(currentNodeId);
-      if (!nextEdge) break;
+      const edge = this.getEdge(currentNodeId);
+      if (!edge) break;
 
-      currentNodeId = nextEdge.target;
-      transform = nextEdge.transform.multiply(transform);
+      currentNodeId = edge.target;
+      transform = edge.transform.multiply(transform);
     }
 
     return transform;
@@ -362,7 +357,7 @@ export class FloatingOriginGraph<T = any> {
     if (!prevNodeId) return false;
 
     // Get the edge from previous node to reference node
-    const prevToRefEdge = this.getNextEdge(prevNodeId);
+    const prevToRefEdge = this.getEdge(prevNodeId);
     if (!prevToRefEdge) return false;
 
     // Update reference node
@@ -386,11 +381,11 @@ export class FloatingOriginGraph<T = any> {
     let currentNodeId = this.#referenceNodeId;
 
     while (currentNodeId !== nodeId) {
-      const nextEdge = this.getNextEdge(currentNodeId);
-      if (!nextEdge) break;
+      const edge = this.getEdge(currentNodeId);
+      if (!edge) break;
 
-      currentNodeId = nextEdge.target;
-      transform = nextEdge.transform.multiply(transform);
+      currentNodeId = edge.target;
+      transform = edge.transform.multiply(transform);
     }
 
     // Apply viewport transform
