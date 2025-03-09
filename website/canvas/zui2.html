@@ -321,14 +321,20 @@
           .translate(-mouseX, -mouseY)
           .multiply(viewportTransform);
 
-        // Check if the next node fills the screen
-        checkNodeCoverage();
+        // Check if we need to change reference node based on zoom level
+        if (e.deltaY > 0) {
+          // Zooming out - check if we need to go to previous node
+          checkForZoomOut();
+        } else {
+          // Zooming in - check if next node fills the screen
+          checkForZoomIn();
+        }
 
         draw();
       });
 
-      // Function to check if the next node covers the screen
-      function checkNodeCoverage() {
+      // Function to check if the next node covers the screen (for zooming in)
+      function checkForZoomIn() {
         const nextNodeId = nodes[referenceNodeId].next;
         if (!nextNodeId) return;
 
@@ -350,6 +356,29 @@
         if (transformedWidth > canvas.width * 1.2 && transformedHeight > canvas.height * 1.2) {
           // Move to next node
           changeReferenceNodeForward();
+        }
+      }
+
+      // Function to check if the current node is too small (for zooming out)
+      function checkForZoomOut() {
+        const node = nodes[referenceNodeId];
+        if (!node) return;
+
+        // Get the previous node ID
+        const prevNodeId = node.prev;
+        if (!prevNodeId) return;
+
+        // Calculate effective scale from viewport transform
+        const effectiveScale = Math.hypot(viewportTransform.a, viewportTransform.b);
+
+        // Calculate current node dimensions after transform
+        const transformedWidth = node.width * effectiveScale;
+        const transformedHeight = node.height * effectiveScale;
+
+        // Check if current node is too small on screen (with buffer)
+        if (transformedWidth < canvas.width || transformedHeight < canvas.height) {
+          // Move to previous node
+          changeReferenceNodeBackward();
         }
       }
 
