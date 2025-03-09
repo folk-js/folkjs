@@ -469,7 +469,7 @@
     <!-- Import QRTP module -->
     <script type="module">
       import { QRTP } from '@labs/QRTP.ts';
-      import { MonoLabel } from '@labs/MonoLabel.ts';
+      import '@labs/BraceLabel.ts';
 
       // Make QRTP available globally for debugging
       window.QRTP = QRTP;
@@ -888,9 +888,34 @@
       }
     </script>
 
-    <div>hello this is some text</div>
-
     <div class="protocol-description">
+      <div style="text-align: center">
+        <strong>The structure of the QR code is as follows</strong>
+        <div style="margin: 20px 0">
+          <brace-label label="protocol">QRTP</brace-label>[<brace-label label="current" position="top">2</brace-label
+          >/<brace-label label="total">19</brace-label>]:<brace-label label="receipt hash" position="top"
+            >adc23dk5</brace-label
+          >:<brace-label label="outgoing chunk payload">lorem ipsum dolor sit amet</brace-label>
+        </div>
+
+        <em>in the future, we can remove redundant brackets</em>
+        <div style="margin: 20px 0">
+          <brace-label label="protocol">QRTP</brace-label
+          ><brace-label label="current" position="top">2</brace-label>/<brace-label label="total">19</brace-label
+          >:<brace-label label="receipt hash" position="top">adc23dk5</brace-label>:<brace-label
+            label="outgoing chunk payload"
+            >lorem ipsum dolor sit amet</brace-label
+          >
+        </div>
+
+        <em>and can add support for multi-device communication with more states</em>
+        <div style="margin-top: 20px">
+          <brace-label label="protocol">QRTP</brace-label
+          ><brace-label label="init" position="top">I</brace-label>:<brace-label label="message hash" position="top"
+            >ad329fk10spk24s7</brace-label
+          >
+        </div>
+      </div>
       <pre id="qrtp-algorithm" class="pseudocode">
         \begin{algorithm}
         \caption{QR Transfer Protocol}
