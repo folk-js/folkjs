@@ -44,6 +44,7 @@ export class FolkShapeAttribute extends CustomAttribute {
         overflow: scroll;
         transform-origin: center center;
         rotate: var(--folk-rotation);
+        outline: none;
       }
 
       [folk-shape*='x:'][folk-shape*='y:'] {
@@ -117,7 +118,7 @@ export class FolkShapeAttribute extends CustomAttribute {
       }
 
       if (this.#autoHeight) {
-        this.#rect.height = el.offsetTop;
+        this.#rect.height = el.offsetHeight;
       }
 
       this.#requestUpdate();
@@ -320,6 +321,13 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.getBounds();
   }
 
+  constructor(ownerElement: Element, name: string, value: string) {
+    super(ownerElement, name, value);
+
+    ownerElement.addEventListener('focus', this);
+    ownerElement.addEventListener('blur', this);
+  }
+
   connectedCallback(): void {
     const el = this.ownerElement as HTMLElement;
 
@@ -327,9 +335,6 @@ export class FolkShapeAttribute extends CustomAttribute {
     if (el.tabIndex === -1) {
       el.tabIndex = 0;
     }
-
-    el.addEventListener('focus', this);
-    // el.addEventListener('blur', this);
   }
 
   changedCallback(_oldValue: string, newValue: string): void {
@@ -374,14 +379,15 @@ export class FolkShapeAttribute extends CustomAttribute {
   disconnectedCallback(): void {
     const el = this.ownerElement as HTMLElement;
 
-    el.removeEventListener('focus', this);
-    // el.removeEventListener('blur', this);
-
     if (this.#autoHeight || this.#autoWidth) {
       resizeManager.unobserve(el, this.#onResize);
     }
 
-    el.style.top = el.style.left = el.style.height = el.style.width = el.style.rotate = '';
+    el.style.removeProperty('--folk-x');
+    el.style.removeProperty('--folk-y');
+    el.style.removeProperty('--folk-height');
+    el.style.removeProperty('--folk-width');
+    el.style.removeProperty('--folk-rotation');
   }
 
   handleEvent(event: Event) {
@@ -395,9 +401,7 @@ export class FolkShapeAttribute extends CustomAttribute {
       }
       this.#shapeOverlay.open(this);
     } else if (event.type === 'blur') {
-      if (this.#shapeOverlay.isOpen) {
-        this.#shapeOverlay.close();
-      }
+      this.#shapeOverlay.close();
     }
   }
 

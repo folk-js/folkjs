@@ -56,25 +56,34 @@ export class FolkShapeOverlay extends FolkElement {
 
   static styles = css`
     :host {
-      display: none;
-      background: oklch(0.54 0.01 0 / 0.2);
-      cursor: move;
+      box-sizing: border-box;
       position: absolute;
       transform-origin: center center;
-      transition: outline-width 75ms ease-out;
-      outline: solid 1.5px hsl(214, 84%, 56%);
+      pointer-events: none;
+      overflow: visible;
+      padding: 0;
+      margin: unset;
+      inset: unset;
+      border: none;
+      background: transparent;
+      outline: 1px solid rgb(0, 95, 204);
+      outline-offset: -1px;
     }
 
-    :host(:state(open)) {
-      display: block;
-      z-index: calc(infinity);
+    :host(:focus),
+    :host(:focus-visible) {
+      cursor: move;
+      background: rgba(0, 0, 0, 0.1);
+      pointer-events: all;
+      outline-width: 2px;
     }
 
-    :host(:hover) {
-      outline-width: 2.25px;
+    :host:has(:focus, :focus-visible) {
+      outline-width: 1px;
     }
 
     [part] {
+      box-sizing: border-box;
       aspect-ratio: 1;
       position: absolute;
       padding: 0;
@@ -83,10 +92,17 @@ export class FolkShapeOverlay extends FolkElement {
 
     [part^='resize'] {
       background: hsl(210, 20%, 98%);
-      width: 10px;
-      transform: translate(-50%, -50%);
-      border: 1.5px solid hsl(214, 84%, 56%);
+      width: 9px;
+      translate: -50% -50%;
+      outline: 1px solid rgb(0, 95, 204);
+      outline-offset: -1px;
+      border: unset;
       border-radius: 2px;
+
+      &:focus,
+      &:focus-visible {
+        outline-width: 2px;
+      }
 
       @media (any-pointer: coarse) {
         width: 15px;
@@ -103,8 +119,8 @@ export class FolkShapeOverlay extends FolkElement {
     }
 
     [part$='top-left'] {
-      top: 0;
-      left: 0;
+      top: 1px;
+      left: 1px;
     }
 
     [part='rotation-top-left'] {
@@ -112,8 +128,8 @@ export class FolkShapeOverlay extends FolkElement {
     }
 
     [part$='top-right'] {
-      top: 0;
-      left: 100%;
+      top: 1px;
+      left: calc(100% - 1px);
     }
 
     [part='rotation-top-right'] {
@@ -121,8 +137,8 @@ export class FolkShapeOverlay extends FolkElement {
     }
 
     [part$='bottom-right'] {
-      top: 100%;
-      left: 100%;
+      top: calc(100% - 1px);
+      left: calc(100% - 1px);
     }
 
     [part='rotation-bottom-right'] {
@@ -130,8 +146,8 @@ export class FolkShapeOverlay extends FolkElement {
     }
 
     [part$='bottom-left'] {
-      top: 100%;
-      left: 0;
+      top: calc(100% - 1px);
+      left: 1px;
     }
 
     [part='rotation-bottom-left'] {
@@ -142,35 +158,38 @@ export class FolkShapeOverlay extends FolkElement {
   #internals = this.attachInternals();
 
   get isOpen() {
-    return this.#internals.states.has('open');
+    return this.#shape !== null;
   }
 
   #startAngle = 0;
-
-  // #canReceivePreviousFocus = false;
-
   #shape: FolkShapeAttribute | null = null;
-
   #handles!: Record<ResizeHandle | RotateHandle, HTMLElement>;
+
+  #spatialTabMode = false;
 
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot() as ShadowRoot;
 
+    this.popover = 'manual';
+    this.tabIndex = -1;
+
     this.addEventListener('pointerdown', this);
     this.addEventListener('dblclick', this);
+    this.addEventListener('keydown', this);
+    this.addEventListener('blur', this);
     // prevent IOS Safari from scrolling when a shape is interacted with.
     this.addEventListener('touchmove', this, { passive: false });
 
-    (root as ShadowRoot).setHTMLUnsafe(
-      html`<button part="rotation-top-left" tabindex="-1" aria-label="Rotate shape from top left"></button>
-        <button part="rotation-top-right" tabindex="-1" aria-label="Rotate shape from top right"></button>
-        <button part="rotation-bottom-right" tabindex="-1" aria-label="Rotate shape from bottom right"></button>
-        <button part="rotation-bottom-left" tabindex="-1" aria-label="Rotate shape from bottom left"></button>
-        <button part="resize-top-left" tabindex="-1" aria-label="Resize shape from top left"></button>
-        <button part="resize-top-right" tabindex="-1" aria-label="Resize shape from top right"></button>
-        <button part="resize-bottom-right" tabindex="-1" aria-label="Resize shape from bottom right"></button>
-        <button part="resize-bottom-left" tabindex="-1" aria-label="Resize shape from bottom left"></button>`,
-    );
+    (root as ShadowRoot).setHTMLUnsafe(html`
+      <button part="rotation-top-left" tabindex="-1" aria-label="Rotate shape from top left"></button>
+      <button part="rotation-top-right" tabindex="-1" aria-label="Rotate shape from top right"></button>
+      <button part="rotation-bottom-right" tabindex="-1" aria-label="Rotate shape from bottom right"></button>
+      <button part="rotation-bottom-left" tabindex="-1" aria-label="Rotate shape from bottom left"></button>
+      <button part="resize-top-left" aria-label="Resize shape from top left"></button>
+      <button part="resize-top-right" aria-label="Resize shape from top right"></button>
+      <button part="resize-bottom-right" aria-label="Resize shape from bottom right"></button>
+      <button part="resize-bottom-left" aria-label="Resize shape from bottom left"></button>
+    `);
 
     this.#handles = Object.fromEntries(
       Array.from(root.querySelectorAll('[part]')).map((el) => [
@@ -182,12 +201,108 @@ export class FolkShapeOverlay extends FolkElement {
     return root;
   }
 
-  handleEvent(event: PointerEvent | KeyboardEvent) {
+  connectedCallback(): void {
+    super.connectedCallback();
+
+    window.addEventListener('keydown', this.#handleTabbing, { capture: true });
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+
+    window.removeEventListener('keydown', this.#handleTabbing, { capture: true });
+  }
+
+  #handleTabbing = (event: KeyboardEvent) => {
+    if (event.type === 'keydown' && event.key === 'Tab') {
+      if (event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
+        this.#spatialTabMode = !this.#spatialTabMode;
+
+        if (this.#spatialTabMode) {
+          if (this.#shape === null) {
+            const firstShape = document.querySelector('[folk-shape]')?.shape;
+
+            if (firstShape === undefined) return;
+
+            this.open(firstShape);
+          }
+
+          this.focus();
+        } else {
+          setTimeout(() => (this.#shape?.ownerElement as HTMLElement).focus(), 0);
+        }
+
+        this.focus();
+      } else if (
+        event.shiftKey &&
+        this.#spatialTabMode &&
+        document.activeElement === this &&
+        this.shadowRoot!.activeElement === null
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        setTimeout(() => this.#handles['resize-bottom-left'].focus(), 0);
+      } else if (
+        !event.shiftKey &&
+        this.#spatialTabMode &&
+        this.shadowRoot!.activeElement === this.#handles['resize-bottom-left']
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        setTimeout(() => this.focus(), 0);
+      } else if (
+        event.shiftKey &&
+        this.#spatialTabMode &&
+        this.shadowRoot!.activeElement === this.#handles['resize-top-left']
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        setTimeout(() => this.focus(), 0);
+      }
+
+      return;
+    }
+
+    // if (this.#spatialTabMode && this.#isTabKeyDown) {
+    //   switch (event.key) {
+    //     case 'ArrowLeft':
+    //       // Left pressed
+    //       break;
+    //     case 'ArrowRight':
+    //       // Right pressed
+    //       break;
+    //     case 'ArrowUp':
+    //       // Up pressed
+    //       break;
+    //     case 'ArrowDown':
+    //       // Down pressed
+    //       break;
+    //   }
+    // }
+  };
+
+  handleEvent(event: PointerEvent | KeyboardEvent | FocusEvent) {
     if (this.#shape === null) return;
 
     // prevent IOS Safari from scrolling when a shape is interacted with.
     if (event.type === 'touchmove') {
       event.preventDefault();
+      return;
+    }
+
+    if (event instanceof FocusEvent) {
+      if (event.relatedTarget !== this.shape?.ownerElement) {
+        this.#spatialTabMode = false;
+        this.close();
+        console.log(this.#shape);
+      }
       return;
     }
 
@@ -334,55 +449,6 @@ export class FolkShapeOverlay extends FolkElement {
     }
   }
 
-  // handleEvent(event: KeyboardEvent | FocusEvent) {
-  //   // TODO: if someone back tabs into the element the overlay should be show second and the focus element first?
-
-  //   // the overlay was just closed due to a forward tab.
-  //   if (this.#canReceivePreviousFocus) {
-  //     // when someone tabbed away from the overlay, then shift+tabbed back
-  //     if (event instanceof KeyboardEvent && event.type === 'keydown' && event.key === 'Tab' && event.shiftKey) {
-  //       event.preventDefault();
-  //       event.stopPropagation();
-  //       event.stopImmediatePropagation();
-  //       this.#canReceivePreviousFocus = false;
-  //       document.removeEventListener('keydown', this, { capture: true });
-  //       document.removeEventListener('focusout', this, { capture: true });
-  //       const shape = (event.target as Element).getShape();
-
-  //       if (shape) {
-  //         this.open(shape);
-  //       }
-  //     }
-
-  //     // in the case the we lost focus
-  //     if (event instanceof FocusEvent && event.type === 'focusout') {
-  //       this.#canReceivePreviousFocus = false;
-  //       document.removeEventListener('keydown', this, { capture: true });
-  //       document.removeEventListener('focusout', this, { capture: true });
-  //     }
-
-  //     return;
-  //   }
-
-  //   // when the overlay is open and someone tabs forward we need to close it and prepare if they tab back
-  //   if (event instanceof KeyboardEvent && event.type === 'keydown' && event.key === 'Tab') {
-  //     if (!event.shiftKey) {
-  //       event.stopPropagation();
-  //       event.stopImmediatePropagation();
-  //       event.preventDefault();
-  //       this.close();
-  //       this.#canReceivePreviousFocus = true;
-  //       // make sure to close the overlay before adding these event listeners otherwise the keydown event will be removed.
-  //       document.addEventListener('keydown', this, { capture: true });
-  //       // FIX: focusout isn't what we want
-  //       document.addEventListener('focusout', this, { capture: true });
-  //     }
-  //     return;
-  //   }
-
-  //   event.preventDefault();
-  // }
-
   open(shape: FolkShapeAttribute) {
     if (this.isOpen) this.close();
 
@@ -390,16 +456,15 @@ export class FolkShapeOverlay extends FolkElement {
     this.#shape.ownerElement.addEventListener('transform', this.#update);
     this.#update();
     this.#updateCursors();
-
-    // document.addEventListener('keydown', this, { capture: true });
-    this.#internals.states.add('open');
+    this.showPopover();
   }
 
   close() {
+    if (!this.isOpen) return;
+
     this.#shape?.ownerElement.removeEventListener('transform', this.#update);
     this.#shape = null;
-    // document.removeEventListener('keydown', this, { capture: true });
-    this.#internals.states.delete('open');
+    this.hidePopover();
   }
 
   #update = () => {
