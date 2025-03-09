@@ -89,6 +89,51 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
+   * Iterate through visible nodes with their accumulated transforms
+   * This provides both the node and its transform relative to the reference node
+   * @param distance - Maximum number of nodes to include
+   * @returns Iterator yielding objects with node, nodeId, and accumulated transform
+   */
+  *getVisibleNodesWithTransforms(distance: number = 12): Generator<{
+    nodeId: string;
+    node: Node<T>;
+    transform: DOMMatrix;
+  }> {
+    // Always yield the reference node first with identity transform
+    yield {
+      nodeId: this.#referenceNodeId,
+      node: this.#nodes[this.#referenceNodeId],
+      transform: new DOMMatrix(), // Identity transform
+    };
+
+    // Then yield subsequent nodes with accumulated transforms
+    let currentNodeId = this.#referenceNodeId;
+    let currentTransform = new DOMMatrix(); // Start with identity matrix
+    let count = 0;
+
+    while (this.#nodes[currentNodeId]?.next && count < distance) {
+      const nextNodeId = this.#nodes[currentNodeId].next;
+      if (!nextNodeId) break;
+
+      // Move to the next node
+      currentNodeId = nextNodeId;
+      const node = this.#nodes[currentNodeId];
+
+      // Accumulate the transform
+      currentTransform = currentTransform.multiply(node.transform);
+
+      // Yield the node with its accumulated transform
+      yield {
+        nodeId: currentNodeId,
+        node,
+        transform: currentTransform,
+      };
+
+      count++;
+    }
+  }
+
+  /**
    * Apply zoom transform centered on a point
    * @param centerX - X coordinate of zoom center point
    * @param centerY - Y coordinate of zoom center point
