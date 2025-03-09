@@ -54,7 +54,9 @@
 
     <canvas id="zui-canvas"></canvas>
 
-    <script>
+    <script type="module">
+      import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
+
       // Define our node structure
       const nodes = {
         node1: {
@@ -133,11 +135,8 @@
 
       const VISIBLE_DISTANCE = 12;
 
-      // Reference node ID
-      let referenceNodeId = 'node1';
-
-      // Viewport transform (reference node to viewport)
-      let viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
+      // Create the floating origin graph
+      const graph = new FloatingOriginGraph(nodes, 'node1');
 
       // Setup canvas
       const canvas = document.getElementById('zui-canvas');
@@ -153,33 +152,13 @@
       window.addEventListener('resize', resizeCanvas);
       resizeCanvas();
 
-      // Helper function to invert a transform
-      function invertTransform(transform) {
-        return transform.inverse();
-      }
-
-      // Function to get next nodes up to a specified distance
-      function getNextNodes(startNodeId, distance) {
-        const nextNodes = [startNodeId];
-
-        let currentNodeId = startNodeId;
-        let count = 0;
-        while (nodes[currentNodeId].next && count < distance) {
-          nextNodes.push(nodes[currentNodeId].next);
-          currentNodeId = nodes[currentNodeId].next;
-          count++;
-        }
-
-        return nextNodes;
-      }
-
       // Draw function
       function draw() {
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         // Get visible nodes
-        const visibleNodes = getNextNodes(referenceNodeId, VISIBLE_DISTANCE);
+        const visibleNodes = graph.getVisibleNodes(VISIBLE_DISTANCE);
 
         // Save current state
         ctx.save();
@@ -188,6 +167,7 @@
         ctx.translate(canvas.width / 2, canvas.height / 2);
 
         // Apply viewport transform
+        const viewportTransform = graph.viewportTransform;
         ctx.transform(
           viewportTransform.a,
           viewportTransform.b,
@@ -198,7 +178,7 @@
         );
 
         // Draw the reference node first (at the origin)
-        drawNode(referenceNodeId);
+        drawNode(graph.referenceNodeId);
 
         // Draw next nodes with accumulated transforms
         let currentTransform = new DOMMatrix();
@@ -283,7 +263,7 @@
           const dy = e.clientY - lastY;
 
           // Update viewport transform for panning
-          viewportTransform = new DOMMatrix().translate(dx, dy).multiply(viewportTransform);
+          graph.pan(dx, dy);
 
           lastX = e.clientX;
           lastY = e.clientY;
@@ -307,79 +287,23 @@
         const mouseX = e.clientX - canvas.width / 2;
         const mouseY = e.clientY - canvas.height / 2;
 
-        // Update viewport transform for zooming
-        // First translate to mouse position, then scale, then translate back
-        viewportTransform = new DOMMatrix()
-          .translate(mouseX, mouseY)
-          .scale(zoomFactor)
-          .translate(-mouseX, -mouseY)
-          .multiply(viewportTransform);
+        // Apply zoom centered on mouse position and check if reference node changed
+        const referenceChanged = graph.zoomAtPoint(mouseX, mouseY, zoomFactor, canvas.width, canvas.height);
 
-        // Check if we need to change reference node based on zoom level
-        if (e.deltaY > 0) {
-          // Zooming out - check if we need to go to previous node
-          checkForZoomOut();
-        } else {
-          // Zooming in - check if next node fills the screen
-          checkForZoomIn();
+        // Update the reference node info if needed
+        if (referenceChanged) {
+          updateReferenceNodeInfo();
         }
 
         draw();
       });
 
-      // Function to check if the next node covers the screen (for zooming in)
-      function checkForZoomIn() {
-        const nextNodeId = nodes[referenceNodeId].next;
-        if (!nextNodeId) return;
-
-        const nextNode = nodes[nextNodeId];
-        if (!nextNode) return;
-
-        // Get the transform from reference node to next node
-        const nextNodeTransform = getAccumulatedTransform(referenceNodeId, nextNodeId);
-
-        // Calculate effective scale from combined viewport and node transform
-        const combinedTransform = viewportTransform.multiply(nextNodeTransform);
-        const effectiveScale = Math.hypot(combinedTransform.a, combinedTransform.b);
-
-        // Calculate next node dimensions after transform
-        const transformedWidth = nextNode.width * effectiveScale;
-        const transformedHeight = nextNode.height * effectiveScale;
-
-        // Check if next node covers the screen (with some buffer)
-        if (transformedWidth > canvas.width * 1.2 && transformedHeight > canvas.height * 1.2) {
-          // Move to next node
-          changeReferenceNodeForward();
-        }
-      }
-
-      // Function to check if the current node is too small (for zooming out)
-      function checkForZoomOut() {
-        const node = nodes[referenceNodeId];
-        if (!node) return;
-
-        // Get the previous node ID
-        const prevNodeId = node.prev;
-        if (!prevNodeId) return;
-
-        // Calculate effective scale from viewport transform
-        const effectiveScale = Math.hypot(viewportTransform.a, viewportTransform.b);
-
-        // Calculate current node dimensions after transform
-        const transformedWidth = node.width * effectiveScale;
-        const transformedHeight = node.height * effectiveScale;
-
-        // Check if current node is too small on screen (with buffer)
-        if (transformedWidth < canvas.width || transformedHeight < canvas.height) {
-          // Move to previous node
-          changeReferenceNodeBackward();
-        }
-      }
-
       // Remove the shift-click event and add continuous zooming functionality
       let isShiftZooming = false;
       let isAltShiftZooming = false;
-      let zoomInterval = null;
+      let zoomAnimationId = null;
+      let isZooming = false;
+      let zoomDirection = 1; // 1 for zoom in, -1 for zoom out
 
       // Add keyboard event listeners for continuous zooming
       window.addEventListener('keydown', (e) => {
@@ -401,144 +325,60 @@
       });
 
       function startContinuousZoom(zoomIn) {
-        stopContinuousZoom(); // Clear any existing interval
+        stopContinuousZoom(); // Cancel any existing animation
 
-        const zoomFactor = zoomIn ? 1.02 : 0.98;
+        isZooming = true;
+        zoomDirection = zoomIn ? 1 : -1;
 
-        zoomInterval = setInterval(() => {
-          // Get mouse position relative to canvas center
-          const mouseX = currentMouseX - canvas.width / 2;
-          const mouseY = currentMouseY - canvas.height / 2;
+        // Start the animation loop
+        animateZoom();
+      }
 
-          // Apply zoom transform centered on mouse position
-          viewportTransform = new DOMMatrix()
-            .translate(mouseX, mouseY)
-            .scale(zoomFactor)
-            .translate(-mouseX, -mouseY)
-            .multiply(viewportTransform);
+      function animateZoom() {
+        if (!isZooming) return;
 
-          // Check if we need to change reference node
-          if (zoomIn) {
-            checkForZoomIn();
-          } else {
-            checkForZoomOut();
-          }
+        // Calculate zoom factor based on direction
+        const zoomFactor = zoomDirection > 0 ? 1.02 : 0.98;
 
-          draw();
-        }, 16); // ~60fps
+        // Get mouse position relative to canvas center
+        const mouseX = currentMouseX - canvas.width / 2;
+        const mouseY = currentMouseY - canvas.height / 2;
+
+        // Apply zoom centered on mouse position and check if reference node changed
+        const referenceChanged = graph.zoomAtPoint(mouseX, mouseY, zoomFactor, canvas.width, canvas.height);
+
+        // Update the reference node info if needed
+        if (referenceChanged) {
+          updateReferenceNodeInfo();
+        }
+
+        // Redraw
+        draw();
+
+        // Continue the animation loop
+        zoomAnimationId = requestAnimationFrame(animateZoom);
       }
 
       function stopContinuousZoom() {
-        if (zoomInterval) {
-          clearInterval(zoomInterval);
-          zoomInterval = null;
+        isZooming = false;
+        if (zoomAnimationId) {
+          cancelAnimationFrame(zoomAnimationId);
+          zoomAnimationId = null;
         }
       }
 
-      // Helper function to get the current screen position of a node
-      function getNodeScreenPosition(nodeId) {
-        let transform = new DOMMatrix();
-
-        // Accumulate transforms from reference node to target node
-        let currentNodeId = referenceNodeId;
-        while (currentNodeId !== nodeId) {
-          currentNodeId = nodes[currentNodeId].next;
-          if (!currentNodeId) break;
-          transform = nodes[currentNodeId].transform.multiply(transform);
-        }
-
-        // Apply viewport transform
-        transform = viewportTransform.multiply(transform);
-
-        // The node is drawn at the canvas center, so apply canvas center offset
-        const screenX = canvas.width / 2 + transform.e;
-        const screenY = canvas.height / 2 + transform.f;
-
-        return { x: screenX, y: screenY };
-      }
-
-      // Helper function to get the accumulated transform from reference node to target node
-      function getAccumulatedTransform(fromNodeId, toNodeId) {
-        let transform = new DOMMatrix();
-        let currentNodeId = fromNodeId;
-
-        while (currentNodeId !== toNodeId) {
-          currentNodeId = nodes[currentNodeId].next;
-          if (!currentNodeId) break;
-          transform = nodes[currentNodeId].transform.multiply(transform);
-        }
-
-        return transform;
-      }
-
-      function changeReferenceNodeForward() {
-        const nextNodeId = nodes[referenceNodeId].next;
-        if (nextNodeId) {
-          // Calculate the visual transform of the next node before changing reference
-          const visualTransformBefore = viewportTransform.multiply(
-            getAccumulatedTransform(referenceNodeId, nextNodeId),
-          );
-
-          // Update reference node
-          referenceNodeId = nextNodeId;
-
-          // After changing reference, the next node is now at the origin (identity transform)
-          const visualTransformAfter = new DOMMatrix();
-
-          // Calculate the difference between before and after transforms
-          const compensationTransform = visualTransformBefore.multiply(visualTransformAfter.inverse());
-
-          // Adjust viewport transform to compensate exactly for the difference
-          viewportTransform = compensationTransform;
-
-          // Update the info panel
-          document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
-
-          // Redraw
-          draw();
-        }
-      }
-
-      function changeReferenceNodeBackward() {
-        const prevNodeId = nodes[referenceNodeId].prev;
-        if (prevNodeId) {
-          // Get the transform from previous node to current node
-          const nodeTransform = nodes[referenceNodeId].transform;
-
-          // Calculate the current node's position in viewport before changing reference
-          const visualTransformBefore = viewportTransform;
-
-          // Update reference node (before applying transform changes)
-          referenceNodeId = prevNodeId;
-
-          // Apply the inverse of the node transform to maintain visual position
-          viewportTransform = viewportTransform.multiply(invertTransform(nodeTransform));
-
-          // Update the info panel
-          document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
-
-          // Redraw
-          draw();
-        }
+      function updateReferenceNodeInfo() {
+        document.getElementById('reference-node-info').textContent = `reference frame: ${graph.referenceNodeId}`;
       }
 
       function resetView() {
-        // Reset to node1 and reset viewport transform
-        referenceNodeId = 'node1';
-        viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
-
-        // Update the info panel
-        document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
-
-        console.log('View reset to node1');
-
-        // Redraw
+        // Reset the view to the initial node
+        graph.resetView('node1');
+        updateReferenceNodeInfo();
         draw();
       }
 
       // Make globally accessible for the buttons
-      window.changeReferenceNodeForward = changeReferenceNodeForward;
-      window.changeReferenceNodeBackward = changeReferenceNodeBackward;
       window.resetView = resetView;
 
       // Initial draw
