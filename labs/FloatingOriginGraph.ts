@@ -4,25 +4,31 @@
  */
 
 // Define the node structure
-export interface Node {
+export interface Node<T = any> {
   id: string;
   prev?: string;
   next?: string;
-  data: any;
-  width: number;
-  height: number;
+  data: T;
   transform: DOMMatrix;
 }
 
 // Define node map type
-export type NodeMap = Record<string, Node>;
+export type NodeMap<T = any> = Record<string, Node<T>>;
 
 // Define zoom checking callback types
-export type ShouldZoomInCallback = (graph: FloatingOriginGraph, canvasWidth: number, canvasHeight: number) => boolean;
-export type ShouldZoomOutCallback = (graph: FloatingOriginGraph, canvasWidth: number, canvasHeight: number) => boolean;
+export type ShouldZoomInCallback = <T>(
+  graph: FloatingOriginGraph<T>,
+  canvasWidth: number,
+  canvasHeight: number,
+) => boolean;
+export type ShouldZoomOutCallback = <T>(
+  graph: FloatingOriginGraph<T>,
+  canvasWidth: number,
+  canvasHeight: number,
+) => boolean;
 
-export class FloatingOriginGraph {
-  #nodes: NodeMap;
+export class FloatingOriginGraph<T = any> {
+  #nodes: NodeMap<T>;
   #referenceNodeId: string;
   #viewportTransform: DOMMatrix;
 
@@ -31,7 +37,7 @@ export class FloatingOriginGraph {
    * @param nodes - Object mapping node IDs to node objects
    * @param initialReferenceNodeId - The ID of the initial reference node
    */
-  constructor(nodes: NodeMap, initialReferenceNodeId: string = Object.keys(nodes)[0]) {
+  constructor(nodes: NodeMap<T>, initialReferenceNodeId: string = Object.keys(nodes)[0]) {
     this.#nodes = nodes;
     this.#referenceNodeId = initialReferenceNodeId;
     this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
@@ -40,7 +46,7 @@ export class FloatingOriginGraph {
   /**
    * Get the current reference node
    */
-  get referenceNode(): Node {
+  get referenceNode(): Node<T> {
     return this.#nodes[this.#referenceNodeId];
   }
 
@@ -73,6 +79,13 @@ export class FloatingOriginGraph {
    */
   set viewportTransform(transform: DOMMatrix) {
     this.#viewportTransform = transform;
+  }
+
+  /**
+   * Get all nodes in the graph
+   */
+  get nodes(): NodeMap<T> {
+    return this.#nodes;
   }
 
   /**

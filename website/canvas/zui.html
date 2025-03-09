@@ -57,93 +57,116 @@
     <script type="module">
       import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
 
-      // Define our node structure
+      // Define our node structure with width, height, and color in the data property
       const nodes = {
         node1: {
           id: 'node1',
           prev: 'node8',
           next: 'node2',
-          data: 'red',
-          width: 150,
-          height: 100,
+          data: {
+            color: 'red',
+            width: 150,
+            height: 100,
+          },
           transform: new DOMMatrix().scale(0.5),
         },
         node2: {
           id: 'node2',
           prev: 'node1',
           next: 'node3',
-          data: 'blue',
-          width: 150,
-          height: 100,
+          data: {
+            color: 'blue',
+            width: 150,
+            height: 100,
+          },
           transform: new DOMMatrix().translate(35, 0).scale(0.5),
         },
         node3: {
           id: 'node3',
           prev: 'node2',
           next: 'node4',
-          data: 'green',
-          width: 150,
-          height: 100,
+          data: {
+            color: 'green',
+            width: 150,
+            height: 100,
+          },
           transform: new DOMMatrix().scale(0.6),
         },
         node4: {
           id: 'node4',
           prev: 'node3',
           next: 'node5',
-          data: 'grey',
-          width: 150,
-          height: 100,
+          data: {
+            color: 'grey',
+            width: 150,
+            height: 100,
+          },
           transform: new DOMMatrix().scale(0.6).translate(-50, 0),
         },
         node5: {
           id: 'node5',
           prev: 'node4',
           next: 'node6',
-          data: 'purple',
-          width: 150,
-          height: 100,
+          data: {
+            color: 'purple',
+            width: 150,
+            height: 100,
+          },
           transform: new DOMMatrix().scale(0.7),
         },
         node6: {
           id: 'node6',
           prev: 'node5',
           next: 'node7',
-          data: 'orange',
-          width: 180,
-          height: 90,
+          data: {
+            color: 'orange',
+            width: 180,
+            height: 90,
+          },
           transform: new DOMMatrix().scale(0.3).translate(-25, -25).rotate(45),
         },
         node7: {
           id: 'node7',
           prev: 'node6',
           next: 'node8',
-          data: 'teal',
-          width: 150,
-          height: 100,
+          data: {
+            color: 'teal',
+            width: 150,
+            height: 100,
+          },
           transform: new DOMMatrix().scale(0.4),
         },
         node8: {
           id: 'node8',
           prev: 'node7',
           next: 'node1',
-          data: 'magenta',
-          width: 150,
-          height: 100,
+          data: {
+            color: 'magenta',
+            width: 150,
+            height: 100,
+          },
           transform: new DOMMatrix().scale(0.5).rotate(-45),
         },
       };
 
       const VISIBLE_DISTANCE = 12;
 
-      // Create the floating origin graph
+      /**
+       * @typedef {Object} NodeData
+       * @property {string} color - The color of the node
+       * @property {number} width - The width of the node
+       * @property {number} height - The height of the node
+       */
+
+      // Create the floating origin graph with our specific data type
       const graph = new FloatingOriginGraph(nodes, 'node1');
 
       // Define zoom threshold callbacks
       function shouldZoomInToNextNode(graph, canvasWidth, canvasHeight) {
-        const nextNodeId = nodes[graph.referenceNodeId]?.next;
+        const nextNodeId = graph.referenceNode.next;
         if (!nextNodeId) return false;
 
-        const nextNode = nodes[nextNodeId];
+        const nextNode = graph.nodes[nextNodeId];
         if (!nextNode) return false;
 
         // Get the transform from reference node to next node
@@ -154,15 +177,15 @@
         const effectiveScale = Math.hypot(combinedTransform.a, combinedTransform.b);
 
         // Calculate next node dimensions after transform
-        const transformedWidth = nextNode.width * effectiveScale;
-        const transformedHeight = nextNode.height * effectiveScale;
+        const transformedWidth = nextNode.data.width * effectiveScale;
+        const transformedHeight = nextNode.data.height * effectiveScale;
 
         // Check if next node covers the screen (with some buffer)
         return transformedWidth > canvasWidth * 1.2 && transformedHeight > canvasHeight * 1.2;
       }
 
       function shouldZoomOutToPrevNode(graph, canvasWidth, canvasHeight) {
-        const node = nodes[graph.referenceNodeId];
+        const node = graph.referenceNode;
         if (!node) return false;
 
         // Get the previous node ID
@@ -173,8 +196,8 @@
         const effectiveScale = Math.hypot(graph.viewportTransform.a, graph.viewportTransform.b);
 
         // Calculate current node dimensions after transform
-        const transformedWidth = node.width * effectiveScale;
-        const transformedHeight = node.height * effectiveScale;
+        const transformedWidth = node.data.width * effectiveScale;
+        const transformedHeight = node.data.height * effectiveScale;
 
         // Check if current node is too small on screen (with buffer)
         return transformedWidth < canvasWidth || transformedHeight < canvasHeight;
@@ -227,7 +250,7 @@
 
         for (let i = 1; i < visibleNodes.length; i++) {
           const nodeId = visibleNodes[i];
-          const node = nodes[nodeId];
+          const node = graph.nodes[nodeId];
 
           ctx.save();
 
@@ -256,15 +279,15 @@
       function drawNode(nodeId) {
         if (!nodeId) return;
 
-        const node = nodes[nodeId];
+        const node = graph.nodes[nodeId];
         if (!node) return;
 
-        // Use node's width and height
-        const width = node.width || 100;
-        const height = node.height || 100;
+        // Use node's width and height from data
+        const width = node.data.width || 100;
+        const height = node.data.height || 100;
 
         // Draw a rectangle with the node's dimensions
-        ctx.fillStyle = node.data;
+        ctx.fillStyle = node.data.color;
         ctx.fillRect(-width / 2, -height / 2, width, height);
 
         // Add a border
