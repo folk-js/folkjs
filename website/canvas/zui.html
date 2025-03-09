@@ -35,12 +35,23 @@
       button {
         padding: 5px 10px;
         cursor: pointer;
+        margin-right: 5px;
+        margin-top: 8px;
       }
 
       canvas {
         position: absolute;
         top: 0;
         left: 0;
+      }
+
+      .controls {
+        margin-top: 8px;
+      }
+
+      .node-info {
+        font-style: italic;
+        margin-top: 5px;
       }
     </style>
   </head>
@@ -49,7 +60,11 @@
       <div>Infinite ZUI</div>
       <div> Zoom in/out forever using a <em>floating origin graph.</em> </div>
       <div>Hold <kbd>shift</kbd> to zoom in, <kbd>alt+shift</kbd> to zoom out.</div>
-      <div id="reference-node-info">reference frame: node1</div>
+      <div id="reference-node-info">Reference frame: node1</div>
+      <div class="node-info">Zoom toward any visible node to explore alternative paths</div>
+      <div class="controls">
+        <button id="reset-view">Reset View</button>
+      </div>
     </div>
 
     <canvas id="zui-canvas"></canvas>
@@ -123,53 +138,108 @@
             height: 100,
           },
         },
+        // New magenta-ish nodes for the alternative path
+        nodeA: {
+          id: 'nodeA',
+          data: {
+            color: '#ff00ff', // Bright magenta
+            width: 180,
+            height: 120,
+          },
+        },
+        nodeB: {
+          id: 'nodeB',
+          data: {
+            color: '#cc33cc', // Different shade of magenta
+            width: 160,
+            height: 110,
+          },
+        },
       };
 
-      // Define edges - mapping from source node to edge
+      // Define edges - mapping from source node to edges
       const edges = {
-        node1: {
-          source: 'node1',
-          target: 'node2',
-          transform: new DOMMatrix().translate(35, 0).scale(0.5),
-        },
-        node2: {
-          source: 'node2',
-          target: 'node3',
-          transform: new DOMMatrix().scale(0.6),
-        },
-        node3: {
-          source: 'node3',
-          target: 'node4',
-          transform: new DOMMatrix().scale(0.6).translate(-50, 0),
-        },
-        node4: {
-          source: 'node4',
-          target: 'node5',
-          transform: new DOMMatrix().scale(0.7),
-        },
-        node5: {
-          source: 'node5',
-          target: 'node6',
-          transform: new DOMMatrix().scale(0.3).translate(-25, -25).rotate(45),
-        },
-        node6: {
-          source: 'node6',
-          target: 'node7',
-          transform: new DOMMatrix().scale(0.4),
-        },
-        node7: {
-          source: 'node7',
-          target: 'node8',
-          transform: new DOMMatrix().scale(0.5).rotate(-45),
-        },
-        node8: {
-          source: 'node8',
-          target: 'node1',
-          transform: new DOMMatrix().scale(0.5),
-        },
+        node1: [
+          // Main path edge
+          {
+            source: 'node1',
+            target: 'node2',
+            transform: new DOMMatrix().translate(35, 0).scale(0.5),
+          },
+          // Alternative path edge
+          {
+            source: 'node1',
+            target: 'nodeA',
+            transform: new DOMMatrix().translate(-50, 35).scale(0.4),
+          },
+        ],
+        node2: [
+          {
+            source: 'node2',
+            target: 'node3',
+            transform: new DOMMatrix().scale(0.6),
+          },
+        ],
+        node3: [
+          {
+            source: 'node3',
+            target: 'node4',
+            transform: new DOMMatrix().scale(0.6).translate(-50, 0),
+          },
+        ],
+        node4: [
+          {
+            source: 'node4',
+            target: 'node5',
+            transform: new DOMMatrix().scale(0.7),
+          },
+        ],
+        node5: [
+          {
+            source: 'node5',
+            target: 'node6',
+            transform: new DOMMatrix().scale(0.3).translate(-25, -25).rotate(45),
+          },
+        ],
+        node6: [
+          {
+            source: 'node6',
+            target: 'node7',
+            transform: new DOMMatrix().scale(0.4),
+          },
+        ],
+        node7: [
+          {
+            source: 'node7',
+            target: 'node8',
+            transform: new DOMMatrix().scale(0.5).rotate(-45),
+          },
+        ],
+        node8: [
+          {
+            source: 'node8',
+            target: 'node1',
+            transform: new DOMMatrix().scale(0.5),
+          },
+        ],
+        // New edges for the alternative path
+        nodeA: [
+          {
+            source: 'nodeA',
+            target: 'nodeB',
+            transform: new DOMMatrix().scale(0.7).rotate(30),
+          },
+        ],
+        nodeB: [
+          {
+            source: 'nodeB',
+            target: 'node1',
+            transform: new DOMMatrix().scale(0.6).translate(60, -20),
+          },
+        ],
       };
 
-      const VISIBLE_DISTANCE = 12;
+      const VISIBLE_DISTANCE = 40;
 
       /**
        * @typedef {Object} NodeData
@@ -182,16 +252,13 @@
       const graph = new FloatingOriginGraph(nodes, edges, 'node1');
 
       // Define zoom threshold callbacks
-      function shouldZoomInToNextNode(graph, canvasWidth, canvasHeight) {
-        // Use the helper method instead of direct property access
-        const nextNodeId = graph.getNextNodeId(graph.referenceNodeId);
-        if (!nextNodeId) return false;
-
+      function shouldZoomInToNextNode(graph, canvasWidth, canvasHeight, nextNodeId) {
         const nextNode = graph.nodes[nextNodeId];
         if (!nextNode) return false;
 
         // Get the transform from reference node to next node
         const nextNodeTransform = graph.getAccumulatedTransform(nextNodeId);
+        if (!nextNodeTransform) return false;
 
         // Calculate effective scale from combined viewport and node transform
         const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
@@ -205,13 +272,9 @@
         return transformedWidth > canvasWidth * 1.2 && transformedHeight > canvasHeight * 1.2;
       }
 
-      function shouldZoomOutToPrevNode(graph, canvasWidth, canvasHeight) {
+      function shouldZoomOutToPrevNode(graph, canvasWidth, canvasHeight, prevNodeId) {
         const node = graph.referenceNode;
         if (!node) return false;
-
-        // Get the previous node ID using the helper method
-        const prevNodeId = graph.getPrevNodeId(graph.referenceNodeId);
-        if (!prevNodeId) return false;
 
         // Calculate effective scale from viewport transform
         const effectiveScale = Math.hypot(graph.viewportTransform.a, graph.viewportTransform.b);
@@ -227,6 +290,59 @@
       // Setup canvas
       const canvas = document.getElementById('zui-canvas');
       const ctx = canvas.getContext('2d');
+
+      // Setup reset button
+      document.getElementById('reset-view').addEventListener('click', () => {
+        graph.resetView('node1');
+        updateReferenceNodeInfo();
+        draw();
+      });
+
+      // Update reference node info
+      function updateReferenceNodeInfo() {
+        document.getElementById('reference-node-info').textContent = `Reference frame: ${graph.referenceNodeId}`;
+      }
+
+      // Handle mouseover on nodes - set the target node based on cursor position
+      function handleMouseOver(mouseX, mouseY) {
+        // Find the node closest to mouse
+        let closestNode = null;
+        let closestDistance = Infinity;
+
+        // Get visible nodes (starting from the reference node)
+        for (const { nodeId, transform } of graph.getVisibleNodesWithTransforms(VISIBLE_DISTANCE)) {
+          if (nodeId === graph.referenceNodeId) continue; // Skip reference node
+
+          // Apply viewport transform to get screen position
+          const combinedTransform = graph.viewportTransform.multiply(transform);
+
+          // Calculate node center in screen coordinates
+          const centerX = canvas.width / 2 + combinedTransform.e;
+          const centerY = canvas.height / 2 + combinedTransform.f;
+
+          // Calculate distance to mouse
+          const dx = mouseX - centerX;
+          const dy = mouseY - centerY;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          // Get node dimensions (in screen space)
+          const node = graph.nodes[nodeId];
+          const scale = Math.hypot(combinedTransform.a, combinedTransform.b);
+          const width = (node.data.width * scale) / 2; // Half-width
+          const height = (node.data.height * scale) / 2; // Half-height
+
+          // If mouse is over this node and it's closer than previous closest
+          if (Math.abs(dx) <= width && Math.abs(dy) <= height && distance < closestDistance) {
+            closestNode = nodeId;
+            closestDistance = distance;
+          }
+        }
+
+        // If mouse is over a node, set it as target
+        if (closestNode) {
+          graph.setTargetNode(closestNode);
+        }
+      }
 
       // Resize canvas to window size
       function resizeCanvas() {
@@ -296,7 +412,7 @@
 
         // Add a border
         ctx.strokeStyle = 'black';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1;
         ctx.strokeRect(-width / 2, -height / 2, width, height);
 
         // Add node ID text
@@ -338,6 +454,9 @@
           lastY = e.clientY;
 
           draw();
+        } else {
+          // If not dragging, check for node selection
+          handleMouseOver(e.clientX, e.clientY);
         }
       });
 
@@ -452,19 +571,8 @@
         }
       }
 
-      function updateReferenceNodeInfo() {
-        document.getElementById('reference-node-info').textContent = `reference frame: ${graph.referenceNodeId}`;
-      }
-
-      function resetView() {
-        // Reset the view to the initial node
-        graph.resetView('node1');
-        updateReferenceNodeInfo();
-        draw();
-      }
-
-      // Make globally accessible for the buttons
-      window.resetView = resetView;
+      // Initialize displays
+      updateReferenceNodeInfo();
 
       // Initial draw
       draw();

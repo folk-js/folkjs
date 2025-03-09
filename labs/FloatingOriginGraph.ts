@@ -18,18 +18,20 @@ export interface Edge {
 
 // Define node and edge map types
 export type NodeMap<T = any> = Record<string, Node<T>>;
-export type EdgeMap = Record<string, Edge>; // Maps source node ID to edge
+export type EdgeMap = Record<string, Edge[]>; // Maps source node ID to an array of edges
 
 // Define zoom checking callback types
 export type ShouldZoomInCallback = <T>(
   graph: FloatingOriginGraph<T>,
   canvasWidth: number,
   canvasHeight: number,
+  nextNodeId: string,
 ) => boolean;
 export type ShouldZoomOutCallback = <T>(
   graph: FloatingOriginGraph<T>,
   canvasWidth: number,
   canvasHeight: number,
+  prevNodeId: string,
 ) => boolean;
 
 export class FloatingOriginGraph<T = any> {
@@ -37,16 +39,23 @@ export class FloatingOriginGraph<T = any> {
   #edges: EdgeMap; // Directed edges from source to target
   #referenceNodeId: string;
   #viewportTransform: DOMMatrix;
+  #lastTargetNodeId: string | null = null; // Track last targeted node for zooming context
 
   /**
    * Create a new FloatingOriginGraph
    * @param nodes - Object mapping node IDs to node objects
-   * @param edges - Object mapping source node IDs to edges
+   * @param edges - Object mapping source node IDs to arrays of edges
    * @param initialReferenceNodeId - The ID of the initial reference node
    */
   constructor(nodes: NodeMap<T>, edges: EdgeMap, initialReferenceNodeId: string = Object.keys(nodes)[0]) {
     this.#nodes = nodes;
-    this.#edges = edges;
+
+    // Initialize the edges map, ensuring each node ID maps to an array
+    this.#edges = {};
+    for (const [sourceId, edgesArray] of Object.entries(edges)) {
+      this.#edges[sourceId] = Array.isArray(edgesArray) ? edgesArray : [edgesArray];
+    }
+
     this.#referenceNodeId = initialReferenceNodeId;
     this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
@@ -104,61 +113,130 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
-   * Helper method to get the next node ID for the current node
-   * @param nodeId - The current node ID
-   * @returns The next node ID or undefined if not found
+   * Get all outgoing edges from a node
+   * @param nodeId - The source node ID
+   * @returns Array of edges from the node
    */
-  getNextNodeId(nodeId: string): string | undefined {
-    const edge = this.#edges[nodeId];
-    return edge?.target;
+  getEdgesFrom(nodeId: string): Edge[] {
+    return this.#edges[nodeId] || [];
   }
 
   /**
-   * Helper method to get the previous node ID for the current node
-   * (a node that has an edge pointing to the current node)
+   * Helper method to get the next node IDs for the current node
    * @param nodeId - The current node ID
-   * @returns The previous node ID or undefined if not found
+   * @returns Array of target node IDs
    */
-  getPrevNodeId(nodeId: string): string | undefined {
-    // Find nodes that have an edge targeting the current node
-    for (const [sourceId, edge] of Object.entries(this.#edges)) {
-      if (edge.target === nodeId) {
-        return sourceId;
+  getNextNodeIds(nodeId: string): string[] {
+    const edges = this.getEdgesFrom(nodeId);
+    return edges.map((edge) => edge.target);
+  }
+
+  /**
+   * Helper method to get nodes that have edges pointing to the specified node
+   * @param nodeId - The target node ID
+   * @returns Array of source node IDs
+   */
+  getPrevNodeIds(nodeId: string): string[] {
+    const prevNodeIds: string[] = [];
+
+    for (const [sourceId, edges] of Object.entries(this.#edges)) {
+      for (const edge of edges) {
+        if (edge.target === nodeId) {
+          prevNodeIds.push(sourceId);
+          break; // Only add each source once
+        }
       }
     }
-    return undefined;
+
+    return prevNodeIds;
   }
 
   /**
-   * Get the edge from a source node
-   * @param sourceNodeId - The source node ID
-   * @returns The edge or undefined if not found
+   * Get the best next node to follow when zooming in
+   * For now, just returns the first outgoing edge, but could be more sophisticated
+   * by checking which node is most centered in the view
+   * @param nodeId - The current node ID
+   * @returns The next node ID or undefined if none found
    */
-  getEdge(sourceNodeId: string): Edge | undefined {
-    return this.#edges[sourceNodeId];
+  getBestNextNodeId(nodeId: string): string | undefined {
+    const edges = this.getEdgesFrom(nodeId);
+
+    // If we've previously targeted a node, prefer that direction
+    if (this.#lastTargetNodeId) {
+      const targetEdge = edges.find((edge) => edge.target === this.#lastTargetNodeId);
+      if (targetEdge) {
+        return targetEdge.target;
+      }
+    }
+
+    // Otherwise return the first available edge
+    return edges.length > 0 ? edges[0].target : undefined;
   }
 
   /**
-   * Find the edge connecting to the target node
+   * Get the best previous node to follow when zooming out
+   * @param nodeId - The current node ID
+   * @returns The previous node ID or undefined if none found
+   */
+  getBestPrevNodeId(nodeId: string): string | undefined {
+    const prevNodeIds = this.getPrevNodeIds(nodeId);
+
+    // If we've previously targeted a node, prefer that direction
+    if (this.#lastTargetNodeId) {
+      if (prevNodeIds.includes(this.#lastTargetNodeId)) {
+        return this.#lastTargetNodeId;
+      }
+    }
+
+    // Otherwise return the first available previous node
+    return prevNodeIds.length > 0 ? prevNodeIds[0] : undefined;
+  }
+
+  /**
+   * Get an edge between source and target nodes
+   * @param sourceNodeId - The source node ID
    * @param targetNodeId - The target node ID
    * @returns The edge or undefined if not found
    */
-  findEdgeToNode(targetNodeId: string): Edge | undefined {
-    for (const edge of Object.values(this.#edges)) {
-      if (edge.target === targetNodeId) {
-        return edge;
+  getEdge(sourceNodeId: string, targetNodeId: string): Edge | undefined {
+    const edges = this.getEdgesFrom(sourceNodeId);
+    return edges.find((edge) => edge.target === targetNodeId);
+  }
+
+  /**
+   * Find all edges connecting to the target node
+   * @param targetNodeId - The target node ID
+   * @returns The edges targeting the node
+   */
+  findEdgesToNode(targetNodeId: string): Edge[] {
+    const result: Edge[] = [];
+    for (const edges of Object.values(this.#edges)) {
+      for (const edge of edges) {
+        if (edge.target === targetNodeId) {
+          result.push(edge);
+        }
       }
     }
-    return undefined;
+    return result;
+  }
+
+  /**
+   * Set the target node for contextual zooming
+   * @param nodeId - The target node ID
+   */
+  setTargetNode(nodeId: string): void {
+    if (this.#nodes[nodeId]) {
+      this.#lastTargetNodeId = nodeId;
+    }
   }
 
   /**
    * Iterate through visible nodes with their accumulated transforms
    * This provides both the node and its transform relative to the reference node
-   * @param distance - Maximum number of nodes to include
+   * @param maxNodes - Maximum number of nodes to include
    * @returns Iterator yielding objects with node, nodeId, and accumulated transform
    */
-  *getVisibleNodesWithTransforms(distance: number = 12): Generator<{
+  *getVisibleNodesWithTransforms(maxNodes: number = 40): Generator<{
     nodeId: string;
     node: Node<T>;
     transform: DOMMatrix;
@@ -170,31 +248,68 @@ export class FloatingOriginGraph<T = any> {
       transform: new DOMMatrix(), // Identity transform
     };
 
-    // Then yield subsequent nodes with accumulated transforms
-    let currentNodeId = this.#referenceNodeId;
-    let currentTransform = new DOMMatrix(); // Start with identity matrix
-    let count = 0;
+    // Count of nodes yielded so far (including reference node)
+    let nodesYielded = 1;
 
-    while (count < distance) {
-      const edge = this.getEdge(currentNodeId);
-      if (!edge) break;
+    // Create a queue for breadth-first traversal
+    const queue: {
+      nodeId: string;
+      transform: DOMMatrix;
+      depth: number;
+    }[] = [];
 
-      // Move to the next node
-      currentNodeId = edge.target;
-      const node = this.#nodes[currentNodeId];
-      if (!node) break;
+    // Start with all edges from the reference node
+    const edges = this.getEdgesFrom(this.#referenceNodeId);
+    for (const edge of edges) {
+      // Create a copy of the transform by extracting and reapplying its values
+      const originalTransform = edge.transform;
+      const copiedTransform = new DOMMatrix([
+        originalTransform.a,
+        originalTransform.b,
+        originalTransform.c,
+        originalTransform.d,
+        originalTransform.e,
+        originalTransform.f,
+      ]);
 
-      // Accumulate the transform from the edge
-      currentTransform = currentTransform.multiply(edge.transform);
+      queue.push({
+        nodeId: edge.target,
+        transform: copiedTransform,
+        depth: 1,
+      });
+    }
 
-      // Yield the node with its accumulated transform
-      yield {
-        nodeId: currentNodeId,
-        node,
-        transform: currentTransform,
-      };
+    // Process the queue until we hit maxNodes limit
+    while (queue.length > 0 && nodesYielded < maxNodes) {
+      const { nodeId, transform, depth } = queue.shift()!;
 
-      count++;
+      // Get the node (skip if it doesn't exist)
+      const node = this.#nodes[nodeId];
+      if (!node) continue;
+
+      // Yield the node
+      yield { nodeId, node, transform };
+      nodesYielded++;
+
+      // Add all outgoing edges to the queue
+      const nextEdges = this.getEdgesFrom(nodeId);
+      for (const edge of nextEdges) {
+        // Copy the current transform and multiply by edge transform
+        const nextTransform = new DOMMatrix([
+          transform.a,
+          transform.b,
+          transform.c,
+          transform.d,
+          transform.e,
+          transform.f,
+        ]).multiply(edge.transform);
+
+        queue.push({
+          nodeId: edge.target,
+          transform: nextTransform,
+          depth: depth + 1,
+        });
+      }
     }
   }
 
@@ -268,12 +383,14 @@ export class FloatingOriginGraph<T = any> {
   ): boolean {
     if (isZoomingOut && shouldZoomOut) {
       // Check if we need to go to previous node
-      if (shouldZoomOut(this, canvasWidth, canvasHeight)) {
+      const prevNodeId = this.getBestPrevNodeId(this.#referenceNodeId);
+      if (prevNodeId && shouldZoomOut(this, canvasWidth, canvasHeight, prevNodeId)) {
         return this.moveReferenceBackward();
       }
     } else if (!isZoomingOut && shouldZoomIn) {
       // Check if next node fills the screen
-      if (shouldZoomIn(this, canvasWidth, canvasHeight)) {
+      const nextNodeId = this.getBestNextNodeId(this.#referenceNodeId);
+      if (nextNodeId && shouldZoomIn(this, canvasWidth, canvasHeight, nextNodeId)) {
         return this.moveReferenceForward();
       }
     }
@@ -281,57 +398,100 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
-   * Get a list of nodes visible from the reference node up to a specified distance
-   * @param distance - Maximum number of nodes to include
+   * Get a list of nodes visible from the reference node
+   * @param maxNodes - Maximum number of nodes to include
    * @returns Array of node IDs visible from the reference node
    */
-  getVisibleNodes(distance: number = 12): string[] {
-    const visibleNodes = [this.#referenceNodeId];
+  getVisibleNodes(maxNodes: number = 40): string[] {
+    // Always include the reference node
+    const result: string[] = [this.#referenceNodeId];
 
-    let currentNodeId = this.#referenceNodeId;
-    let count = 0;
-    while (count < distance) {
-      const nextNodeId = this.getNextNodeId(currentNodeId);
-      if (!nextNodeId) break;
+    // Count the reference node
+    let nodesAdded = 1;
 
-      visibleNodes.push(nextNodeId);
-      currentNodeId = nextNodeId;
-      count++;
+    // Create a queue for breadth-first traversal
+    const queue: { nodeId: string; depth: number }[] = [{ nodeId: this.#referenceNodeId, depth: 0 }];
+
+    while (queue.length > 0 && nodesAdded < maxNodes) {
+      const { nodeId, depth } = queue.shift()!;
+
+      // Get all next nodes
+      const nextNodeIds = this.getNextNodeIds(nodeId);
+      for (const nextId of nextNodeIds) {
+        // Skip if node doesn't exist
+        if (!this.#nodes[nextId]) continue;
+
+        // Add to result
+        result.push(nextId);
+        nodesAdded++;
+
+        // Stop if we've reached the limit
+        if (nodesAdded >= maxNodes) break;
+
+        // Add to queue for further exploration
+        queue.push({ nodeId: nextId, depth: depth + 1 });
+      }
     }
 
-    return visibleNodes;
+    return result;
   }
 
   /**
    * Get the accumulated transform from the reference node to a target node
    * @param toNodeId - Target node ID
-   * @returns The accumulated transform matrix
+   * @returns The accumulated transform matrix or null if no path found
    */
-  getAccumulatedTransform(toNodeId: string): DOMMatrix {
-    let transform = new DOMMatrix();
-    let currentNodeId = this.#referenceNodeId;
-
-    while (currentNodeId !== toNodeId) {
-      const edge = this.getEdge(currentNodeId);
-      if (!edge) break;
-
-      currentNodeId = edge.target;
-      transform = edge.transform.multiply(transform);
+  getAccumulatedTransform(toNodeId: string): DOMMatrix | null {
+    if (toNodeId === this.#referenceNodeId) {
+      return new DOMMatrix(); // Identity transform for self
     }
 
-    return transform;
+    // Use breadth-first search to find a path from reference to target
+    const visited = new Set<string>([this.#referenceNodeId]);
+    const queue: { nodeId: string; transform: DOMMatrix }[] = [
+      { nodeId: this.#referenceNodeId, transform: new DOMMatrix() },
+    ];
+
+    while (queue.length > 0) {
+      const { nodeId, transform } = queue.shift()!;
+
+      const edges = this.getEdgesFrom(nodeId);
+      for (const edge of edges) {
+        if (edge.target === toNodeId) {
+          // Found a path to target
+          return transform.multiply(edge.transform);
+        }
+
+        if (!visited.has(edge.target)) {
+          visited.add(edge.target);
+          queue.push({
+            nodeId: edge.target,
+            transform: transform.multiply(edge.transform),
+          });
+        }
+      }
+    }
+
+    // No path found
+    return null;
   }
 
   /**
-   * Move the reference node to the next node
+   * Move the reference node to the best next node
    * @returns Boolean indicating if the operation was successful
    */
   moveReferenceForward(): boolean {
-    const nextNodeId = this.getNextNodeId(this.#referenceNodeId);
+    const nextNodeId = this.getBestNextNodeId(this.#referenceNodeId);
     if (!nextNodeId) return false;
 
+    // Update the last target to help with continuity
+    this.#lastTargetNodeId = this.#referenceNodeId;
+
     // Calculate the visual transform of the next node before changing reference
-    const visualTransformBefore = this.#viewportTransform.multiply(this.getAccumulatedTransform(nextNodeId));
+    const transform = this.getAccumulatedTransform(nextNodeId);
+    if (!transform) return false;
+
+    const visualTransformBefore = this.#viewportTransform.multiply(transform);
 
     // Update reference node
     this.#referenceNodeId = nextNodeId;
@@ -349,15 +509,18 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
-   * Move the reference node to the previous node
+   * Move the reference node to the best previous node
    * @returns Boolean indicating if the operation was successful
    */
   moveReferenceBackward(): boolean {
-    const prevNodeId = this.getPrevNodeId(this.#referenceNodeId);
+    const prevNodeId = this.getBestPrevNodeId(this.#referenceNodeId);
     if (!prevNodeId) return false;
 
+    // Update the last target to help with continuity
+    this.#lastTargetNodeId = this.#referenceNodeId;
+
     // Get the edge from previous node to reference node
-    const prevToRefEdge = this.getEdge(prevNodeId);
+    const prevToRefEdge = this.getEdge(prevNodeId, this.#referenceNodeId);
     if (!prevToRefEdge) return false;
 
     // Update reference node
@@ -374,26 +537,18 @@ export class FloatingOriginGraph<T = any> {
    * @param nodeId - The ID of the node to get the position for
    * @param canvasWidth - Width of the canvas
    * @param canvasHeight - Height of the canvas
-   * @returns The x, y coordinates of the node on screen
+   * @returns The x, y coordinates of the node on screen or null if node not found
    */
-  getNodeScreenPosition(nodeId: string, canvasWidth: number, canvasHeight: number): { x: number; y: number } {
-    let transform = new DOMMatrix();
-    let currentNodeId = this.#referenceNodeId;
-
-    while (currentNodeId !== nodeId) {
-      const edge = this.getEdge(currentNodeId);
-      if (!edge) break;
-
-      currentNodeId = edge.target;
-      transform = edge.transform.multiply(transform);
-    }
+  getNodeScreenPosition(nodeId: string, canvasWidth: number, canvasHeight: number): { x: number; y: number } | null {
+    const transform = this.getAccumulatedTransform(nodeId);
+    if (!transform) return null;
 
     // Apply viewport transform
-    transform = this.#viewportTransform.multiply(transform);
+    const screenTransform = this.#viewportTransform.multiply(transform);
 
     // The node is drawn at the canvas center, so apply canvas center offset
-    const screenX = canvasWidth / 2 + transform.e;
-    const screenY = canvasHeight / 2 + transform.f;
+    const screenX = canvasWidth / 2 + screenTransform.e;
+    const screenY = canvasHeight / 2 + screenTransform.f;
 
     return { x: screenX, y: screenY };
   }
@@ -405,6 +560,7 @@ export class FloatingOriginGraph<T = any> {
   resetView(initialNodeId: string = Object.keys(this.#nodes)[0]): void {
     this.#referenceNodeId = initialNodeId;
     this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
+    this.#lastTargetNodeId = null; // Reset the target node
   }
 
   /**
