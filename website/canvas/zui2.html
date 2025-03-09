@@ -64,9 +64,6 @@
       <button onclick="changeReferenceNode('node3')">Node 3</button>
       <button onclick="changeReferenceNode('node4')">Node 4</button>
       <button onclick="changeReferenceNode('node5')">Node 5</button>
-      <button onclick="getVisibleNodes('node1', 2)">Nodes in range 1</button>
-      <button onclick="getVisibleNodes('node2', 2)">Nodes in range 2</button>
-      <button onclick="getVisibleNodes('node3', 2)">Nodes in range 3</button>
     </div>
 
     <canvas id="zui-canvas"></canvas>
@@ -137,7 +134,12 @@
 
         console.log(`Changing reference node from ${referenceNodeId} to ${newReferenceNodeId}`);
 
-        // TODO: Implement reference node change logic
+        // Calculate the transform from old reference node to new reference node
+        const transformPath = findTransformPath(referenceNodeId, newReferenceNodeId);
+
+        // Apply this transform to the viewport transform
+        // This ensures visual continuity - everything stays in the same place
+        viewportTransform = transformPath.multiply(viewportTransform);
 
         // Update reference node
         referenceNodeId = newReferenceNodeId;
@@ -149,31 +151,111 @@
         draw();
       }
 
-      // get nodes N distance away from reference node, ordered by distance
-      function getVisibleNodes(referenceNodeId, distance) {
-        const nextNodes = [];
-        const prevNodes = [];
-        let currentNodeId = referenceNodeId;
+      // Function to find the transform path between two nodes
+      function findTransformPath(fromNodeId, toNodeId) {
+        // If nodes are the same, return identity transform
+        if (fromNodeId === toNodeId) return new DOMMatrix();
 
-        // Add nodes before the reference node (up to distance)
-        let count = 0;
-        while (nodes[currentNodeId].prev && count < distance) {
-          prevNodes.push(nodes[currentNodeId].prev);
-          currentNodeId = nodes[currentNodeId].prev;
-          count++;
+        // Try to find a path going forward
+        let path = findForwardPath(fromNodeId, toNodeId);
+        if (path) {
+          return path;
         }
 
-        // Add nodes after the reference node (up to distance)
-        currentNodeId = referenceNodeId;
-        count = 0;
+        // Try to find a path going backward
+        path = findBackwardPath(fromNodeId, toNodeId);
+        if (path) {
+          return path;
+        }
+
+        // If we need a more complex path (going backward then forward)
+        // Find a common ancestor and combine paths
+        return findComplexPath(fromNodeId, toNodeId);
+      }
+
+      // Find transform going forward through next links
+      function findForwardPath(fromNodeId, toNodeId) {
+        let currentNodeId = fromNodeId;
+        let transform = new DOMMatrix();
+
+        while (currentNodeId !== toNodeId) {
+          const currentNode = nodes[currentNodeId];
+          if (!currentNode.next) return null; // Can't go further
+
+          // Accumulate transform
+          transform = nodes[currentNode.next].transform.multiply(transform);
+          currentNodeId = currentNode.next;
+
+          if (currentNodeId === toNodeId) {
+            return transform;
+          }
+        }
+
+        return transform;
+      }
+
+      // Find transform going backward through prev links
+      function findBackwardPath(fromNodeId, toNodeId) {
+        let currentNodeId = fromNodeId;
+        let transform = new DOMMatrix();
+
+        while (currentNodeId !== toNodeId) {
+          const currentNode = nodes[currentNodeId];
+          if (!currentNode.prev) return null; // Can't go further
+
+          // For backward movement, we need to invert the transform
+          const prevNode = nodes[currentNode.prev];
+          const inverseTransform = invertTransform(prevNode.transform);
+          transform = inverseTransform.multiply(transform);
+          currentNodeId = currentNode.prev;
+
+          if (currentNodeId === toNodeId) {
+            return transform;
+          }
+        }
+
+        return transform;
+      }
+
+      // Find a complex path that might require going backward then forward
+      function findComplexPath(fromNodeId, toNodeId) {
+        // This is a simplified approach - in a real implementation
+        // you might need a more sophisticated graph traversal algorithm
+
+        // For this demo, we'll just try all nodes as potential common ancestors
+        for (const potentialAncestorId in nodes) {
+          const pathToAncestor = findBackwardPath(fromNodeId, potentialAncestorId);
+          const pathFromAncestor = findForwardPath(potentialAncestorId, toNodeId);
+
+          if (pathToAncestor && pathFromAncestor) {
+            return pathFromAncestor.multiply(pathToAncestor);
+          }
+        }
+
+        // If no path found, return identity (shouldn't happen in a connected graph)
+        console.error('No path found between nodes');
+        return new DOMMatrix();
+      }
+
+      // Helper function to invert a transform
+      function invertTransform(transform) {
+        // DOMMatrix has an inverse() method we can use
+        return transform.inverse();
+      }
+
+      // Function to get next nodes up to a specified distance
+      function getNextNodes(startNodeId, distance) {
+        const nextNodes = [startNodeId];
+
+        let currentNodeId = startNodeId;
+        let count = 0;
         while (nodes[currentNodeId].next && count < distance) {
           nextNodes.push(nodes[currentNodeId].next);
           currentNodeId = nodes[currentNodeId].next;
           count++;
         }
 
-        console.log({ prevNodes, nextNodes, referenceNodeId });
-        return { prevNodes, nextNodes };
+        return nextNodes;
       }
 
       // Draw function
@@ -181,8 +263,9 @@
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Get visible nodes
-        const { prevNodes, nextNodes } = getVisibleNodes(referenceNodeId, 2);
+        // Get visible nodes (only next nodes)
+        const visibleDistance = 2;
+        const visibleNodes = getNextNodes(referenceNodeId, visibleDistance);
 
         // Save current state
         ctx.save();
@@ -198,58 +281,21 @@
           viewportTransform.f,
         );
 
-        // Draw nodes in order from first to last
-        // First draw previous nodes (if any)
-        let currentTransform = new DOMMatrix();
-
-        // Draw previous nodes in reverse order (from furthest to closest to reference)
-        for (let i = prevNodes.length - 1; i >= 0; i--) {
-          const nodeId = prevNodes[i];
-          const node = nodes[nodeId];
-
-          // Apply the node's transform
-          ctx.save();
-          if (i === prevNodes.length - 1) {
-            // First prev node uses its own transform
-            currentTransform = node.transform;
-          } else {
-            // Other prev nodes are relative to their next node
-            currentTransform = node.transform.multiply(currentTransform);
-          }
-
-          ctx.transform(
-            currentTransform.a,
-            currentTransform.b,
-            currentTransform.c,
-            currentTransform.d,
-            currentTransform.e,
-            currentTransform.f,
-          );
-
-          drawNode(nodeId);
-          ctx.restore();
-        }
-
-        // Draw reference node
+        // Draw the reference node first
         drawNode(referenceNodeId);
 
-        // Draw next nodes
-        currentTransform = new DOMMatrix();
+        // Draw next nodes with accumulated transforms
+        let currentTransform = new DOMMatrix();
 
-        for (let i = 0; i < nextNodes.length; i++) {
-          const nodeId = nextNodes[i];
+        for (let i = 1; i < visibleNodes.length; i++) {
+          const nodeId = visibleNodes[i];
           const node = nodes[nodeId];
-          const prevNode = nodes[node.prev];
 
-          // Apply the node's transform relative to its prev
+          // Apply the node's transform relative to its previous node
           ctx.save();
-          if (i === 0) {
-            // First next node is relative to reference node
-            currentTransform = node.transform;
-          } else {
-            // Other next nodes are relative to their prev node
-            currentTransform = node.transform.multiply(currentTransform);
-          }
+
+          // Apply the current node's transform
+          currentTransform = node.transform.multiply(currentTransform);
 
           ctx.transform(
             currentTransform.a,
@@ -346,9 +392,17 @@
         draw();
       });
 
+      canvas.addEventListener('click', (e) => {
+        if (e.shiftKey) {
+          // go to the next node
+          const nextNodeId = nodes[referenceNodeId].next;
+          changeReferenceNode(nextNodeId);
+        }
+      });
+
       // Make globally accessible for the buttons
       window.changeReferenceNode = changeReferenceNode;
-      window.getVisibleNodes = getVisibleNodes;
+      window.getNextNodes = getNextNodes;
 
       // Initial draw
       draw();
