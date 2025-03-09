@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZUI</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #f9f9f9;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      #info-container {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: white;
+        padding: 8px 10px;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        z-index: 2000;
+        max-width: 300px;
+        font-size: 12px;
+        line-height: 1.4;
+
+        & > div:first-child {
+          font-weight: bold;
+        }
+      }
+
+      #canvas-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info-container">
+      <div>ZUI demo</div>
+      <div>Pan: Drag with mouse | Zoom: Mouse wheel | Click node to focus</div>
+      <div id="reference-node-info">Reference node: node1</div>
+    </div>
+
+    <div id="canvas-container">
+      <canvas id="zui-canvas"></canvas>
+    </div>
+
+    <script type="module">
+      // Define our node structure
+      const nodes = {
+        node1: {
+          id: 'node1',
+          prev: null,
+          next: 'node2',
+          data: 'red',
+          transform: new DOMMatrix().scale(0.8),
+        },
+        node2: {
+          id: 'node2',
+          prev: 'node1',
+          next: 'node3',
+          data: 'blue',
+          transform: new DOMMatrix().scale(0.8),
+        },
+        node3: {
+          id: 'node3',
+          prev: 'node2',
+          next: 'node4',
+          data: 'green',
+          transform: new DOMMatrix().scale(0.8),
+        },
+        node4: {
+          id: 'node4',
+          prev: 'node3',
+          next: 'node5',
+          data: 'grey',
+          transform: new DOMMatrix().scale(0.8),
+        },
+        node5: {
+          id: 'node5',
+          prev: 'node4',
+          next: 'node1',
+          data: 'purple',
+          transform: new DOMMatrix().scale(0.8),
+        },
+      };
+
+      // Reference node ID
+      let referenceNodeId = 'node1';
+
+      // Viewport transform (reference node to viewport)
+      let viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
+
+      // Setup canvas
+      const canvas = document.getElementById('zui-canvas');
+      const ctx = canvas.getContext('2d');
+
+      // Resize canvas to window size
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        draw();
+      }
+
+      window.addEventListener('resize', resizeCanvas);
+      resizeCanvas();
+
+      // Helper function to get the relative transform between two nodes
+      function getRelativeTransform(fromNodeId, toNodeId) {
+        if (fromNodeId === toNodeId) {
+          return new DOMMatrix(); // Identity transform
+        }
+
+        // Get the chain of nodes from fromNode to toNode
+        const chain = [];
+        let current = toNodeId;
+
+        // Build chain backwards from toNode
+        while (current && current !== fromNodeId) {
+          chain.unshift(current);
+          current = nodes[current].prev;
+        }
+
+        // If we didn't reach fromNode, try the other direction
+        if (current !== fromNodeId) {
+          chain.length = 0; // Clear the chain
+          current = fromNodeId;
+
+          // Build chain forwards from fromNode
+          while (current && current !== toNodeId) {
+            chain.push(current);
+            current = nodes[current].next;
+          }
+
+          // If we still didn't find a path, return identity
+          if (current !== toNodeId) {
+            return new DOMMatrix();
+          }
+        }
+
+        // Calculate the transform along the chain
+        let transform = new DOMMatrix();
+
+        // If going backwards from fromNode to toNode
+        if (chain[0] === fromNodeId) {
+          for (let i = 1; i < chain.length; i++) {
+            transform = transform.multiply(nodes[chain[i]].transform);
+          }
+        }
+        // If going forwards from toNode to fromNode (need to invert)
+        else {
+          for (let i = 0; i < chain.length; i++) {
+            transform = nodes[chain[i]].transform.multiply(transform);
+          }
+          transform = transform.inverse();
+        }
+
+        return transform;
+      }
+
+      // Function to change the reference node
+      function changeReferenceNode(newReferenceNodeId) {
+        if (newReferenceNodeId === referenceNodeId) return; // No change needed
+
+        // Calculate the transform from old reference to new reference
+        const oldToNewTransform = getRelativeTransform(referenceNodeId, newReferenceNodeId);
+
+        // Update the viewport transform to maintain visual position
+        // viewportTransform = oldToNewTransform⁻¹ * viewportTransform
+        viewportTransform = oldToNewTransform.inverse().multiply(viewportTransform);
+
+        // Update reference node
+        referenceNodeId = newReferenceNodeId;
+
+        // Update the info panel
+        document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
+
+        // Redraw
+        draw();
+      }
+
+      // Function to get a chain of nodes to draw, limited by distance from reference
+      function getVisibleNodeChain(referenceId, distance) {
+        const result = [referenceId];
+
+        // Add nodes before the reference node (up to distance)
+        let current = referenceId;
+        let count = 0;
+        while (nodes[current].prev && count < distance) {
+          current = nodes[current].prev;
+          result.unshift(current); // Add to beginning of array
+          count++;
+        }
+
+        // Add nodes after the reference node (up to distance)
+        current = referenceId;
+        count = 0;
+        while (nodes[current].next && count < distance) {
+          current = nodes[current].next;
+          result.push(current); // Add to end of array
+          count++;
+        }
+
+        return result;
+      }
+
+      // Draw function
+      function draw() {
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Save current state
+        ctx.save();
+
+        // Apply viewport transform (centered in viewport)
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.transform(
+          viewportTransform.a,
+          viewportTransform.b,
+          viewportTransform.c,
+          viewportTransform.d,
+          viewportTransform.e,
+          viewportTransform.f,
+        );
+
+        // Get the chain of nodes to draw
+        const nodesToDraw = getVisibleNodeChain(referenceNodeId, 2);
+
+        // Draw each node
+        for (const nodeId of nodesToDraw) {
+          drawNode(nodeId);
+        }
+
+        // Restore state
+        ctx.restore();
+      }
+
+      // Function to draw a single node
+      function drawNode(nodeId) {
+        if (!nodeId) return;
+
+        const node = nodes[nodeId];
+        if (!node) return;
+
+        const nodeSize = 100; // Size of the node
+
+        // Save context
+        ctx.save();
+
+        // Calculate transform relative to reference node
+        const relativeTransform = getRelativeTransform(referenceNodeId, nodeId);
+
+        // Apply the transform
+        ctx.transform(
+          relativeTransform.a,
+          relativeTransform.b,
+          relativeTransform.c,
+          relativeTransform.d,
+          relativeTransform.e,
+          relativeTransform.f,
+        );
+
+        // Draw the node
+        ctx.fillStyle = node.data;
+        ctx.fillRect(-nodeSize / 2, -nodeSize / 2, nodeSize, nodeSize);
+
+        // Get current scale for line width adjustments
+        const currentScale = Math.sqrt(
+          viewportTransform.a * viewportTransform.a + viewportTransform.b * viewportTransform.b,
+        );
+
+        // Add a border - highlight the reference node with a thicker, distinctive border
+        if (nodeId === referenceNodeId) {
+          ctx.strokeStyle = 'white';
+          ctx.lineWidth = 4 / currentScale; // Thicker border for reference node
+          ctx.strokeRect(-nodeSize / 2, -nodeSize / 2, nodeSize, nodeSize);
+
+          // Add a second border for emphasis
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = 2 / currentScale;
+          ctx.strokeRect(
+            -nodeSize / 2 - 3 / currentScale,
+            -nodeSize / 2 - 3 / currentScale,
+            nodeSize + 6 / currentScale,
+            nodeSize + 6 / currentScale,
+          );
+        } else {
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = 2 / currentScale; // Keep border width consistent regardless of zoom
+          ctx.strokeRect(-nodeSize / 2, -nodeSize / 2, nodeSize, nodeSize);
+        }
+
+        // Add node ID text
+        ctx.fillStyle = 'white';
+        ctx.font = `${20 / currentScale}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(node.id, 0, 0);
+
+        // Add "Reference" text if this is the reference node
+        if (nodeId === referenceNodeId) {
+          ctx.fillStyle = 'white';
+          ctx.font = `${14 / currentScale}px Arial`;
+          ctx.fillText('Reference', 0, 25 / currentScale);
+        }
+
+        // Restore context
+        ctx.restore();
+      }
+
+      // Helper function to find which node was clicked
+      function findNodeAtPosition(x, y) {
+        const nodeSize = 100;
+
+        // Get the visible nodes in the correct order
+        const visibleNodes = getVisibleNodeChain(referenceNodeId, 2);
+
+        // Convert screen coordinates to reference node space
+        // First to canvas center
+        const centerX = x - canvas.width / 2;
+        const centerY = y - canvas.height / 2;
+
+        // Create a point in screen space
+        const screenPoint = new DOMPoint(centerX, centerY);
+
+        // Transform to reference node space
+        const refPoint = screenPoint.matrixTransform(viewportTransform.inverse());
+
+        // Check nodes in reverse order (top to bottom in z-order)
+        for (let i = visibleNodes.length - 1; i >= 0; i--) {
+          const nodeId = visibleNodes[i];
+
+          // Get transform relative to reference node
+          const relativeTransform = getRelativeTransform(referenceNodeId, nodeId);
+
+          try {
+            // Transform the point to the node's local space
+            const localPoint = refPoint.matrixTransform(relativeTransform.inverse());
+
+            // Check if the point is inside the node
+            if (
+              localPoint.x >= -nodeSize / 2 &&
+              localPoint.x <= nodeSize / 2 &&
+              localPoint.y >= -nodeSize / 2 &&
+              localPoint.y <= nodeSize / 2
+            ) {
+              return nodeId;
+            }
+          } catch (error) {
+            console.error('Error checking node', nodeId, error);
+          }
+        }
+
+        return null;
+      }
+
+      // Mouse event handlers
+      canvas.addEventListener('mousedown', (e) => {
+        // Check if a node was clicked first
+        const clickedNodeId = findNodeAtPosition(e.clientX, e.clientY);
+
+        if (clickedNodeId) {
+          // If a node was clicked, change the reference node
+          changeReferenceNode(clickedNodeId);
+        } else {
+          // Otherwise, start dragging the canvas
+          const dragInfo = {
+            dragging: true,
+            lastX: e.clientX,
+            lastY: e.clientY,
+          };
+
+          const mouseMoveHandler = (e) => {
+            if (dragInfo.dragging) {
+              const dx = e.clientX - dragInfo.lastX;
+              const dy = e.clientY - dragInfo.lastY;
+
+              // Update viewport transform for panning
+              viewportTransform = new DOMMatrix().translate(dx, dy).multiply(viewportTransform);
+
+              dragInfo.lastX = e.clientX;
+              dragInfo.lastY = e.clientY;
+
+              draw();
+            }
+          };
+
+          const mouseUpHandler = () => {
+            dragInfo.dragging = false;
+            window.removeEventListener('mousemove', mouseMoveHandler);
+            window.removeEventListener('mouseup', mouseUpHandler);
+          };
+
+          window.addEventListener('mousemove', mouseMoveHandler);
+          window.addEventListener('mouseup', mouseUpHandler);
+        }
+      });
+
+      // Zoom with mouse wheel
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+
+        // Calculate zoom factor
+        const zoomFactor = e.deltaY > 0 ? 0.97 : 1.02;
+
+        // Get mouse position relative to canvas center
+        const mouseX = e.clientX - canvas.width / 2;
+        const mouseY = e.clientY - canvas.height / 2;
+
+        // Update viewport transform for zooming
+        // First translate to mouse position, then scale, then translate back
+        viewportTransform = new DOMMatrix()
+          .translate(mouseX, mouseY)
+          .scale(zoomFactor)
+          .translate(-mouseX, -mouseY)
+          .multiply(viewportTransform);
+
+        draw();
+      });
+
+      // Initial draw
+      draw();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZUI Simplified</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #f9f9f9;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      #info-container {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: white;
+        padding: 8px 10px;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        z-index: 2000;
+        max-width: 300px;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      #buttons-container {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background-color: white;
+        padding: 0.2em;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        z-index: 2000;
+      }
+
+      button {
+        padding: 5px 10px;
+        cursor: pointer;
+      }
+
+      canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info-container">
+      <div>ZUI Simplified</div>
+      <div>Pan: Drag with mouse | Zoom: Mouse wheel</div>
+      <div id="reference-node-info">Reference node: node1</div>
+    </div>
+
+    <div id="buttons-container">
+      <button onclick="changeReferenceNode('node1')">Node 1</button>
+      <button onclick="changeReferenceNode('node2')">Node 2</button>
+      <button onclick="changeReferenceNode('node3')">Node 3</button>
+      <button onclick="changeReferenceNode('node4')">Node 4</button>
+      <button onclick="changeReferenceNode('node5')">Node 5</button>
+      <button onclick="getVisibleNodes('node1', 2)">Nodes in range 1</button>
+      <button onclick="getVisibleNodes('node2', 2)">Nodes in range 2</button>
+      <button onclick="getVisibleNodes('node3', 2)">Nodes in range 3</button>
+    </div>
+
+    <canvas id="zui-canvas"></canvas>
+
+    <script>
+      // Define our node structure
+      const nodes = {
+        node1: {
+          id: 'node1',
+          prev: null,
+          next: 'node2',
+          data: 'red',
+          transform: new DOMMatrix().scale(0.8),
+        },
+        node2: {
+          id: 'node2',
+          prev: 'node1',
+          next: 'node3',
+          data: 'blue',
+          transform: new DOMMatrix().scale(0.8),
+        },
+        node3: {
+          id: 'node3',
+          prev: 'node2',
+          next: 'node4',
+          data: 'green',
+          transform: new DOMMatrix().scale(0.8),
+        },
+        node4: {
+          id: 'node4',
+          prev: 'node3',
+          next: 'node5',
+          data: 'grey',
+          transform: new DOMMatrix().scale(0.8),
+        },
+        node5: {
+          id: 'node5',
+          prev: 'node4',
+          next: 'node1',
+          data: 'purple',
+          transform: new DOMMatrix().scale(0.8),
+        },
+      };
+
+      // Reference node ID
+      let referenceNodeId = 'node1';
+
+      // Viewport transform (reference node to viewport)
+      let viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
+
+      // Setup canvas
+      const canvas = document.getElementById('zui-canvas');
+      const ctx = canvas.getContext('2d');
+
+      // Resize canvas to window size
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        draw();
+      }
+
+      window.addEventListener('resize', resizeCanvas);
+      resizeCanvas();
+
+      // Function to change the reference node
+      function changeReferenceNode(newReferenceNodeId) {
+        if (newReferenceNodeId === referenceNodeId) return; // No change needed
+
+        console.log(`Changing reference node from ${referenceNodeId} to ${newReferenceNodeId}`);
+
+        // TODO: Implement reference node change logic
+
+        // Update reference node
+        referenceNodeId = newReferenceNodeId;
+
+        // Update the info panel
+        document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
+
+        // Redraw
+        draw();
+      }
+
+      // get nodes N distance away from reference node, ordered by distance
+      function getVisibleNodes(referenceNodeId, distance) {
+        const nextNodes = [];
+        const prevNodes = [];
+        let currentNodeId = referenceNodeId;
+
+        // Add nodes before the reference node (up to distance)
+        let count = 0;
+        while (nodes[currentNodeId].prev && count < distance) {
+          prevNodes.push(nodes[currentNodeId].prev);
+          currentNodeId = nodes[currentNodeId].prev;
+          count++;
+        }
+
+        // Add nodes after the reference node (up to distance)
+        currentNodeId = referenceNodeId;
+        count = 0;
+        while (nodes[currentNodeId].next && count < distance) {
+          nextNodes.push(nodes[currentNodeId].next);
+          currentNodeId = nodes[currentNodeId].next;
+          count++;
+        }
+
+        console.log({ prevNodes, nextNodes, referenceNodeId });
+        return { prevNodes, nextNodes };
+      }
+
+      // Draw function
+      function draw() {
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Get visible nodes
+        const { prevNodes, nextNodes } = getVisibleNodes(referenceNodeId, 2);
+
+        // Save current state
+        ctx.save();
+
+        // Apply viewport transform (centered in viewport)
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.transform(
+          viewportTransform.a,
+          viewportTransform.b,
+          viewportTransform.c,
+          viewportTransform.d,
+          viewportTransform.e,
+          viewportTransform.f,
+        );
+
+        // Draw nodes in order from first to last
+        // First draw previous nodes (if any)
+        let currentTransform = new DOMMatrix();
+
+        // Draw previous nodes in reverse order (from furthest to closest to reference)
+        for (let i = prevNodes.length - 1; i >= 0; i--) {
+          const nodeId = prevNodes[i];
+          const node = nodes[nodeId];
+
+          // Apply the node's transform
+          ctx.save();
+          if (i === prevNodes.length - 1) {
+            // First prev node uses its own transform
+            currentTransform = node.transform;
+          } else {
+            // Other prev nodes are relative to their next node
+            currentTransform = node.transform.multiply(currentTransform);
+          }
+
+          ctx.transform(
+            currentTransform.a,
+            currentTransform.b,
+            currentTransform.c,
+            currentTransform.d,
+            currentTransform.e,
+            currentTransform.f,
+          );
+
+          drawNode(nodeId);
+          ctx.restore();
+        }
+
+        // Draw reference node
+        drawNode(referenceNodeId);
+
+        // Draw next nodes
+        currentTransform = new DOMMatrix();
+
+        for (let i = 0; i < nextNodes.length; i++) {
+          const nodeId = nextNodes[i];
+          const node = nodes[nodeId];
+          const prevNode = nodes[node.prev];
+
+          // Apply the node's transform relative to its prev
+          ctx.save();
+          if (i === 0) {
+            // First next node is relative to reference node
+            currentTransform = node.transform;
+          } else {
+            // Other next nodes are relative to their prev node
+            currentTransform = node.transform.multiply(currentTransform);
+          }
+
+          ctx.transform(
+            currentTransform.a,
+            currentTransform.b,
+            currentTransform.c,
+            currentTransform.d,
+            currentTransform.e,
+            currentTransform.f,
+          );
+
+          drawNode(nodeId);
+          ctx.restore();
+        }
+
+        // Restore state
+        ctx.restore();
+      }
+
+      // Function to draw a single node
+      function drawNode(nodeId) {
+        if (!nodeId) return;
+
+        const node = nodes[nodeId];
+        if (!node) return;
+
+        const nodeSize = 100; // Size of the node
+
+        // Draw a simple rectangle for now
+        ctx.fillStyle = node.data;
+        ctx.fillRect(-nodeSize / 2, -nodeSize / 2, nodeSize, nodeSize);
+
+        // Add a border
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-nodeSize / 2, -nodeSize / 2, nodeSize, nodeSize);
+
+        // Add node ID text
+        ctx.fillStyle = 'white';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(node.id, 0, 0);
+      }
+
+      // Pan handling
+      let isDragging = false;
+      let lastX = 0;
+      let lastY = 0;
+
+      canvas.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
+
+      canvas.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+
+          // Update viewport transform for panning
+          viewportTransform = new DOMMatrix().translate(dx, dy).multiply(viewportTransform);
+
+          lastX = e.clientX;
+          lastY = e.clientY;
+
+          draw();
+        }
+      });
+
+      window.addEventListener('mouseup', () => {
+        isDragging = false;
+      });
+
+      // Zoom with mouse wheel
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+
+        // Calculate zoom factor
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+
+        // Get mouse position relative to canvas center
+        const mouseX = e.clientX - canvas.width / 2;
+        const mouseY = e.clientY - canvas.height / 2;
+
+        // Update viewport transform for zooming
+        // First translate to mouse position, then scale, then translate back
+        viewportTransform = new DOMMatrix()
+          .translate(mouseX, mouseY)
+          .scale(zoomFactor)
+          .translate(-mouseX, -mouseY)
+          .multiply(viewportTransform);
+
+        draw();
+      });
+
+      // Make globally accessible for the buttons
+      window.changeReferenceNode = changeReferenceNode;
+      window.getVisibleNodes = getVisibleNodes;
+
+      // Initial draw
+      draw();
+    </script>
+  </body>
+</html>
