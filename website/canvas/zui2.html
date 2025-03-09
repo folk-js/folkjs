@@ -398,20 +398,17 @@
       function changeReferenceNodeBackward() {
         const prevNodeId = nodes[referenceNodeId].prev;
         if (prevNodeId) {
-          // Calculate the visual transform of the current node relative to the previous node
+          // Get the transform from previous node to current node
+          const nodeTransform = nodes[referenceNodeId].transform;
+
+          // Calculate the current node's position in viewport before changing reference
           const visualTransformBefore = viewportTransform;
 
-          // After changing reference, the current node will have a transform relative to the new reference node
-          const visualTransformAfter = viewportTransform.multiply(nodes[referenceNodeId].transform);
-
-          // Calculate the difference between before and after transforms
-          const compensationTransform = visualTransformAfter.multiply(visualTransformBefore.inverse());
-
-          // Adjust viewport transform to compensate exactly for the difference
-          viewportTransform = compensationTransform;
-
-          // Update reference node
+          // Update reference node (before applying transform changes)
           referenceNodeId = prevNodeId;
+
+          // Apply the inverse of the node transform to maintain visual position
+          viewportTransform = viewportTransform.multiply(invertTransform(nodeTransform));
 
           // Update the info panel
           document.getElementById('reference-node-info').textContent = `Reference node: ${referenceNodeId}`;
