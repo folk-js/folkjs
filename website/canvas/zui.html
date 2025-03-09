@@ -159,6 +159,30 @@
             height: 110,
           },
         },
+        {
+          id: 'nodeD',
+          data: {
+            color: '#505050', // Darker grey
+            width: 160,
+            height: 110,
+          },
+        },
+        {
+          id: 'nodeE',
+          data: {
+            color: '#404040', // Darker grey
+            width: 160,
+            height: 110,
+          },
+        },
+        {
+          id: 'nodeF',
+          data: {
+            color: '#303030', // Darker grey
+            width: 160,
+            height: 110,
+          },
+        },
       ];
 
       // Define edges as an array instead of a nested object
@@ -222,8 +246,23 @@
         },
         {
           source: 'nodeC',
+          target: 'nodeD',
+          transform: new DOMMatrix().scale(0.6).translate(50, -20),
+        },
+        {
+          source: 'nodeD',
+          target: 'nodeE',
+          transform: new DOMMatrix().scale(0.5).rotate(30),
+        },
+        {
+          source: 'nodeE',
+          target: 'nodeF',
+          transform: new DOMMatrix().scale(0.5).rotate(30),
+        },
+        {
+          source: 'nodeF',
           target: 'node1',
-          transform: new DOMMatrix().scale(0.6).translate(60, -20),
+          transform: new DOMMatrix().scale(0.5).rotate(30),
         },
       ];
 
