@@ -55,9 +55,9 @@
     <canvas id="zui-canvas"></canvas>
 
     <script type="module">
-      import { FloatingOriginGraph, CONNECTION_TYPES } from '@labs/FloatingOriginGraph.ts';
+      import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
 
-      // Define nodes with just ID and data - no connections or transforms
+      // Define nodes with just ID and data
       const nodes = {
         node1: {
           id: 'node1',
@@ -125,118 +125,90 @@
         },
       };
 
-      // Define edges that connect nodes with their transforms
-      const edges = {
-        edge1to2: {
-          id: 'edge1to2',
+      // Define next edges - mapping from source node to edge
+      const nextEdges = {
+        node1: {
           source: 'node1',
           target: 'node2',
-          type: CONNECTION_TYPES.NEXT,
           transform: new DOMMatrix().translate(35, 0).scale(0.5),
         },
-        edge2to1: {
-          id: 'edge2to1',
-          source: 'node2',
-          target: 'node1',
-          type: CONNECTION_TYPES.PREV,
-          transform: new DOMMatrix(), // Transform is in node1->node2 direction, not needed here
-        },
-        edge2to3: {
-          id: 'edge2to3',
+        node2: {
           source: 'node2',
           target: 'node3',
-          type: CONNECTION_TYPES.NEXT,
           transform: new DOMMatrix().scale(0.6),
         },
-        edge3to2: {
-          id: 'edge3to2',
-          source: 'node3',
-          target: 'node2',
-          type: CONNECTION_TYPES.PREV,
-          transform: new DOMMatrix(),
-        },
-        edge3to4: {
-          id: 'edge3to4',
+        node3: {
           source: 'node3',
           target: 'node4',
-          type: CONNECTION_TYPES.NEXT,
           transform: new DOMMatrix().scale(0.6).translate(-50, 0),
         },
-        edge4to3: {
-          id: 'edge4to3',
-          source: 'node4',
-          target: 'node3',
-          type: CONNECTION_TYPES.PREV,
-          transform: new DOMMatrix(),
-        },
-        edge4to5: {
-          id: 'edge4to5',
+        node4: {
           source: 'node4',
           target: 'node5',
-          type: CONNECTION_TYPES.NEXT,
           transform: new DOMMatrix().scale(0.7),
         },
-        edge5to4: {
-          id: 'edge5to4',
-          source: 'node5',
-          target: 'node4',
-          type: CONNECTION_TYPES.PREV,
-          transform: new DOMMatrix(),
-        },
-        edge5to6: {
-          id: 'edge5to6',
+        node5: {
           source: 'node5',
           target: 'node6',
-          type: CONNECTION_TYPES.NEXT,
           transform: new DOMMatrix().scale(0.3).translate(-25, -25).rotate(45),
         },
-        edge6to5: {
-          id: 'edge6to5',
-          source: 'node6',
-          target: 'node5',
-          type: CONNECTION_TYPES.PREV,
-          transform: new DOMMatrix(),
-        },
-        edge6to7: {
-          id: 'edge6to7',
+        node6: {
           source: 'node6',
           target: 'node7',
-          type: CONNECTION_TYPES.NEXT,
           transform: new DOMMatrix().scale(0.4),
         },
-        edge7to6: {
-          id: 'edge7to6',
-          source: 'node7',
-          target: 'node6',
-          type: CONNECTION_TYPES.PREV,
-          transform: new DOMMatrix(),
-        },
-        edge7to8: {
-          id: 'edge7to8',
+        node7: {
           source: 'node7',
           target: 'node8',
-          type: CONNECTION_TYPES.NEXT,
           transform: new DOMMatrix().scale(0.5).rotate(-45),
         },
-        edge8to7: {
-          id: 'edge8to7',
-          source: 'node8',
-          target: 'node7',
-          type: CONNECTION_TYPES.PREV,
-          transform: new DOMMatrix(),
-        },
-        edge8to1: {
-          id: 'edge8to1',
+        node8: {
           source: 'node8',
           target: 'node1',
-          type: CONNECTION_TYPES.NEXT,
           transform: new DOMMatrix().scale(0.5),
         },
-        edge1to8: {
-          id: 'edge1to8',
+      };
+
+      // Define prev edges - mapping from source node to edge
+      const prevEdges = {
+        node2: {
+          source: 'node2',
+          target: 'node1',
+          transform: new DOMMatrix(), // Transform is in the next direction
+        },
+        node3: {
+          source: 'node3',
+          target: 'node2',
+          transform: new DOMMatrix(),
+        },
+        node4: {
+          source: 'node4',
+          target: 'node3',
+          transform: new DOMMatrix(),
+        },
+        node5: {
+          source: 'node5',
+          target: 'node4',
+          transform: new DOMMatrix(),
+        },
+        node6: {
+          source: 'node6',
+          target: 'node5',
+          transform: new DOMMatrix(),
+        },
+        node7: {
+          source: 'node7',
+          target: 'node6',
+          transform: new DOMMatrix(),
+        },
+        node8: {
+          source: 'node8',
+          target: 'node7',
+          transform: new DOMMatrix(),
+        },
+        node1: {
           source: 'node1',
           target: 'node8',
-          type: CONNECTION_TYPES.PREV,
           transform: new DOMMatrix(),
         },
       };
@@ -251,7 +223,7 @@
        */
 
       // Create the floating origin graph with our specific data type
-      const graph = new FloatingOriginGraph(nodes, edges, 'node1');
+      const graph = new FloatingOriginGraph(nodes, nextEdges, prevEdges, 'node1');
 
       // Define zoom threshold callbacks
       function shouldZoomInToNextNode(graph, canvasWidth, canvasHeight) {
