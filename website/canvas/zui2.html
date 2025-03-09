@@ -26,17 +26,10 @@
         max-width: 300px;
         font-size: 12px;
         line-height: 1.4;
-      }
 
-      #buttons-container {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        background-color: white;
-        padding: 0.2em;
-        border-radius: 4px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-        z-index: 2000;
+        & > div:first-child {
+          font-weight: bold;
+        }
       }
 
       button {
@@ -53,17 +46,10 @@
   </head>
   <body>
     <div id="info-container">
-      <div>ZUI Simplified</div>
-      <div>Pan: Drag with mouse | Zoom: Mouse wheel</div>
-      <div id="reference-node-info">Reference node: node1</div>
-    </div>
-
-    <div id="buttons-container">
-      <button onclick="changeReferenceNodeBackward()">◀ Previous</button>
-      <button onclick="changeReferenceNodeForward()">Next ▶</button>
-      <div style="margin-top: 8px">
-        <button onclick="resetView()">Reset View</button>
-      </div>
+      <div>Infinite ZUI</div>
+      <div> Zoom in/out forever using a <em>floating origin graph.</em> </div>
+      <div>Hold <kbd>shift</kbd> to zoom in, <kbd>alt+shift</kbd> to zoom out.</div>
+      <div id="reference-node-info">reference frame: node1</div>
     </div>
 
     <canvas id="zui-canvas"></canvas>
@@ -87,7 +73,7 @@
           data: 'blue',
           width: 150,
           height: 100,
-          transform: new DOMMatrix().scale(0.5),
+          transform: new DOMMatrix().scale(0.5).rotate(10),
         },
         node3: {
           id: 'node3',
@@ -145,7 +131,7 @@
         },
       };
 
-      const VISIBLE_DISTANCE = 4;
+      const VISIBLE_DISTANCE = 12;
 
       // Reference node ID
       let referenceNodeId = 'node1';
@@ -283,7 +269,15 @@
         lastY = e.clientY;
       });
 
+      // Add mouse position tracking
+      let currentMouseX = canvas.width / 2;
+      let currentMouseY = canvas.height / 2;
+
+      // Update mouse position when it moves
       canvas.addEventListener('mousemove', (e) => {
+        currentMouseX = e.clientX;
+        currentMouseY = e.clientY;
+
         if (isDragging) {
           const dx = e.clientX - lastX;
           const dy = e.clientY - lastY;
@@ -382,12 +376,64 @@
         }
       }
 
-      canvas.addEventListener('click', (e) => {
-        if (e.shiftKey) {
-          // go to the next node using our direct function
-          changeReferenceNodeForward();
+      // Remove the shift-click event and add continuous zooming functionality
+      let isShiftZooming = false;
+      let isAltShiftZooming = false;
+      let zoomInterval = null;
+
+      // Add keyboard event listeners for continuous zooming
+      window.addEventListener('keydown', (e) => {
+        if (e.shiftKey && !e.altKey && !isShiftZooming) {
+          isShiftZooming = true;
+          startContinuousZoom(true);
+        } else if (e.shiftKey && e.altKey && !isAltShiftZooming) {
+          isAltShiftZooming = true;
+          startContinuousZoom(false);
         }
       });
+
+      window.addEventListener('keyup', (e) => {
+        if (!e.shiftKey || (isAltShiftZooming && !e.altKey)) {
+          isShiftZooming = false;
+          isAltShiftZooming = false;
+          stopContinuousZoom();
+        }
+      });
+
+      function startContinuousZoom(zoomIn) {
+        stopContinuousZoom(); // Clear any existing interval
+
+        const zoomFactor = zoomIn ? 1.02 : 0.98;
+
+        zoomInterval = setInterval(() => {
+          // Get mouse position relative to canvas center
+          const mouseX = currentMouseX - canvas.width / 2;
+          const mouseY = currentMouseY - canvas.height / 2;
+
+          // Apply zoom transform centered on mouse position
+          viewportTransform = new DOMMatrix()
+            .translate(mouseX, mouseY)
+            .scale(zoomFactor)
+            .translate(-mouseX, -mouseY)
+            .multiply(viewportTransform);
+
+          // Check if we need to change reference node
+          if (zoomIn) {
+            checkForZoomIn();
+          } else {
+            checkForZoomOut();
+          }
+
+          draw();
+        }, 16); // ~60fps
+      }
+
+      function stopContinuousZoom() {
+        if (zoomInterval) {
+          clearInterval(zoomInterval);
+          zoomInterval = null;
+        }
+      }
 
       // Helper function to get the current screen position of a node
       function getNodeScreenPosition(nodeId) {
