@@ -73,7 +73,7 @@
           data: 'blue',
           width: 150,
           height: 100,
-          transform: new DOMMatrix().scale(0.5).rotate(10),
+          transform: new DOMMatrix().translate(35, 0).scale(0.5),
         },
         node3: {
           id: 'node3',
@@ -91,7 +91,7 @@
           data: 'grey',
           width: 150,
           height: 100,
-          transform: new DOMMatrix().scale(0.6),
+          transform: new DOMMatrix().scale(0.6).translate(-50, 0),
         },
         node5: {
           id: 'node5',
@@ -109,7 +109,7 @@
           data: 'orange',
           width: 180,
           height: 90,
-          transform: new DOMMatrix().scale(0.65),
+          transform: new DOMMatrix().scale(0.3).translate(-25, -25).rotate(45),
         },
         node7: {
           id: 'node7',
@@ -127,7 +127,7 @@
           data: 'magenta',
           width: 150,
           height: 100,
-          transform: new DOMMatrix().scale(0.5),
+          transform: new DOMMatrix().scale(0.5).rotate(-45),
         },
       };
 
@@ -209,8 +209,8 @@
 
           ctx.save();
 
-          // Accumulate transform for this node
-          currentTransform = node.transform.multiply(currentTransform);
+          // Corrected multiplication order: accumulated transform first, then node transform
+          currentTransform = currentTransform.multiply(node.transform);
 
           // Apply the accumulated transform
           ctx.transform(
