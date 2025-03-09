@@ -16,7 +16,7 @@ export interface Edge {
   transform: DOMMatrix; // Transform to apply when going from source to target
 }
 
-// Define node and edge map types
+// Define node and edge map types (for internal use)
 export type NodeMap<T = any> = Record<string, Node<T>>;
 export type EdgeMap = Record<string, Edge[]>; // Maps source node ID to an array of edges
 
@@ -43,20 +43,40 @@ export class FloatingOriginGraph<T = any> {
 
   /**
    * Create a new FloatingOriginGraph
-   * @param nodes - Object mapping node IDs to node objects
-   * @param edges - Object mapping source node IDs to arrays of edges
+   * @param nodes - Array of nodes or object mapping node IDs to node objects
+   * @param edges - Array of edges or object mapping source node IDs to arrays of edges
    * @param initialReferenceNodeId - The ID of the initial reference node
    */
-  constructor(nodes: NodeMap<T>, edges: EdgeMap, initialReferenceNodeId: string = Object.keys(nodes)[0]) {
-    this.#nodes = nodes;
-
-    // Initialize the edges map, ensuring each node ID maps to an array
-    this.#edges = {};
-    for (const [sourceId, edgesArray] of Object.entries(edges)) {
-      this.#edges[sourceId] = Array.isArray(edgesArray) ? edgesArray : [edgesArray];
+  constructor(nodes: Node<T>[] | NodeMap<T>, edges: Edge[] | EdgeMap, initialReferenceNodeId?: string) {
+    // Convert nodes array to map if necessary
+    if (Array.isArray(nodes)) {
+      this.#nodes = {};
+      for (const node of nodes) {
+        this.#nodes[node.id] = node;
+      }
+    } else {
+      this.#nodes = nodes;
     }
 
-    this.#referenceNodeId = initialReferenceNodeId;
+    // Initialize the edges map, converting array to map if necessary
+    this.#edges = {};
+    if (Array.isArray(edges)) {
+      // Group edges by source
+      for (const edge of edges) {
+        if (!this.#edges[edge.source]) {
+          this.#edges[edge.source] = [];
+        }
+        this.#edges[edge.source].push(edge);
+      }
+    } else {
+      // Initialize from object, ensuring each node ID maps to an array
+      for (const [sourceId, edgesArray] of Object.entries(edges)) {
+        this.#edges[sourceId] = Array.isArray(edgesArray) ? edgesArray : [edgesArray];
+      }
+    }
+
+    // Use provided initial reference node or default to first node
+    this.#referenceNodeId = initialReferenceNodeId || Object.keys(this.#nodes)[0];
     this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
 
@@ -106,10 +126,28 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
+   * Get all nodes as an array
+   */
+  get nodesArray(): Node<T>[] {
+    return Object.values(this.#nodes);
+  }
+
+  /**
    * Get all edges in the graph
    */
   get edges(): EdgeMap {
     return this.#edges;
+  }
+
+  /**
+   * Get all edges as a flat array
+   */
+  get edgesArray(): Edge[] {
+    const result: Edge[] = [];
+    for (const edgeArray of Object.values(this.#edges)) {
+      result.push(...edgeArray);
+    }
+    return result;
   }
 
   /**
@@ -557,8 +595,8 @@ export class FloatingOriginGraph<T = any> {
    * Reset the view to the initial reference node
    * @param initialNodeId - Optional node ID to reset to, defaults to the first node
    */
-  resetView(initialNodeId: string = Object.keys(this.#nodes)[0]): void {
-    this.#referenceNodeId = initialNodeId;
+  resetView(initialNodeId?: string): void {
+    this.#referenceNodeId = initialNodeId || Object.keys(this.#nodes)[0];
     this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
     this.#lastTargetNodeId = null; // Reset the target node
   }

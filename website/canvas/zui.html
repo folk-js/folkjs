@@ -72,9 +72,9 @@
     <script type="module">
       import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
 
-      // Define nodes with just ID and data
-      const nodes = {
-        node1: {
+      // Define nodes as an array instead of an object
+      const nodesArray = [
+        {
           id: 'node1',
           data: {
             color: 'red',
@@ -82,7 +82,7 @@
             height: 100,
           },
         },
-        node2: {
+        {
           id: 'node2',
           data: {
             color: 'blue',
@@ -90,7 +90,7 @@
             height: 100,
           },
         },
-        node3: {
+        {
           id: 'node3',
           data: {
             color: 'green',
@@ -98,7 +98,7 @@
             height: 100,
           },
         },
-        node4: {
+        {
           id: 'node4',
           data: {
             color: 'grey',
@@ -106,7 +106,7 @@
             height: 100,
           },
         },
-        node5: {
+        {
           id: 'node5',
           data: {
             color: 'purple',
@@ -114,7 +114,7 @@
             height: 100,
           },
         },
-        node6: {
+        {
           id: 'node6',
           data: {
             color: 'orange',
@@ -122,7 +122,7 @@
             height: 90,
           },
         },
-        node7: {
+        {
           id: 'node7',
           data: {
             color: 'teal',
@@ -130,7 +130,7 @@
             height: 100,
           },
         },
-        node8: {
+        {
           id: 'node8',
           data: {
             color: 'magenta',
@@ -138,8 +138,7 @@
             height: 100,
           },
         },
-        // New magenta-ish nodes for the alternative path
-        nodeA: {
+        {
           id: 'nodeA',
           data: {
             color: '#ff00ff', // Bright magenta
@@ -147,7 +146,7 @@
             height: 120,
           },
         },
-        nodeB: {
+        {
           id: 'nodeB',
           data: {
             color: '#cc33cc', // Different shade of magenta
@@ -155,89 +154,68 @@
             height: 110,
           },
         },
-      };
+      ];
 
-      // Define edges - mapping from source node to edges
-      const edges = {
-        node1: [
-          // Main path edge
-          {
-            source: 'node1',
-            target: 'node2',
-            transform: new DOMMatrix().translate(35, 0).scale(0.5),
-          },
-          // Alternative path edge
-          {
-            source: 'node1',
-            target: 'nodeA',
-            transform: new DOMMatrix().translate(-50, 35).scale(0.4),
-          },
-        ],
-        node2: [
-          {
-            source: 'node2',
-            target: 'node3',
-            transform: new DOMMatrix().scale(0.6),
-          },
-        ],
-        node3: [
-          {
-            source: 'node3',
-            target: 'node4',
-            transform: new DOMMatrix().scale(0.6).translate(-50, 0),
-          },
-        ],
-        node4: [
-          {
-            source: 'node4',
-            target: 'node5',
-            transform: new DOMMatrix().scale(0.7),
-          },
-        ],
-        node5: [
-          {
-            source: 'node5',
-            target: 'node6',
-            transform: new DOMMatrix().scale(0.3).translate(-25, -25).rotate(45),
-          },
-        ],
-        node6: [
-          {
-            source: 'node6',
-            target: 'node7',
-            transform: new DOMMatrix().scale(0.4),
-          },
-        ],
-        node7: [
-          {
-            source: 'node7',
-            target: 'node8',
-            transform: new DOMMatrix().scale(0.5).rotate(-45),
-          },
-        ],
-        node8: [
-          {
-            source: 'node8',
-            target: 'node1',
-            transform: new DOMMatrix().scale(0.5),
-          },
-        ],
-        // New edges for the alternative path
-        nodeA: [
-          {
-            source: 'nodeA',
-            target: 'nodeB',
-            transform: new DOMMatrix().scale(0.7).rotate(30),
-          },
-        ],
-        nodeB: [
-          {
-            source: 'nodeB',
-            target: 'node1',
-            transform: new DOMMatrix().scale(0.6).translate(60, -20),
-          },
-        ],
-      };
+      // Define edges as an array instead of a nested object
+      const edgesArray = [
+        // Main path edges
+        {
+          source: 'node1',
+          target: 'node2',
+          transform: new DOMMatrix().translate(35, 0).scale(0.5),
+        },
+        {
+          source: 'node1',
+          target: 'nodeA',
+          transform: new DOMMatrix().translate(-50, 35).scale(0.4),
+        },
+        {
+          source: 'node2',
+          target: 'node3',
+          transform: new DOMMatrix().scale(0.6),
+        },
+        {
+          source: 'node3',
+          target: 'node4',
+          transform: new DOMMatrix().scale(0.6).translate(-50, 0),
+        },
+        {
+          source: 'node4',
+          target: 'node5',
+          transform: new DOMMatrix().scale(0.7),
+        },
+        {
+          source: 'node5',
+          target: 'node6',
+          transform: new DOMMatrix().scale(0.3).translate(-25, -25).rotate(45),
+        },
+        {
+          source: 'node6',
+          target: 'node7',
+          transform: new DOMMatrix().scale(0.4),
+        },
+        {
+          source: 'node7',
+          target: 'node8',
+          transform: new DOMMatrix().scale(0.5).rotate(-45),
+        },
+        {
+          source: 'node8',
+          target: 'node1',
+          transform: new DOMMatrix().scale(0.5),
+        },
+        // Alternative path edges
+        {
+          source: 'nodeA',
+          target: 'nodeB',
+          transform: new DOMMatrix().scale(0.7).rotate(30),
+        },
+        {
+          source: 'nodeB',
+          target: 'node1',
+          transform: new DOMMatrix().scale(0.6).translate(60, -20),
+        },
+      ];
 
       const VISIBLE_DISTANCE = 40;
 
@@ -248,8 +226,8 @@
        * @property {number} height - The height of the node
        */
 
-      // Create the floating origin graph with our specific data type
-      const graph = new FloatingOriginGraph(nodes, edges, 'node1');
+      // Create the floating origin graph directly with arrays
+      const graph = new FloatingOriginGraph(nodesArray, edgesArray, 'node1');
 
       // Define zoom threshold callbacks
       function shouldZoomInToNextNode(graph, canvasWidth, canvasHeight, nextNodeId) {
