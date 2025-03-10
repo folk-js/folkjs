@@ -64,9 +64,10 @@
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        text-align: center;
+        align-items: flex-start;
+        text-align: left;
+        position: relative;
+        justify-content: flex-start;
       }
 
       .node h3 {
@@ -77,6 +78,34 @@
       .node p {
         margin: 0;
         font-size: 0.9em;
+      }
+
+      /* Style for the node links */
+      .zui-link {
+        display: block;
+        position: relative;
+        width: 100px;
+        height: 60px; /* Maintain the same 5:3 aspect ratio */
+        margin: 20px 0;
+        background-color: rgba(255, 255, 255, 0.3);
+        border: 2px dashed rgba(0, 0, 0, 0.5);
+        border-radius: 8px;
+        text-decoration: none;
+        color: black;
+        font-weight: bold;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 12px;
+        cursor: pointer;
+        z-index: 10;
+        /* Keep the same aspect ratio as nodes */
+        aspect-ratio: 5/3;
+      }
+
+      .zui-link:hover {
+        background-color: rgba(255, 255, 255, 0.5);
+        transform: scale(1.05);
       }
 
       #debug-panel {
@@ -115,104 +144,43 @@
       const NODE_WIDTH = 500;
       const NODE_HEIGHT = 300;
 
-      /**
-       * Helper function to convert relative bounds to a DOMMatrix transform
-       *
-       * In FloatingOriginGraph, transforms are applied from the center of the source node
-       * to the center of the target node. The transform defines how to go from the source
-       * node's coordinate system to the target node's coordinate system.
-       *
-       * @param {Object} bounds - The bounds object with x, y, width, height properties (all in relative units 0-1)
-       * @returns {DOMMatrix} - The resulting transform matrix
-       */
-      function boundsToTransform(bounds) {
-        // Default values if not provided
-        const x = bounds.x !== undefined ? bounds.x : 0.5;
-        const y = bounds.y !== undefined ? bounds.y : 0.5;
-        const width = bounds.width !== undefined ? bounds.width : 1;
-        const height = bounds.height !== undefined ? bounds.height : 1;
-
-        // Calculate the scale factors
-        const scaleX = width;
-        const scaleY = height;
-
-        // Calculate the translation in source node's coordinate system
-        // x and y are relative coordinates (0-1) within the source node
-        // where (0,0) is top-left and (1,1) is bottom-right
-
-        // Convert from relative coordinates (where 0.5,0.5 is center)
-        // to the coordinate system of the source node (where 0,0 is center)
-        const translateX = (x - 0.5) * NODE_WIDTH;
-        const translateY = (y - 0.5) * NODE_HEIGHT;
-
-        // Create and return the transform matrix
-        // The order is important: first translate, then scale
-        return new DOMMatrix().translate(translateX, translateY).scale(scaleX, scaleY);
-      }
-
       // Define nodes as an array for our simple 3-node cycle
       const nodesArray = [
         {
           id: 'nodeA',
           data: {
             color: 'red',
-            content: '<h3>Node A</h3><p>This is the main node</p>',
+            content: `
+              <h3>Node A</h3>
+              <p>This is the main node with regular text content. It contains a link to Node B below.</p>
+              <a href="#" class="zui-link" data-target="nodeB">Link to Node B</a>
+            `,
           },
         },
         {
           id: 'nodeB',
           data: {
             color: 'blue',
-            content: '<h3>Node B</h3><p>This is inside node A</p>',
+            content: `
+              <h3>Node B</h3>
+              <p>This node is embedded inside Node A. You can continue exploring by following the link to Node C.</p>
+              <a href="#" class="zui-link" data-target="nodeC">Link to Node C</a>
+            `,
           },
         },
         {
           id: 'nodeC',
           data: {
             color: 'green',
-            content: '<h3>Node C</h3><p>This is inside node B</p>',
+            content: `
+              <h3>Node C</h3>
+              <p>Now we're deep in the hierarchy. This node is contained within Node B.</p>
+              <p>The link below will take you back to Node A, creating an infinite loop!</p>
+              <a href="#" class="zui-link" data-target="nodeA">Back to Node A</a>
+            `,
           },
         },
       ];
-
-      // Define edges with relative bounds
-      const edgesWithBounds = [
-        {
-          source: 'nodeA',
-          target: 'nodeB',
-          // Position nodeB in the bottom-right quadrant of nodeA
-          bounds: { x: 0.75, y: 0.75, width: 0.5, height: 0.5 },
-        },
-        {
-          source: 'nodeB',
-          target: 'nodeC',
-          // Position nodeC in the top-left quadrant of nodeB
-          bounds: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 },
-        },
-        {
-          source: 'nodeC',
-          target: 'nodeA',
-          // Position nodeA in the center of nodeC but smaller
-          bounds: { x: 0.5, y: 0.5, width: 0.4, height: 0.4 },
-        },
-      ];
-
-      // Convert bounds to transforms
-      const edgesArray = edgesWithBounds.map((edge) => {
-        return {
-          source: edge.source,
-          target: edge.target,
-          transform: boundsToTransform(edge.bounds),
-        };
-      });
-
-      const MAX_VISIBLE_NODES = 20;
-      const container = document.getElementById('zui-container');
-      const debugInfo = document.getElementById('debug-info');
-      const visibleNodesInfo = document.getElementById('visible-nodes');
-
-      // Create the floating origin graph with our nodes and edges
-      const graph = new FloatingOriginGraph(nodesArray, edgesArray, 'nodeA');
 
       // Function to create a node element
       function createNodeElement(nodeId, instanceId) {
@@ -239,9 +207,158 @@
           contentElement.textContent = nodeId;
         }
 
+        // Setup links to prevent default behavior and add visual indicators
+        const links = contentElement.querySelectorAll('.zui-link');
+        links.forEach((link) => {
+          link.addEventListener('click', (e) => {
+            e.preventDefault();
+          });
+
+          // Add visual indicator showing which node this links to
+          const targetId = link.dataset.target;
+          if (targetId) {
+            link.title = `Links to: ${targetId}`;
+
+            // Add text label to show relationship
+            const linkLabel = document.createElement('div');
+            linkLabel.style.position = 'absolute';
+            linkLabel.style.bottom = '5px';
+            linkLabel.style.right = '5px';
+            linkLabel.style.fontSize = '9px';
+            linkLabel.style.color = '#000';
+            linkLabel.style.fontWeight = 'bold';
+            linkLabel.style.backgroundColor = 'rgba(255,255,255,0.7)';
+            linkLabel.style.padding = '1px 3px';
+            linkLabel.style.borderRadius = '3px';
+            linkLabel.textContent = `→ ${targetId}`;
+            link.appendChild(linkLabel);
+          }
+        });
+
         nodeElement.appendChild(contentElement);
         return nodeElement;
       }
+
+      /**
+       * Calculates relative position of a link within its parent node
+       * @param {HTMLElement} linkElement - The link element
+       * @param {HTMLElement} nodeElement - The parent node element
+       * @returns {Object} - The relative position and size data
+       */
+      function getLinkPosition(linkElement, nodeElement) {
+        const nodeRect = nodeElement.getBoundingClientRect();
+        const linkRect = linkElement.getBoundingClientRect();
+
+        // Calculate relative position (0-1) within the node
+        const x = (linkRect.left + linkRect.width / 2 - nodeRect.left) / nodeRect.width;
+        const y = (linkRect.top + linkRect.height / 2 - nodeRect.top) / nodeRect.height;
+
+        // Calculate relative size (0-1) compared to the node
+        const width = linkRect.width / nodeRect.width;
+        const height = linkRect.height / nodeRect.height;
+
+        return { x, y, width, height };
+      }
+
+      /**
+       * Converts link position to a transform matrix
+       * @param {Object} linkPosition - The relative position and size data
+       * @returns {DOMMatrix} - The resulting transform matrix
+       */
+      function linkPositionToTransform(linkPosition) {
+        // Calculate the scale factor to make the target node exactly match the link size
+        // We need to scale the node (NODE_WIDTH x NODE_HEIGHT) to match the link's dimensions
+        const scaleX = linkPosition.width;
+        const scaleY = linkPosition.height;
+
+        // The link's center position in the node's coordinate system
+        // Convert from relative coordinates (where linkPosition.x,linkPosition.y is the relative center)
+        // to the coordinate system of the source node (where 0,0 is center)
+        const translateX = (linkPosition.x - 0.5) * NODE_WIDTH;
+        const translateY = (linkPosition.y - 0.5) * NODE_HEIGHT;
+
+        // Create the transform matrix
+        // First translate to position, then scale to match the link's size
+        return new DOMMatrix().translate(translateX, translateY).scale(scaleX, scaleY);
+      }
+
+      // Setup temporary DOM to find links and build the edge map
+      function buildEdgesFromLinks() {
+        // Create a temporary container
+        const tempContainer = document.createElement('div');
+        tempContainer.style.position = 'absolute';
+        tempContainer.style.visibility = 'hidden';
+        tempContainer.style['pointer-events'] = 'none';
+        document.body.appendChild(tempContainer);
+
+        // Generate the edges array
+        const edges = [];
+        const renderedNodes = {};
+
+        // First, create a DOM element for each node
+        for (const node of nodesArray) {
+          const nodeElement = document.createElement('div');
+          nodeElement.classList.add('node');
+          nodeElement.style.width = `${NODE_WIDTH}px`;
+          nodeElement.style.height = `${NODE_HEIGHT}px`;
+
+          const contentElement = document.createElement('div');
+          contentElement.classList.add('node-content');
+          contentElement.innerHTML = node.data.content;
+
+          nodeElement.appendChild(contentElement);
+          tempContainer.appendChild(nodeElement);
+          renderedNodes[node.id] = nodeElement;
+        }
+
+        // Force layout calculation
+        void tempContainer.offsetHeight;
+
+        console.log('Building edges from links...');
+
+        // Now find all links and calculate their positions
+        for (const [nodeId, nodeElement] of Object.entries(renderedNodes)) {
+          const links = nodeElement.querySelectorAll('.zui-link');
+          console.log(`Node ${nodeId} has ${links.length} links`);
+
+          links.forEach((link) => {
+            const targetId = link.dataset.target;
+            if (!targetId || !renderedNodes[targetId]) return;
+
+            // Get the link's position relative to its parent node
+            const linkPosition = getLinkPosition(link, nodeElement);
+            console.log(`Link from ${nodeId} to ${targetId} at position:`, linkPosition);
+
+            // Convert to a transform matrix
+            const transform = linkPositionToTransform(linkPosition);
+            console.log(`Transform for ${nodeId} → ${targetId}:`, formatTransform(transform));
+
+            // Add to edges array
+            edges.push({
+              source: nodeId,
+              target: targetId,
+              transform,
+            });
+          });
+        }
+
+        // Clean up
+        document.body.removeChild(tempContainer);
+
+        console.log(`Built ${edges.length} edges total`);
+        return edges;
+      }
+
+      // First, build edges from links in node content
+      const edgesArray = buildEdgesFromLinks();
+
+      const MAX_VISIBLE_NODES = 20;
+      const container = document.getElementById('zui-container');
+      const debugInfo = document.getElementById('debug-info');
+      const visibleNodesInfo = document.getElementById('visible-nodes');
+
+      // Create the floating origin graph with our nodes and edges
+      const graph = new FloatingOriginGraph(nodesArray, edgesArray, 'nodeA');
 
       // Define zoom threshold callbacks
       function shouldZoomInToNextNode(graph, containerWidth, containerHeight, nextNodeId) {
@@ -433,7 +550,7 @@
           // Highlight the reference node
           if (nodeId === graph.referenceNodeId && transform.a === 1 && transform.d === 1) {
             nodeElement.style.border = '4px solid yellow';
-            debugInfo.textContent = `Reference: ${nodeId}, Scale: ${scale.toFixed(2)}, Position: (${translateX.toFixed(0)}, ${translateY.toFixed(0)})`;
+            debugInfo.textContent = `Reference: ${nodeId}, ${formatTransform(combinedTransform)}`;
           }
         }
 
@@ -461,6 +578,12 @@
       function setupEventListeners() {
         // Mouse down for panning
         container.addEventListener('mousedown', (e) => {
+          // Prevent zooming when clicking on links
+          if (e.target.classList.contains('zui-link')) {
+            e.preventDefault();
+            return;
+          }
+
           isDragging = true;
           lastX = e.clientX;
           lastY = e.clientY;
@@ -602,6 +725,11 @@
         }
       }
 
+      // Debug info formatter for transforms
+      function formatTransform(transform) {
+        return `[Scale: ${transform.a.toFixed(2)} × ${transform.d.toFixed(2)}, Pos: (${transform.e.toFixed(0)}, ${transform.f.toFixed(0)})]`;
+      }
+
       // Initialize and start the application
       function init() {
         setupEventListeners();
@@ -615,7 +743,7 @@
         });
 
         // Log the edges with their transforms
-        console.log('Edges with transforms:', edgesArray);
+        console.log('Edges with their transforms:', edgesArray);
       }
 
       // Start the application
