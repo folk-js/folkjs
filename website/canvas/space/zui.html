@@ -474,7 +474,7 @@
         );
 
         // Get and draw all visible nodes with their accumulated transforms
-        for (const { nodeId, transform } of graph.getVisibleNodesWithTransforms()) {
+        for (const { nodeId, transform } of graph.getVisibleNodes()) {
           // Save the current state before applying node transform
           ctx.save();
 

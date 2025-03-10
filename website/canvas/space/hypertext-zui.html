@@ -885,9 +885,7 @@
         const visibleNodes = [];
 
         // Get nodes from graph with transforms using our culling callback
-        for (const nodeData of graph.getVisibleNodesWithTransforms(nodeCullingCallback)) {
-          const { nodeId, node, transform } = nodeData;
-
+        for (const { nodeId, node, transform } of graph.getVisibleNodes(nodeCullingCallback)) {
           // Combine viewport transform with the node's transform
           const combinedTransform = graph.viewportTransform.multiply(transform);
 

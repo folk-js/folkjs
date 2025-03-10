@@ -254,7 +254,7 @@ export class FloatingOriginGraph<T = any> {
    * @param shouldCullNode - Optional callback to determine if a node should be culled
    * @returns Iterator yielding objects with node, nodeId, and accumulated transform
    */
-  *getVisibleNodesWithTransforms(shouldCullNode?: NodeCullingCallback): Generator<{
+  *getVisibleNodes(shouldCullNode?: NodeCullingCallback): Generator<{
     nodeId: string;
     node: Node<T>;
     transform: DOMMatrix;
@@ -339,45 +339,6 @@ export class FloatingOriginGraph<T = any> {
         }
       }
     }
-  }
-
-  /**
-   * Get a list of nodes visible from the reference node
-   * @param maxNodes - Maximum number of nodes to include
-   * @returns Array of node IDs visible from the reference node
-   */
-  getVisibleNodes(maxNodes: number = 40): string[] {
-    // Always include the reference node
-    const result: string[] = [this.#referenceNodeId];
-
-    // Count the reference node
-    let nodesAdded = 1;
-
-    // Create a queue for breadth-first traversal
-    const queue: { nodeId: string; depth: number }[] = [{ nodeId: this.#referenceNodeId, depth: 0 }];
-
-    while (queue.length > 0 && nodesAdded < maxNodes) {
-      const { nodeId, depth } = queue.shift()!;
-
-      // Get all next nodes
-      const nextNodeIds = this.getNextNodeIds(nodeId);
-      for (const nextId of nextNodeIds) {
-        // Skip if node doesn't exist
-        if (!this.#nodes[nextId]) continue;
-
-        // Add to result
-        result.push(nextId);
-        nodesAdded++;
-
-        // Stop if we've reached the limit
-        if (nodesAdded >= maxNodes) break;
-
-        // Add to queue for further exploration
-        queue.push({ nodeId: nextId, depth: depth + 1 });
-      }
-    }
-
-    return result;
   }
 
   /**
