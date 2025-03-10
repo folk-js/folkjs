@@ -61,6 +61,7 @@
           0 8px 25px rgba(0, 0, 0, 0.3),
           0 2px 5px rgba(0, 0, 0, 0.2);
         overflow: hidden;
+        will-change: transform;
       }
 
       .node-content {
@@ -136,6 +137,27 @@
         vertical-align: middle;
         opacity: 0;
       }
+
+      /* Performance optimization classes */
+      .content-hidden {
+        opacity: 0;
+      }
+
+      .content-visible {
+        opacity: 1;
+      }
+
+      .node-title {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 1.2em;
+        color: white;
+        text-align: center;
+        padding: 5px;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
@@ -158,6 +180,10 @@
       // Define constants for node dimensions
       const NODE_WIDTH = 500 * 2;
       const NODE_HEIGHT = 300 * 2;
+
+      // Caches for performance optimization
+      const nodeContentCache = {}; // Cache for node content templates
+      const linkPositionsCache = {}; // Cache for link positions within nodes
 
       // Define nodes as an array for our simple 3-node cycle
       const nodesArray = [
@@ -324,7 +350,7 @@
                 
                 <h4>The Foldspace Breakthrough</h4>
                 <p>In 2412, Venn published her revolutionary paper "On the Compression of Spatial Dimensions in Quantum Null Fields," providing the theoretical framework for what would become <a href="#" class="zui-link-inline" data-target="nodeB">Quantum Foldspace</a> technology. Working with engineer Hiroshi Katori, she developed the first functioning Venn-Katori device the following year, demonstrating instantaneous matter transfer over a distance of 10 kilometers.</p>
-                
+
                 <h4>Later Work</h4>
                 <p>Following her initial breakthrough, Venn shifted her focus to applications in <a href="#" class="zui-link-inline" data-target="nodeI">temporal physics</a>, exploring the time-dilation effects observed within foldspace. Her controversial collaboration with the <a href="#" class="zui-link-inline" data-target="nodeC">Mist Sovereigns</a> yielded insights into non-human perspectives on time and space that remain influential in theoretical physics. Her current project involves studying potential connections between foldspace and the <a href="#" class="zui-link-inline" data-target="nodeJ">quantum echo</a> phenomenon.</p>
               </div>
@@ -518,6 +544,10 @@
         const node = graph.nodes[nodeId];
         if (!node) return null;
 
+        // Create a document fragment to build the element
+        const fragment = document.createDocumentFragment();
+
+        // Create the node element with performance optimizations
         const nodeElement = document.createElement('div');
         nodeElement.classList.add('node');
         nodeElement.id = `node-${nodeId}-${instanceId}`;
@@ -531,25 +561,67 @@
         const contentElement = document.createElement('div');
         contentElement.classList.add('node-content');
 
-        // Use HTML content if available
-        if (node.data.content) {
+        // Check if we have cached content for this nodeId
+        if (!nodeContentCache[nodeId] && node.data.content) {
+          // Create a template element to parse the HTML once
+          const template = document.createElement('template');
+          template.innerHTML = node.data.content.trim();
+
+          // Save the parsed content in the cache
+          nodeContentCache[nodeId] = template.content.cloneNode(true);
+
+          // Cache link positions if not already done
+          if (!linkPositionsCache[nodeId]) {
+            // Create a temporary node to measure link positions
+            const tempNode = document.createElement('div');
+            tempNode.style.width = `${NODE_WIDTH}px`;
+            tempNode.style.height = `${NODE_HEIGHT}px`;
+            tempNode.style.position = 'absolute';
+            tempNode.style.visibility = 'hidden';
+            tempNode.appendChild(template.content.cloneNode(true));
+            document.body.appendChild(tempNode);
+
+            // Force layout calculation
+            void tempNode.offsetHeight;
+
+            // Find all links and cache their positions
+            const links = tempNode.querySelectorAll('.zui-link, .zui-link-inline');
+            const positions = {};
+
+            links.forEach((link) => {
+              const targetId = link.dataset.target;
+              if (targetId) {
+                positions[targetId] = getLinkPosition(link, tempNode);
+              }
+            });
+
+            linkPositionsCache[nodeId] = positions;
+
+            // Clean up
+            document.body.removeChild(tempNode);
+          }
+        }
+
+        // Use cached content if available, otherwise use the node content or ID
+        if (nodeContentCache[nodeId]) {
+          contentElement.appendChild(nodeContentCache[nodeId].cloneNode(true));
+        } else if (node.data.content) {
           contentElement.innerHTML = node.data.content;
         } else {
           contentElement.textContent = nodeId;
         }
 
-        // Setup links to prevent default behavior and remove visual indicators
+        // Setup links to prevent default behavior
         const links = contentElement.querySelectorAll('.zui-link, .zui-link-inline');
         links.forEach((link) => {
           link.addEventListener('click', (e) => {
             e.preventDefault();
           });
 
-          // Just set the title without adding any visual elements
+          // Set the title without adding visual elements
           const targetId = link.dataset.target;
           if (targetId) {
             link.title = `Links to: ${targetId}`;
-            // No longer adding any visual label
           }
         });
 
@@ -602,6 +674,30 @@
 
       // Setup temporary DOM to find links and build the edge map
       function buildEdgesFromLinks() {
+        // If we already have cached link positions for all nodes, use them directly
+        if (Object.keys(linkPositionsCache).length === nodesArray.length) {
+          const edges = [];
+
+          // Generate edges from cached positions
+          for (const node of nodesArray) {
+            const nodeId = node.id;
+            const positions = linkPositionsCache[nodeId];
+
+            if (positions) {
+              for (const [targetId, linkPosition] of Object.entries(positions)) {
+                edges.push({
+                  source: nodeId,
+                  target: targetId,
+                  transform: linkPositionToTransform(linkPosition),
+                });
+              }
+            }
+          }
+
+          return edges;
+        }
+
+        // If cache is incomplete, fall back to the original method
         // Create a temporary container
         const tempContainer = document.createElement('div');
         tempContainer.style.position = 'absolute';
@@ -636,12 +732,20 @@
         for (const [nodeId, nodeElement] of Object.entries(renderedNodes)) {
           const links = nodeElement.querySelectorAll('.zui-link, .zui-link-inline');
 
+          // Create cache entry for this node if it doesn't exist
+          if (!linkPositionsCache[nodeId]) {
+            linkPositionsCache[nodeId] = {};
+          }
+
           links.forEach((link) => {
             const targetId = link.dataset.target;
             if (!targetId || !renderedNodes[targetId]) return;
 
             // Get the link's position relative to its parent node
             const linkPosition = getLinkPosition(link, nodeElement);
+
+            // Cache the position for future use
+            linkPositionsCache[nodeId][targetId] = linkPosition;
 
             // Convert to a transform matrix
             const transform = linkPositionToTransform(linkPosition);
@@ -664,7 +768,7 @@
       // First, build edges from links in node content
       const edgesArray = buildEdgesFromLinks();
 
-      const MAX_VISIBLE_NODES = 30;
+      const MAX_VISIBLE_NODES = 60; // Increased from 30 after optimizations
       // Define size threshold for showing content (as a proportion of original size)
       const CONTENT_VISIBILITY_THRESHOLD = 0.05;
 
@@ -814,6 +918,9 @@
         const containerWidth = container.clientWidth;
         const containerHeight = container.clientHeight;
 
+        // Create a document fragment for batch DOM updates
+        const fragment = document.createDocumentFragment();
+
         // Clear the container
         container.innerHTML = '';
 
@@ -829,8 +936,8 @@
           const nodeElement = createNodeElement(nodeId, instanceId);
           if (!nodeElement) continue;
 
-          // Add to container
-          container.appendChild(nodeElement);
+          // Add to fragment (not directly to DOM)
+          fragment.appendChild(nodeElement);
 
           // Combine viewport transform with the node's transform
           const combinedTransform = graph.viewportTransform.multiply(transform);
@@ -858,27 +965,36 @@
           const contentElement = nodeElement.querySelector('.node-content');
           if (scale < CONTENT_VISIBILITY_THRESHOLD) {
             // Node is too small, hide content but keep the colored background
-            contentElement.style.opacity = '0';
+            contentElement.classList.add('content-hidden');
+            contentElement.classList.remove('content-visible');
+
             // Optionally show just the title for medium-sized nodes
             if (scale > CONTENT_VISIBILITY_THRESHOLD * 0.5) {
-              const titleElement = document.createElement('div');
-              titleElement.textContent = node.data.content.match(/<h3>(.*?)<\/h3>/)?.[1] || nodeId;
-              titleElement.style.position = 'absolute';
-              titleElement.style.top = '50%';
-              titleElement.style.left = '50%';
-              titleElement.style.transform = 'translate(-50%, -50%)';
-              titleElement.style.fontSize = '1.2em';
-              titleElement.style.color = 'white';
-              titleElement.style.textAlign = 'center';
-              titleElement.style.padding = '5px';
-              titleElement.style.pointerEvents = 'none';
-              nodeElement.appendChild(titleElement);
+              // Check if title element already exists
+              let titleElement = nodeElement.querySelector('.node-title');
+
+              if (!titleElement) {
+                titleElement = document.createElement('div');
+                titleElement.classList.add('node-title');
+                titleElement.textContent = node.data.content.match(/<h3>(.*?)<\/h3>/)?.[1] || nodeId;
+                nodeElement.appendChild(titleElement);
+              }
             }
           } else {
             // Node is large enough, ensure content is visible
-            contentElement.style.opacity = '1';
+            contentElement.classList.add('content-visible');
+            contentElement.classList.remove('content-hidden');
+
+            // Remove title element if it exists
+            const titleElement = nodeElement.querySelector('.node-title');
+            if (titleElement) {
+              nodeElement.removeChild(titleElement);
+            }
           }
         }
+
+        // Add all nodes to the container at once
+        container.appendChild(fragment);
 
         // Update reference node info display if it exists
         const referenceNodeInfo = document.getElementById('reference-node-info');
