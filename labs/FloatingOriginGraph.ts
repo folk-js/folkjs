@@ -58,13 +58,11 @@ export class FloatingOriginGraph<T = any> {
   constructor(nodes: Node<T>[], edges: Edge[], initialReferenceNodeId?: string, maxNodes?: number) {
     this.#maxNodes = maxNodes || 30;
 
-    // Convert nodes array to map
     this.#nodes = {};
     for (const node of nodes) {
       this.#nodes[node.id] = node;
     }
 
-    // Initialize the edges map
     this.#edges = {};
     this.#reverseEdges = {};
 
@@ -107,66 +105,6 @@ export class FloatingOriginGraph<T = any> {
    */
   get nodes(): NodeMap<T> {
     return this.#nodes;
-  }
-
-  /**
-   * Get all outgoing edges from a node
-   * @param nodeId - The source node ID
-   * @returns Array of edges from the node
-   */
-  #getEdgesFrom(nodeId: string): Edge[] {
-    return this.#edges[nodeId] || [];
-  }
-
-  /**
-   * Helper method to get the next node IDs for the current node
-   * @param nodeId - The current node ID
-   * @returns Array of target node IDs
-   */
-  #getNextNodeIds(nodeId: string): string[] {
-    const edges = this.#getEdgesFrom(nodeId);
-    return edges.map((edge) => edge.target);
-  }
-
-  /**
-   * Get the IDs of all nodes that have edges to the specified node
-   * @param nodeId - The ID of the node to get previous nodes for
-   * @returns Array of node IDs that have edges to the specified node
-   */
-  #getPrevNodeIds(nodeId: string): string[] {
-    const edges = this.#reverseEdges[nodeId] || [];
-    return edges.map((edge) => edge.source);
-  }
-
-  /**
-   * Get the best next node to follow when zooming in
-   * @param nodeId - The current node ID
-   * @returns The next node ID or undefined if none found
-   */
-  #getBestNextNodeId(nodeId: string): string | undefined {
-    const edges = this.#getEdgesFrom(nodeId);
-    return edges.length > 0 ? edges[0].target : undefined;
-  }
-
-  /**
-   * Get the best previous node to follow when zooming out
-   * @param nodeId - The current node ID
-   * @returns The previous node ID or undefined if none found
-   */
-  #getBestPrevNodeId(nodeId: string): string | undefined {
-    const prevNodeIds = this.#getPrevNodeIds(nodeId);
-    return prevNodeIds.length > 0 ? prevNodeIds[0] : undefined;
-  }
-
-  /**
-   * Get an edge between source and target nodes
-   * @param sourceNodeId - The source node ID
-   * @param targetNodeId - The target node ID
-   * @returns The edge or undefined if not found
-   */
-  #getEdge(sourceNodeId: string, targetNodeId: string): Edge | undefined {
-    const edges = this.#getEdgesFrom(sourceNodeId);
-    return edges.find((edge) => edge.target === targetNodeId);
   }
 
   /**
@@ -345,6 +283,77 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
+   * Reset the view to the initial reference node
+   * @param initialNodeId - Optional node ID to reset to, defaults to the first node
+   */
+  resetView(initialNodeId?: string): void {
+    this.#referenceNodeId = initialNodeId || Object.keys(this.#nodes)[0];
+    this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
+  }
+
+  /* ---- PRIVATE METHODS ---- */
+
+  /**
+   * Get all outgoing edges from a node
+   * @param nodeId - The source node ID
+   * @returns Array of edges from the node
+   */
+  #getEdgesFrom(nodeId: string): Edge[] {
+    return this.#edges[nodeId] || [];
+  }
+
+  /**
+   * Helper method to get the next node IDs for the current node
+   * @param nodeId - The current node ID
+   * @returns Array of target node IDs
+   */
+  #getNextNodeIds(nodeId: string): string[] {
+    const edges = this.#getEdgesFrom(nodeId);
+    return edges.map((edge) => edge.target);
+  }
+
+  /**
+   * Get the IDs of all nodes that have edges to the specified node
+   * @param nodeId - The ID of the node to get previous nodes for
+   * @returns Array of node IDs that have edges to the specified node
+   */
+  #getPrevNodeIds(nodeId: string): string[] {
+    const edges = this.#reverseEdges[nodeId] || [];
+    return edges.map((edge) => edge.source);
+  }
+
+  /**
+   * Get the best next node to follow when zooming in
+   * @param nodeId - The current node ID
+   * @returns The next node ID or undefined if none found
+   */
+  #getBestNextNodeId(nodeId: string): string | undefined {
+    const edges = this.#getEdgesFrom(nodeId);
+    return edges.length > 0 ? edges[0].target : undefined;
+  }
+
+  /**
+   * Get the best previous node to follow when zooming out
+   * @param nodeId - The current node ID
+   * @returns The previous node ID or undefined if none found
+   */
+  #getBestPrevNodeId(nodeId: string): string | undefined {
+    const prevNodeIds = this.#getPrevNodeIds(nodeId);
+    return prevNodeIds.length > 0 ? prevNodeIds[0] : undefined;
+  }
+
+  /**
+   * Get an edge between source and target nodes
+   * @param sourceNodeId - The source node ID
+   * @param targetNodeId - The target node ID
+   * @returns The edge or undefined if not found
+   */
+  #getEdge(sourceNodeId: string, targetNodeId: string): Edge | undefined {
+    const edges = this.#getEdgesFrom(sourceNodeId);
+    return edges.find((edge) => edge.target === targetNodeId);
+  }
+
+  /**
    * Check if reference node needs to change and update it if needed
    * @param isZoomingOut - Whether we're zooming out
    * @param canvasWidth - Width of the canvas
@@ -489,15 +498,6 @@ export class FloatingOriginGraph<T = any> {
     const screenY = canvasHeight / 2 + screenTransform.f;
 
     return { x: screenX, y: screenY };
-  }
-
-  /**
-   * Reset the view to the initial reference node
-   * @param initialNodeId - Optional node ID to reset to, defaults to the first node
-   */
-  resetView(initialNodeId?: string): void {
-    this.#referenceNodeId = initialNodeId || Object.keys(this.#nodes)[0];
-    this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
 
   /**
