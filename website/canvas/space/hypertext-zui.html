@@ -169,6 +169,11 @@
       // Define constants for node dimensions
       const NODE_WIDTH = 500 * 2;
       const NODE_HEIGHT = 300 * 2;
+      // Define zoom limits for when the reference node doesn't change
+      const MAX_ZOOM_LEVEL = 100.0; // Maximum zoom level (zoomed in)
+
+      let currentZoomLevel = 1.0; // Track the current zoom level
+      let lastReferenceNodeId = null; // Track the last reference node
 
       // Caches for performance optimization
       const nodeContentCache = {}; // Cache for node content templates
@@ -868,6 +873,14 @@
         const containerWidth = container.clientWidth;
         const containerHeight = container.clientHeight;
 
+        // Update reference node tracking
+        const currentReferenceNodeId = graph.referenceNode;
+        if (lastReferenceNodeId !== currentReferenceNodeId) {
+          // Reference node changed, reset zoom level
+          currentZoomLevel = 1.0;
+          lastReferenceNodeId = currentReferenceNodeId;
+        }
+
         // Create a map to track which nodes we've processed
         const processedNodes = new Map();
 
@@ -1039,6 +1052,13 @@
             // Calculate zoom factor
             const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
 
+            // Check if zoom limits would be exceeded
+            const newZoomLevel = currentZoomLevel * zoomFactor;
+            if (zoomFactor > 1 && newZoomLevel > MAX_ZOOM_LEVEL) {
+              // Skip zooming if it would exceed limits
+              return;
+            }
+
             // Get mouse position relative to container center
             const containerWidth = container.clientWidth;
             const containerHeight = container.clientHeight;
@@ -1055,6 +1075,14 @@
               shouldZoomInToNextNode,
               shouldZoomOutToPrevNode,
             );
+
+            // Update the current zoom level if reference node did not change
+            if (!referenceChanged) {
+              currentZoomLevel = newZoomLevel;
+            } else {
+              // Reference node changed, reset zoom level
+              currentZoomLevel = 1.0;
+            }
 
             updateDOM();
           },
@@ -1118,6 +1146,14 @@
         const baseZoomFactor = zoomDirection > 0 ? 1.1 : 0.9;
         const zoomFactor = Math.pow(baseZoomFactor, ZOOM_SPEED * deltaTime);
 
+        // Check if zoom limits would be exceeded
+        const newZoomLevel = currentZoomLevel * zoomFactor;
+        if (zoomFactor > 1 && newZoomLevel > MAX_ZOOM_LEVEL) {
+          // Skip this frame of zooming if it would exceed limits
+          zoomAnimationId = requestAnimationFrame(animateZoom);
+          return;
+        }
+
         // Get mouse position relative to container center
         const containerWidth = container.clientWidth;
         const containerHeight = container.clientHeight;
@@ -1134,6 +1170,14 @@
           shouldZoomInToNextNode,
           shouldZoomOutToPrevNode,
         );
+
+        // Update the current zoom level if reference node did not change
+        if (!referenceChanged) {
+          currentZoomLevel = newZoomLevel;
+        } else {
+          // Reference node changed, reset zoom level
+          currentZoomLevel = 1.0;
+        }
 
         updateDOM();
 
