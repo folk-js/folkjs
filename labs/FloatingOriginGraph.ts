@@ -29,12 +29,15 @@ export type ShouldZoomInCallback = <T>(
   canvasHeight: number,
   nextNodeId: string,
 ) => boolean;
+
 export type ShouldZoomOutCallback = <T>(
   graph: FloatingOriginGraph<T>,
   canvasWidth: number,
   canvasHeight: number,
   prevNodeId: string,
 ) => boolean;
+
+export type NodeCullingCallback = <T>(nodeId: string, transform: DOMMatrix, viewportTransform: DOMMatrix) => boolean;
 
 export class FloatingOriginGraph<T = any> {
   #nodes: NodeMap<T>;
@@ -242,9 +245,13 @@ export class FloatingOriginGraph<T = any> {
    * Iterate through visible nodes with their accumulated transforms
    * This provides both the node and its transform relative to the reference node
    * @param maxNodes - Maximum number of nodes to include
+   * @param shouldCullNode - Optional callback to determine if a node should be culled
    * @returns Iterator yielding objects with node, nodeId, and accumulated transform
    */
-  *getVisibleNodesWithTransforms(maxNodes: number = 40): Generator<{
+  *getVisibleNodesWithTransforms(
+    maxNodes: number = 40,
+    shouldCullNode?: NodeCullingCallback,
+  ): Generator<{
     nodeId: string;
     node: Node<T>;
     transform: DOMMatrix;
@@ -280,11 +287,16 @@ export class FloatingOriginGraph<T = any> {
         originalTransform.f,
       ]);
 
-      queue.push({
-        nodeId: edge.target,
-        transform: copiedTransform,
-        depth: 1,
-      });
+      // Check if node should be culled using the callback
+      const shouldCull = shouldCullNode ? shouldCullNode(edge.target, copiedTransform, this.#viewportTransform) : false;
+
+      if (!shouldCull) {
+        queue.push({
+          nodeId: edge.target,
+          transform: copiedTransform,
+          depth: 1,
+        });
+      }
     }
 
     // Process the queue until we hit maxNodes limit
@@ -312,13 +324,97 @@ export class FloatingOriginGraph<T = any> {
           transform.f,
         ]).multiply(edge.transform);
 
-        queue.push({
-          nodeId: edge.target,
-          transform: nextTransform,
-          depth: depth + 1,
-        });
+        // Check if node should be culled using the callback
+        const shouldCull = shouldCullNode ? shouldCullNode(edge.target, nextTransform, this.#viewportTransform) : false;
+
+        if (!shouldCull) {
+          queue.push({
+            nodeId: edge.target,
+            transform: nextTransform,
+            depth: depth + 1,
+          });
+        }
       }
     }
+  }
+
+  /**
+   * Get a list of nodes visible from the reference node
+   * @param maxNodes - Maximum number of nodes to include
+   * @returns Array of node IDs visible from the reference node
+   */
+  getVisibleNodes(maxNodes: number = 40): string[] {
+    // Always include the reference node
+    const result: string[] = [this.#referenceNodeId];
+
+    // Count the reference node
+    let nodesAdded = 1;
+
+    // Create a queue for breadth-first traversal
+    const queue: { nodeId: string; depth: number }[] = [{ nodeId: this.#referenceNodeId, depth: 0 }];
+
+    while (queue.length > 0 && nodesAdded < maxNodes) {
+      const { nodeId, depth } = queue.shift()!;
+
+      // Get all next nodes
+      const nextNodeIds = this.getNextNodeIds(nodeId);
+      for (const nextId of nextNodeIds) {
+        // Skip if node doesn't exist
+        if (!this.#nodes[nextId]) continue;
+
+        // Add to result
+        result.push(nextId);
+        nodesAdded++;
+
+        // Stop if we've reached the limit
+        if (nodesAdded >= maxNodes) break;
+
+        // Add to queue for further exploration
+        queue.push({ nodeId: nextId, depth: depth + 1 });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Get the accumulated transform from the reference node to a target node
+   * @param toNodeId - Target node ID
+   * @returns The accumulated transform matrix or null if no path found
+   */
+  getAccumulatedTransform(toNodeId: string): DOMMatrix | null {
+    if (toNodeId === this.#referenceNodeId) {
+      return new DOMMatrix(); // Identity transform for self
+    }
+
+    // Use breadth-first search to find a path from reference to target
+    const visited = new Set<string>([this.#referenceNodeId]);
+    const queue: { nodeId: string; transform: DOMMatrix }[] = [
+      { nodeId: this.#referenceNodeId, transform: new DOMMatrix() },
+    ];
+
+    while (queue.length > 0) {
+      const { nodeId, transform } = queue.shift()!;
+
+      const edges = this.getEdgesFrom(nodeId);
+      for (const edge of edges) {
+        if (edge.target === toNodeId) {
+          // Found a path to target
+          return transform.multiply(edge.transform);
+        }
+
+        if (!visited.has(edge.target)) {
+          visited.add(edge.target);
+          queue.push({
+            nodeId: edge.target,
+            transform: transform.multiply(edge.transform),
+          });
+        }
+      }
+    }
+
+    // No path found
+    return null;
   }
 
   /**
@@ -429,85 +525,6 @@ export class FloatingOriginGraph<T = any> {
       }
     }
     return false;
-  }
-
-  /**
-   * Get a list of nodes visible from the reference node
-   * @param maxNodes - Maximum number of nodes to include
-   * @returns Array of node IDs visible from the reference node
-   */
-  getVisibleNodes(maxNodes: number = 40): string[] {
-    // Always include the reference node
-    const result: string[] = [this.#referenceNodeId];
-
-    // Count the reference node
-    let nodesAdded = 1;
-
-    // Create a queue for breadth-first traversal
-    const queue: { nodeId: string; depth: number }[] = [{ nodeId: this.#referenceNodeId, depth: 0 }];
-
-    while (queue.length > 0 && nodesAdded < maxNodes) {
-      const { nodeId, depth } = queue.shift()!;
-
-      // Get all next nodes
-      const nextNodeIds = this.getNextNodeIds(nodeId);
-      for (const nextId of nextNodeIds) {
-        // Skip if node doesn't exist
-        if (!this.#nodes[nextId]) continue;
-
-        // Add to result
-        result.push(nextId);
-        nodesAdded++;
-
-        // Stop if we've reached the limit
-        if (nodesAdded >= maxNodes) break;
-
-        // Add to queue for further exploration
-        queue.push({ nodeId: nextId, depth: depth + 1 });
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Get the accumulated transform from the reference node to a target node
-   * @param toNodeId - Target node ID
-   * @returns The accumulated transform matrix or null if no path found
-   */
-  getAccumulatedTransform(toNodeId: string): DOMMatrix | null {
-    if (toNodeId === this.#referenceNodeId) {
-      return new DOMMatrix(); // Identity transform for self
-    }
-
-    // Use breadth-first search to find a path from reference to target
-    const visited = new Set<string>([this.#referenceNodeId]);
-    const queue: { nodeId: string; transform: DOMMatrix }[] = [
-      { nodeId: this.#referenceNodeId, transform: new DOMMatrix() },
-    ];
-
-    while (queue.length > 0) {
-      const { nodeId, transform } = queue.shift()!;
-
-      const edges = this.getEdgesFrom(nodeId);
-      for (const edge of edges) {
-        if (edge.target === toNodeId) {
-          // Found a path to target
-          return transform.multiply(edge.transform);
-        }
-
-        if (!visited.has(edge.target)) {
-          visited.add(edge.target);
-          queue.push({
-            nodeId: edge.target,
-            transform: transform.multiply(edge.transform),
-          });
-        }
-      }
-    }
-
-    // No path found
-    return null;
   }
 
   /**

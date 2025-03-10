@@ -874,6 +874,47 @@
         return Geometry.isScreenCoveredByRectangle(rect, transform, containerWidth, containerHeight);
       }
 
+      /**
+       * Determines whether a node should be culled based on its position and size
+       * @param {string} nodeId - The ID of the node
+       * @param {DOMMatrix} transform - The transform from reference node to this node
+       * @param {DOMMatrix} viewportTransform - The current viewport transform
+       * @returns {boolean} true if the node should be culled (invisible), false if visible
+       */
+      function nodeCullingCallback(nodeId, transform, viewportTransform) {
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const padding = 0.5; // Add 50% padding around viewport to account for nodes partially visible
+
+        // Combine viewport transform with the node's transform
+        const combinedTransform = viewportTransform.multiply(transform);
+
+        // Get the scale of the node
+        const scale = combinedTransform.a; // Assuming uniform scaling
+
+        // Calculate the node's position in viewport coordinates
+        const nodeX = containerWidth / 2 + combinedTransform.e;
+        const nodeY = containerHeight / 2 + combinedTransform.f;
+
+        // Calculate the scaled dimensions of the node
+        const scaledWidth = NODE_WIDTH * scale;
+        const scaledHeight = NODE_HEIGHT * scale;
+
+        // Define the extended viewport bounds with padding
+        const minVisibleX = -containerWidth * padding;
+        const maxVisibleX = containerWidth * (1 + padding);
+        const minVisibleY = -containerHeight * padding;
+        const maxVisibleY = containerHeight * (1 + padding);
+
+        // Check if node is outside the viewport - use a bounding box test
+        return !(
+          nodeX + scaledWidth / 2 >= minVisibleX &&
+          nodeX - scaledWidth / 2 <= maxVisibleX &&
+          nodeY + scaledHeight / 2 >= minVisibleY &&
+          nodeY - scaledHeight / 2 <= maxVisibleY
+        );
+      }
+
       // Function to update the DOM based on the current graph state
       function updateDOM() {
         // Get container dimensions for centering
@@ -893,12 +934,11 @@
           nodePool.set(key, element);
         });
 
-        // Process all visible nodes - implement viewport culling
+        // Process all visible nodes using the culling callback
         const visibleNodes = [];
-        const padding = 0.5; // Add 50% padding around viewport to account for nodes partially visible
 
-        // Get nodes from graph with transforms and apply culling
-        for (const nodeData of graph.getVisibleNodesWithTransforms(MAX_VISIBLE_NODES)) {
+        // Get nodes from graph with transforms using our culling callback
+        for (const nodeData of graph.getVisibleNodesWithTransforms(MAX_VISIBLE_NODES, nodeCullingCallback)) {
           const { nodeId, node, transform } = nodeData;
 
           // Combine viewport transform with the node's transform
@@ -911,34 +951,16 @@
           const nodeX = containerWidth / 2 + combinedTransform.e;
           const nodeY = containerHeight / 2 + combinedTransform.f;
 
-          // Calculate the scaled dimensions of the node
-          const scaledWidth = NODE_WIDTH * scale;
-          const scaledHeight = NODE_HEIGHT * scale;
-
-          // Define the extended viewport bounds with padding
-          const minVisibleX = -containerWidth * padding;
-          const maxVisibleX = containerWidth * (1 + padding);
-          const minVisibleY = -containerHeight * padding;
-          const maxVisibleY = containerHeight * (1 + padding);
-
-          // Check if node is visible or close to the viewport - use a bounding box test
-          if (
-            nodeX + scaledWidth / 2 >= minVisibleX &&
-            nodeX - scaledWidth / 2 <= maxVisibleX &&
-            nodeY + scaledHeight / 2 >= minVisibleY &&
-            nodeY - scaledHeight / 2 <= maxVisibleY
-          ) {
-            // Node is visible, add it to our visible nodes array
-            visibleNodes.push({
-              nodeId,
-              node,
-              transform,
-              combinedTransform,
-              nodeX,
-              nodeY,
-              scale,
-            });
-          }
+          // Add directly to our visible nodes array (culling already done by the graph)
+          visibleNodes.push({
+            nodeId,
+            node,
+            transform,
+            combinedTransform,
+            nodeX,
+            nodeY,
+            scale,
+          });
         }
 
         let instanceCounter = 0;
