@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DOM-based ZUI</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #f9f9f9;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      #info-container {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: white;
+        padding: 8px 10px;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        z-index: 2000;
+        max-width: 300px;
+        font-size: 12px;
+        line-height: 1.4;
+
+        & > div:first-child {
+          font-weight: bold;
+        }
+      }
+
+      #zui-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      .node {
+        position: absolute;
+        transform-origin: center;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-weight: bold;
+        color: white;
+        border: 2px solid black;
+        box-sizing: border-box;
+        user-select: none;
+        font-size: 24px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+      }
+
+      #debug-panel {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        background-color: rgba(255, 255, 255, 0.8);
+        padding: 8px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 12px;
+        z-index: 2000;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info-container">
+      <div>DOM-based Infinite ZUI</div>
+      <div>Zoom in/out forever using a <em>floating origin graph</em> with DOM elements.</div>
+      <br />
+      <div>Hold <kbd>shift</kbd> to zoom in, <kbd>alt+shift</kbd> to zoom out.</div>
+      <div id="reference-node-info">coordinate frame: nodeA</div>
+    </div>
+
+    <div id="debug-panel">
+      <div id="debug-info"></div>
+      <div id="visible-nodes"></div>
+    </div>
+
+    <div id="zui-container"></div>
+
+    <script type="module">
+      import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
+
+      // Define nodes as an array for our simple 3-node cycle
+      const nodesArray = [
+        {
+          id: 'nodeA',
+          data: {
+            color: 'red',
+            width: 200,
+            height: 150,
+          },
+        },
+        {
+          id: 'nodeB',
+          data: {
+            color: 'blue',
+            width: 200,
+            height: 150,
+          },
+        },
+        {
+          id: 'nodeC',
+          data: {
+            color: 'green',
+            width: 200,
+            height: 150,
+          },
+        },
+      ];
+
+      // Define edges as an array for our cycle A → B → C → A
+      // Each edge defines a transform from source to target
+      // The transform is applied when going from source to target
+      const edgesArray = [
+        {
+          source: 'nodeA',
+          target: 'nodeB',
+          // Position nodeB inside nodeA, scaled down
+          transform: new DOMMatrix().translate(0, 0).scale(0.5),
+        },
+        {
+          source: 'nodeB',
+          target: 'nodeC',
+          // Position nodeC inside nodeB, scaled down
+          transform: new DOMMatrix().translate(0, 0).scale(0.5),
+        },
+        {
+          source: 'nodeC',
+          target: 'nodeA',
+          // Position nodeA inside nodeC, scaled down (completing the cycle)
+          transform: new DOMMatrix().translate(0, 0).scale(0.5),
+        },
+      ];
+
+      const MAX_VISIBLE_NODES = 20;
+      const container = document.getElementById('zui-container');
+      const debugInfo = document.getElementById('debug-info');
+      const visibleNodesInfo = document.getElementById('visible-nodes');
+
+      // Create the floating origin graph with our nodes and edges
+      const graph = new FloatingOriginGraph(nodesArray, edgesArray, 'nodeA');
+
+      // Function to create a node element
+      function createNodeElement(nodeId, instanceId) {
+        const node = graph.nodes[nodeId];
+        if (!node) return null;
+
+        const nodeElement = document.createElement('div');
+        nodeElement.classList.add('node');
+        nodeElement.id = `node-${nodeId}-${instanceId}`;
+        nodeElement.dataset.nodeId = nodeId;
+        nodeElement.dataset.instanceId = instanceId;
+        nodeElement.style.width = `${node.data.width}px`;
+        nodeElement.style.height = `${node.data.height}px`;
+        nodeElement.style.backgroundColor = node.data.color;
+        nodeElement.textContent = nodeId;
+
+        return nodeElement;
+      }
+
+      // Define zoom threshold callbacks
+      function shouldZoomInToNextNode(graph, containerWidth, containerHeight, nextNodeId) {
+        const nextNode = graph.nodes[nextNodeId];
+        if (!nextNode) return false;
+
+        // Get the transform from reference node to next node
+        const nextNodeTransform = graph.getAccumulatedTransform(nextNodeId);
+        if (!nextNodeTransform) return false;
+
+        // Calculate effective transform from combined viewport and node transform
+        const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
+
+        // Get the node's dimensions
+        const nodeWidth = nextNode.data.width;
+        const nodeHeight = nextNode.data.height;
+
+        // Check if screen is completely covered by the node
+        return isScreenCoveredByRectangle(
+          -nodeWidth / 2,
+          -nodeHeight / 2,
+          nodeWidth,
+          nodeHeight,
+          combinedTransform,
+          containerWidth,
+          containerHeight,
+        );
+      }
+
+      function shouldZoomOutToPrevNode(graph, containerWidth, containerHeight, prevNodeId) {
+        const currentNode = graph.referenceNode;
+        if (!currentNode) return false;
+
+        // Get the node's dimensions
+        const nodeWidth = currentNode.data.width;
+        const nodeHeight = currentNode.data.height;
+
+        // For zooming out, we check if the current reference node no longer covers the screen
+        return !isScreenCoveredByRectangle(
+          -nodeWidth / 2,
+          -nodeHeight / 2,
+          nodeWidth,
+          nodeHeight,
+          graph.viewportTransform,
+          containerWidth,
+          containerHeight,
+        );
+      }
+
+      /**
+       * Checks if a rectangle completely covers the screen, even when transformed (rotated/scaled)
+       * @param rectX - The x coordinate of the top-left of the rectangle (in its own coordinate system)
+       * @param rectY - The y coordinate of the top-left of the rectangle (in its own coordinate system)
+       * @param width - The width of the rectangle
+       * @param height - The height of the rectangle
+       * @param transform - The transformation to apply to the rectangle
+       * @param containerWidth - The width of the container
+       * @param containerHeight - The height of the container
+       * @returns True if the rectangle completely covers the screen
+       */
+      function isScreenCoveredByRectangle(rectX, rectY, width, height, transform, containerWidth, containerHeight) {
+        // We'll check multiple points along the screen edges to see if they're all inside the transformed rectangle
+        // For better accuracy, we sample more points for larger screens
+        const numPointsToCheck = Math.max(5, Math.min(20, Math.floor(Math.max(containerWidth, containerHeight) / 50)));
+
+        // Create test points along the screen edges and interior
+        const testPoints = [];
+
+        // Add the four corners of the screen
+        testPoints.push({ x: 0, y: 0 }); // Top-left
+        testPoints.push({ x: containerWidth, y: 0 }); // Top-right
+        testPoints.push({ x: containerWidth, y: containerHeight }); // Bottom-right
+        testPoints.push({ x: 0, y: containerHeight }); // Bottom-left
+
+        // Add points along the edges of the screen
+        for (let i = 1; i < numPointsToCheck - 1; i++) {
+          const t = i / (numPointsToCheck - 1);
+          // Top edge
+          testPoints.push({ x: t * containerWidth, y: 0 });
+          // Right edge
+          testPoints.push({ x: containerWidth, y: t * containerHeight });
+          // Bottom edge
+          testPoints.push({ x: (1 - t) * containerWidth, y: containerHeight });
+          // Left edge
+          testPoints.push({ x: 0, y: (1 - t) * containerHeight });
+        }
+
+        // Add some interior points
+        for (let i = 1; i < numPointsToCheck - 1; i++) {
+          for (let j = 1; j < numPointsToCheck - 1; j++) {
+            const x = (i / (numPointsToCheck - 1)) * containerWidth;
+            const y = (j / (numPointsToCheck - 1)) * containerHeight;
+            testPoints.push({ x, y });
+          }
+        }
+
+        // Calculate the corners of the rectangle in its local coordinate system
+        const rectCorners = [
+          { x: rectX, y: rectY }, // Top-left
+          { x: rectX + width, y: rectY }, // Top-right
+          { x: rectX + width, y: rectY + height }, // Bottom-right
+          { x: rectX, y: rectY + height }, // Bottom-left
+        ];
+
+        // Transform the rectangle corners to screen space
+        const transformedRectCorners = rectCorners.map((corner) => {
+          const pt = new DOMPoint(corner.x, corner.y);
+          const transformedPt = pt.matrixTransform(transform);
+          return {
+            x: transformedPt.x + containerWidth / 2,
+            y: transformedPt.y + containerHeight / 2,
+          };
+        });
+
+        // Verify that all test points are inside the transformed rectangle
+        for (const point of testPoints) {
+          if (!isPointInPolygon(point, transformedRectCorners)) {
+            return false;
+          }
+        }
+
+        return true;
+      }
+
+      /**
+       * Checks if a point is inside a polygon using the ray casting algorithm
+       * @param point - The point to check
+       * @param polygon - Array of points forming the polygon
+       * @returns True if the point is inside the polygon
+       */
+      function isPointInPolygon(point, polygon) {
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+          const xi = polygon[i].x,
+            yi = polygon[i].y;
+          const xj = polygon[j].x,
+            yj = polygon[j].y;
+
+          const intersect = yi > point.y !== yj > point.y && point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
+          if (intersect) inside = !inside;
+        }
+        return inside;
+      }
+
+      // Function to update the DOM based on the current graph state
+      function updateDOM() {
+        // Get container dimensions for centering
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+
+        // Clear the container
+        container.innerHTML = '';
+
+        // Track visible nodes for debugging
+        const visibleNodeIds = [];
+
+        // Counter for generating unique instance IDs
+        let instanceCounter = 0;
+
+        // Process all visible nodes
+        for (const { nodeId, node, transform } of graph.getVisibleNodesWithTransforms(MAX_VISIBLE_NODES)) {
+          // Create a unique instance ID for this occurrence of the node
+          const instanceId = instanceCounter++;
+
+          // Create a new DOM element for this instance of the node
+          const nodeElement = createNodeElement(nodeId, instanceId);
+          if (!nodeElement) continue;
+
+          // Add to container
+          container.appendChild(nodeElement);
+
+          // Track for debugging
+          visibleNodeIds.push(`${nodeId}:${instanceId}`);
+
+          // Combine viewport transform with the node's transform
+          const combinedTransform = graph.viewportTransform.multiply(transform);
+
+          // Get the node's dimensions
+          const width = node.data.width;
+          const height = node.data.height;
+
+          // Calculate the position in the container
+          const translateX = containerWidth / 2 + combinedTransform.e;
+          const translateY = containerHeight / 2 + combinedTransform.f;
+
+          // Apply scale from the transform (assuming uniform scaling)
+          const scale = combinedTransform.a;
+
+          // Create a CSS transform
+          const cssTransform = `
+            translate(-50%, -50%)
+            translate(${translateX}px, ${translateY}px)
+            scale(${scale})
+          `;
+
+          // Apply the transform and show the node
+          nodeElement.style.transform = cssTransform;
+
+          // Highlight the reference node
+          if (nodeId === graph.referenceNodeId && transform.a === 1 && transform.d === 1) {
+            nodeElement.style.border = '4px solid yellow';
+            debugInfo.textContent = `Reference: ${nodeId}, Scale: ${scale.toFixed(2)}, Position: (${translateX.toFixed(0)}, ${translateY.toFixed(0)})`;
+          }
+        }
+
+        // Update visible nodes info
+        visibleNodesInfo.textContent = `Visible nodes: ${visibleNodeIds.join(', ')}`;
+
+        // Update reference node info display
+        document.getElementById('reference-node-info').textContent = `coordinate frame: ${graph.referenceNodeId}`;
+      }
+
+      // Handle window resizing
+      function handleResize() {
+        updateDOM();
+      }
+
+      // Pan handling
+      let isDragging = false;
+      let lastX = 0;
+      let lastY = 0;
+
+      // Add mouse position tracking
+      let currentMouseX = container.clientWidth / 2;
+      let currentMouseY = container.clientHeight / 2;
+
+      function setupEventListeners() {
+        // Mouse down for panning
+        container.addEventListener('mousedown', (e) => {
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          container.style.cursor = 'grabbing';
+        });
+
+        // Mouse move for panning and tracking
+        container.addEventListener('mousemove', (e) => {
+          currentMouseX = e.clientX;
+          currentMouseY = e.clientY;
+
+          if (isDragging) {
+            const dx = e.clientX - lastX;
+            const dy = e.clientY - lastY;
+
+            // Update viewport transform for panning
+            graph.pan(dx, dy);
+
+            lastX = e.clientX;
+            lastY = e.clientY;
+
+            updateDOM();
+          }
+        });
+
+        // Mouse up to end panning
+        window.addEventListener('mouseup', () => {
+          if (isDragging) {
+            isDragging = false;
+            container.style.cursor = 'default';
+          }
+        });
+
+        // Wheel for zooming
+        container.addEventListener(
+          'wheel',
+          (e) => {
+            e.preventDefault();
+
+            // Calculate zoom factor
+            const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
+
+            // Get mouse position relative to container center
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            const mouseX = e.clientX - containerWidth / 2;
+            const mouseY = e.clientY - containerHeight / 2;
+
+            // Apply zoom centered on mouse position and check if reference node changed
+            const referenceChanged = graph.zoomAtPoint(
+              mouseX,
+              mouseY,
+              zoomFactor,
+              containerWidth,
+              containerHeight,
+              shouldZoomInToNextNode,
+              shouldZoomOutToPrevNode,
+            );
+
+            updateDOM();
+          },
+          { passive: false },
+        );
+
+        // Keyboard events for continuous zooming
+        window.addEventListener('keydown', (e) => {
+          if (e.shiftKey && !e.altKey && !isShiftZooming) {
+            isShiftZooming = true;
+            startContinuousZoom(true);
+          } else if (e.shiftKey && e.altKey && !isAltShiftZooming) {
+            isAltShiftZooming = true;
+            startContinuousZoom(false);
+          }
+        });
+
+        window.addEventListener('keyup', (e) => {
+          if (!e.shiftKey || (isAltShiftZooming && !e.altKey)) {
+            isShiftZooming = false;
+            isAltShiftZooming = false;
+            stopContinuousZoom();
+          }
+        });
+
+        // Window resize handler
+        window.addEventListener('resize', handleResize);
+      }
+
+      // Continuous zoom variables and functions
+      let isShiftZooming = false;
+      let isAltShiftZooming = false;
+      let zoomAnimationId = null;
+      let isZooming = false;
+      let zoomDirection = 1;
+
+      function startContinuousZoom(zoomIn) {
+        stopContinuousZoom(); // Cancel any existing animation
+
+        isZooming = true;
+        zoomDirection = zoomIn ? 1 : -1;
+
+        // Start the animation loop
+        animateZoom();
+      }
+
+      function animateZoom() {
+        if (!isZooming) return;
+
+        // Calculate zoom factor based on direction
+        const zoomFactor = zoomDirection > 0 ? 1.02 : 0.98;
+
+        // Get mouse position relative to container center
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const mouseX = currentMouseX - containerWidth / 2;
+        const mouseY = currentMouseY - containerHeight / 2;
+
+        // Apply zoom centered on mouse position and check if reference node changed
+        const referenceChanged = graph.zoomAtPoint(
+          mouseX,
+          mouseY,
+          zoomFactor,
+          containerWidth,
+          containerHeight,
+          shouldZoomInToNextNode,
+          shouldZoomOutToPrevNode,
+        );
+
+        updateDOM();
+
+        // Continue the animation loop
+        zoomAnimationId = requestAnimationFrame(animateZoom);
+      }
+
+      function stopContinuousZoom() {
+        isZooming = false;
+        if (zoomAnimationId) {
+          cancelAnimationFrame(zoomAnimationId);
+          zoomAnimationId = null;
+        }
+      }
+
+      // Initialize and start the application
+      function init() {
+        setupEventListeners();
+        updateDOM();
+
+        // Log initial state
+        console.log('Initial graph state:', {
+          referenceNodeId: graph.referenceNodeId,
+          viewportTransform: graph.viewportTransform,
+          nodes: graph.nodesArray.length,
+        });
+      }
+
+      // Start the application
+      init();
+    </script>
+  </body>
+</html>
