@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSS Paint API</title>
+    <style>
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        background-color: #f0f0f0;
+      }
+
+      folk-shape {
+        border-radius: 10px;
+        background: paint(bauhaus);
+        --pattern-seed: 42;
+        --pattern-size: 10;
+        --pattern-detail: 10;
+        --pattern-color-1: #ff6b6b;
+        --pattern-color-2: #4ecdc4;
+        --pattern-color-3: #ffe66d;
+        --pattern-color-4: #1a535c;
+        --pattern-color-5: #f7fff7;
+      }
+    </style>
+  </head>
+  <body>
+    <folk-shape x="100" y="100" width="200" height="200"></folk-shape>
+    <folk-shape
+      x="350"
+      y="150"
+      width="200"
+      height="200"
+      style="
+        --pattern-color-1: #ff9f1c;
+        --pattern-color-2: #2ec4b6;
+        --pattern-color-3: #e71d36;
+        --pattern-color-4: #011627;
+        --pattern-seed: 123;
+      "
+    ></folk-shape>
+    <folk-shape
+      x="100"
+      y="350"
+      width="200"
+      height="200"
+      rotation="45"
+      style="
+        --pattern-seed: 789;
+        --pattern-color-1: #6d59f0;
+        --pattern-color-2: #7bc950;
+        --pattern-color-3: #384e77;
+        --pattern-color-4: #fb4d3d;
+      "
+    ></folk-shape>
+    <folk-shape
+      x="350"
+      y="350"
+      width="200"
+      height="200"
+      style="
+        --pattern-seed: 456;
+        --pattern-color-1: #845ec2;
+        --pattern-color-2: #d65db1;
+        --pattern-color-3: #ff6f91;
+        --pattern-color-4: #ff9671;
+        --pattern-color-5: #ffc75f;
+      "
+    ></folk-shape>
+
+    <script type="module">
+      import { CanIUse } from '@lib/CanIUse.ts';
+      import '@labs/standalone/folk-shape.ts';
+
+      function createRandom(seed) {
+        return {
+          next: function () {
+            seed = (seed * 9301 + 49297) % 233280;
+            return seed / 233280;
+          },
+          int: function (min, max) {
+            return Math.floor(this.next() * (max - min + 1)) + min;
+          },
+          pick: function (array) {
+            return array[this.int(0, array.length - 1)];
+          },
+        };
+      }
+
+      if (CanIUse.paintAPI()) {
+        CSS.paintWorklet.addModule(
+          URL.createObjectURL(
+            new Blob(
+              [
+                `
+                function createRandom(seed) {
+                  return {
+                    next: function() {
+                      seed = (seed * 9301 + 49297) % 233280;
+                      return seed / 233280;
+                    },
+                    int: function(min, max) {
+                      return Math.floor(this.next() * (max - min + 1)) + min;
+                    },
+                    pick: function(array) {
+                      return array[this.int(0, array.length - 1)];
+                    }
+                  };
+                }
+
+                registerPaint('bauhaus', class {
+                  static get inputProperties() {
+                    return [
+                      '--pattern-seed',
+                      '--pattern-size',
+                      '--pattern-detail',
+                      '--pattern-color-1',
+                      '--pattern-color-2',
+                      '--pattern-color-3',
+                      '--pattern-color-4',
+                      '--pattern-color-5'
+                    ];
+                  }
+                  
+                  paint(ctx, geometry, props) {
+                    const { width, height } = geometry;
+                    
+                    const patternSeed = parseInt(props.get('--pattern-seed').toString() || '42');
+                    const patternSize = parseInt(props.get('--pattern-size').toString() || '10');
+                    const patternDetail = parseInt(props.get('--pattern-detail').toString() || '10');
+                    
+                    const colors = [];
+                    for (let i = 1; i <= 5; i++) {
+                      const color = props.get('--pattern-color-' + i).toString();
+                      if (color) colors.push(color);
+                    }
+                    
+                    if (colors.length === 0) {
+                      colors.push('#FF6B6B', '#4ECDC4', '#FFE66D', '#1A535C', '#F7FFF7');
+                    }
+                    
+                    const random = createRandom(patternSeed);
+                    
+                    // Instead of scaling the context, we'll calculate cell size based on the pattern detail
+                    // and draw as many cells as can fit in the available space
+                    const baseSize = Math.min(width, height) / patternDetail;
+                    const cellSize = baseSize * patternSize / 10; // Scale cellSize based on patternSize
+                    
+                    // Calculate how many cells can fit in the width and height
+                    const cellsX = Math.ceil(width / cellSize);
+                    const cellsY = Math.ceil(height / cellSize);
+                    
+                    // Create a seeded random based on pattern seed to ensure consistent patterns
+                    const patternRandom = createRandom(patternSeed);
+                    
+                    // Pre-generate the pattern choices to ensure consistency
+                    const patternChoices = [];
+                    for (let y = 0; y < cellsY; y++) {
+                      patternChoices[y] = [];
+                      for (let x = 0; x < cellsX; x++) {
+                        patternChoices[y][x] = {
+                          color: patternRandom.int(0, colors.length - 1),
+                          shape: patternRandom.int(0, 3), // 0=circle, 1=arc, 2=rectangle, 3=triangle
+                          rotation: patternRandom.int(0, 2) // 0, 1, or 2 (multiplied by 90 for degrees)
+                        };
+                      }
+                    }
+                    
+                    // Draw each cell
+                    for (let y = 0; y < cellsY; y++) {
+                      for (let x = 0; x < cellsX; x++) {
+                        const choice = patternChoices[y][x];
+                        
+                        // Calculate cell center coordinates
+                        const cx = x * cellSize + cellSize / 2;
+                        const cy = y * cellSize + cellSize / 2;
+                        
+                        // Set fill color
+                        ctx.fillStyle = colors[choice.color];
+                        
+                        // Save context for rotation
+                        ctx.save();
+                        
+                        // Apply rotation around cell center
+                        const rotation = choice.rotation * 90; // 0, 90, or 180 degrees
+                        ctx.translate(cx, cy);
+                        ctx.rotate((rotation * Math.PI) / 180);
+                        ctx.translate(-cx, -cy);
+                        
+                        // Draw the appropriate shape
+                        const shapes = ['circle', 'arc', 'rectangle', 'triangle'];
+                        const shapeChoice = shapes[choice.shape];
+                        
+                        switch (shapeChoice) {
+                          case 'circle':
+                            this.drawCircle(ctx, cx, cy, cellSize / 2);
+                            break;
+                          case 'arc':
+                            this.drawArc(ctx, cx, cy, cellSize / 2);
+                            break;
+                          case 'rectangle':
+                            this.drawRectangle(ctx, cx, cy, cellSize);
+                            break;
+                          case 'triangle':
+                            this.drawTriangle(ctx, cx, cy, cellSize);
+                            break;
+                        }
+                        
+                        ctx.fill();
+                        ctx.restore();
+                      }
+                    }
+                  }
+                  
+                  drawCircle(ctx, cx, cy, radius) {
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                    ctx.closePath();
+                  }
+                  
+                  drawArc(ctx, cx, cy, radius) {
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radius, 0, Math.PI);
+                    ctx.closePath();
+                  }
+                  
+                  drawRectangle(ctx, cx, cy, size) {
+                    ctx.beginPath();
+                    ctx.rect(cx - size / 2, cy - size / 2, size, size);
+                    ctx.closePath();
+                  }
+                  
+                  drawTriangle(ctx, cx, cy, size) {
+                    const originX = cx - size / 2;
+                    const originY = cy - size / 2;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(originX, originY);
+                    ctx.lineTo(originX + size, originY + size);
+                    ctx.lineTo(originX, originY + size);
+                    ctx.closePath();
+                  }
+                });
+              `,
+              ],
+              { type: 'text/javascript' },
+            ),
+          ),
+        );
+      }
+    </script>
+  </body>
+</html>

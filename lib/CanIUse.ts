@@ -26,5 +26,14 @@ export class CanIUse {
     return enabled;
   }
 
+  static paintAPI() {
+    const enabled = typeof CSS !== 'undefined' && !!(CSS as any).paintWorklet;
+    if (!enabled) {
+      console.warn('CSS Paint API is not supported in this browser');
+      alert('CSS Paint API is not supported in this browser');
+    }
+    return enabled;
+  }
+
   static highlightAPI() {}
 }
