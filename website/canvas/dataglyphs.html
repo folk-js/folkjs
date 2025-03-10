@@ -3,151 +3,100 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dataglyphs</title>
+    <title>Dataglyphs Demo</title>
 
     <style>
       body {
-        font-family:
-          system-ui,
-          -apple-system,
-          BlinkMacSystemFont,
-          'Segoe UI',
-          Roboto,
-          Oxygen,
-          Ubuntu,
-          Cantarell,
-          'Open Sans',
-          'Helvetica Neue',
-          sans-serif;
-        line-height: 1.6;
-        color: #333;
-        max-width: 800px;
+        font-family: system-ui, sans-serif;
+        line-height: 1.5;
+        max-width: 650px;
         margin: 0 auto;
         padding: 2rem;
-      }
-
-      h1 {
-        font-size: 2.5rem;
-        margin-bottom: 1rem;
-        color: #2c3e50;
-      }
-
-      h2 {
-        font-size: 1.8rem;
-        margin-top: 2rem;
-        color: #34495e;
+        color: #333;
       }
 
       p {
-        margin-bottom: 1.2rem;
-        font-size: 1.1rem;
+        margin-bottom: 1rem;
       }
 
-      .example {
-        padding: 1.5rem;
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        margin: 1.5rem 0;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      h1 {
+        font-weight: normal;
+        font-size: 1.5rem;
+        margin-bottom: 1.5rem;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 0.5rem;
       }
 
       code {
-        font-family: 'Courier New', Courier, monospace;
-        background-color: #f1f1f1;
-        padding: 0.2em 0.4em;
+        font-family: monospace;
+        background: #f5f5f5;
+        padding: 0.1em 0.3em;
         border-radius: 3px;
-        font-size: 0.9em;
-      }
-
-      .prose {
-        font-size: 1.25rem;
-        line-height: 1.7;
-      }
-
-      .code-block {
-        background-color: #2c3e50;
-        color: #ecf0f1;
-        padding: 1rem;
-        border-radius: 5px;
-        overflow-x: auto;
-        margin: 1rem 0;
-        font-family: 'Courier New', Courier, monospace;
-      }
-
-      .highlight {
-        color: #e74c3c;
-      }
-
-      .trend-up {
-        color: #27ae60;
-      }
-      .trend-down {
-        color: #e74c3c;
-      }
-      .trend-neutral {
-        color: #f39c12;
       }
     </style>
   </head>
   <body>
-    <h1>Dataglyphs: Inline Data Visualization</h1>
+    <h1>PDP11/rsx-system/changelog.txt</h1>
 
     <p>
-      Dataglyphs are tiny visualizations embedded directly in the flow of text. They provide immediate visual context
-      without disrupting reading.
+      The kernel packet buffer allocation
+      <data-glyph data="12,10,18,15,22,25,22,20,18,25,30" width="3em"></data-glyph> continues to show irregular patterns
+      under heavy networked I/O. Recommend increasing default allocation to 128K. Memory usage appears stable
+      <data-glyph data="45,47,46,45,48,46,45" width="2.5em"></data-glyph> following last week's garbage collection
+      patches.
     </p>
 
-    <div class="example">
-      <h2>Basic Example</h2>
-      <p class="prose">
-        Stock prices have been fluctuating <data-glyph data="25,28,26,24,29,27,30" width="3em"></data-glyph> over the
-        past week, with trading volumes <data-glyph data="3,7,12,8,5,10,9" width="3em"></data-glyph> showing similar
-        volatility.
-      </p>
-    </div>
-
-    <div class="example">
-      <h2>Styling with Text</h2>
-      <p class="prose">
-        Revenue is
-        <span class="trend-up">trending upward <data-glyph data="10,14,12,18,20,25,30" width="3em"></data-glyph></span>,
-        while costs are
-        <span class="trend-down">decreasing <data-glyph data="30,28,25,20,22,18,15" width="3em"></data-glyph></span>,
-        and customer satisfaction remains
-        <span class="trend-neutral">consistent <data-glyph data="75,73,78,74,76,75,77" width="3em"></data-glyph></span>.
-      </p>
-    </div>
-
-    <div class="example">
-      <h2>Different Widths</h2>
-      <p class="prose">
-        Comparing narrow <data-glyph data="5,8,3,9,5,7,4" width="2em"></data-glyph> and wide
-        <data-glyph data="5,8,3,9,5,7,4" width="5em"></data-glyph> dataglyphs with the same data.
-      </p>
-    </div>
-
-    <div class="example">
-      <h2>Font Weight Integration</h2>
-      <p class="prose">
-        Regular text with <data-glyph data="5,8,3,9,5,7,4" width="3em"></data-glyph> and
-        <strong>bold text with <data-glyph data="5,8,3,9,5,7,4" width="3em"></data-glyph></strong> and
-        <span style="font-weight: 300">light text with <data-glyph data="5,8,3,9,5,7,4" width="3em"></data-glyph></span>
-        all adapt to match the text weight.
-      </p>
-    </div>
-
-    <div class="example">
-      <h2>Implementation</h2>
-      <div class="code-block">
-        &lt;p&gt; Sales have been trending &lt;data-glyph data="3,6,2,7,5,9,4" width="3em"&gt;&lt;/data-glyph&gt; over
-        the past week. &lt;/p&gt;
-      </div>
-    </div>
-
-    <h2>How It Works</h2>
     <p>
-      Dataglyphs automatically derive their height, color, and baseline from the surrounding text. They normalize the
-      data range automatically to fit within the visual space.
+      Syscall latency <data-glyph data="5,12,4,3,8,15,6,4,3" width="3em"></data-glyph> improved after removing the
+      redundant mutex locks. Thread contention still observed during peak loads. The compiler optimizations
+      <data-glyph data="1,2,4,8,16,32,36,37" width="4em"></data-glyph> have resulted in significant binary size
+      reduction.
+    </p>
+
+    <p>
+      Filesystem corruption reported at inode block <code>0xff8a2c</code> - possible race condition in the journaling
+      subsystem. Disk throughput <data-glyph data="50,52,48,55,60,45,65,50,70" width="3em"></data-glyph> shows sporadic
+      drops during heavy write operations.
+    </p>
+
+    <p>
+      TCP connection pooling behavior <data-glyph data="5,8,12,10,15,14,9,8,5,12,15" width="3.5em"></data-glyph> remains
+      inconsistent across multiple worker processes. Memory fragmentation
+      <data-glyph data="2,3,5,7,10,12,15,20,25" width="3em"></data-glyph> increases steadily over uptime duration,
+      suggesting a possible memory leak in the network stack.
+    </p>
+
+    <p>
+      IPC message queue depth <data-glyph data="6,8,12,15,22,18,12,8,10,14" width="3em"></data-glyph> during normal
+      operation, with spikes correlating to resource contention events. Consider implementing backpressure mechanisms to
+      regulate producer/consumer rates.
+    </p>
+
+    <p>
+      Stack trace analysis reveals recursion depth
+      <data-glyph data="3,5,7,12,9,6,4,15,10,5" width="3em"></data-glyph> in error handling paths. The signal handler's
+      invocation count <data-glyph data="0,0,1,0,2,5,1,0,3,0" width="3em"></data-glyph> indicates possible intermittent
+      hardware exceptions.
+    </p>
+
+    <p>
+      Cache hit ratio <data-glyph data="85,87,90,92,88,85,90,95,97,94" width="3em"></data-glyph> improved after page
+      size alignment adjustments. Average heap allocation time
+      <data-glyph data="12,10,8,6,5,5,6" width="3em"></data-glyph> (microseconds) shows positive trend following memory
+      allocator tuning.
+    </p>
+
+    <p>
+      Implemented <code>SIGBUS</code> trapping for unaligned memory access. Register usage optimization
+      <data-glyph data="12,18,22,25,28,30,25" width="3em"></data-glyph> in the inner loops yielded ~18% performance
+      boost in microbenchmarks. Consider backporting to stable branch.
+    </p>
+
+    <p>
+      Event loop latency <data-glyph data="2,4,3,5,8,4,3,5,6" width="3em"></data-glyph> (milliseconds) remains within
+      acceptable parameters. I/O wait states
+      <data-glyph data="10,15,12,18,25,15,20,10,8" width="3em"></data-glyph> still dominate total processing time during
+      disk-intensive operations.
     </p>
 
     <script type="module">
