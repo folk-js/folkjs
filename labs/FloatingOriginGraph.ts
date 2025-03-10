@@ -1,26 +1,28 @@
 /**
  * FloatingOriginGraph - A graph structure that supports infinite zooming
- * by changing the reference node.
+ * by changing the reference frame node. This allows for zoomable user interfaces that contain cycles,
+ * where there is no top or bottom to the zoom. Memory consumption is finite and you'll never hit floating point
+ * precision limits.
+
+ * @note This is a PoC, lots of optimisations are possible. Graph visibility culling, caching, etc.
+ * There's quite a bit of jank leftover from figuring this out, after we play with it some more we can do a cleanup pass.
+ * Also not sure yet what the best API is for this.
  */
 
-// Define the node structure - simplified, no longer contains connections or transform
 export interface Node<T = any> {
   id: string;
   data: T;
 }
 
-// Define the edge structure - connects nodes and contains transform information
 export interface Edge {
   source: string; // Source node ID
   target: string; // Target node ID
-  transform: DOMMatrix; // Transform to apply when going from source to target
+  transform: DOMMatrix;
 }
 
-// Define node and edge map types (for internal use)
-export type NodeMap<T = any> = Record<string, Node<T>>;
-export type EdgeMap = Record<string, Edge[]>; // Maps source node ID to an array of edges
+type NodeMap<T = any> = Record<string, Node<T>>;
+type EdgeMap = Record<string, Edge[]>;
 
-// Define zoom checking callback types
 export type ShouldZoomInCallback = <T>(
   graph: FloatingOriginGraph<T>,
   canvasWidth: number,
