@@ -800,7 +800,7 @@
       // First, build edges from links in node content
       const edgesArray = buildEdgesFromLinks();
 
-      const MAX_VISIBLE_NODES = 30; // Increased from 30 after optimizations
+      const MAX_VISIBLE_NODES = 60; // Increased from 30 after optimizations
       // Define size threshold for showing content (as a proportion of original size)
       const CONTENT_VISIBILITY_THRESHOLD = 0.05;
 
@@ -950,43 +950,100 @@
         const containerWidth = container.clientWidth;
         const containerHeight = container.clientHeight;
 
-        // Create a document fragment for batch DOM updates
-        const fragment = document.createDocumentFragment();
+        // Create a map to track which nodes we've processed
+        const processedNodes = new Map();
 
-        // Clear the container
-        container.innerHTML = '';
+        // Track existing DOM elements already in the container
+        const existingElements = Array.from(container.querySelectorAll('.node'));
+        const nodePool = new Map();
 
-        // Counter for generating unique instance IDs
-        let instanceCounter = 0;
+        // Put existing elements into the pool keyed by nodeId-instanceId
+        existingElements.forEach((element) => {
+          const key = `${element.dataset.nodeId}-${element.dataset.instanceId}`;
+          nodePool.set(key, element);
+        });
 
-        // Process all visible nodes
-        for (const { nodeId, node, transform } of graph.getVisibleNodesWithTransforms(MAX_VISIBLE_NODES)) {
-          // Create a unique instance ID for this occurrence of the node
-          const instanceId = instanceCounter++;
+        // Process all visible nodes - implement viewport culling
+        const visibleNodes = [];
+        const padding = 0.5; // Add 50% padding around viewport to account for nodes partially visible
 
-          // Create a new DOM element for this instance of the node
-          const nodeElement = createNodeElement(nodeId, instanceId);
-          if (!nodeElement) continue;
-
-          // Add to fragment (not directly to DOM)
-          fragment.appendChild(nodeElement);
+        // Get nodes from graph with transforms and apply culling
+        for (const nodeData of graph.getVisibleNodesWithTransforms(MAX_VISIBLE_NODES)) {
+          const { nodeId, node, transform } = nodeData;
 
           // Combine viewport transform with the node's transform
           const combinedTransform = graph.viewportTransform.multiply(transform);
 
-          // Calculate the position in the container
-          // In FloatingOriginGraph, nodes are positioned at the center of the container
-          const translateX = containerWidth / 2 + combinedTransform.e;
-          const translateY = containerHeight / 2 + combinedTransform.f;
-
-          // Extract scale and rotation from the transform
+          // Get the scale of the node
           const scale = combinedTransform.a; // Assuming uniform scaling
+
+          // Calculate the node's position in viewport coordinates
+          const nodeX = containerWidth / 2 + combinedTransform.e;
+          const nodeY = containerHeight / 2 + combinedTransform.f;
+
+          // Calculate the scaled dimensions of the node
+          const scaledWidth = NODE_WIDTH * scale;
+          const scaledHeight = NODE_HEIGHT * scale;
+
+          // Define the extended viewport bounds with padding
+          const minVisibleX = -containerWidth * padding;
+          const maxVisibleX = containerWidth * (1 + padding);
+          const minVisibleY = -containerHeight * padding;
+          const maxVisibleY = containerHeight * (1 + padding);
+
+          // Check if node is visible or close to the viewport - use a bounding box test
+          if (
+            nodeX + scaledWidth / 2 >= minVisibleX &&
+            nodeX - scaledWidth / 2 <= maxVisibleX &&
+            nodeY + scaledHeight / 2 >= minVisibleY &&
+            nodeY - scaledHeight / 2 <= maxVisibleY
+          ) {
+            // Node is visible, add it to our visible nodes array
+            visibleNodes.push({
+              nodeId,
+              node,
+              transform,
+              combinedTransform,
+              nodeX,
+              nodeY,
+              scale,
+            });
+          }
+        }
+
+        let instanceCounter = 0;
+
+        // Process all visible nodes
+        for (const { nodeId, node, transform, combinedTransform, nodeX, nodeY, scale } of visibleNodes) {
+          // Create a unique instance ID for this occurrence of the node
+          const instanceId = instanceCounter++;
+          const nodeKey = `${nodeId}-${instanceId}`;
+
+          // Track that we've processed this node
+          processedNodes.set(nodeKey, true);
+
+          // Get or create node element
+          let nodeElement;
+
+          // Check if we have this node in our pool already
+          if (nodePool.has(nodeKey)) {
+            nodeElement = nodePool.get(nodeKey);
+            // Remove from pool as we're using it
+            nodePool.delete(nodeKey);
+          } else {
+            // Create a new DOM element for this instance of the node
+            nodeElement = createNodeElement(nodeId, instanceId);
+            if (!nodeElement) continue;
+
+            // Add to container
+            container.appendChild(nodeElement);
+          }
 
           // Create a CSS transform
           // The order is important: first translate to center, then apply the transform
           const cssTransform = `
             translate(-50%, -50%)
-            translate(${translateX}px, ${translateY}px)
+            translate(${nodeX}px, ${nodeY}px)
             scale(${scale})
           `;
 
@@ -1022,8 +1079,10 @@
           }
         }
 
-        // Add all nodes to the container at once
-        container.appendChild(fragment);
+        // Remove nodes that are no longer visible
+        for (const [key, element] of nodePool.entries()) {
+          container.removeChild(element);
+        }
 
         // Update reference node info display if it exists
         const referenceNodeInfo = document.getElementById('reference-node-info');
