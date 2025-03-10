@@ -42,6 +42,7 @@ export type NodeCullingCallback = <T>(nodeId: string, transform: DOMMatrix, view
 export class FloatingOriginGraph<T = any> {
   #nodes: NodeMap<T>;
   #edges: EdgeMap; // Directed edges from source to target
+  #reverseEdges: EdgeMap; // Reverse index mapping target to source edges
   #referenceNodeId: string;
   #viewportTransform: DOMMatrix;
   #maxNodes = 30;
@@ -73,18 +74,36 @@ export class FloatingOriginGraph<T = any> {
 
     // Initialize the edges map, converting array to map if necessary
     this.#edges = {};
+    this.#reverseEdges = {};
+
     if (Array.isArray(edges)) {
       // Group edges by source
       for (const edge of edges) {
+        // Forward index
         if (!this.#edges[edge.source]) {
           this.#edges[edge.source] = [];
         }
         this.#edges[edge.source].push(edge);
+
+        // Reverse index
+        if (!this.#reverseEdges[edge.target]) {
+          this.#reverseEdges[edge.target] = [];
+        }
+        this.#reverseEdges[edge.target].push(edge);
       }
     } else {
       // Initialize from object, ensuring each node ID maps to an array
       for (const [sourceId, edgesArray] of Object.entries(edges)) {
-        this.#edges[sourceId] = Array.isArray(edgesArray) ? edgesArray : [edgesArray];
+        const edgesList = Array.isArray(edgesArray) ? edgesArray : [edgesArray];
+        this.#edges[sourceId] = edgesList;
+
+        // Populate reverse index
+        for (const edge of edgesList) {
+          if (!this.#reverseEdges[edge.target]) {
+            this.#reverseEdges[edge.target] = [];
+          }
+          this.#reverseEdges[edge.target].push(edge);
+        }
       }
     }
 
@@ -183,23 +202,13 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
-   * Helper method to get nodes that have edges pointing to the specified node
-   * @param nodeId - The target node ID
-   * @returns Array of source node IDs
+   * Get the IDs of all nodes that have edges to the specified node
+   * @param nodeId - The ID of the node to get previous nodes for
+   * @returns Array of node IDs that have edges to the specified node
    */
   getPrevNodeIds(nodeId: string): string[] {
-    const prevNodeIds: string[] = [];
-
-    for (const [sourceId, edges] of Object.entries(this.#edges)) {
-      for (const edge of edges) {
-        if (edge.target === nodeId) {
-          prevNodeIds.push(sourceId);
-          break; // Only add each source once
-        }
-      }
-    }
-
-    return prevNodeIds;
+    const edges = this.#reverseEdges[nodeId] || [];
+    return edges.map((edge) => edge.source);
   }
 
   /**
@@ -234,20 +243,12 @@ export class FloatingOriginGraph<T = any> {
   }
 
   /**
-   * Find all edges connecting to the target node
-   * @param targetNodeId - The target node ID
-   * @returns The edges targeting the node
+   * Find all edges that target a specific node
+   * @param targetNodeId - The ID of the target node
+   * @returns Array of edges targeting the specified node
    */
   findEdgesToNode(targetNodeId: string): Edge[] {
-    const result: Edge[] = [];
-    for (const edges of Object.values(this.#edges)) {
-      for (const edge of edges) {
-        if (edge.target === targetNodeId) {
-          result.push(edge);
-        }
-      }
-    }
-    return result;
+    return this.#reverseEdges[targetNodeId] || [];
   }
 
   /**
