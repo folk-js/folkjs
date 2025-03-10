@@ -45,6 +45,8 @@ export class FloatingOriginGraph<T = any> {
   #referenceNodeId: string;
   #viewportTransform: DOMMatrix;
   #maxNodes = 30;
+  #matrixPool: DOMMatrix[] = [];
+  #poolSize = 20; // Configurable pool size
 
   /**
    * Create a new FloatingOriginGraph
@@ -260,11 +262,15 @@ export class FloatingOriginGraph<T = any> {
     transform: DOMMatrix;
   }> {
     // Always yield the reference node first with identity transform
+    const identityMatrix = this.getMatrix(); // Get from pool instead of creating new
+
     yield {
       nodeId: this.#referenceNodeId,
       node: this.#nodes[this.#referenceNodeId],
-      transform: new DOMMatrix(), // Identity transform
+      transform: identityMatrix,
     };
+
+    this.releaseMatrix(identityMatrix); // Return to pool after use
 
     // Count of nodes yielded so far (including reference node)
     let nodesYielded = 1;
@@ -281,14 +287,7 @@ export class FloatingOriginGraph<T = any> {
     for (const edge of edges) {
       // Create a copy of the transform by extracting and reapplying its values
       const originalTransform = edge.transform;
-      const copiedTransform = new DOMMatrix([
-        originalTransform.a,
-        originalTransform.b,
-        originalTransform.c,
-        originalTransform.d,
-        originalTransform.e,
-        originalTransform.f,
-      ]);
+      const copiedTransform = this.copyMatrix(originalTransform);
 
       // Check if node should be culled using the callback
       const shouldCull = shouldCullNode ? shouldCullNode(edge.target, copiedTransform, this.#viewportTransform) : false;
@@ -318,14 +317,7 @@ export class FloatingOriginGraph<T = any> {
       const nextEdges = this.getEdgesFrom(nodeId);
       for (const edge of nextEdges) {
         // Copy the current transform and multiply by edge transform
-        const nextTransform = new DOMMatrix([
-          transform.a,
-          transform.b,
-          transform.c,
-          transform.d,
-          transform.e,
-          transform.f,
-        ]).multiply(edge.transform);
+        const nextTransform = this.copyMatrix(transform).multiply(edge.transform);
 
         // Check if node should be culled using the callback
         const shouldCull = shouldCullNode ? shouldCullNode(edge.target, nextTransform, this.#viewportTransform) : false;
@@ -402,11 +394,11 @@ export class FloatingOriginGraph<T = any> {
     shouldZoomOut?: ShouldZoomOutCallback,
   ): boolean {
     // Apply zoom transform centered on the specified point
-    const newTransform = new DOMMatrix()
-      .translate(centerX, centerY)
-      .scale(zoomFactor)
-      .translate(-centerX, -centerY)
-      .multiply(this.#viewportTransform);
+    const tempMatrix = this.getMatrix().translate(centerX, centerY).scale(zoomFactor).translate(-centerX, -centerY);
+
+    // Multiply with viewport transform
+    const newTransform = tempMatrix.multiply(this.#viewportTransform);
+    this.releaseMatrix(tempMatrix);
 
     this.#viewportTransform = newTransform;
 
@@ -590,10 +582,61 @@ export class FloatingOriginGraph<T = any> {
 
   /**
    * Helper function to invert a transform
-   * @param transform - The transform to invert
-   * @returns The inverted transform
+   * Optimized to avoid unnecessary matrix creation
    */
   private invertTransform(transform: DOMMatrix): DOMMatrix {
-    return transform.inverse();
+    // For 2D transforms, we can calculate inverse more efficiently than using the built-in inverse()
+    // which does full 4x4 matrix inversion
+    const det = transform.a * transform.d - transform.b * transform.c;
+
+    // Handle zero determinant case
+    if (Math.abs(det) < 1e-10) {
+      return transform.inverse(); // Fall back to default if singular
+    }
+
+    const result = this.getMatrix();
+
+    const invDet = 1 / det;
+    result.a = transform.d * invDet;
+    result.b = -transform.b * invDet;
+    result.c = -transform.c * invDet;
+    result.d = transform.a * invDet;
+    result.e = (transform.c * transform.f - transform.d * transform.e) * invDet;
+    result.f = (transform.b * transform.e - transform.a * transform.f) * invDet;
+
+    return result;
+  }
+
+  /**
+   * Get a matrix from the pool or create a new one
+   */
+  private getMatrix(): DOMMatrix {
+    return this.#matrixPool.pop() || new DOMMatrix();
+  }
+
+  /**
+   * Return a matrix to the pool
+   */
+  private releaseMatrix(matrix: DOMMatrix): void {
+    if (this.#matrixPool.length < this.#poolSize) {
+      // Reset the matrix to identity before returning to pool
+      matrix.a = matrix.d = 1;
+      matrix.b = matrix.c = matrix.e = matrix.f = 0;
+      this.#matrixPool.push(matrix);
+    }
+  }
+
+  /**
+   * Create a copy of a transform matrix efficiently
+   */
+  private copyMatrix(source: DOMMatrix): DOMMatrix {
+    const result = this.getMatrix();
+    result.a = source.a;
+    result.b = source.b;
+    result.c = source.c;
+    result.d = source.d;
+    result.e = source.e;
+    result.f = source.f;
+    return result;
   }
 }
