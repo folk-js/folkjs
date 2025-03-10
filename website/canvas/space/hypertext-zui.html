@@ -191,6 +191,7 @@
 
     <script type="module">
       import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
+      import { Geometry } from '@lib/Geometry.ts';
 
       // Define constants for node dimensions
       const NODE_WIDTH = 500 * 2;
@@ -861,87 +862,16 @@
        * @returns True if the rectangle completely covers the screen
        */
       function isScreenCoveredByRectangle(rectX, rectY, width, height, transform, containerWidth, containerHeight) {
-        // We'll check multiple points along the screen edges to see if they're all inside the transformed rectangle
-        // For better accuracy, we sample more points for larger screens
-        const numPointsToCheck = Math.max(5, Math.min(20, Math.floor(Math.max(containerWidth, containerHeight) / 50)));
+        // Create a Rectangle object for Geometry utility
+        const rect = {
+          x: rectX,
+          y: rectY,
+          width: width,
+          height: height,
+        };
 
-        // Create test points along the screen edges and interior
-        const testPoints = [];
-
-        // Add the four corners of the screen
-        testPoints.push({ x: 0, y: 0 }); // Top-left
-        testPoints.push({ x: containerWidth, y: 0 }); // Top-right
-        testPoints.push({ x: containerWidth, y: containerHeight }); // Bottom-right
-        testPoints.push({ x: 0, y: containerHeight }); // Bottom-left
-
-        // Add points along the edges of the screen
-        for (let i = 1; i < numPointsToCheck - 1; i++) {
-          const t = i / (numPointsToCheck - 1);
-          // Top edge
-          testPoints.push({ x: t * containerWidth, y: 0 });
-          // Right edge
-          testPoints.push({ x: containerWidth, y: t * containerHeight });
-          // Bottom edge
-          testPoints.push({ x: (1 - t) * containerWidth, y: containerHeight });
-          // Left edge
-          testPoints.push({ x: 0, y: (1 - t) * containerHeight });
-        }
-
-        // Add some interior points
-        for (let i = 1; i < numPointsToCheck - 1; i++) {
-          for (let j = 1; j < numPointsToCheck - 1; j++) {
-            const x = (i / (numPointsToCheck - 1)) * containerWidth;
-            const y = (j / (numPointsToCheck - 1)) * containerHeight;
-            testPoints.push({ x, y });
-          }
-        }
-
-        // Calculate the corners of the rectangle in its local coordinate system
-        const rectCorners = [
-          { x: rectX, y: rectY }, // Top-left
-          { x: rectX + width, y: rectY }, // Top-right
-          { x: rectX + width, y: rectY + height }, // Bottom-right
-          { x: rectX, y: rectY + height }, // Bottom-left
-        ];
-
-        // Transform the rectangle corners to screen space
-        const transformedRectCorners = rectCorners.map((corner) => {
-          const pt = new DOMPoint(corner.x, corner.y);
-          const transformedPt = pt.matrixTransform(transform);
-          return {
-            x: transformedPt.x + containerWidth / 2,
-            y: transformedPt.y + containerHeight / 2,
-          };
-        });
-
-        // Verify that all test points are inside the transformed rectangle
-        for (const point of testPoints) {
-          if (!isPointInPolygon(point, transformedRectCorners)) {
-            return false;
-          }
-        }
-
-        return true;
-      }
-
-      /**
-       * Checks if a point is inside a polygon using the ray casting algorithm
-       * @param point - The point to check
-       * @param polygon - Array of points forming the polygon
-       * @returns True if the point is inside the polygon
-       */
-      function isPointInPolygon(point, polygon) {
-        let inside = false;
-        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-          const xi = polygon[i].x,
-            yi = polygon[i].y;
-          const xj = polygon[j].x,
-            yj = polygon[j].y;
-
-          const intersect = yi > point.y !== yj > point.y && point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
-          if (intersect) inside = !inside;
-        }
-        return inside;
+        // Use the Geometry utility function
+        return Geometry.isScreenCoveredByRectangle(rect, transform, containerWidth, containerHeight);
       }
 
       // Function to update the DOM based on the current graph state
