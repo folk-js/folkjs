@@ -15,6 +15,10 @@ export class DataGlyph extends HTMLElement {
     return ['data', 'width', 'type'];
   }
 
+  // Baseline offset for font adjustment (percentage of em height)
+  // This determines the distance from the font baseline to the bottom of the container
+  private static readonly BASELINE_OFFSET: number = 0.25; // 25% of em height
+
   // Shadow DOM
   private shadow: ShadowRoot;
 
@@ -249,59 +253,174 @@ export class DataGlyph extends HTMLElement {
     const maxDepth = analysis.depth + 1;
 
     // Adjust margins to ensure all content stays within the 0-1 range
-    // Top margin - position root node slightly down from the top
-    const topMargin = 0.1;
+    const topMargin = 0.1; // Root node position
+    const bottomY = 0.9; // Leaf nodes position
+    const leftX = 0.05; // Left boundary
+    const rightX = 0.95; // Right boundary
 
-    // Adjusted bottom margin to prevent overflow
-    // Leave more bottom margin to ensure even deep trees stay within bounds
-    const bottomY = 0.9; // 20% margin from bottom
-
-    // Calculate vertical spacing based on available space and depth
-    // Ensure the spacing doesn't push nodes below the bottom margin
+    // Available dimensions
     const availableHeight = bottomY - topMargin;
-    const verticalSpacing = availableHeight / Math.max(1, maxDepth - 1);
+    const availableWidth = rightX - leftX;
 
-    // Use slightly less width for the tree to prevent horizontal overflow
-    const treeWidth = 1; // 7.5% margin on each side
+    // First, count total leaf nodes to determine spacing
+    const countLeafNodes = (node: any): number => {
+      if (!node) return 0;
+      if (!Array.isArray(node) || node.length <= 1) return 1;
 
-    // Function to recursively render tree nodes with proper spacing
-    const renderNode = (node: any, x: number, y: number, width: number, depth: number = 0, maxDepth: number) => {
+      const children = node.slice(1).filter(Boolean);
+      if (children.length === 0) return 1;
+
+      return children.reduce((sum, child) => sum + countLeafNodes(child), 0);
+    };
+
+    const totalLeaves = Math.max(1, countLeafNodes(this.treeData));
+
+    // Store all leaf nodes to position them later
+    const leafNodes: any[] = [];
+
+    // Collect all leaf nodes
+    const collectLeafNodes = (node: any) => {
       if (!node) return;
 
-      // Create the node using the drawPoint utility
-      this.drawPoint(x, y, true);
+      if (!Array.isArray(node) || node.length <= 1) {
+        leafNodes.push(node);
+        return;
+      }
 
-      if (Array.isArray(node)) {
-        const children = node.slice(1);
+      const children = node.slice(1).filter(Boolean);
+      if (children.length === 0) {
+        leafNodes.push(node);
+        return;
+      }
 
-        if (children.length > 0) {
-          // Calculate position for children based on depth
-          // For leaf nodes (at maxDepth-1), position at bottom
-          // For intermediate nodes, position proportionally
-          const childY =
-            depth === maxDepth - 2
-              ? bottomY // Position leaves at bottom
-              : y + verticalSpacing; // Regular spacing for other levels
+      children.forEach(collectLeafNodes);
+    };
 
-          // Distribute children evenly across the allocated width
-          const childWidth = width / children.length;
+    collectLeafNodes(this.treeData);
 
-          // Draw children
-          children.forEach((child, i) => {
-            const childX = x - width / 2 + childWidth * (i + 0.5);
+    // Pre-calculate node positions for the entire tree
+    const nodePositions: Map<string, { x: number; y: number }> = new Map();
+    const nodeIds: Map<any, string> = new Map();
+    let nextId = 0;
 
-            // Draw connecting line
-            this.drawLine(x, y, childX, childY, false);
+    // Position leaf nodes evenly across the available width
+    for (let i = 0; i < leafNodes.length; i++) {
+      const node = leafNodes[i];
+      const nodeId = `node_${nextId++}`;
+      nodeIds.set(node, nodeId);
 
-            // Recurse to child
-            renderNode(child, childX, childY, childWidth, depth + 1, maxDepth);
-          });
+      // Calculate position based on leaf index
+      let x: number;
+      if (leafNodes.length === 1) {
+        x = 0.5; // Center single leaf
+      } else {
+        // Distribute evenly from left to right
+        x = leftX + (availableWidth * i) / (leafNodes.length - 1);
+      }
+
+      nodePositions.set(nodeId, { x, y: bottomY });
+    }
+
+    // Calculate positions for non-leaf nodes
+    const calculateIntermediateNodePositions = (node: any, depth: number): string => {
+      if (!node) return '';
+
+      // If this node already has an ID (it's a leaf), return it
+      if (nodeIds.has(node)) {
+        return nodeIds.get(node) || '';
+      }
+
+      // Generate a unique ID for this node
+      const nodeId = `node_${nextId++}`;
+      nodeIds.set(node, nodeId);
+
+      // Calculate Y position based on depth
+      const y = depth === 0 ? topMargin : topMargin + (availableHeight * depth) / (maxDepth - 1);
+
+      // For non-array nodes or empty arrays at non-leaf levels
+      if (!Array.isArray(node) || node.length <= 1) {
+        nodePositions.set(nodeId, { x: 0.5, y });
+        return nodeId;
+      }
+
+      // Extract children
+      const children = node.slice(1).filter(Boolean);
+
+      // For nodes with no children
+      if (children.length === 0) {
+        nodePositions.set(nodeId, { x: 0.5, y });
+        return nodeId;
+      }
+
+      // Process children recursively
+      const childIds = children
+        .map((child) => calculateIntermediateNodePositions(child, depth + 1))
+        .filter((id) => id !== '');
+
+      // Calculate X position as average of children's X positions
+      if (childIds.length > 0) {
+        const childXs = childIds.map((id) => nodePositions.get(id)?.x || 0);
+        const avgX = childXs.reduce((sum, x) => sum + x, 0) / childXs.length;
+        nodePositions.set(nodeId, { x: avgX, y });
+      } else {
+        // Default position if no children data available
+        nodePositions.set(nodeId, { x: 0.5, y });
+      }
+
+      return nodeId;
+    };
+
+    // Start by positioning all leaf nodes, then work upward
+    if (this.treeData) {
+      // Special case for root
+      if (maxDepth === 1) {
+        const rootId = `node_${nextId++}`;
+        nodeIds.set(this.treeData, rootId);
+        nodePositions.set(rootId, { x: 0.5, y: topMargin });
+      } else {
+        calculateIntermediateNodePositions(this.treeData, 0);
+      }
+    }
+
+    // Second pass: Draw all nodes and connections
+    const drawnPositions = new Set<string>();
+
+    const drawNodeAndConnections = (node: any, parentId: string | null = null): void => {
+      if (!node) return;
+
+      const nodeId = nodeIds.get(node);
+      if (!nodeId || !nodePositions.has(nodeId)) return;
+
+      const { x, y } = nodePositions.get(nodeId)!;
+
+      // Create a position key to avoid duplicate nodes
+      const posKey = `${x.toFixed(4)},${y.toFixed(4)}`;
+
+      // Only draw if we haven't already drawn at this position
+      if (!drawnPositions.has(posKey)) {
+        drawnPositions.add(posKey);
+        this.drawPoint(x, y, true);
+      }
+
+      // Draw connection to parent
+      if (parentId) {
+        const parentPos = nodePositions.get(parentId);
+        if (parentPos) {
+          this.drawLine(parentPos.x, parentPos.y, x, y, false, 0.8);
         }
+      }
+
+      // Recursively process children
+      if (Array.isArray(node)) {
+        const children = node.slice(1).filter(Boolean);
+        children.forEach((child) => {
+          drawNodeAndConnections(child, nodeId);
+        });
       }
     };
 
-    // Render tree with root at the top and centered horizontally
-    renderNode(this.treeData, 0.5, topMargin, treeWidth, 0, maxDepth);
+    // Start drawing from the root
+    drawNodeAndConnections(this.treeData);
   }
 
   private analyzeTreeStructure(node: any): { depth: number; leafCount: number } {
@@ -366,9 +485,13 @@ export class DataGlyph extends HTMLElement {
 
   /**
    * Converts a relative y coordinate (0-1) to SVG y coordinate
+   * Applies baseline offset adjustment
    */
   private relativeToSvgY(y: number): number {
-    return y * 100;
+    // Apply the baseline offset adjustment
+    // This scales the y coordinate to stay within the visible part of the SVG
+    // which accounts for the baseline offset
+    return y * 100 * (1 - DataGlyph.BASELINE_OFFSET);
   }
 
   /**
@@ -378,9 +501,17 @@ export class DataGlyph extends HTMLElement {
    * @param x2 Ending X coordinate (0-1)
    * @param y2 Ending Y coordinate (0-1)
    * @param dotted Whether the line should be dotted (default: false)
+   * @param thicknessMultiplier Multiplier for stroke width (default: 1)
    * @returns The created SVG path element
    */
-  public drawLine(x1: number, y1: number, x2: number, y2: number, dotted: boolean = false): SVGPathElement {
+  public drawLine(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    dotted: boolean = false,
+    thicknessMultiplier: number = 1,
+  ): SVGPathElement {
     // Ensure drawing groups exist
     if (!this.lineGroup) {
       this.setupRender();
@@ -396,7 +527,7 @@ export class DataGlyph extends HTMLElement {
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     line.setAttribute('d', `M ${svgX1},${svgY1} L ${svgX2},${svgY2}`);
     line.setAttribute('stroke', 'currentColor');
-    line.setAttribute('stroke-width', this.getStrokeWidth().toString());
+    line.setAttribute('stroke-width', (this.getStrokeWidth() * thicknessMultiplier).toString());
     line.classList.add('link');
 
     // Apply dotted style if requested
@@ -414,9 +545,14 @@ export class DataGlyph extends HTMLElement {
    * Draws a path through multiple points using relative coordinates (0-1)
    * @param points Array of points with relative x, y coordinates (0-1)
    * @param dotted Whether the path should be dotted (default: false)
+   * @param thicknessMultiplier Multiplier for stroke width (default: 1)
    * @returns The created SVG path element
    */
-  public drawPath(points: { x: number; y: number }[], dotted: boolean = false): SVGPathElement {
+  public drawPath(
+    points: { x: number; y: number }[],
+    dotted: boolean = false,
+    thicknessMultiplier: number = 1,
+  ): SVGPathElement {
     // Ensure drawing groups exist
     if (!this.lineGroup) {
       this.setupRender();
@@ -440,7 +576,7 @@ export class DataGlyph extends HTMLElement {
     const pathData = `M ${svgPoints.map((p) => `${p.x},${p.y}`).join(' L ')}`;
     path.setAttribute('d', pathData);
     path.setAttribute('stroke', 'currentColor');
-    path.setAttribute('stroke-width', this.getStrokeWidth().toString());
+    path.setAttribute('stroke-width', (this.getStrokeWidth() * thicknessMultiplier).toString());
     path.classList.add('link');
 
     // Apply dotted style if requested
@@ -462,6 +598,7 @@ export class DataGlyph extends HTMLElement {
    * @returns The created SVG circle element
    */
   public drawPoint(x: number, y: number, filled: boolean = true): SVGCircleElement {
+    console.log('drawPoint', x, y);
     // Ensure drawing groups exist
     if (!this.dotGroup) {
       this.setupRender();
