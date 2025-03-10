@@ -41,6 +41,9 @@ export class DataGlyph extends HTMLElement {
     this.path.setAttribute('stroke-linecap', 'round');
     this.path.setAttribute('stroke-linejoin', 'round');
 
+    // Add vector-effect to maintain consistent stroke width regardless of scaling
+    this.path.setAttribute('vector-effect', 'non-scaling-stroke');
+
     // Create styles
     const style = document.createElement('style');
     style.textContent = `
@@ -127,14 +130,14 @@ export class DataGlyph extends HTMLElement {
       numericWeight = fontWeight === 'bold' ? 700 : 400; // Default to 400 for 'normal' or other values
     }
 
-    // Use a more generous base stroke width
-    const baseStrokeWidth = fontSize * 0.2; // 20% of font size
+    // Use a more refined stroke width calculation for gel pen appearance
+    const baseStrokeWidth = fontSize * 0.08; // Reduced from 0.15 to 0.08 (8% of font size)
 
-    // Scale based on font weight but ensure it's never too thin
-    const weightFactor = Math.max(1.0, numericWeight / 400);
+    // More subtle weight scaling
+    const weightFactor = 0.7 + (numericWeight / 400) * 0.5; // Ranges from ~0.9 for light to ~1.3 for bold
 
-    // Calculate stroke width with a minimum floor
-    const strokeWidth = Math.max(2, baseStrokeWidth * weightFactor);
+    // Calculate stroke width with a smaller minimum floor
+    const strokeWidth = Math.max(1.2, baseStrokeWidth * weightFactor);
 
     // Set the stroke width
     this.path.setAttribute('stroke-width', strokeWidth.toString());

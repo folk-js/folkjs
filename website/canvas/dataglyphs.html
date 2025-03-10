@@ -27,17 +27,66 @@
         padding-bottom: 0.5rem;
       }
 
+      h2 {
+        font-size: 1.2rem;
+        margin-top: 1.8rem;
+        margin-bottom: 0.8rem;
+        font-weight: 600;
+      }
+
+      h3 {
+        font-size: 1rem;
+        font-weight: normal;
+        margin-top: 1.2rem;
+        margin-bottom: 0.5rem;
+        color: #555;
+      }
+
       code {
         font-family: monospace;
         background: #f5f5f5;
         padding: 0.1em 0.3em;
         border-radius: 3px;
       }
+
+      .error {
+        color: #e53e3e;
+      }
+      .warning {
+        color: #dd6b20;
+      }
+      .success {
+        color: #38a169;
+      }
+      .info {
+        color: #3182ce;
+      }
+
+      .light {
+        font-weight: 300;
+      }
+      .normal {
+        font-weight: 400;
+      }
+      .medium {
+        font-weight: 500;
+      }
+      .bold {
+        font-weight: 700;
+      }
+
+      .mono {
+        font-family: 'Courier New', monospace;
+      }
+      .serif {
+        font-family: Georgia, serif;
+      }
     </style>
   </head>
   <body>
     <h1>PDP11/rsx-system/changelog.txt</h1>
 
+    <h2>Kernel Subsystem</h2>
     <p>
       The kernel packet buffer allocation
       <data-glyph data="12,10,18,15,22,25,22,20,18,25,30" width="3em"></data-glyph> continues to show irregular patterns
@@ -46,6 +95,13 @@
       patches.
     </p>
 
+    <p class="error bold">
+      Critical: Unexplained system crashes <data-glyph data="0,0,1,0,0,2,1,3,0,5" width="3em"></data-glyph> observed in
+      production environment. Root cause analysis <data-glyph data="10,15,25,40,60,80,90" width="3em"></data-glyph> is
+      still ongoing.
+    </p>
+
+    <h3>System Call Interface</h3>
     <p>
       Syscall latency <data-glyph data="5,12,4,3,8,15,6,4,3" width="3em"></data-glyph> improved after removing the
       redundant mutex locks. Thread contention still observed during peak loads. The compiler optimizations
@@ -53,12 +109,25 @@
       reduction.
     </p>
 
+    <p class="mono medium">
+      Stack overflow issues <data-glyph data="1,3,7,12,8,4,2,1" width="3em"></data-glyph>
+      reported in recursive algorithms. Check maximum depth settings.
+    </p>
+
+    <h2>Storage Management</h2>
     <p>
       Filesystem corruption reported at inode block <code>0xff8a2c</code> - possible race condition in the journaling
       subsystem. Disk throughput <data-glyph data="50,52,48,55,60,45,65,50,70" width="3em"></data-glyph> shows sporadic
       drops during heavy write operations.
     </p>
 
+    <p class="warning light">
+      Warning: RAID array rebuild progress
+      <data-glyph data="0,5,12,18,25,35,42,50,65,82,100" width="4em"></data-glyph> proceeding slower than expected. I/O
+      performance degraded during rebuild.
+    </p>
+
+    <h3>Network Protocol Stack</h3>
     <p>
       TCP connection pooling behavior <data-glyph data="5,8,12,10,15,14,9,8,5,12,15" width="3.5em"></data-glyph> remains
       inconsistent across multiple worker processes. Memory fragmentation
@@ -66,12 +135,19 @@
       suggesting a possible memory leak in the network stack.
     </p>
 
+    <p class="info serif">
+      UDP packet loss <data-glyph data="1,2,5,3,7,4,2,3,5" width="3em"></data-glyph> under high load conditions.
+      Consider implementing packet recovery mechanism.
+    </p>
+
+    <h2>Inter-Process Communication</h2>
     <p>
       IPC message queue depth <data-glyph data="6,8,12,15,22,18,12,8,10,14" width="3em"></data-glyph> during normal
       operation, with spikes correlating to resource contention events. Consider implementing backpressure mechanisms to
       regulate producer/consumer rates.
     </p>
 
+    <h3 class="mono">Debug Introspection</h3>
     <p>
       Stack trace analysis reveals recursion depth
       <data-glyph data="3,5,7,12,9,6,4,15,10,5" width="3em"></data-glyph> in error handling paths. The signal handler's
@@ -79,24 +155,31 @@
       hardware exceptions.
     </p>
 
-    <p>
-      Cache hit ratio <data-glyph data="85,87,90,92,88,85,90,95,97,94" width="3em"></data-glyph> improved after page
-      size alignment adjustments. Average heap allocation time
-      <data-glyph data="12,10,8,6,5,5,6" width="3em"></data-glyph> (microseconds) shows positive trend following memory
-      allocator tuning.
+    <p class="success bold">
+      Success: Cache hit ratio <data-glyph data="85,87,90,92,88,85,90,95,97,94" width="3em"></data-glyph> improved after
+      page size alignment adjustments. Average heap allocation time
+      <data-glyph data="12,10,8,6,5,5,6" width="3em"></data-glyph> (microseconds) shows positive trend.
     </p>
 
+    <h2 class="serif">Performance Optimization</h2>
     <p>
       Implemented <code>SIGBUS</code> trapping for unaligned memory access. Register usage optimization
       <data-glyph data="12,18,22,25,28,30,25" width="3em"></data-glyph> in the inner loops yielded ~18% performance
       boost in microbenchmarks. Consider backporting to stable branch.
     </p>
 
-    <p>
+    <h3 class="light">Event Processing</h3>
+    <p class="mono">
       Event loop latency <data-glyph data="2,4,3,5,8,4,3,5,6" width="3em"></data-glyph> (milliseconds) remains within
       acceptable parameters. I/O wait states
       <data-glyph data="10,15,12,18,25,15,20,10,8" width="3em"></data-glyph> still dominate total processing time during
       disk-intensive operations.
+    </p>
+
+    <p class="info medium">
+      Thread synchronization issues <data-glyph data="1,3,7,4,9,5,8,3" width="3em"></data-glyph>
+      resolved with improved locking strategy. Worker thread utilization
+      <data-glyph data="45,50,60,75,85,90,88" width="3em"></data-glyph> approaching optimal levels.
     </p>
 
     <script type="module">
