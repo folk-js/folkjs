@@ -111,6 +111,10 @@
     <script type="module">
       import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
 
+      // Define constants for node dimensions
+      const NODE_WIDTH = 500;
+      const NODE_HEIGHT = 300;
+
       /**
        * Helper function to convert relative bounds to a DOMMatrix transform
        *
@@ -119,10 +123,9 @@
        * node's coordinate system to the target node's coordinate system.
        *
        * @param {Object} bounds - The bounds object with x, y, width, height properties (all in relative units 0-1)
-       * @param {Object} sourceSize - The source node's size in pixels
        * @returns {DOMMatrix} - The resulting transform matrix
        */
-      function boundsToTransform(bounds, sourceSize) {
+      function boundsToTransform(bounds) {
         // Default values if not provided
         const x = bounds.x !== undefined ? bounds.x : 0.5;
         const y = bounds.y !== undefined ? bounds.y : 0.5;
@@ -136,16 +139,14 @@
         // Calculate the translation in source node's coordinate system
         // x and y are relative coordinates (0-1) within the source node
         // where (0,0) is top-left and (1,1) is bottom-right
-        const sourceWidth = sourceSize.width;
-        const sourceHeight = sourceSize.height;
 
         // Convert from relative coordinates (where 0.5,0.5 is center)
         // to the coordinate system of the source node (where 0,0 is center)
-        const translateX = (x - 0.5) * sourceWidth;
-        const translateY = (y - 0.5) * sourceHeight;
+        const translateX = (x - 0.5) * NODE_WIDTH;
+        const translateY = (y - 0.5) * NODE_HEIGHT;
 
         // Create and return the transform matrix
-        // The order is important: first scale, then translate
+        // The order is important: first translate, then scale
         return new DOMMatrix().translate(translateX, translateY).scale(scaleX, scaleY);
       }
 
@@ -155,8 +156,6 @@
           id: 'nodeA',
           data: {
             color: 'red',
-            width: 300,
-            height: 200,
             content: '<h3>Node A</h3><p>This is the main node</p>',
           },
         },
@@ -164,8 +163,6 @@
           id: 'nodeB',
           data: {
             color: 'blue',
-            width: 300,
-            height: 200,
             content: '<h3>Node B</h3><p>This is inside node A</p>',
           },
         },
@@ -173,8 +170,6 @@
           id: 'nodeC',
           data: {
             color: 'green',
-            width: 300,
-            height: 200,
             content: '<h3>Node C</h3><p>This is inside node B</p>',
           },
         },
@@ -204,11 +199,10 @@
 
       // Convert bounds to transforms
       const edgesArray = edgesWithBounds.map((edge) => {
-        const sourceNode = nodesArray.find((node) => node.id === edge.source);
         return {
           source: edge.source,
           target: edge.target,
-          transform: boundsToTransform(edge.bounds, sourceNode.data),
+          transform: boundsToTransform(edge.bounds),
         };
       });
 
@@ -230,8 +224,8 @@
         nodeElement.id = `node-${nodeId}-${instanceId}`;
         nodeElement.dataset.nodeId = nodeId;
         nodeElement.dataset.instanceId = instanceId;
-        nodeElement.style.width = `${node.data.width}px`;
-        nodeElement.style.height = `${node.data.height}px`;
+        nodeElement.style.width = `${NODE_WIDTH}px`;
+        nodeElement.style.height = `${NODE_HEIGHT}px`;
         nodeElement.style.backgroundColor = node.data.color;
 
         // Create a content container
@@ -261,16 +255,12 @@
         // Calculate effective transform from combined viewport and node transform
         const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
 
-        // Get the node's dimensions
-        const nodeWidth = nextNode.data.width;
-        const nodeHeight = nextNode.data.height;
-
         // Check if screen is completely covered by the node
         return isScreenCoveredByRectangle(
-          -nodeWidth / 2,
-          -nodeHeight / 2,
-          nodeWidth,
-          nodeHeight,
+          -NODE_WIDTH / 2,
+          -NODE_HEIGHT / 2,
+          NODE_WIDTH,
+          NODE_HEIGHT,
           combinedTransform,
           containerWidth,
           containerHeight,
@@ -281,16 +271,12 @@
         const currentNode = graph.referenceNode;
         if (!currentNode) return false;
 
-        // Get the node's dimensions
-        const nodeWidth = currentNode.data.width;
-        const nodeHeight = currentNode.data.height;
-
         // For zooming out, we check if the current reference node no longer covers the screen
         return !isScreenCoveredByRectangle(
-          -nodeWidth / 2,
-          -nodeHeight / 2,
-          nodeWidth,
-          nodeHeight,
+          -NODE_WIDTH / 2,
+          -NODE_HEIGHT / 2,
+          NODE_WIDTH,
+          NODE_HEIGHT,
           graph.viewportTransform,
           containerWidth,
           containerHeight,
@@ -424,10 +410,6 @@
 
           // Combine viewport transform with the node's transform
           const combinedTransform = graph.viewportTransform.multiply(transform);
-
-          // Get the node's dimensions
-          const width = node.data.width;
-          const height = node.data.height;
 
           // Calculate the position in the container
           // In FloatingOriginGraph, nodes are positioned at the center of the container
