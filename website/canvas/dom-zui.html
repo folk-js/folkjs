@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DOM-based ZUI</title>
+    <title>Hypertext ZUI</title>
     <style>
       html,
       body {
@@ -16,19 +16,22 @@
 
       #info-container {
         position: absolute;
-        top: 10px;
-        left: 10px;
-        background-color: white;
-        padding: 8px 10px;
-        border-radius: 4px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        bottom: 15px;
+        right: 15px;
+        background-color: rgba(255, 255, 255, 0.9);
+        padding: 12px 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
         z-index: 2000;
         max-width: 300px;
         font-size: 12px;
         line-height: 1.4;
+        backdrop-filter: blur(5px);
+        border: 1px solid rgba(220, 220, 220, 0.5);
 
         & > div:first-child {
           font-weight: bold;
+          margin-bottom: 5px;
         }
       }
 
@@ -49,16 +52,19 @@
         align-items: center;
         font-weight: bold;
         color: white;
-        border: 2px solid black;
+        border: none;
+        border-radius: 12px;
         box-sizing: border-box;
         user-select: none;
         font-size: 14px;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        box-shadow:
+          0 8px 25px rgba(0, 0, 0, 0.3),
+          0 2px 5px rgba(0, 0, 0, 0.2);
         overflow: hidden;
       }
 
       .node-content {
-        padding: 10px;
+        padding: 50px 25px 20px;
         width: 100%;
         height: 100%;
         overflow: hidden;
@@ -71,68 +77,72 @@
       }
 
       .node h3 {
-        margin: 0 0 5px 0;
-        font-size: 1.2em;
+        margin: 0 0 15px 0;
+        font-size: 1.5em;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+        width: 100%;
+        padding-bottom: 8px;
+        letter-spacing: 0.02em;
       }
 
       .node p {
-        margin: 0;
+        margin: 0 0 15px 0;
         font-size: 0.9em;
+        line-height: 1.5;
       }
 
-      /* Style for the node links */
+      /* Wiki-style formatting */
+      .wiki-content {
+        font-family: 'Georgia', serif;
+        font-size: 15px;
+      }
+
+      .wiki-content .summary {
+        font-style: italic;
+        border-left: 3px solid rgba(255, 255, 255, 0.5);
+        padding-left: 15px;
+        margin-bottom: 20px;
+        line-height: 1.6;
+        color: rgba(255, 255, 255, 0.95);
+      }
+
+      .wiki-content h4 {
+        margin: 20px 0 10px 0;
+        font-size: 1.1em;
+        font-family: 'Georgia', serif;
+        font-weight: bold;
+        letter-spacing: 0.02em;
+      }
+
+      /* Links should be invisible but maintain dimensions */
       .zui-link {
         display: block;
         position: relative;
         width: 100px;
         height: 60px; /* Maintain the same 5:3 aspect ratio */
-        margin: 20px 0;
-        background-color: rgba(255, 255, 255, 0.3);
-        border: 2px dashed rgba(0, 0, 0, 0.5);
-        border-radius: 8px;
-        text-decoration: none;
-        color: black;
-        font-weight: bold;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        font-size: 12px;
-        cursor: pointer;
-        z-index: 10;
+        margin: 10px 0;
+        opacity: 0;
+        background-color: transparent;
+        border: none;
+        cursor: default;
         /* Keep the same aspect ratio as nodes */
         aspect-ratio: 5/3;
-      }
-
-      .zui-link:hover {
-        background-color: rgba(255, 255, 255, 0.5);
-        transform: scale(1.05);
-      }
-
-      #debug-panel {
-        position: absolute;
-        bottom: 10px;
-        left: 10px;
-        background-color: rgba(255, 255, 255, 0.8);
-        padding: 8px;
-        border-radius: 4px;
-        font-family: monospace;
-        font-size: 12px;
-        z-index: 2000;
+        /* No interaction */
+        pointer-events: none;
+        /* Make invisible but keep space */
+        color: transparent;
+        font-size: 0;
+        text-decoration: none;
       }
     </style>
   </head>
   <body>
     <div id="info-container">
-      <div>DOM-based Infinite ZUI</div>
-      <div>Zoom in/out forever using a <em>floating origin graph</em> with DOM elements.</div>
+      <div>Infinite Knowledge Explorer</div>
+      <div>Navigate through an interconnected wiki using an infinite zoom interface.</div>
       <br />
-      <div>Hold <kbd>shift</kbd> to zoom in, <kbd>alt+shift</kbd> to zoom out.</div>
-      <div id="reference-node-info">coordinate frame: nodeA</div>
-    </div>
-
-    <div id="debug-panel">
-      <div id="debug-info"></div>
-      <div id="visible-nodes"></div>
+      <div> <kbd>Shift</kbd> to zoom in &nbsp;|&nbsp; <kbd>Alt+Shift</kbd> to zoom out </div>
+      <div id="reference-node-info" style="margin-top: 8px; font-style: italic">coordinate frame: nodeA</div>
     </div>
 
     <div id="zui-container"></div>
@@ -141,42 +151,69 @@
       import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
 
       // Define constants for node dimensions
-      const NODE_WIDTH = 500;
-      const NODE_HEIGHT = 300;
+      const NODE_WIDTH = 500 * 2;
+      const NODE_HEIGHT = 300 * 2;
 
       // Define nodes as an array for our simple 3-node cycle
       const nodesArray = [
         {
           id: 'nodeA',
           data: {
-            color: 'red',
+            color: 'rgba(70, 50, 100, 0.95)',
             content: `
-              <h3>Node A</h3>
-              <p>This is the main node with regular text content. It contains a link to Node B below.</p>
-              <a href="#" class="zui-link" data-target="nodeB">Link to Node B</a>
+              <div class="wiki-content">
+                <h3>Aetheria</h3>
+                <div class="summary">A floating city-state in the upper atmosphere of Jovian-9, renowned for its advanced teleportation technology and crystalline architecture.</div>
+                
+                <p>Established in 2387 as a scientific research outpost, Aetheria evolved into a sovereign technological haven within decades. The city hovers within the upper cloud layers of Jovian-9, protected by a powerful energy field that maintains Earth-like conditions within its boundaries.</p>
+                
+                <h4>Notable Locations</h4>
+                <p>The <strong>Central Nexus</strong> serves as both governmental center and research facility. The sprawling <strong>Cloudwalker District</strong> houses most of the 50,000 permanent residents, while the <strong>Prism Gardens</strong> feature exotic flora that thrive in the unusual atmospheric conditions.</p>
+                
+                <h4>Related Topics</h4>
+                <a href="#" class="zui-link" data-target="nodeB">Quantum Foldspace</a>
+                <a href="#" class="zui-link" data-target="nodeC">The Mist Sovereigns</a>
+              </div>
             `,
           },
         },
         {
           id: 'nodeB',
           data: {
-            color: 'blue',
+            color: 'rgba(40, 80, 120, 0.95)',
             content: `
-              <h3>Node B</h3>
-              <p>This node is embedded inside Node A. You can continue exploring by following the link to Node C.</p>
-              <a href="#" class="zui-link" data-target="nodeC">Link to Node C</a>
+              <div class="wiki-content">
+                <h3>Quantum Foldspace</h3>
+                <div class="summary">A theoretical dimension that enables near-instantaneous travel between distant points in conventional space-time through dimensional compression.</div>
+                
+                <p>First theorized by Dr. Elara Venn in 2412, Quantum Foldspace exists as a parallel dimension where conventional space-time is compressed to an extraordinary degree. Aetherian scientists developed the revolutionary Venn-Katori apparatus that creates temporary "folds" in reality, allowing matter to traverse vast distances through this dimensional shortcut.</p>
+                
+                <h4>Observable Properties</h4>
+                <p>To human observers, Foldspace appears as a luminescent azure void with visible ripples of energy that correspond to gravitational waves in normal space. Physical laws differ significantly from our universe, with time dilation effects making a typical journey feel subjectively instantaneous regardless of the objective distance covered.</p>
+                
+                <h4>Related Topics</h4>
+                <a href="#" class="zui-link" data-target="nodeC">The Mist Sovereigns</a>
+              </div>
             `,
           },
         },
         {
           id: 'nodeC',
           data: {
-            color: 'green',
+            color: 'rgba(60, 100, 70, 0.95)',
             content: `
-              <h3>Node C</h3>
-              <p>Now we're deep in the hierarchy. This node is contained within Node B.</p>
-              <p>The link below will take you back to Node A, creating an infinite loop!</p>
-              <a href="#" class="zui-link" data-target="nodeA">Back to Node A</a>
+              <div class="wiki-content">
+                <h3>The Mist Sovereigns</h3>
+                <div class="summary">A collective intelligence of sentient gaseous entities native to the lower atmosphere of Jovian-9, capable of manipulating atmospheric conditions with remarkable precision.</div>
+                
+                <p>First contacted in 2430, the Mist Sovereigns are a distributed consciousness composed of billions of specialized ionized gas particles that form a collective mind. They communicate through complex patterns of modulated electrical discharges that Aetherian linguists have only partially decoded. Individual Sovereigns can extend across hundreds of kilometers but typically condense to more localized forms when interacting with humans.</p>
+                
+                <h4>Relations with Aetheria</h4>
+                <p>Initial encounters were marked by hostility as the Sovereigns perceived Aetherian energy fields as an intrusion into their domain. After the Diplomatic Crisis of 2433, a cautious alliance was established. The Sovereigns now maintain a complex symbiotic relationship with Aetheria, exchanging their unparalleled knowledge of atmospheric science for limited access to foldspace technology, which they use to explore distant gas giants.</p>
+                
+                <h4>Related Topics</h4>
+                <a href="#" class="zui-link" data-target="nodeA">Aetheria</a>
+              </div>
             `,
           },
         },
@@ -207,31 +244,18 @@
           contentElement.textContent = nodeId;
         }
 
-        // Setup links to prevent default behavior and add visual indicators
+        // Setup links to prevent default behavior and remove visual indicators
         const links = contentElement.querySelectorAll('.zui-link');
         links.forEach((link) => {
           link.addEventListener('click', (e) => {
             e.preventDefault();
           });
 
-          // Add visual indicator showing which node this links to
+          // Just set the title without adding any visual elements
           const targetId = link.dataset.target;
           if (targetId) {
             link.title = `Links to: ${targetId}`;
-
-            // Add text label to show relationship
-            const linkLabel = document.createElement('div');
-            linkLabel.style.position = 'absolute';
-            linkLabel.style.bottom = '5px';
-            linkLabel.style.right = '5px';
-            linkLabel.style.fontSize = '9px';
-            linkLabel.style.color = '#000';
-            linkLabel.style.fontWeight = 'bold';
-            linkLabel.style.backgroundColor = 'rgba(255,255,255,0.7)';
-            linkLabel.style.padding = '1px 3px';
-            linkLabel.style.borderRadius = '3px';
-            linkLabel.textContent = `→ ${targetId}`;
-            link.appendChild(linkLabel);
+            // No longer adding any visual label
           }
         });
 
@@ -314,12 +338,9 @@
         // Force layout calculation
         void tempContainer.offsetHeight;
 
-        console.log('Building edges from links...');
-
         // Now find all links and calculate their positions
         for (const [nodeId, nodeElement] of Object.entries(renderedNodes)) {
           const links = nodeElement.querySelectorAll('.zui-link');
-          console.log(`Node ${nodeId} has ${links.length} links`);
 
           links.forEach((link) => {
             const targetId = link.dataset.target;
@@ -327,11 +348,9 @@
 
             // Get the link's position relative to its parent node
             const linkPosition = getLinkPosition(link, nodeElement);
-            console.log(`Link from ${nodeId} to ${targetId} at position:`, linkPosition);
 
             // Convert to a transform matrix
             const transform = linkPositionToTransform(linkPosition);
-            console.log(`Transform for ${nodeId} → ${targetId}:`, formatTransform(transform));
 
             // Add to edges array
             edges.push({
@@ -345,7 +364,6 @@
         // Clean up
         document.body.removeChild(tempContainer);
 
-        console.log(`Built ${edges.length} edges total`);
         return edges;
       }
 
@@ -354,8 +372,6 @@
 
       const MAX_VISIBLE_NODES = 20;
       const container = document.getElementById('zui-container');
-      const debugInfo = document.getElementById('debug-info');
-      const visibleNodesInfo = document.getElementById('visible-nodes');
 
       // Create the floating origin graph with our nodes and edges
       const graph = new FloatingOriginGraph(nodesArray, edgesArray, 'nodeA');
@@ -504,9 +520,6 @@
         // Clear the container
         container.innerHTML = '';
 
-        // Track visible nodes for debugging
-        const visibleNodeIds = [];
-
         // Counter for generating unique instance IDs
         let instanceCounter = 0;
 
@@ -521,9 +534,6 @@
 
           // Add to container
           container.appendChild(nodeElement);
-
-          // Track for debugging
-          visibleNodeIds.push(`${nodeId}:${instanceId}`);
 
           // Combine viewport transform with the node's transform
           const combinedTransform = graph.viewportTransform.multiply(transform);
@@ -546,16 +556,7 @@
 
           // Apply the transform
           nodeElement.style.transform = cssTransform;
-
-          // Highlight the reference node
-          if (nodeId === graph.referenceNodeId && transform.a === 1 && transform.d === 1) {
-            nodeElement.style.border = '4px solid yellow';
-            debugInfo.textContent = `Reference: ${nodeId}, ${formatTransform(combinedTransform)}`;
-          }
         }
-
-        // Update visible nodes info
-        visibleNodesInfo.textContent = `Visible nodes: ${visibleNodeIds.join(', ')}`;
 
         // Update reference node info display
         document.getElementById('reference-node-info').textContent = `coordinate frame: ${graph.referenceNodeId}`;
@@ -725,25 +726,10 @@
         }
       }
 
-      // Debug info formatter for transforms
-      function formatTransform(transform) {
-        return `[Scale: ${transform.a.toFixed(2)} × ${transform.d.toFixed(2)}, Pos: (${transform.e.toFixed(0)}, ${transform.f.toFixed(0)})]`;
-      }
-
       // Initialize and start the application
       function init() {
         setupEventListeners();
         updateDOM();
-
-        // Log initial state
-        console.log('Initial graph state:', {
-          referenceNodeId: graph.referenceNodeId,
-          viewportTransform: graph.viewportTransform,
-          nodes: graph.nodesArray.length,
-        });
-
-        // Log the edges with their transforms
-        console.log('Edges with their transforms:', edgesArray);
       }
 
       // Start the application
