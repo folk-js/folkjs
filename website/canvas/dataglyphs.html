@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dataglyphs</title>
+
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          Oxygen,
+          Ubuntu,
+          Cantarell,
+          'Open Sans',
+          'Helvetica Neue',
+          sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 2rem;
+      }
+
+      h1 {
+        font-size: 2.5rem;
+        margin-bottom: 1rem;
+        color: #2c3e50;
+      }
+
+      h2 {
+        font-size: 1.8rem;
+        margin-top: 2rem;
+        color: #34495e;
+      }
+
+      p {
+        margin-bottom: 1.2rem;
+        font-size: 1.1rem;
+      }
+
+      .example {
+        padding: 1.5rem;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        margin: 1.5rem 0;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      }
+
+      code {
+        font-family: 'Courier New', Courier, monospace;
+        background-color: #f1f1f1;
+        padding: 0.2em 0.4em;
+        border-radius: 3px;
+        font-size: 0.9em;
+      }
+
+      .prose {
+        font-size: 1.25rem;
+        line-height: 1.7;
+      }
+
+      .code-block {
+        background-color: #2c3e50;
+        color: #ecf0f1;
+        padding: 1rem;
+        border-radius: 5px;
+        overflow-x: auto;
+        margin: 1rem 0;
+        font-family: 'Courier New', Courier, monospace;
+      }
+
+      .highlight {
+        color: #e74c3c;
+      }
+
+      .trend-up {
+        color: #27ae60;
+      }
+      .trend-down {
+        color: #e74c3c;
+      }
+      .trend-neutral {
+        color: #f39c12;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Dataglyphs: Inline Data Visualization</h1>
+
+    <p>
+      Dataglyphs are tiny visualizations embedded directly in the flow of text. They provide immediate visual context
+      without disrupting reading.
+    </p>
+
+    <div class="example">
+      <h2>Basic Example</h2>
+      <p class="prose">
+        Stock prices have been fluctuating <data-glyph data="25,28,26,24,29,27,30" width="3em"></data-glyph> over the
+        past week, with trading volumes <data-glyph data="3,7,12,8,5,10,9" width="3em"></data-glyph> showing similar
+        volatility.
+      </p>
+    </div>
+
+    <div class="example">
+      <h2>Styling with Text</h2>
+      <p class="prose">
+        Revenue is
+        <span class="trend-up">trending upward <data-glyph data="10,14,12,18,20,25,30" width="3em"></data-glyph></span>,
+        while costs are
+        <span class="trend-down">decreasing <data-glyph data="30,28,25,20,22,18,15" width="3em"></data-glyph></span>,
+        and customer satisfaction remains
+        <span class="trend-neutral">consistent <data-glyph data="75,73,78,74,76,75,77" width="3em"></data-glyph></span>.
+      </p>
+    </div>
+
+    <div class="example">
+      <h2>Different Widths</h2>
+      <p class="prose">
+        Comparing narrow <data-glyph data="5,8,3,9,5,7,4" width="2em"></data-glyph> and wide
+        <data-glyph data="5,8,3,9,5,7,4" width="5em"></data-glyph> dataglyphs with the same data.
+      </p>
+    </div>
+
+    <div class="example">
+      <h2>Font Weight Integration</h2>
+      <p class="prose">
+        Regular text with <data-glyph data="5,8,3,9,5,7,4" width="3em"></data-glyph> and
+        <strong>bold text with <data-glyph data="5,8,3,9,5,7,4" width="3em"></data-glyph></strong> and
+        <span style="font-weight: 300">light text with <data-glyph data="5,8,3,9,5,7,4" width="3em"></data-glyph></span>
+        all adapt to match the text weight.
+      </p>
+    </div>
+
+    <div class="example">
+      <h2>Implementation</h2>
+      <div class="code-block">
+        &lt;p&gt; Sales have been trending &lt;data-glyph data="3,6,2,7,5,9,4" width="3em"&gt;&lt;/data-glyph&gt; over
+        the past week. &lt;/p&gt;
+      </div>
+    </div>
+
+    <h2>How It Works</h2>
+    <p>
+      Dataglyphs automatically derive their height, color, and baseline from the surrounding text. They normalize the
+      data range automatically to fit within the visual space.
+    </p>
+
+    <script type="module">
+      import { DataGlyph } from '@labs/data-glyph.ts';
+    </script>
+  </body>
+</html>
