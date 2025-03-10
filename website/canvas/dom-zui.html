@@ -149,14 +149,28 @@
 
       .node-title {
         position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 1.2em;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 11em;
+        font-weight: bold;
         color: white;
         text-align: center;
-        padding: 5px;
+        padding: 20px;
+        box-sizing: border-box;
         pointer-events: none;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+        overflow: hidden;
+        word-wrap: break-word;
+        word-break: break-word;
+        hyphens: auto;
+        max-height: 100%;
+        background: rgba(0, 0, 0, 0.15);
+        border-radius: 12px;
       }
     </style>
   </head>
@@ -190,6 +204,7 @@
         {
           id: 'nodeA',
           data: {
+            title: 'Aetheria',
             color: 'rgb(70, 50, 100)',
             content: `
               <div class="wiki-content">
@@ -214,6 +229,7 @@
         {
           id: 'nodeB',
           data: {
+            title: 'Quantum Foldspace',
             color: 'rgb(40, 80, 120)',
             content: `
               <div class="wiki-content">
@@ -237,6 +253,7 @@
         {
           id: 'nodeC',
           data: {
+            title: 'The Mist Sovereigns',
             color: 'rgb(60, 100, 70)',
             content: `
               <div class="wiki-content">
@@ -257,6 +274,7 @@
         {
           id: 'nodeD',
           data: {
+            title: 'Jovian-9',
             color: 'rgb(120, 60, 40)',
             content: `
               <div class="wiki-content">
@@ -280,6 +298,7 @@
         {
           id: 'nodeE',
           data: {
+            title: 'Central Nexus',
             color: 'rgb(100, 30, 100)',
             content: `
               <div class="wiki-content">
@@ -300,6 +319,7 @@
         {
           id: 'nodeF',
           data: {
+            title: 'Crystalline Architecture',
             color: 'rgb(140, 140, 180)',
             content: `
               <div class="wiki-content">
@@ -320,6 +340,7 @@
         {
           id: 'nodeG',
           data: {
+            title: 'The Atmospheric Council',
             color: 'rgb(90, 110, 130)',
             content: `
               <div class="wiki-content">
@@ -340,6 +361,7 @@
         {
           id: 'nodeH',
           data: {
+            title: 'Dr. Elara Venn',
             color: 'rgb(160, 120, 40)',
             content: `
               <div class="wiki-content">
@@ -360,6 +382,7 @@
         {
           id: 'nodeI',
           data: {
+            title: 'Temporal Communications',
             color: 'rgb(60, 150, 160)',
             content: `
               <div class="wiki-content">
@@ -380,6 +403,7 @@
         {
           id: 'nodeJ',
           data: {
+            title: 'Quantum Echolocation',
             color: 'rgb(90, 50, 140)',
             content: `
               <div class="wiki-content">
@@ -400,6 +424,7 @@
         {
           id: 'nodeK',
           data: {
+            title: 'Storm Poetry',
             color: 'rgb(130, 90, 50)',
             content: `
               <div class="wiki-content">
@@ -420,6 +445,7 @@
         {
           id: 'nodeL',
           data: {
+            title: 'Galileo Research Station',
             color: 'rgb(70, 100, 120)',
             content: `
               <div class="wiki-content">
@@ -440,6 +466,7 @@
         {
           id: 'nodeM',
           data: {
+            title: 'Sarai Nimura',
             color: 'rgb(150, 80, 100)',
             content: `
               <div class="wiki-content">
@@ -460,6 +487,7 @@
         {
           id: 'nodeN',
           data: {
+            title: 'Suspended Gardens',
             color: 'rgb(60, 130, 70)',
             content: `
               <div class="wiki-content">
@@ -480,6 +508,7 @@
         {
           id: 'nodeO',
           data: {
+            title: 'Takashi Moreau',
             color: 'rgb(110, 70, 90)',
             content: `
               <div class="wiki-content">
@@ -500,6 +529,7 @@
         {
           id: 'nodeP',
           data: {
+            title: 'Earth Temporal Regulations Commission',
             color: 'rgb(30, 100, 130)',
             content: `
               <div class="wiki-content">
@@ -520,6 +550,7 @@
         {
           id: 'nodeQ',
           data: {
+            title: 'Aria Xiang',
             color: 'rgb(180, 120, 60)',
             content: `
               <div class="wiki-content">
@@ -768,7 +799,7 @@
       // First, build edges from links in node content
       const edgesArray = buildEdgesFromLinks();
 
-      const MAX_VISIBLE_NODES = 60; // Increased from 30 after optimizations
+      const MAX_VISIBLE_NODES = 30; // Increased from 30 after optimizations
       // Define size threshold for showing content (as a proportion of original size)
       const CONTENT_VISIBILITY_THRESHOLD = 0.05;
 
@@ -968,17 +999,14 @@
             contentElement.classList.add('content-hidden');
             contentElement.classList.remove('content-visible');
 
-            // Optionally show just the title for medium-sized nodes
-            if (scale > CONTENT_VISIBILITY_THRESHOLD * 0.5) {
-              // Check if title element already exists
-              let titleElement = nodeElement.querySelector('.node-title');
+            // Check if title element already exists
+            let titleElement = nodeElement.querySelector('.node-title');
 
-              if (!titleElement) {
-                titleElement = document.createElement('div');
-                titleElement.classList.add('node-title');
-                titleElement.textContent = node.data.content.match(/<h3>(.*?)<\/h3>/)?.[1] || nodeId;
-                nodeElement.appendChild(titleElement);
-              }
+            if (!titleElement) {
+              titleElement = document.createElement('div');
+              titleElement.classList.add('node-title');
+              titleElement.textContent = node.data.title || nodeId;
+              nodeElement.appendChild(titleElement);
             }
           } else {
             // Node is large enough, ensure content is visible
