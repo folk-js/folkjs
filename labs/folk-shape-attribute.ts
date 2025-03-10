@@ -49,17 +49,17 @@ export class FolkShapeAttribute extends CustomAttribute {
 
       [folk-shape*='x:'][folk-shape*='y:'] {
         position: absolute;
-        left: var(--folk-x);
-        top: var(--folk-y);
+        left: var(--folk-x) !important;
+        top: var(--folk-y) !important;
         margin: 0;
       }
 
       [folk-shape*='width:'] {
-        width: var(--folk-width);
+        width: var(--folk-width) !important;
       }
 
       [folk-shape*='height:'] {
-        height: var(--folk-height);
+        height: var(--folk-height) !important;
       }
     }
   `;
@@ -103,12 +103,12 @@ export class FolkShapeAttribute extends CustomAttribute {
     if (value === this.#autoPosition) return;
 
     this.#autoPosition = value;
-
     if (this.#autoPosition) {
       const el = this.ownerElement as HTMLElement;
       el.style.display = '';
       this.#previousRect.x = this.#rect.x;
       this.#previousRect.y = this.#rect.y;
+      // this is broken, we need update the attribute value and relayout before we can apply these values
       this.#rect.x = el.offsetLeft;
       this.#rect.y = el.offsetTop;
 
@@ -390,7 +390,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     el.style.removeProperty('--folk-rotation');
   }
 
-  handleEvent(event: Event) {
+  handleEvent(event: FocusEvent) {
     // If someone is tabbing backwards and hits an element with a shadow DOM, we cant tell the difference between is that element is focused of if something in it is.
     if (event.type === 'focus') {
       // this is a hack until we observe the position changing
@@ -400,7 +400,7 @@ export class FolkShapeAttribute extends CustomAttribute {
         this.#rect.y = el.offsetTop;
       }
       this.#shapeOverlay.open(this);
-    } else if (event.type === 'blur') {
+    } else if (event.type === 'blur' && event.relatedTarget !== this.#shapeOverlay) {
       this.#shapeOverlay.close();
     }
   }

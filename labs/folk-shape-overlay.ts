@@ -301,7 +301,6 @@ export class FolkShapeOverlay extends FolkElement {
       if (event.relatedTarget !== this.shape?.ownerElement) {
         this.#spatialTabMode = false;
         this.close();
-        console.log(this.#shape);
       }
       return;
     }
