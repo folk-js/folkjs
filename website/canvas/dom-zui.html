@@ -52,8 +52,31 @@
         border: 2px solid black;
         box-sizing: border-box;
         user-select: none;
-        font-size: 24px;
+        font-size: 14px;
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        overflow: hidden;
+      }
+
+      .node-content {
+        padding: 10px;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+      }
+
+      .node h3 {
+        margin: 0 0 5px 0;
+        font-size: 1.2em;
+      }
+
+      .node p {
+        margin: 0;
+        font-size: 0.9em;
       }
 
       #debug-panel {
@@ -88,57 +111,106 @@
     <script type="module">
       import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
 
+      /**
+       * Helper function to convert relative bounds to a DOMMatrix transform
+       *
+       * In FloatingOriginGraph, transforms are applied from the center of the source node
+       * to the center of the target node. The transform defines how to go from the source
+       * node's coordinate system to the target node's coordinate system.
+       *
+       * @param {Object} bounds - The bounds object with x, y, width, height properties (all in relative units 0-1)
+       * @param {Object} sourceSize - The source node's size in pixels
+       * @returns {DOMMatrix} - The resulting transform matrix
+       */
+      function boundsToTransform(bounds, sourceSize) {
+        // Default values if not provided
+        const x = bounds.x !== undefined ? bounds.x : 0.5;
+        const y = bounds.y !== undefined ? bounds.y : 0.5;
+        const width = bounds.width !== undefined ? bounds.width : 1;
+        const height = bounds.height !== undefined ? bounds.height : 1;
+
+        // Calculate the scale factors
+        const scaleX = width;
+        const scaleY = height;
+
+        // Calculate the translation in source node's coordinate system
+        // x and y are relative coordinates (0-1) within the source node
+        // where (0,0) is top-left and (1,1) is bottom-right
+        const sourceWidth = sourceSize.width;
+        const sourceHeight = sourceSize.height;
+
+        // Convert from relative coordinates (where 0.5,0.5 is center)
+        // to the coordinate system of the source node (where 0,0 is center)
+        const translateX = (x - 0.5) * sourceWidth;
+        const translateY = (y - 0.5) * sourceHeight;
+
+        // Create and return the transform matrix
+        // The order is important: first scale, then translate
+        return new DOMMatrix().translate(translateX, translateY).scale(scaleX, scaleY);
+      }
+
       // Define nodes as an array for our simple 3-node cycle
       const nodesArray = [
         {
           id: 'nodeA',
           data: {
             color: 'red',
-            width: 200,
-            height: 150,
+            width: 300,
+            height: 200,
+            content: '<h3>Node A</h3><p>This is the main node</p>',
           },
         },
         {
           id: 'nodeB',
           data: {
             color: 'blue',
-            width: 200,
-            height: 150,
+            width: 300,
+            height: 200,
+            content: '<h3>Node B</h3><p>This is inside node A</p>',
           },
         },
         {
           id: 'nodeC',
           data: {
             color: 'green',
-            width: 200,
-            height: 150,
+            width: 300,
+            height: 200,
+            content: '<h3>Node C</h3><p>This is inside node B</p>',
           },
         },
       ];
 
-      // Define edges as an array for our cycle A → B → C → A
-      // Each edge defines a transform from source to target
-      // The transform is applied when going from source to target
-      const edgesArray = [
+      // Define edges with relative bounds
+      const edgesWithBounds = [
         {
           source: 'nodeA',
           target: 'nodeB',
-          // Position nodeB inside nodeA, scaled down
-          transform: new DOMMatrix().translate(0, 0).scale(0.5),
+          // Position nodeB in the bottom-right quadrant of nodeA
+          bounds: { x: 0.75, y: 0.75, width: 0.5, height: 0.5 },
         },
         {
           source: 'nodeB',
           target: 'nodeC',
-          // Position nodeC inside nodeB, scaled down
-          transform: new DOMMatrix().translate(0, 0).scale(0.5),
+          // Position nodeC in the top-left quadrant of nodeB
+          bounds: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 },
         },
         {
           source: 'nodeC',
           target: 'nodeA',
-          // Position nodeA inside nodeC, scaled down (completing the cycle)
-          transform: new DOMMatrix().translate(0, 0).scale(0.5),
+          // Position nodeA in the center of nodeC but smaller
+          bounds: { x: 0.5, y: 0.5, width: 0.4, height: 0.4 },
         },
       ];
+
+      // Convert bounds to transforms
+      const edgesArray = edgesWithBounds.map((edge) => {
+        const sourceNode = nodesArray.find((node) => node.id === edge.source);
+        return {
+          source: edge.source,
+          target: edge.target,
+          transform: boundsToTransform(edge.bounds, sourceNode.data),
+        };
+      });
 
       const MAX_VISIBLE_NODES = 20;
       const container = document.getElementById('zui-container');
@@ -161,8 +233,19 @@
         nodeElement.style.width = `${node.data.width}px`;
         nodeElement.style.height = `${node.data.height}px`;
         nodeElement.style.backgroundColor = node.data.color;
-        nodeElement.textContent = nodeId;
 
+        // Create a content container
+        const contentElement = document.createElement('div');
+        contentElement.classList.add('node-content');
+
+        // Use HTML content if available
+        if (node.data.content) {
+          contentElement.innerHTML = node.data.content;
+        } else {
+          contentElement.textContent = nodeId;
+        }
+
+        nodeElement.appendChild(contentElement);
         return nodeElement;
       }
 
@@ -347,20 +430,22 @@
           const height = node.data.height;
 
           // Calculate the position in the container
+          // In FloatingOriginGraph, nodes are positioned at the center of the container
           const translateX = containerWidth / 2 + combinedTransform.e;
           const translateY = containerHeight / 2 + combinedTransform.f;
 
-          // Apply scale from the transform (assuming uniform scaling)
-          const scale = combinedTransform.a;
+          // Extract scale and rotation from the transform
+          const scale = combinedTransform.a; // Assuming uniform scaling
 
           // Create a CSS transform
+          // The order is important: first translate to center, then apply the transform
           const cssTransform = `
             translate(-50%, -50%)
             translate(${translateX}px, ${translateY}px)
             scale(${scale})
           `;
 
-          // Apply the transform and show the node
+          // Apply the transform
           nodeElement.style.transform = cssTransform;
 
           // Highlight the reference node
@@ -546,6 +631,9 @@
           viewportTransform: graph.viewportTransform,
           nodes: graph.nodesArray.length,
         });
+
+        // Log the edges with their transforms
+        console.log('Edges with transforms:', edgesArray);
       }
 
       // Start the application
