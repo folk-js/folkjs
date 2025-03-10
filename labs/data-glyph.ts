@@ -73,13 +73,10 @@ export class DataGlyph extends HTMLElement {
     this.updateStyles();
     this.renderPath();
 
-    // Observe font changes
+    // One-time font ready check
     if ('fonts' in document) {
       document.fonts.ready.then(() => this.updateStyles());
     }
-
-    // Set up a mutation observer for parent element style changes
-    this.observeStyleChanges();
   }
 
   attributeChangedCallback(name: string, oldValue: string, newValue: string) {
@@ -113,12 +110,12 @@ export class DataGlyph extends HTMLElement {
     // Adjust SVG viewBox
     this.svg.setAttribute('viewBox', `0 0 100 100`);
 
-    // Update stroke width based on font weight
-    this.updateStrokeWidth();
+    // Set stroke width based on font properties - calculated once at init/update
+    this.setStrokeWidth();
   }
 
-  private updateStrokeWidth() {
-    // Get computed font style of the parent or host element
+  private setStrokeWidth() {
+    // Get computed font style
     const computedStyle = getComputedStyle(this);
     const fontWeight = computedStyle.fontWeight;
     const fontSize = parseFloat(computedStyle.fontSize);
@@ -130,14 +127,14 @@ export class DataGlyph extends HTMLElement {
       numericWeight = fontWeight === 'bold' ? 700 : 400; // Default to 400 for 'normal' or other values
     }
 
-    // Significantly increase the base stroke width
-    const baseStrokeWidth = fontSize * 0.15; // Doubled from 0.075 to 0.15 (15% of font size)
+    // Use a more generous base stroke width
+    const baseStrokeWidth = fontSize * 0.2; // 20% of font size
 
-    // Adjust the weight factor with a minimum value to ensure even light text has visible lines
-    const weightFactor = Math.max(0.8, numericWeight / 400); // Minimum factor of 0.8
+    // Scale based on font weight but ensure it's never too thin
+    const weightFactor = Math.max(1.0, numericWeight / 400);
 
     // Calculate stroke width with a minimum floor
-    const strokeWidth = Math.max(1.5, baseStrokeWidth * weightFactor);
+    const strokeWidth = Math.max(2, baseStrokeWidth * weightFactor);
 
     // Set the stroke width
     this.path.setAttribute('stroke-width', strokeWidth.toString());
@@ -161,41 +158,6 @@ export class DataGlyph extends HTMLElement {
     // Create SVG path
     const pathData = `M ${points.join(' L ')}`;
     this.path.setAttribute('d', pathData);
-  }
-
-  private observeStyleChanges() {
-    // Create a MutationObserver to watch for style changes in the parent element
-    const observer = new MutationObserver((mutations) => {
-      let shouldUpdate = false;
-
-      for (const mutation of mutations) {
-        if (
-          mutation.type === 'attributes' &&
-          (mutation.attributeName === 'style' || mutation.attributeName === 'class')
-        ) {
-          shouldUpdate = true;
-          break;
-        }
-      }
-
-      if (shouldUpdate) {
-        this.updateStrokeWidth();
-      }
-    });
-
-    // Start observing the parent element for style changes
-    if (this.parentElement) {
-      observer.observe(this.parentElement, {
-        attributes: true,
-        attributeFilter: ['style', 'class'],
-      });
-    }
-
-    // Also observe the document's body for global style changes
-    observer.observe(document.body, {
-      attributes: true,
-      attributeFilter: ['style', 'class'],
-    });
   }
 
   // Public API for programmatic updates
