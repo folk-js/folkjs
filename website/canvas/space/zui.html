@@ -58,7 +58,7 @@
   <body>
     <div id="info-container">
       <div>Infinite ZUI</div>
-      <div> Zoom in/out forever using a <em>floating origin graph.</em> which allows zooming in cyclic graphs. </div>
+      <div> Zoom in/out forever using a <em>shifting origin graph.</em> which allows zooming in cyclic graphs. </div>
       <br />
       <div>Hold <kbd>shift</kbd> to zoom in, <kbd>alt+shift</kbd> to zoom out.</div>
       <div id="reference-node-info">coordinate frame: node1</div>
@@ -67,7 +67,7 @@
     <canvas id="zui-canvas"></canvas>
 
     <script type="module">
-      import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
+      import { ShiftingOriginGraph } from '@labs/ShiftingOriginGraph.ts';
 
       // Define nodes as an array instead of an object
       const nodesArray = [
@@ -273,8 +273,8 @@
        * @property {number} height - The height of the node
        */
 
-      // Create the floating origin graph directly with arrays
-      const graph = new FloatingOriginGraph(nodesArray, edgesArray, 'node1');
+      // Create the shifting origin graph directly with arrays
+      const graph = new ShiftingOriginGraph(nodesArray, edgesArray, 'node1');
 
       // Define zoom threshold callbacks
       function shouldZoomInToNextNode(graph, canvasWidth, canvasHeight, nextNodeId) {

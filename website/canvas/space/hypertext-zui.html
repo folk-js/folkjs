@@ -163,7 +163,7 @@
     <div id="zui-container"></div>
 
     <script type="module">
-      import { FloatingOriginGraph } from '@labs/FloatingOriginGraph.ts';
+      import { ShiftingOriginGraph } from '@labs/ShiftingOriginGraph.ts';
       import { Geometry } from '@lib/Geometry.ts';
 
       // Define constants for node dimensions
@@ -789,8 +789,8 @@
 
       const container = document.getElementById('zui-container');
 
-      // Create the floating origin graph with our nodes and edges
-      const graph = new FloatingOriginGraph(nodesArray, edgesArray, 'nodeA', 50);
+      // Create the shifting origin graph with our nodes and edges
+      const graph = new ShiftingOriginGraph(nodesArray, edgesArray, 'nodeA', 50);
 
       // Define zoom threshold callbacks
       function shouldZoomInToNextNode(graph, containerWidth, containerHeight, nextNodeId) {
