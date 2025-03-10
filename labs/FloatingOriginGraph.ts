@@ -44,6 +44,7 @@ export class FloatingOriginGraph<T = any> {
   #edges: EdgeMap; // Directed edges from source to target
   #referenceNodeId: string;
   #viewportTransform: DOMMatrix;
+  #maxNodes = 30;
 
   /**
    * Create a new FloatingOriginGraph
@@ -51,7 +52,13 @@ export class FloatingOriginGraph<T = any> {
    * @param edges - Array of edges or object mapping source node IDs to arrays of edges
    * @param initialReferenceNodeId - The ID of the initial reference node
    */
-  constructor(nodes: Node<T>[] | NodeMap<T>, edges: Edge[] | EdgeMap, initialReferenceNodeId?: string) {
+  constructor(
+    nodes: Node<T>[] | NodeMap<T>,
+    edges: Edge[] | EdgeMap,
+    initialReferenceNodeId?: string,
+    maxNodes?: number,
+  ) {
+    this.#maxNodes = maxNodes || 30;
     // Convert nodes array to map if necessary
     if (Array.isArray(nodes)) {
       this.#nodes = {};
@@ -244,14 +251,10 @@ export class FloatingOriginGraph<T = any> {
   /**
    * Iterate through visible nodes with their accumulated transforms
    * This provides both the node and its transform relative to the reference node
-   * @param maxNodes - Maximum number of nodes to include
    * @param shouldCullNode - Optional callback to determine if a node should be culled
    * @returns Iterator yielding objects with node, nodeId, and accumulated transform
    */
-  *getVisibleNodesWithTransforms(
-    maxNodes: number = 40,
-    shouldCullNode?: NodeCullingCallback,
-  ): Generator<{
+  *getVisibleNodesWithTransforms(shouldCullNode?: NodeCullingCallback): Generator<{
     nodeId: string;
     node: Node<T>;
     transform: DOMMatrix;
@@ -300,7 +303,7 @@ export class FloatingOriginGraph<T = any> {
     }
 
     // Process the queue until we hit maxNodes limit
-    while (queue.length > 0 && nodesYielded < maxNodes) {
+    while (queue.length > 0 && nodesYielded < this.#maxNodes) {
       const { nodeId, transform, depth } = queue.shift()!;
 
       // Get the node (skip if it doesn't exist)

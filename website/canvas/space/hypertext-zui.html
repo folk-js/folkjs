@@ -61,7 +61,6 @@
           0 8px 25px rgba(0, 0, 0, 0.3),
           0 2px 5px rgba(0, 0, 0, 0.2);
         overflow: hidden;
-        will-change: transform;
       }
 
       .node-content {
@@ -801,7 +800,6 @@
       // First, build edges from links in node content
       const edgesArray = buildEdgesFromLinks();
 
-      const MAX_VISIBLE_NODES = 30;
       // Define size threshold for showing content (as a proportion of original size)
       const CONTENT_VISIBILITY_THRESHOLD = 0.005;
 
@@ -908,7 +906,7 @@
         const visibleNodes = [];
 
         // Get nodes from graph with transforms using our culling callback
-        for (const nodeData of graph.getVisibleNodesWithTransforms(MAX_VISIBLE_NODES, nodeCullingCallback)) {
+        for (const nodeData of graph.getVisibleNodesWithTransforms(nodeCullingCallback)) {
           const { nodeId, node, transform } = nodeData;
 
           // Combine viewport transform with the node's transform

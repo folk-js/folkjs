@@ -266,8 +266,6 @@
         },
       ];
 
-      const MAX_VISIBLE_NODES = 40;
-
       /**
        * @typedef {Object} NodeData
        * @property {string} color - The color of the node
@@ -476,7 +474,7 @@
         );
 
         // Get and draw all visible nodes with their accumulated transforms
-        for (const { nodeId, transform } of graph.getVisibleNodesWithTransforms(MAX_VISIBLE_NODES)) {
+        for (const { nodeId, transform } of graph.getVisibleNodesWithTransforms()) {
           // Save the current state before applying node transform
           ctx.save();
 
