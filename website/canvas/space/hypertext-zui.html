@@ -801,9 +801,9 @@
       // First, build edges from links in node content
       const edgesArray = buildEdgesFromLinks();
 
-      const MAX_VISIBLE_NODES = 60; // Increased from 30 after optimizations
+      const MAX_VISIBLE_NODES = 30;
       // Define size threshold for showing content (as a proportion of original size)
-      const CONTENT_VISIBILITY_THRESHOLD = 0.05;
+      const CONTENT_VISIBILITY_THRESHOLD = 0.005;
 
       const container = document.getElementById('zui-container');
 
@@ -823,11 +823,8 @@
         const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
 
         // Check if screen is completely covered by the node
-        return isScreenCoveredByRectangle(
-          -NODE_WIDTH / 2,
-          -NODE_HEIGHT / 2,
-          NODE_WIDTH,
-          NODE_HEIGHT,
+        return Geometry.isScreenCoveredByRectangle(
+          { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
           combinedTransform,
           containerWidth,
           containerHeight,
@@ -839,39 +836,12 @@
         if (!currentNode) return false;
 
         // For zooming out, we check if the current reference node no longer covers the screen
-        return !isScreenCoveredByRectangle(
-          -NODE_WIDTH / 2,
-          -NODE_HEIGHT / 2,
-          NODE_WIDTH,
-          NODE_HEIGHT,
+        return !Geometry.isScreenCoveredByRectangle(
+          { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
           graph.viewportTransform,
           containerWidth,
           containerHeight,
         );
-      }
-
-      /**
-       * Checks if a rectangle completely covers the screen, even when transformed (rotated/scaled)
-       * @param rectX - The x coordinate of the top-left of the rectangle (in its own coordinate system)
-       * @param rectY - The y coordinate of the top-left of the rectangle (in its own coordinate system)
-       * @param width - The width of the rectangle
-       * @param height - The height of the rectangle
-       * @param transform - The transformation to apply to the rectangle
-       * @param containerWidth - The width of the container
-       * @param containerHeight - The height of the container
-       * @returns True if the rectangle completely covers the screen
-       */
-      function isScreenCoveredByRectangle(rectX, rectY, width, height, transform, containerWidth, containerHeight) {
-        // Create a Rectangle object for Geometry utility
-        const rect = {
-          x: rectX,
-          y: rectY,
-          width: width,
-          height: height,
-        };
-
-        // Use the Geometry utility function
-        return Geometry.isScreenCoveredByRectangle(rect, transform, containerWidth, containerHeight);
       }
 
       /**
@@ -1159,22 +1129,33 @@
       let zoomAnimationId = null;
       let isZooming = false;
       let zoomDirection = 1;
+      let lastZoomTime = 0;
+      const ZOOM_SPEED = 20;
 
       function startContinuousZoom(zoomIn) {
         stopContinuousZoom(); // Cancel any existing animation
 
         isZooming = true;
         zoomDirection = zoomIn ? 1 : -1;
+        lastZoomTime = performance.now();
 
         // Start the animation loop
         animateZoom();
       }
 
-      function animateZoom() {
+      function animateZoom(currentTime) {
         if (!isZooming) return;
 
-        // Calculate zoom factor based on direction
-        const zoomFactor = zoomDirection > 0 ? 1.02 : 0.98;
+        // Calculate time delta in seconds since last frame
+        if (!currentTime) currentTime = performance.now();
+        const deltaTime = (currentTime - lastZoomTime) / 1000; // Convert to seconds
+        lastZoomTime = currentTime;
+
+        // Calculate framerate-independent zoom factor
+        // Base formula: zoom = baseZoom^(speed * deltaTime)
+        // For zoom in: baseZoom > 1, for zoom out: baseZoom < 1
+        const baseZoomFactor = zoomDirection > 0 ? 1.1 : 0.9;
+        const zoomFactor = Math.pow(baseZoomFactor, ZOOM_SPEED * deltaTime);
 
         // Get mouse position relative to container center
         const containerWidth = container.clientWidth;
