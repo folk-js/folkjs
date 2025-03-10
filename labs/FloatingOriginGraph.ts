@@ -114,7 +114,7 @@ export class FloatingOriginGraph<T = any> {
    * @param nodeId - The source node ID
    * @returns Array of edges from the node
    */
-  private getEdgesFrom(nodeId: string): Edge[] {
+  #getEdgesFrom(nodeId: string): Edge[] {
     return this.#edges[nodeId] || [];
   }
 
@@ -123,8 +123,8 @@ export class FloatingOriginGraph<T = any> {
    * @param nodeId - The current node ID
    * @returns Array of target node IDs
    */
-  private getNextNodeIds(nodeId: string): string[] {
-    const edges = this.getEdgesFrom(nodeId);
+  #getNextNodeIds(nodeId: string): string[] {
+    const edges = this.#getEdgesFrom(nodeId);
     return edges.map((edge) => edge.target);
   }
 
@@ -133,7 +133,7 @@ export class FloatingOriginGraph<T = any> {
    * @param nodeId - The ID of the node to get previous nodes for
    * @returns Array of node IDs that have edges to the specified node
    */
-  private getPrevNodeIds(nodeId: string): string[] {
+  #getPrevNodeIds(nodeId: string): string[] {
     const edges = this.#reverseEdges[nodeId] || [];
     return edges.map((edge) => edge.source);
   }
@@ -143,8 +143,8 @@ export class FloatingOriginGraph<T = any> {
    * @param nodeId - The current node ID
    * @returns The next node ID or undefined if none found
    */
-  private getBestNextNodeId(nodeId: string): string | undefined {
-    const edges = this.getEdgesFrom(nodeId);
+  #getBestNextNodeId(nodeId: string): string | undefined {
+    const edges = this.#getEdgesFrom(nodeId);
     return edges.length > 0 ? edges[0].target : undefined;
   }
 
@@ -153,8 +153,8 @@ export class FloatingOriginGraph<T = any> {
    * @param nodeId - The current node ID
    * @returns The previous node ID or undefined if none found
    */
-  private getBestPrevNodeId(nodeId: string): string | undefined {
-    const prevNodeIds = this.getPrevNodeIds(nodeId);
+  #getBestPrevNodeId(nodeId: string): string | undefined {
+    const prevNodeIds = this.#getPrevNodeIds(nodeId);
     return prevNodeIds.length > 0 ? prevNodeIds[0] : undefined;
   }
 
@@ -164,8 +164,8 @@ export class FloatingOriginGraph<T = any> {
    * @param targetNodeId - The target node ID
    * @returns The edge or undefined if not found
    */
-  private getEdge(sourceNodeId: string, targetNodeId: string): Edge | undefined {
-    const edges = this.getEdgesFrom(sourceNodeId);
+  #getEdge(sourceNodeId: string, targetNodeId: string): Edge | undefined {
+    const edges = this.#getEdgesFrom(sourceNodeId);
     return edges.find((edge) => edge.target === targetNodeId);
   }
 
@@ -181,7 +181,7 @@ export class FloatingOriginGraph<T = any> {
     transform: DOMMatrix;
   }> {
     // Always yield the reference node first with identity transform
-    const identityMatrix = this.getMatrix(); // Get from pool instead of creating new
+    const identityMatrix = this.#getMatrix(); // Get from pool instead of creating new
 
     yield {
       nodeId: this.#referenceNodeId,
@@ -189,7 +189,7 @@ export class FloatingOriginGraph<T = any> {
       transform: identityMatrix,
     };
 
-    this.releaseMatrix(identityMatrix); // Return to pool after use
+    this.#releaseMatrix(identityMatrix); // Return to pool after use
 
     // Count of nodes yielded so far (including reference node)
     let nodesYielded = 1;
@@ -202,11 +202,11 @@ export class FloatingOriginGraph<T = any> {
     }[] = [];
 
     // Start with all edges from the reference node
-    const edges = this.getEdgesFrom(this.#referenceNodeId);
+    const edges = this.#getEdgesFrom(this.#referenceNodeId);
     for (const edge of edges) {
       // Create a copy of the transform by extracting and reapplying its values
       const originalTransform = edge.transform;
-      const copiedTransform = this.copyMatrix(originalTransform);
+      const copiedTransform = this.#copyMatrix(originalTransform);
 
       // Check if node should be culled using the callback
       const shouldCull = shouldCullNode ? shouldCullNode(edge.target, copiedTransform, this.#viewportTransform) : false;
@@ -233,10 +233,10 @@ export class FloatingOriginGraph<T = any> {
       nodesYielded++;
 
       // Add all outgoing edges to the queue
-      const nextEdges = this.getEdgesFrom(nodeId);
+      const nextEdges = this.#getEdgesFrom(nodeId);
       for (const edge of nextEdges) {
         // Copy the current transform and multiply by edge transform
-        const nextTransform = this.copyMatrix(transform).multiply(edge.transform);
+        const nextTransform = this.#copyMatrix(transform).multiply(edge.transform);
 
         // Check if node should be culled using the callback
         const shouldCull = shouldCullNode ? shouldCullNode(edge.target, nextTransform, this.#viewportTransform) : false;
@@ -271,7 +271,7 @@ export class FloatingOriginGraph<T = any> {
     while (queue.length > 0) {
       const { nodeId, transform } = queue.shift()!;
 
-      const edges = this.getEdgesFrom(nodeId);
+      const edges = this.#getEdgesFrom(nodeId);
       for (const edge of edges) {
         if (edge.target === toNodeId) {
           // Found a path to target
@@ -313,11 +313,11 @@ export class FloatingOriginGraph<T = any> {
     shouldZoomOut?: ShouldZoomOutCallback,
   ): boolean {
     // Apply zoom transform centered on the specified point
-    const tempMatrix = this.getMatrix().translate(centerX, centerY).scale(zoomFactor).translate(-centerX, -centerY);
+    const tempMatrix = this.#getMatrix().translate(centerX, centerY).scale(zoomFactor).translate(-centerX, -centerY);
 
     // Multiply with viewport transform
     const newTransform = tempMatrix.multiply(this.#viewportTransform);
-    this.releaseMatrix(tempMatrix);
+    this.#releaseMatrix(tempMatrix);
 
     this.#viewportTransform = newTransform;
 
@@ -327,7 +327,7 @@ export class FloatingOriginGraph<T = any> {
       canvasHeight !== undefined &&
       (shouldZoomIn !== undefined || shouldZoomOut !== undefined)
     ) {
-      return this.checkAndUpdateReferenceNode(zoomFactor < 1, canvasWidth, canvasHeight, shouldZoomIn, shouldZoomOut);
+      return this.#checkAndUpdateReferenceNode(zoomFactor < 1, canvasWidth, canvasHeight, shouldZoomIn, shouldZoomOut);
     }
 
     return false;
@@ -353,7 +353,7 @@ export class FloatingOriginGraph<T = any> {
    * @param shouldZoomOut - Callback to determine if zooming out should change reference node
    * @returns Boolean indicating if the reference node changed
    */
-  private checkAndUpdateReferenceNode(
+  #checkAndUpdateReferenceNode(
     isZoomingOut: boolean,
     canvasWidth: number,
     canvasHeight: number,
@@ -362,13 +362,13 @@ export class FloatingOriginGraph<T = any> {
   ): boolean {
     if (isZoomingOut && shouldZoomOut) {
       // Check if we need to go to previous node
-      const prevNodeId = this.getBestPrevNodeId(this.#referenceNodeId);
+      const prevNodeId = this.#getBestPrevNodeId(this.#referenceNodeId);
       if (prevNodeId && shouldZoomOut(this, canvasWidth, canvasHeight, prevNodeId)) {
-        return this.moveReferenceBackward();
+        return this.#moveReferenceBackward();
       }
     } else if (!isZoomingOut && shouldZoomIn) {
       // Check all connected nodes to see if any fully cover the screen
-      const nextNodeIds = this.getNextNodeIds(this.#referenceNodeId);
+      const nextNodeIds = this.#getNextNodeIds(this.#referenceNodeId);
 
       // First, check if any nodes fully cover the screen according to shouldZoomIn callback
       const coveringNodes = nextNodeIds.filter((nodeId) => shouldZoomIn(this, canvasWidth, canvasHeight, nodeId));
@@ -383,7 +383,7 @@ export class FloatingOriginGraph<T = any> {
           const centerY = canvasHeight / 2;
 
           for (const nodeId of coveringNodes) {
-            const position = this.getNodeScreenPosition(nodeId, canvasWidth, canvasHeight);
+            const position = this.#getNodeScreenPosition(nodeId, canvasWidth, canvasHeight);
             if (position) {
               const distance = Math.hypot(position.x - centerX, position.y - centerY);
 
@@ -396,7 +396,7 @@ export class FloatingOriginGraph<T = any> {
         }
 
         // Move reference to the best fully-covering node
-        return this.moveReferenceForward(bestNodeId);
+        return this.#moveReferenceForward(bestNodeId);
       }
     }
     return false;
@@ -407,12 +407,12 @@ export class FloatingOriginGraph<T = any> {
    * @param targetNodeId - The target node ID to move to (if undefined, will use best next node)
    * @returns Boolean indicating if the operation was successful
    */
-  private moveReferenceForward(targetNodeId?: string): boolean {
+  #moveReferenceForward(targetNodeId?: string): boolean {
     // If no specific target is provided, use the best next node
-    const nextNodeId = targetNodeId || this.getBestNextNodeId(this.#referenceNodeId);
+    const nextNodeId = targetNodeId || this.#getBestNextNodeId(this.#referenceNodeId);
     if (!nextNodeId) return false;
 
-    return this.moveReference(this.#referenceNodeId, nextNodeId, false);
+    return this.#moveReference(this.#referenceNodeId, nextNodeId, false);
   }
 
   /**
@@ -420,12 +420,12 @@ export class FloatingOriginGraph<T = any> {
    * @param targetNodeId - The target node ID to move to (if undefined, will use best previous node)
    * @returns Boolean indicating if the operation was successful
    */
-  private moveReferenceBackward(targetNodeId?: string): boolean {
+  #moveReferenceBackward(targetNodeId?: string): boolean {
     // If no specific target is provided, use the best previous node
-    const prevNodeId = targetNodeId || this.getBestPrevNodeId(this.#referenceNodeId);
+    const prevNodeId = targetNodeId || this.#getBestPrevNodeId(this.#referenceNodeId);
     if (!prevNodeId) return false;
 
-    return this.moveReference(prevNodeId, this.#referenceNodeId, true);
+    return this.#moveReference(prevNodeId, this.#referenceNodeId, true);
   }
 
   /**
@@ -435,9 +435,9 @@ export class FloatingOriginGraph<T = any> {
    * @param isBackward - Whether moving backward (true) or forward (false)
    * @returns Boolean indicating if the operation was successful
    */
-  private moveReference(fromNodeId: string, toNodeId: string, isBackward: boolean): boolean {
+  #moveReference(fromNodeId: string, toNodeId: string, isBackward: boolean): boolean {
     // Verify that the edge exists between the nodes
-    const edge = this.getEdge(fromNodeId, toNodeId);
+    const edge = this.#getEdge(fromNodeId, toNodeId);
     if (!edge) return false;
 
     if (isBackward) {
@@ -448,7 +448,7 @@ export class FloatingOriginGraph<T = any> {
       this.#referenceNodeId = fromNodeId;
 
       // Apply inverse transform to maintain visual state
-      const invertedEdgeTransform = this.invertTransform(edge.transform);
+      const invertedEdgeTransform = this.#invertTransform(edge.transform);
       this.#viewportTransform = currentVisualTransform.multiply(invertedEdgeTransform);
     } else {
       // Calculate the visual transform before changing reference
@@ -477,11 +477,7 @@ export class FloatingOriginGraph<T = any> {
    * @param canvasHeight - Height of the canvas
    * @returns The x, y coordinates of the node on screen or null if node not found
    */
-  private getNodeScreenPosition(
-    nodeId: string,
-    canvasWidth: number,
-    canvasHeight: number,
-  ): { x: number; y: number } | null {
+  #getNodeScreenPosition(nodeId: string, canvasWidth: number, canvasHeight: number): { x: number; y: number } | null {
     const transform = this.getAccumulatedTransform(nodeId);
     if (!transform) return null;
 
@@ -508,7 +504,7 @@ export class FloatingOriginGraph<T = any> {
    * Helper function to invert a transform
    * Optimized to avoid unnecessary matrix creation
    */
-  private invertTransform(transform: DOMMatrix): DOMMatrix {
+  #invertTransform(transform: DOMMatrix): DOMMatrix {
     // For 2D transforms, we can calculate inverse more efficiently than using the built-in inverse()
     // which does full 4x4 matrix inversion
     const det = transform.a * transform.d - transform.b * transform.c;
@@ -518,7 +514,7 @@ export class FloatingOriginGraph<T = any> {
       return transform.inverse(); // Fall back to default if singular
     }
 
-    const result = this.getMatrix();
+    const result = this.#getMatrix();
 
     const invDet = 1 / det;
     result.a = transform.d * invDet;
@@ -534,14 +530,14 @@ export class FloatingOriginGraph<T = any> {
   /**
    * Get a matrix from the pool or create a new one
    */
-  private getMatrix(): DOMMatrix {
+  #getMatrix(): DOMMatrix {
     return this.#matrixPool.pop() || new DOMMatrix();
   }
 
   /**
    * Return a matrix to the pool
    */
-  private releaseMatrix(matrix: DOMMatrix): void {
+  #releaseMatrix(matrix: DOMMatrix): void {
     if (this.#matrixPool.length < this.#poolSize) {
       // Reset the matrix to identity before returning to pool
       matrix.a = matrix.d = 1;
@@ -553,8 +549,8 @@ export class FloatingOriginGraph<T = any> {
   /**
    * Create a copy of a transform matrix efficiently
    */
-  private copyMatrix(source: DOMMatrix): DOMMatrix {
-    const result = this.getMatrix();
+  #copyMatrix(source: DOMMatrix): DOMMatrix {
+    const result = this.#getMatrix();
     result.a = source.a;
     result.b = source.b;
     result.c = source.c;
