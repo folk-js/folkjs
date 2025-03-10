@@ -121,18 +121,20 @@
         width: 100px;
         height: 60px; /* Maintain the same 5:3 aspect ratio */
         margin: 10px 0;
-        opacity: 0;
-        background-color: transparent;
-        border: none;
-        cursor: default;
-        /* Keep the same aspect ratio as nodes */
         aspect-ratio: 5/3;
-        /* No interaction */
-        pointer-events: none;
-        /* Make invisible but keep space */
-        color: transparent;
-        font-size: 0;
-        text-decoration: none;
+        opacity: 0;
+      }
+
+      /* Inline version of zui-link that flows with text */
+      .zui-link-inline {
+        display: inline-block;
+        position: relative;
+        width: 50px; /* Smaller width for inline flow */
+        height: 30px; /* Preserve 5:3 aspect ratio */
+        aspect-ratio: 5/3;
+        margin: 0 5px;
+        vertical-align: middle;
+        opacity: 0;
       }
     </style>
   </head>
@@ -159,7 +161,7 @@
         {
           id: 'nodeA',
           data: {
-            color: 'rgba(70, 50, 100, 0.95)',
+            color: 'rgb(70, 50, 100)',
             content: `
               <div class="wiki-content">
                 <h3>Aetheria</h3>
@@ -180,7 +182,7 @@
         {
           id: 'nodeB',
           data: {
-            color: 'rgba(40, 80, 120, 0.95)',
+            color: 'rgb(40, 80, 120)',
             content: `
               <div class="wiki-content">
                 <h3>Quantum Foldspace</h3>
@@ -200,7 +202,7 @@
         {
           id: 'nodeC',
           data: {
-            color: 'rgba(60, 100, 70, 0.95)',
+            color: 'rgb(60, 100, 70)',
             content: `
               <div class="wiki-content">
                 <h3>The Mist Sovereigns</h3>
@@ -209,7 +211,7 @@
                 <p>First contacted in 2430, the Mist Sovereigns are a distributed consciousness composed of billions of specialized ionized gas particles that form a collective mind. They communicate through complex patterns of modulated electrical discharges that Aetherian linguists have only partially decoded. Individual Sovereigns can extend across hundreds of kilometers but typically condense to more localized forms when interacting with humans.</p>
                 
                 <h4>Relations with Aetheria</h4>
-                <p>Initial encounters were marked by hostility as the Sovereigns perceived Aetherian energy fields as an intrusion into their domain. After the Diplomatic Crisis of 2433, a cautious alliance was established. The Sovereigns now maintain a complex symbiotic relationship with Aetheria, exchanging their unparalleled knowledge of atmospheric science for limited access to foldspace technology, which they use to explore distant gas giants.</p>
+                <p>Initial encounters were marked by hostility as the Sovereigns perceived Aetherian energy fields as an intrusion into their domain. After the <a href="#" class="zui-link-inline" data-target="nodeA">Diplomatic Crisis of 2433</a>, a cautious alliance was established. The Sovereigns now maintain a complex symbiotic relationship with Aetheria, exchanging their unparalleled knowledge of atmospheric science for limited access to foldspace technology, which they use to explore distant gas giants.</p>
                 
                 <h4>Related Topics</h4>
                 <a href="#" class="zui-link" data-target="nodeA">Aetheria</a>
@@ -245,7 +247,7 @@
         }
 
         // Setup links to prevent default behavior and remove visual indicators
-        const links = contentElement.querySelectorAll('.zui-link');
+        const links = contentElement.querySelectorAll('.zui-link, .zui-link-inline');
         links.forEach((link) => {
           link.addEventListener('click', (e) => {
             e.preventDefault();
@@ -340,7 +342,7 @@
 
         // Now find all links and calculate their positions
         for (const [nodeId, nodeElement] of Object.entries(renderedNodes)) {
-          const links = nodeElement.querySelectorAll('.zui-link');
+          const links = nodeElement.querySelectorAll('.zui-link, .zui-link-inline');
 
           links.forEach((link) => {
             const targetId = link.dataset.target;
