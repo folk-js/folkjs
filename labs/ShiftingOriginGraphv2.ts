@@ -25,15 +25,14 @@ type NodeMap<T = any> = Record<string, Node<T>>;
 type EdgeMap = Record<string, Edge[]>;
 
 export type ShouldZoomInCallback = <T>(
-  graph: ShiftingOriginGraphv2<T>,
+  combinedTransform: DOMMatrix,
   canvasWidth: number,
   canvasHeight: number,
   nodeId: string,
-  transform: DOMMatrix,
 ) => boolean;
 
 export type ShouldZoomOutCallback = <T>(
-  graph: ShiftingOriginGraphv2<T>,
+  viewportTransform: DOMMatrix,
   canvasWidth: number,
   canvasHeight: number,
 ) => boolean;
@@ -409,16 +408,6 @@ export class ShiftingOriginGraphv2<T = any> {
   }
 
   /**
-   * Helper method to get the next node IDs for the current node
-   * @param nodeId - The current node ID
-   * @returns Array of target node IDs
-   */
-  #getNextNodeIds(nodeId: string): string[] {
-    const edges = this.#getEdgesFrom(nodeId);
-    return edges.map((edge) => edge.target);
-  }
-
-  /**
    * Get the IDs of all nodes that have edges to the specified node
    * @param nodeId - The ID of the node to get previous nodes for
    * @returns Array of node IDs that have edges to the specified node
@@ -457,7 +446,7 @@ export class ShiftingOriginGraphv2<T = any> {
   ): boolean {
     if (isZoomingOut && shouldZoomOut) {
       // Check if the reference node no longer covers the screen
-      if (shouldZoomOut(this, canvasWidth, canvasHeight)) {
+      if (shouldZoomOut(this.#viewportTransform, canvasWidth, canvasHeight)) {
         // Get the first incoming edge to the reference node
         const prevNodeId = this.#getPrevNodeIds(this.#referenceNodeId)[0];
         if (!prevNodeId) return false;
@@ -477,7 +466,9 @@ export class ShiftingOriginGraphv2<T = any> {
       // Find the first node that covers the screen
       for (const edge of edges) {
         const nodeId = edge.target;
-        if (shouldZoomIn(this, canvasWidth, canvasHeight, nodeId, edge.transform)) {
+        // Calculate the combined transform
+        const combinedTransform = this.#viewportTransform.multiply(edge.transform);
+        if (shouldZoomIn(combinedTransform, canvasWidth, canvasHeight, nodeId)) {
           // Apply the forward shift to maintain visual state
           this.#shiftOrigin(edge);
           return true;
