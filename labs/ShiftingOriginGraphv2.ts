@@ -29,6 +29,7 @@ export type ShouldZoomInCallback = <T>(
   canvasWidth: number,
   canvasHeight: number,
   nodeId: string,
+  transform: DOMMatrix,
 ) => boolean;
 
 export type ShouldZoomOutCallback = <T>(
@@ -303,46 +304,6 @@ export class ShiftingOriginGraphv2<T = any> {
   }
 
   /**
-   * Get the accumulated transform from the reference node to a target node
-   * @param toNodeId - Target node ID
-   * @returns The accumulated transform matrix or null if no path found
-   */
-  getAccumulatedTransform(toNodeId: string): DOMMatrix | null {
-    if (toNodeId === this.#referenceNodeId) {
-      return new DOMMatrix(); // Identity transform for self
-    }
-
-    // Use breadth-first search to find a path from reference to target
-    const visited = new Set<string>([this.#referenceNodeId]);
-    const queue: { nodeId: string; transform: DOMMatrix }[] = [
-      { nodeId: this.#referenceNodeId, transform: new DOMMatrix() },
-    ];
-
-    while (queue.length > 0) {
-      const { nodeId, transform } = queue.shift()!;
-
-      const edges = this.#getEdgesFrom(nodeId);
-      for (const edge of edges) {
-        if (edge.target === toNodeId) {
-          // Found a path to target
-          return transform.multiply(edge.transform);
-        }
-
-        if (!visited.has(edge.target)) {
-          visited.add(edge.target);
-          queue.push({
-            nodeId: edge.target,
-            transform: transform.multiply(edge.transform),
-          });
-        }
-      }
-    }
-
-    // No path found
-    return null;
-  }
-
-  /**
    * Apply zoom transform centered on a point
    * @param centerX - X coordinate of zoom center point
    * @param centerY - Y coordinate of zoom center point
@@ -468,16 +429,6 @@ export class ShiftingOriginGraphv2<T = any> {
   }
 
   /**
-   * Get the best previous node to follow when zooming out
-   * @param nodeId - The current node ID
-   * @returns The previous node ID or undefined if none found
-   */
-  #getBestPrevNodeId(nodeId: string): string | undefined {
-    const prevNodeIds = this.#getPrevNodeIds(nodeId);
-    return prevNodeIds.length > 0 ? prevNodeIds[0] : undefined;
-  }
-
-  /**
    * Get an edge between source and target nodes
    * @param sourceNodeId - The source node ID
    * @param targetNodeId - The target node ID
@@ -516,22 +467,19 @@ export class ShiftingOriginGraphv2<T = any> {
         if (!edge) return false;
 
         // Apply the backward shift to maintain visual state
-        this.#viewportTransform = this.#unshiftOrigin(edge);
+        this.#unshiftOrigin(edge);
         return true;
       }
     } else if (!isZoomingOut && shouldZoomIn) {
       // Get all outgoing edges from the reference node
-      const nextNodeIds = this.#getNextNodeIds(this.#referenceNodeId);
+      const edges = this.#getEdgesFrom(this.#referenceNodeId);
 
       // Find the first node that covers the screen
-      for (const nodeId of nextNodeIds) {
-        if (shouldZoomIn(this, canvasWidth, canvasHeight, nodeId)) {
-          // Get the edge from current node to next node
-          const edge = this.#getEdge(this.#referenceNodeId, nodeId);
-          if (!edge) continue;
-
+      for (const edge of edges) {
+        const nodeId = edge.target;
+        if (shouldZoomIn(this, canvasWidth, canvasHeight, nodeId, edge.transform)) {
           // Apply the forward shift to maintain visual state
-          this.#viewportTransform = this.#shiftOrigin(edge);
+          this.#shiftOrigin(edge);
           return true;
         }
       }
@@ -540,11 +488,10 @@ export class ShiftingOriginGraphv2<T = any> {
   }
 
   /**
-   * Calculate the new viewport transform when shifting origin to a new node
+   * Shift the origin to a new node by following an edge
    * @param edge - The edge connecting current reference node to the new reference node
-   * @returns The new viewport transform that preserves visual appearance
    */
-  #shiftOrigin(edge: Edge): DOMMatrix {
+  #shiftOrigin(edge: Edge): void {
     // When we change reference nodes, we need to update the viewport transform
     // to keep everything looking the same visually.
 
@@ -558,15 +505,14 @@ export class ShiftingOriginGraphv2<T = any> {
     // - Before: viewport * edge = how target node appears
     // - After: new target node is at origin (0,0)
     // - So new viewport must equal: viewport * edge
-    return this.#viewportTransform.multiply(edge.transform);
+    this.#viewportTransform = this.#viewportTransform.multiply(edge.transform);
   }
 
   /**
-   * Calculate the new viewport transform when shifting origin backwards
+   * Shift the origin back to a previous node by following an edge in reverse
    * @param edge - The edge connecting new reference node to the current reference node
-   * @returns The new viewport transform that preserves visual appearance
    */
-  #unshiftOrigin(edge: Edge): DOMMatrix {
+  #unshiftOrigin(edge: Edge): void {
     // When shifting origin backwards, we need to apply the inverse of the edge transform
 
     // Update reference node to the source of the edge
@@ -582,7 +528,7 @@ export class ShiftingOriginGraphv2<T = any> {
     // - Before: viewport shows current reference node
     // - After: we want to see from previous node's perspective
     // - So we apply the inverse transform: viewport * edge⁻¹
-    return this.#viewportTransform.multiply(inverseEdgeTransform);
+    this.#viewportTransform = this.#viewportTransform.multiply(inverseEdgeTransform);
   }
 
   /**

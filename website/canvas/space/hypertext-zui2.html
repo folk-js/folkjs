@@ -793,16 +793,9 @@
       const graph = new ShiftingOriginGraphv2(nodesArray, edgesArray, 'nodeA', 50);
 
       // Define zoom threshold callbacks
-      function shouldZoomInToNextNode(graph, containerWidth, containerHeight, nextNodeId) {
-        const nextNode = graph.nodes[nextNodeId];
-        if (!nextNode) return false;
-
-        // Get the transform from reference node to next node
-        const nextNodeTransform = graph.getAccumulatedTransform(nextNodeId);
-        if (!nextNodeTransform) return false;
-
+      function shouldZoomInToNextNode(graph, containerWidth, containerHeight, nextNodeId, transform) {
         // Calculate effective transform from combined viewport and node transform
-        const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
+        const combinedTransform = graph.viewportTransform.multiply(transform);
 
         // Check if screen is completely covered by the node
         return Geometry.isScreenCoveredByRectangle(
@@ -813,10 +806,7 @@
         );
       }
 
-      function shouldZoomOutToPrevNode(graph, containerWidth, containerHeight, prevNodeId) {
-        const currentNode = graph.referenceNode;
-        if (!currentNode) return false;
-
+      function shouldZoomOutToPrevNode(graph, containerWidth, containerHeight) {
         // For zooming out, we check if the current reference node no longer covers the screen
         return !Geometry.isScreenCoveredByRectangle(
           { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
