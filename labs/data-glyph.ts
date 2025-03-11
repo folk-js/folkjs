@@ -4,11 +4,13 @@
  * Renders small, text-sized visualizations that flow with text content.
  * Supports multiple visualization types:
  * - line (default): Simple sparkline chart
- * - tree: Tiny tree visualization
+ * - tree: Tiny tree visualization where node values determine appearance:
+ *   - 0: Hollow blue node
+ *   - 1: Filled red node
  *
  * Usage:
  * <data-glyph data="3,6,2,7,5,9,4" width="3em"></data-glyph>
- * <data-glyph type="tree" data="[1,[2,3],[4,[5,6]]]" width="3em"></data-glyph>
+ * <data-glyph type="tree" data="[1,[0],[1]]" width="3em"></data-glyph>
  */
 export class DataGlyph extends HTMLElement {
   static get observedAttributes() {
@@ -68,9 +70,6 @@ export class DataGlyph extends HTMLElement {
         left: 0;
         bottom: 0;
         overflow: visible;
-      }
-      .node, .point {
-        fill: currentColor;
       }
       .link {
         fill: none;
@@ -161,6 +160,11 @@ export class DataGlyph extends HTMLElement {
 
   private parseTreeData(dataAttr: string) {
     // Parse as JSON for tree data
+    // Format: Nested arrays where:
+    // - For nodes: 0 = hollow blue node, 1 = filled red node
+    // - Example: [1,[0,[1],[0]],[1,[0]]] - Root is filled red, with two children
+    //   First child is hollow blue with two children (one filled red, one hollow blue)
+    //   Second child is filled red with one hollow blue child
     try {
       this.treeData = JSON.parse(dataAttr);
     } catch (e) {
@@ -272,8 +276,6 @@ export class DataGlyph extends HTMLElement {
 
       return children.reduce((sum, child) => sum + countLeafNodes(child), 0);
     };
-
-    const totalLeaves = Math.max(1, countLeafNodes(this.treeData));
 
     // Store all leaf nodes to position them later
     const leafNodes: any[] = [];
@@ -393,13 +395,21 @@ export class DataGlyph extends HTMLElement {
 
       const { x, y } = nodePositions.get(nodeId)!;
 
+      // Get the node value to determine if it should be filled
+      // If node is an array, the first element is the value
+      // Otherwise, the node itself is the value
+      let nodeValue = Array.isArray(node) ? node[0] : node;
+
+      // Determine if the node should be filled (1) or hollow (0)
+      const isFilled = nodeValue === 1;
+
       // Create a position key to avoid duplicate nodes
       const posKey = `${x.toFixed(4)},${y.toFixed(4)}`;
 
       // Only draw if we haven't already drawn at this position
       if (!drawnPositions.has(posKey)) {
         drawnPositions.add(posKey);
-        this.drawPoint(x, y, true);
+        this.drawPoint(x, y, isFilled);
       }
 
       // Draw connection to parent
@@ -598,7 +608,6 @@ export class DataGlyph extends HTMLElement {
    * @returns The created SVG circle element
    */
   public drawPoint(x: number, y: number, filled: boolean = true): SVGCircleElement {
-    console.log('drawPoint', x, y);
     // Ensure drawing groups exist
     if (!this.dotGroup) {
       this.setupRender();
@@ -631,12 +640,27 @@ export class DataGlyph extends HTMLElement {
 
     dot.classList.add('point');
 
-    // Apply filled or outline style
+    // Apply filled or outline style (will be overridden if specific colors are set later)
     if (filled) {
       dot.setAttribute('fill', 'currentColor');
-      dot.setAttribute('stroke', 'none');
+      dot.setAttribute('stroke', 'currentColor');
     } else {
-      dot.setAttribute('fill', 'none');
+      // Create a mask effect by using a slightly larger white circle underneath
+      // to "cut through" any lines, then draw the outline on top
+
+      // First, create a slightly larger background circle to mask the lines
+      const maskCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      maskCircle.setAttribute('cx', svgX.toString());
+      maskCircle.setAttribute('cy', svgY.toString());
+      maskCircle.setAttribute('r', (radius + strokeWidth / 2).toString());
+      maskCircle.setAttribute('fill', 'var(--background-color, white)');
+      maskCircle.setAttribute('transform', dot.getAttribute('transform') || '');
+
+      // Add the mask circle first (before the outlined circle)
+      this.dotGroup?.appendChild(maskCircle);
+
+      // Then set up the hollow circle with transparent fill and visible stroke
+      dot.setAttribute('fill', 'transparent');
       dot.setAttribute('stroke', 'currentColor');
       dot.setAttribute('stroke-width', strokeWidth.toString());
     }
