@@ -28,14 +28,13 @@ export type ShouldZoomInCallback = <T>(
   graph: ShiftingOriginGraphv2<T>,
   canvasWidth: number,
   canvasHeight: number,
-  nextNodeId: string,
+  nodeId: string,
 ) => boolean;
 
 export type ShouldZoomOutCallback = <T>(
   graph: ShiftingOriginGraphv2<T>,
   canvasWidth: number,
   canvasHeight: number,
-  prevNodeId: string,
 ) => boolean;
 
 export type NodeCullingCallback = <T>(nodeId: string, transform: DOMMatrix, viewportTransform: DOMMatrix) => boolean;
@@ -469,16 +468,6 @@ export class ShiftingOriginGraphv2<T = any> {
   }
 
   /**
-   * Get the best next node to follow when zooming in
-   * @param nodeId - The current node ID
-   * @returns The next node ID or undefined if none found
-   */
-  #getBestNextNodeId(nodeId: string): string | undefined {
-    const edges = this.#getEdgesFrom(nodeId);
-    return edges.length > 0 ? edges[0].target : undefined;
-  }
-
-  /**
    * Get the best previous node to follow when zooming out
    * @param nodeId - The current node ID
    * @returns The previous node ID or undefined if none found
@@ -504,8 +493,8 @@ export class ShiftingOriginGraphv2<T = any> {
    * @param isZoomingOut - Whether we're zooming out
    * @param canvasWidth - Width of the canvas
    * @param canvasHeight - Height of the canvas
-   * @param shouldZoomIn - Callback to determine if zooming in should change reference node
-   * @param shouldZoomOut - Callback to determine if zooming out should change reference node
+   * @param shouldZoomIn - Callback to determine if a node covers the screen when zooming in
+   * @param shouldZoomOut - Callback to determine if reference node no longer covers the screen when zooming out
    * @returns Boolean indicating if the reference node changed
    */
   #checkAndUpdateReferenceNode(
@@ -516,61 +505,35 @@ export class ShiftingOriginGraphv2<T = any> {
     shouldZoomOut?: ShouldZoomOutCallback,
   ): boolean {
     if (isZoomingOut && shouldZoomOut) {
-      // Check if we need to go to previous node
-      const prevNodeId = this.#getBestPrevNodeId(this.#referenceNodeId);
-      if (prevNodeId && shouldZoomOut(this, canvasWidth, canvasHeight, prevNodeId)) {
+      // Check if the reference node no longer covers the screen
+      if (shouldZoomOut(this, canvasWidth, canvasHeight)) {
+        // Get the first incoming edge to the reference node
+        const prevNodeId = this.#getPrevNodeIds(this.#referenceNodeId)[0];
+        if (!prevNodeId) return false;
+
         // Get the edge from previous node to current node
         const edge = this.#getEdge(prevNodeId, this.#referenceNodeId);
         if (!edge) return false;
 
-        // Update reference node
-        this.#referenceNodeId = prevNodeId;
-
         // Apply the backward shift to maintain visual state
-        this.#viewportTransform = this.#shiftOriginBackwards(edge);
-
+        this.#viewportTransform = this.#unshiftOrigin(edge);
         return true;
       }
     } else if (!isZoomingOut && shouldZoomIn) {
-      // Check all connected nodes to see if any fully cover the screen
+      // Get all outgoing edges from the reference node
       const nextNodeIds = this.#getNextNodeIds(this.#referenceNodeId);
 
-      // First, check if any nodes fully cover the screen according to shouldZoomIn callback
-      const coveringNodes = nextNodeIds.filter((nodeId) => shouldZoomIn(this, canvasWidth, canvasHeight, nodeId));
+      // Find the first node that covers the screen
+      for (const nodeId of nextNodeIds) {
+        if (shouldZoomIn(this, canvasWidth, canvasHeight, nodeId)) {
+          // Get the edge from current node to next node
+          const edge = this.#getEdge(this.#referenceNodeId, nodeId);
+          if (!edge) continue;
 
-      if (coveringNodes.length > 0) {
-        // If multiple nodes cover the screen, determine which is closest to the center of view
-        let bestNodeId = coveringNodes[0];
-
-        if (coveringNodes.length > 1) {
-          let bestDistance = Infinity;
-          const centerX = canvasWidth / 2;
-          const centerY = canvasHeight / 2;
-
-          for (const nodeId of coveringNodes) {
-            const position = this.#getNodeScreenPosition(nodeId, canvasWidth, canvasHeight);
-            if (position) {
-              const distance = Math.hypot(position.x - centerX, position.y - centerY);
-
-              if (distance < bestDistance) {
-                bestDistance = distance;
-                bestNodeId = nodeId;
-              }
-            }
-          }
+          // Apply the forward shift to maintain visual state
+          this.#viewportTransform = this.#shiftOrigin(edge);
+          return true;
         }
-
-        // Get the edge from current node to next node
-        const edge = this.#getEdge(this.#referenceNodeId, bestNodeId);
-        if (!edge) return false;
-
-        // Update reference node
-        this.#referenceNodeId = bestNodeId;
-
-        // Apply the forward shift to maintain visual state
-        this.#viewportTransform = this.#shiftOrigin(edge);
-
-        return true;
       }
     }
     return false;
@@ -584,6 +547,9 @@ export class ShiftingOriginGraphv2<T = any> {
   #shiftOrigin(edge: Edge): DOMMatrix {
     // When we change reference nodes, we need to update the viewport transform
     // to keep everything looking the same visually.
+
+    // Update reference node to the target of the edge
+    this.#referenceNodeId = edge.target;
 
     // 1. We combine current viewport with the edge transform
     // 2. This becomes our new viewport transform
@@ -600,8 +566,11 @@ export class ShiftingOriginGraphv2<T = any> {
    * @param edge - The edge connecting new reference node to the current reference node
    * @returns The new viewport transform that preserves visual appearance
    */
-  #shiftOriginBackwards(edge: Edge): DOMMatrix {
+  #unshiftOrigin(edge: Edge): DOMMatrix {
     // When shifting origin backwards, we need to apply the inverse of the edge transform
+
+    // Update reference node to the source of the edge
+    this.#referenceNodeId = edge.source;
 
     // 1. Calculate the inverse of the edge transform
     const inverseEdgeTransform = edge.transform.inverse();
@@ -614,27 +583,6 @@ export class ShiftingOriginGraphv2<T = any> {
     // - After: we want to see from previous node's perspective
     // - So we apply the inverse transform: viewport * edge⁻¹
     return this.#viewportTransform.multiply(inverseEdgeTransform);
-  }
-
-  /**
-   * Calculate screen position of a node
-   * @param nodeId - The ID of the node to get the position for
-   * @param canvasWidth - Width of the canvas
-   * @param canvasHeight - Height of the canvas
-   * @returns The x, y coordinates of the node on screen or null if node not found
-   */
-  #getNodeScreenPosition(nodeId: string, canvasWidth: number, canvasHeight: number): { x: number; y: number } | null {
-    const transform = this.getAccumulatedTransform(nodeId);
-    if (!transform) return null;
-
-    // Apply viewport transform
-    const screenTransform = this.#viewportTransform.multiply(transform);
-
-    // The node is drawn at the canvas center, so apply canvas center offset
-    const screenX = canvasWidth / 2 + screenTransform.e;
-    const screenY = canvasHeight / 2 + screenTransform.f;
-
-    return { x: screenX, y: screenY };
   }
 
   /**
