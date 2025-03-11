@@ -519,7 +519,17 @@ export class ShiftingOriginGraphv2<T = any> {
       // Check if we need to go to previous node
       const prevNodeId = this.#getBestPrevNodeId(this.#referenceNodeId);
       if (prevNodeId && shouldZoomOut(this, canvasWidth, canvasHeight, prevNodeId)) {
-        return this.#moveReferenceBackward();
+        // Get the edge from previous node to current node
+        const edge = this.#getEdge(prevNodeId, this.#referenceNodeId);
+        if (!edge) return false;
+
+        // Update reference node
+        this.#referenceNodeId = prevNodeId;
+
+        // Apply the backward shift to maintain visual state
+        this.#viewportTransform = this.#shiftOriginBackwards(edge);
+
+        return true;
       }
     } else if (!isZoomingOut && shouldZoomIn) {
       // Check all connected nodes to see if any fully cover the screen
@@ -550,79 +560,20 @@ export class ShiftingOriginGraphv2<T = any> {
           }
         }
 
-        // Move reference to the best fully-covering node
-        return this.#moveReferenceForward(bestNodeId);
+        // Get the edge from current node to next node
+        const edge = this.#getEdge(this.#referenceNodeId, bestNodeId);
+        if (!edge) return false;
+
+        // Update reference node
+        this.#referenceNodeId = bestNodeId;
+
+        // Apply the forward shift to maintain visual state
+        this.#viewportTransform = this.#shiftOrigin(edge);
+
+        return true;
       }
     }
     return false;
-  }
-
-  /**
-   * Move the reference node to a specified next node
-   * @param targetNodeId - The target node ID to move to (if undefined, will use best next node)
-   * @returns Boolean indicating if the operation was successful
-   */
-  #moveReferenceForward(targetNodeId?: string): boolean {
-    // If no specific target is provided, use the best next node
-    const nextNodeId = targetNodeId || this.#getBestNextNodeId(this.#referenceNodeId);
-    if (!nextNodeId) return false;
-
-    return this.#moveReference(this.#referenceNodeId, nextNodeId, false);
-  }
-
-  /**
-   * Move the reference node to a specified previous node
-   * @param targetNodeId - The target node ID to move to (if undefined, will use best previous node)
-   * @returns Boolean indicating if the operation was successful
-   */
-  #moveReferenceBackward(targetNodeId?: string): boolean {
-    // If no specific target is provided, use the best previous node
-    const prevNodeId = targetNodeId || this.#getBestPrevNodeId(this.#referenceNodeId);
-    if (!prevNodeId) return false;
-
-    return this.#moveReference(prevNodeId, this.#referenceNodeId, true);
-  }
-
-  /**
-   * Shared logic for moving the reference node
-   * @param fromNodeId - The starting node ID
-   * @param toNodeId - The target node ID
-   * @param isBackward - Whether moving backward (true) or forward (false)
-   * @returns Boolean indicating if the operation was successful
-   */
-  #moveReference(fromNodeId: string, toNodeId: string, isBackward: boolean): boolean {
-    // Verify that the edge exists between the nodes
-    const edge = this.#getEdge(fromNodeId, toNodeId);
-    if (!edge) return false;
-
-    if (isBackward) {
-      // Calculate the current visual transform
-      const currentVisualTransform = this.#viewportTransform;
-
-      // Update reference node
-      this.#referenceNodeId = fromNodeId;
-
-      // Apply inverse transform to maintain visual state
-      const invertedEdgeTransform = edge.transform.inverse();
-      this.#viewportTransform = currentVisualTransform.multiply(invertedEdgeTransform);
-    } else {
-      // Calculate the visual transform before changing reference
-      const transform = this.getAccumulatedTransform(toNodeId);
-      if (!transform) return false;
-
-      const visualTransformBefore = this.#viewportTransform.multiply(transform);
-
-      // Update reference node
-      this.#referenceNodeId = toNodeId;
-
-      // After changing reference, the target node is at the origin
-      const visualTransformAfter = new DOMMatrix();
-
-      // Calculate and apply compensation transform
-      this.#viewportTransform = visualTransformBefore.multiply(visualTransformAfter.inverse());
-    }
-
-    return true;
   }
 
   /**
