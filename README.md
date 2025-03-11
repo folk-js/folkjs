@@ -1,6 +1,6 @@
 # Folk Canvas
 
-> ⚠️ This project is still in an active research phase. It hasn't been published to NPM yet, but our work is open and you're more than welcome to take a look, poke around, and trying things out.
+> ⚠️ This project is still in an active research phase. It hasn't been published to NPM yet, but our work is open and you're more than welcome to take a look, poke around, and try things out.
 
 ## Explorations
 
