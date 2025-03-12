@@ -142,6 +142,7 @@ export default defineConfig({
       input: {
         index: resolve(__dirname, './website/index.html'),
         fileSpace: resolve(__dirname, './website/file-space/index.html'),
+        hyperzoom: resolve(__dirname, './website/hyperzoom/index.html'),
         ...getCanvasFiles().reduce(
           (acc, file) => {
             acc[`canvas/${file.name.replace('.html', '')}`] = resolve(canvasWebsiteDir, file.name);
