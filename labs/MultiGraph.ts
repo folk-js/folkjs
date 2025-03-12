@@ -13,41 +13,35 @@
  */
 
 /**
- * Represents a node in the graph
- * @template T - The type of data stored in the node
+ * Base interface for nodes with minimum required properties
  */
-export interface Node<T = any> {
+export interface BaseNode {
   /** Unique identifier for the node */
   id: string;
-  /** Custom data associated with the node */
-  data: T;
 }
 
 /**
- * Represents an edge in the graph
- * @template E - The type of data stored in the edge
+ * Base interface for edges with minimum required properties
  */
-export interface Edge<E = any> {
+export interface BaseEdge {
   /** Unique identifier for the edge */
   id: string;
   /** ID of the source node */
   source: string;
   /** ID of the target node */
   target: string;
-  /** Custom data associated with the edge */
-  data: E;
 }
 
 /**
  * A generic directed multigraph implementation
- * @template NodeData - The type of data stored in nodes
- * @template EdgeData - The type of data stored in edges
+ * @template N - The type of nodes in the graph (must extend BaseNode)
+ * @template E - The type of edges in the graph (must extend BaseEdge)
  */
-export class MultiGraph<NodeData = any, EdgeData = any> {
+export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = BaseEdge> {
   /** Map of node IDs to node objects - O(1) lookup */
-  protected nodes: Map<string, Node<NodeData>>;
+  protected nodes: Map<string, N>;
   /** Map of edge IDs to edge objects - O(1) lookup */
-  protected edges: Map<string, Edge<EdgeData>>;
+  protected edges: Map<string, E>;
 
   /**
    * Index for fast outgoing edge lookup
@@ -75,14 +69,12 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
 
   /**
    * Adds a node to the graph
-   * @param id - Unique identifier for the node
-   * @param data - Data to associate with the node
-   * @returns The created node
+   * @param node - The node to add
+   * @returns The added node
    * @complexity O(1)
    */
-  addNode(id: string, data: NodeData): Node<NodeData> {
-    const node: Node<NodeData> = { id, data };
-    this.nodes.set(id, node);
+  addNode(node: N): N {
+    this.nodes.set(node.id, node);
     return node;
   }
 
@@ -92,7 +84,7 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @returns The node or undefined if not found
    * @complexity O(1)
    */
-  getNode(id: string): Node<NodeData> | undefined {
+  getNode(id: string): N | undefined {
     return this.nodes.get(id);
   }
 
@@ -149,53 +141,40 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
 
   /**
    * Adds an edge between two nodes
-   * @param source - ID of the source node
-   * @param target - ID of the target node
-   * @param data - Data to associate with the edge
-   * @param id - Optional custom ID for the edge (generated if not provided)
-   * @returns The created edge or null if source or target node doesn't exist
+   * @param edge - The edge to add
+   * @returns The added edge or null if source or target node doesn't exist
    * @complexity O(1)
    */
-  addEdge(source: string, target: string, data: EdgeData, id?: string): Edge<EdgeData> | null {
-    if (!this.nodes.has(source) || !this.nodes.has(target)) {
+  addEdge(edge: E): E | null {
+    // Validate source and target nodes exist
+    if (!this.nodes.has(edge.source) || !this.nodes.has(edge.target)) {
       return null;
     }
 
-    // Generate ID if not provided
-    const edgeId = id || this.generateEdgeId();
-
-    // Create the edge
-    const edge: Edge<EdgeData> = {
-      id: edgeId,
-      source,
-      target,
-      data,
-    };
-
     // Store the edge
-    this.edges.set(edgeId, edge);
+    this.edges.set(edge.id, edge);
 
     // Update outgoing edges index
-    if (!this.outgoingEdges.has(source)) {
-      this.outgoingEdges.set(source, new Map());
+    if (!this.outgoingEdges.has(edge.source)) {
+      this.outgoingEdges.set(edge.source, new Map());
     }
 
-    if (!this.outgoingEdges.get(source)!.has(target)) {
-      this.outgoingEdges.get(source)!.set(target, new Set());
+    if (!this.outgoingEdges.get(edge.source)!.has(edge.target)) {
+      this.outgoingEdges.get(edge.source)!.set(edge.target, new Set());
     }
 
-    this.outgoingEdges.get(source)!.get(target)!.add(edgeId);
+    this.outgoingEdges.get(edge.source)!.get(edge.target)!.add(edge.id);
 
     // Update incoming edges index
-    if (!this.incomingEdges.has(target)) {
-      this.incomingEdges.set(target, new Map());
+    if (!this.incomingEdges.has(edge.target)) {
+      this.incomingEdges.set(edge.target, new Map());
     }
 
-    if (!this.incomingEdges.get(target)!.has(source)) {
-      this.incomingEdges.get(target)!.set(source, new Set());
+    if (!this.incomingEdges.get(edge.target)!.has(edge.source)) {
+      this.incomingEdges.get(edge.target)!.set(edge.source, new Set());
     }
 
-    this.incomingEdges.get(target)!.get(source)!.add(edgeId);
+    this.incomingEdges.get(edge.target)!.get(edge.source)!.add(edge.id);
 
     return edge;
   }
@@ -206,7 +185,7 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @returns The edge or undefined if not found
    * @complexity O(1)
    */
-  getEdge(id: string): Edge<EdgeData> | undefined {
+  getEdge(id: string): E | undefined {
     return this.edges.get(id);
   }
 
@@ -259,8 +238,8 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @returns Array of edges from the node
    * @complexity O(k) where k is the number of outgoing edges
    */
-  getEdgesFrom(nodeId: string): Edge<EdgeData>[] {
-    const result: Edge<EdgeData>[] = [];
+  getEdgesFrom(nodeId: string): E[] {
+    const result: E[] = [];
     const outgoing = this.outgoingEdges.get(nodeId);
 
     if (outgoing) {
@@ -283,8 +262,8 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @returns Array of edges to the node
    * @complexity O(k) where k is the number of incoming edges
    */
-  getEdgesTo(nodeId: string): Edge<EdgeData>[] {
-    const result: Edge<EdgeData>[] = [];
+  getEdgesTo(nodeId: string): E[] {
+    const result: E[] = [];
     const incoming = this.incomingEdges.get(nodeId);
 
     if (incoming) {
@@ -308,8 +287,8 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @returns Array of edges between the nodes
    * @complexity O(k) where k is the number of edges between the nodes
    */
-  getEdgesBetween(sourceId: string, targetId: string): Edge<EdgeData>[] {
-    const result: Edge<EdgeData>[] = [];
+  getEdgesBetween(sourceId: string, targetId: string): E[] {
+    const result: E[] = [];
     const edgeIds = this.outgoingEdges.get(sourceId)?.get(targetId);
 
     if (edgeIds) {
@@ -331,7 +310,7 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @returns The first edge found or undefined
    * @complexity O(1)
    */
-  getFirstEdgeBetween(sourceId: string, targetId: string): Edge<EdgeData> | undefined {
+  getFirstEdgeBetween(sourceId: string, targetId: string): E | undefined {
     const edgeIds = this.outgoingEdges.get(sourceId)?.get(targetId);
     if (!edgeIds || edgeIds.size === 0) return undefined;
 
@@ -345,7 +324,7 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @returns Array of all nodes
    * @complexity O(n) where n is the number of nodes
    */
-  getAllNodes(): Node<NodeData>[] {
+  getAllNodes(): N[] {
     return Array.from(this.nodes.values());
   }
 
@@ -354,7 +333,7 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @returns Array of all edges
    * @complexity O(e) where e is the number of edges
    */
-  getAllEdges(): Edge<EdgeData>[] {
+  getAllEdges(): E[] {
     return Array.from(this.edges.values());
   }
 
@@ -431,12 +410,31 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
   }
 
   /**
+   * Creates a new edge with a generated ID
+   * @param source - Source node ID
+   * @param target - Target node ID
+   * @returns Null if either node doesn't exist
+   * This is a helper method for subclasses to implement their own edge creation
+   */
+  protected createEdgeWithNodes(source: string, target: string): { id: string; source: string; target: string } | null {
+    if (!this.nodes.has(source) || !this.nodes.has(target)) {
+      return null;
+    }
+
+    return {
+      id: this.generateEdgeId(),
+      source,
+      target,
+    };
+  }
+
+  /**
    * Performs a breadth-first traversal of the graph
    * @param startNodeId - The ID of the node to start from
    * @param callback - Function to call for each visited node
    * @complexity O(n + e) where n is the number of nodes and e is the number of edges
    */
-  breadthFirstTraversal(startNodeId: string, callback: (nodeId: string, node: Node<NodeData>) => void): void {
+  breadthFirstTraversal(startNodeId: string, callback: (nodeId: string, node: N) => void): void {
     if (!this.nodes.has(startNodeId)) {
       return;
     }
@@ -470,7 +468,7 @@ export class MultiGraph<NodeData = any, EdgeData = any> {
    * @param callback - Function to call for each visited node
    * @complexity O(n + e) where n is the number of nodes and e is the number of edges
    */
-  depthFirstTraversal(startNodeId: string, callback: (nodeId: string, node: Node<NodeData>) => void): void {
+  depthFirstTraversal(startNodeId: string, callback: (nodeId: string, node: N) => void): void {
     if (!this.nodes.has(startNodeId)) {
       return;
     }
