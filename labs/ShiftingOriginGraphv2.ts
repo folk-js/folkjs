@@ -11,25 +11,18 @@
  */
 
 import { Matrix } from '@lib/Matrix';
+import { MultiGraph, Edge as MultiGraphEdge, Node as MultiGraphNode } from './MultiGraph';
 
-export interface Node<T = any> {
-  id: string;
-  data: T;
-}
+// Re-export the Node type using 'export type' for TypeScript module compatibility
+export type { Node } from './MultiGraph';
 
+// Our custom Edge interface extends MultiGraph's Edge but changes 'data' to 'transform'
 export interface Edge {
-  id?: string; // Optional ID for compatibility with MultiGraph
-  source: string; // Source node ID
-  target: string; // Target node ID
+  id: string;
+  source: string;
+  target: string;
   transform: DOMMatrix;
 }
-
-// Updated to use Maps instead of Record objects
-type NodeMap<T = any> = Map<string, Node<T>>;
-// Updated to use Maps for edges
-type EdgeMap = Map<string, Edge[]>;
-// Map from target to source edges
-type ReverseEdgeMap = Map<string, Edge[]>;
 
 export type ShouldZoomInCallback = <T>(
   combinedTransform: DOMMatrix,
@@ -46,10 +39,8 @@ export type ShouldZoomOutCallback = <T>(
 
 export type NodeCullingCallback = <T>(nodeId: string, transform: DOMMatrix, originTransform: DOMMatrix) => boolean;
 
-export class ShiftingOriginGraphv2<T = any> {
-  #nodes: NodeMap<T>;
-  #edges: EdgeMap; // Directed edges from source to target
-  #reverseEdges: ReverseEdgeMap; // Reverse index mapping target to source edges
+// Extend MultiGraph with our specialized ShiftingOrigin functionality
+export class ShiftingOriginGraphv2<T = any> extends MultiGraph<T, DOMMatrix> {
   originNodeId: string;
   #originTransform: DOMMatrix;
   #maxNodes = 30;
@@ -61,107 +52,97 @@ export class ShiftingOriginGraphv2<T = any> {
    * @param initialReferenceNodeId - The ID of the initial reference node
    * @param maxNodes - Maximum number of nodes to track for visibility
    */
-  constructor(nodes: Node<T>[] = [], edges: Edge[] = [], initialReferenceNodeId?: string, maxNodes?: number) {
+  constructor(nodes: MultiGraphNode<T>[] = [], edges: Edge[] = [], initialReferenceNodeId?: string, maxNodes?: number) {
+    super(); // Initialize the MultiGraph base class
+
     this.#maxNodes = maxNodes || 30;
 
-    // Initialize with Maps instead of objects
-    this.#nodes = new Map();
+    // Add nodes to the graph
     for (const node of nodes) {
-      this.#nodes.set(node.id, node);
+      this.addNode(node.id, node.data);
     }
 
-    this.#edges = new Map();
-    this.#reverseEdges = new Map();
-
-    // Group edges by source
+    // Add edges to the graph
     for (const edge of edges) {
-      this.#addEdgeToMaps(edge);
+      // Convert our Edge type to MultiGraph edge format - transform becomes data
+      super.addEdge(edge.source, edge.target, edge.transform, edge.id);
     }
 
     // Use provided initial reference node or default to first node
-    this.originNodeId = initialReferenceNodeId || (this.#nodes.size > 0 ? Array.from(this.#nodes.keys())[0] : '');
+    this.originNodeId = initialReferenceNodeId || (this.nodes.size > 0 ? Array.from(this.nodes.keys())[0] : '');
     this.#originTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
 
   /**
    * Add a node to the graph
-   * @param node - The node to add
+   * @param node - The node to add or the node ID if providing data separately
+   * @param data - The node data (if not included in node parameter)
    * @returns The added node
    */
-  addNode(node: Node<T>): Node<T> {
-    this.#nodes.set(node.id, node);
+  addNode(node: MultiGraphNode<T> | string, data?: T): MultiGraphNode<T> {
+    let nodeId: string;
+    let nodeData: T;
+
+    if (typeof node === 'string') {
+      // Called with separate id and data parameters
+      nodeId = node;
+      nodeData = data as T;
+    } else {
+      // Called with a complete node object
+      nodeId = node.id;
+      nodeData = node.data;
+    }
+
+    const createdNode = super.addNode(nodeId, nodeData);
 
     // If this is the first node, make it the reference node
-    if (this.#nodes.size === 1) {
-      this.originNodeId = node.id;
+    if (this.nodeCount === 1) {
+      this.originNodeId = nodeId;
     }
 
-    return node;
+    return createdNode;
   }
 
   /**
-   * Remove a node from the graph
-   * @param nodeId - The ID of the node to remove
-   * @returns True if the node was removed, false if it wasn't found
+   * Override the addEdge method from MultiGraph to work with our custom Edge interface
+   * @param source - Source node ID
+   * @param target - Target node ID
+   * @param data - Either a DOMMatrix transform or data to be used as transform
+   * @param id - Optional edge ID
+   * @returns The added edge or null if the nodes don't exist
    */
-  removeNode(nodeId: string): boolean {
-    if (!this.#nodes.has(nodeId)) {
-      return false;
-    }
-
-    // Remove the node
-    this.#nodes.delete(nodeId);
-
-    // Remove all edges connected to this node
-    if (this.#edges.has(nodeId)) {
-      this.#edges.delete(nodeId);
-    }
-
-    // Remove from reverse edges
-    for (const [targetId, edges] of this.#reverseEdges.entries()) {
-      const filteredEdges = edges.filter((edge) => edge.source !== nodeId);
-
-      if (filteredEdges.length === 0) {
-        this.#reverseEdges.delete(targetId);
-      } else {
-        this.#reverseEdges.set(targetId, filteredEdges);
-      }
-    }
-
-    // Remove the node from forward edges of other nodes
-    for (const [sourceId, edges] of this.#edges.entries()) {
-      const filteredEdges = edges.filter((edge) => edge.target !== nodeId);
-
-      if (filteredEdges.length === 0) {
-        this.#edges.delete(sourceId);
-      } else {
-        this.#edges.set(sourceId, filteredEdges);
-      }
-    }
-
-    // If we removed the reference node, pick a new one
-    if (nodeId === this.originNodeId) {
-      if (this.#nodes.size > 0) {
-        this.resetView(Array.from(this.#nodes.keys())[0]);
-      }
-    }
-
-    return true;
-  }
-
+  addEdge(source: string, target: string, data: DOMMatrix, id?: string): MultiGraphEdge<DOMMatrix> | null;
   /**
-   * Add an edge to the graph
-   * @param edge - The edge to add
-   * @returns The added edge
+   * Add an edge from an Edge object
+   * @param edge - The Edge object to add
+   * @returns The added edge or null if the nodes don't exist
    */
-  addEdge(edge: Edge): Edge {
-    // Ensure edge has an ID for compatibility with MultiGraph
-    if (!edge.id) {
-      edge.id = this.#generateEdgeId(edge.source, edge.target);
+  addEdge(edge: Edge): MultiGraphEdge<DOMMatrix> | null;
+  /**
+   * Implementation of addEdge that handles both signatures
+   */
+  addEdge(
+    sourceOrEdge: string | Edge,
+    target?: string,
+    transform?: DOMMatrix,
+    id?: string,
+  ): MultiGraphEdge<DOMMatrix> | null {
+    // Handle case where a complete edge object is passed
+    if (typeof sourceOrEdge !== 'string') {
+      const edge = sourceOrEdge;
+      return super.addEdge(edge.source, edge.target, edge.transform, edge.id);
     }
 
-    this.#addEdgeToMaps(edge);
-    return edge;
+    // Handle standard case (string source + target + transform)
+    if (!target || !transform) {
+      return null;
+    }
+
+    // Generate a unique ID if not provided
+    const edgeId = id || this.#generateEdgeId(sourceOrEdge, target);
+
+    // Call MultiGraph's addEdge with transform as the data
+    return super.addEdge(sourceOrEdge, target, transform, edgeId);
   }
 
   /**
@@ -171,64 +152,49 @@ export class ShiftingOriginGraphv2<T = any> {
    * @param transform - The transform to apply
    * @returns The created edge or null if the source or target node doesn't exist
    */
-  addEdgeBetween(sourceId: string, targetId: string, transform: DOMMatrix): Edge | null {
-    // Verify that both nodes exist
-    if (!this.#nodes.has(sourceId) || !this.#nodes.has(targetId)) {
-      return null;
-    }
+  addEdgeBetween(sourceId: string, targetId: string, transform: DOMMatrix): MultiGraphEdge<DOMMatrix> | null {
+    return this.addEdge(sourceId, targetId, transform);
+  }
 
-    const edge: Edge = {
-      id: this.#generateEdgeId(sourceId, targetId),
-      source: sourceId,
-      target: targetId,
-      transform,
+  /**
+   * Convert a MultiGraph edge to our Edge format
+   * @param edge - The MultiGraph edge to convert
+   * @returns The converted edge in our format
+   */
+  convertToEdge(edge: MultiGraphEdge<DOMMatrix>): Edge {
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      transform: edge.data,
     };
-
-    this.#addEdgeToMaps(edge);
-    return edge;
   }
 
   /**
    * Remove an edge between two nodes
-   * @param sourceId - The source node ID
-   * @param targetId - The target node ID
+   * @param sourceId - The source node ID or edge ID
+   * @param targetId - The target node ID (not needed if sourceId is an edge ID)
    * @returns True if the edge was removed, false if it wasn't found
    */
-  removeEdge(sourceId: string, targetId: string): boolean {
-    if (!this.#edges.has(sourceId)) {
-      return false;
-    }
-
-    const edges = this.#edges.get(sourceId)!;
-    const initialLength = edges.length;
-    const filteredEdges = edges.filter((edge) => edge.target !== targetId);
-
-    if (filteredEdges.length === 0) {
-      this.#edges.delete(sourceId);
-    } else {
-      this.#edges.set(sourceId, filteredEdges);
-    }
-
-    // Also remove from reverse edges
-    if (this.#reverseEdges.has(targetId)) {
-      const reverseEdges = this.#reverseEdges.get(targetId)!;
-      const filteredReverseEdges = reverseEdges.filter((edge) => edge.source !== sourceId);
-
-      if (filteredReverseEdges.length === 0) {
-        this.#reverseEdges.delete(targetId);
-      } else {
-        this.#reverseEdges.set(targetId, filteredReverseEdges);
+  removeEdge(sourceId: string, targetId?: string): boolean {
+    if (targetId) {
+      // We need to find the specific edge ID
+      const edge = this.getFirstEdgeBetween(sourceId, targetId);
+      if (edge) {
+        return super.removeEdge(edge.id);
       }
+      return false;
+    } else {
+      // sourceId is the edge ID directly
+      return super.removeEdge(sourceId);
     }
-
-    return initialLength !== filteredEdges.length;
   }
 
   /**
    * Get the current reference node
    */
-  get referenceNode(): Node<T> {
-    return this.#nodes.get(this.originNodeId)!;
+  get referenceNode(): MultiGraphNode<T> {
+    return this.getNode(this.originNodeId)!;
   }
 
   /**
@@ -239,13 +205,6 @@ export class ShiftingOriginGraphv2<T = any> {
   }
 
   /**
-   * Get all nodes in the graph
-   */
-  get nodes(): Map<string, Node<T>> {
-    return this.#nodes;
-  }
-
-  /**
    * Iterate through visible nodes with their accumulated transforms
    * This provides both the node and its transform relative to the reference node
    * @param shouldCullNode - Optional callback to determine if a node should be culled
@@ -253,12 +212,12 @@ export class ShiftingOriginGraphv2<T = any> {
    */
   *getVisibleNodes(shouldCullNode?: NodeCullingCallback): Generator<{
     nodeId: string;
-    node: Node<T>;
+    node: MultiGraphNode<T>;
     transform: DOMMatrix;
   }> {
     // Always yield the reference node first with identity transform
     const identityMatrix = new DOMMatrix();
-    const originNode = this.#nodes.get(this.originNodeId);
+    const originNode = this.getNode(this.originNodeId);
 
     if (!originNode) return;
 
@@ -279,10 +238,10 @@ export class ShiftingOriginGraphv2<T = any> {
     }[] = [];
 
     // Start with all edges from the reference node
-    const edges = this.#getEdgesFrom(this.originNodeId);
+    const edges = this.getEdgesFrom(this.originNodeId);
     for (const edge of edges) {
       // Create a copy of the transform
-      const copiedTransform = Matrix.copyDOMMatrix(edge.transform);
+      const copiedTransform = Matrix.copyDOMMatrix(edge.data);
 
       // Check if node should be culled using the callback
       const shouldCull = shouldCullNode ? shouldCullNode(edge.target, copiedTransform, this.#originTransform) : false;
@@ -301,7 +260,7 @@ export class ShiftingOriginGraphv2<T = any> {
       const { nodeId, transform, depth } = queue.shift()!;
 
       // Get the node (skip if it doesn't exist)
-      const node = this.#nodes.get(nodeId);
+      const node = this.getNode(nodeId);
       if (!node) continue;
 
       // Yield the node
@@ -309,10 +268,10 @@ export class ShiftingOriginGraphv2<T = any> {
       nodesYielded++;
 
       // Add all outgoing edges to the queue
-      const nextEdges = this.#getEdgesFrom(nodeId);
+      const nextEdges = this.getEdgesFrom(nodeId);
       for (const edge of nextEdges) {
         // Copy the current transform and multiply by edge transform
-        const nextTransform = Matrix.copyDOMMatrix(transform).multiply(edge.transform);
+        const nextTransform = Matrix.copyDOMMatrix(transform).multiply(edge.data);
 
         // Check if node should be culled using the callback
         const shouldCull = shouldCullNode ? shouldCullNode(edge.target, nextTransform, this.#originTransform) : false;
@@ -384,7 +343,7 @@ export class ShiftingOriginGraphv2<T = any> {
    * @param initialNodeId - Optional node ID to reset to, defaults to the first node
    */
   resetView(initialNodeId?: string): void {
-    this.originNodeId = initialNodeId || (this.#nodes.size > 0 ? Array.from(this.#nodes.keys())[0] : '');
+    this.originNodeId = initialNodeId || (this.nodes.size > 0 ? Array.from(this.nodes.keys())[0] : '');
     this.#originTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
 
@@ -401,62 +360,12 @@ export class ShiftingOriginGraphv2<T = any> {
   }
 
   /**
-   * Helper method to add an edge to both the forward and reverse edge maps
-   * @param edge - The edge to add
-   */
-  #addEdgeToMaps(edge: Edge): void {
-    // Forward index
-    if (!this.#edges.has(edge.source)) {
-      this.#edges.set(edge.source, []);
-    }
-
-    const edges = this.#edges.get(edge.source)!;
-    // Check if the edge already exists
-    const existingEdgeIndex = edges.findIndex((e) => e.target === edge.target);
-
-    if (existingEdgeIndex >= 0) {
-      // Replace the existing edge
-      edges[existingEdgeIndex] = edge;
-    } else {
-      // Add a new edge
-      edges.push(edge);
-    }
-
-    // Reverse index
-    if (!this.#reverseEdges.has(edge.target)) {
-      this.#reverseEdges.set(edge.target, []);
-    }
-
-    const reverseEdges = this.#reverseEdges.get(edge.target)!;
-    // Check if the edge already exists in the reverse map
-    const existingReverseEdgeIndex = reverseEdges.findIndex((e) => e.source === edge.source);
-
-    if (existingReverseEdgeIndex >= 0) {
-      // Replace the existing edge
-      reverseEdges[existingReverseEdgeIndex] = edge;
-    } else {
-      // Add a new edge
-      reverseEdges.push(edge);
-    }
-  }
-
-  /**
-   * Get all outgoing edges from a node
-   * @param nodeId - The source node ID
-   * @returns Array of edges from the node
-   */
-  #getEdgesFrom(nodeId: string): Edge[] {
-    return this.#edges.get(nodeId) || [];
-  }
-
-  /**
    * Get the IDs of all nodes that have edges to the specified node
    * @param nodeId - The ID of the node to get previous nodes for
    * @returns Array of node IDs that have edges to the specified node
    */
   #getPrevNodeIds(nodeId: string): string[] {
-    const edges = this.#reverseEdges.get(nodeId) || [];
-    return edges.map((edge) => edge.source);
+    return this.getSourceNodes(nodeId);
   }
 
   /**
@@ -466,8 +375,10 @@ export class ShiftingOriginGraphv2<T = any> {
    * @returns The edge or undefined if not found
    */
   #getEdge(sourceNodeId: string, targetNodeId: string): Edge | undefined {
-    const edges = this.#getEdgesFrom(sourceNodeId);
-    return edges.find((edge) => edge.target === targetNodeId);
+    const edge = this.getFirstEdgeBetween(sourceNodeId, targetNodeId);
+    if (!edge) return undefined;
+
+    return this.convertToEdge(edge);
   }
 
   /**
@@ -503,16 +414,19 @@ export class ShiftingOriginGraphv2<T = any> {
       }
     } else if (!isZoomingOut && shouldZoomIn) {
       // Get all outgoing edges from the reference node
-      const edges = this.#getEdgesFrom(this.originNodeId);
+      const edges = this.getEdgesFrom(this.originNodeId);
 
       // Find the first node that covers the screen
       for (const edge of edges) {
         const nodeId = edge.target;
         // Calculate the combined transform
-        const combinedTransform = this.#originTransform.multiply(edge.transform);
+        const combinedTransform = this.#originTransform.multiply(edge.data);
         if (shouldZoomIn(combinedTransform, canvasWidth, canvasHeight, nodeId)) {
+          // Convert to our Edge type for shiftOrigin
+          const ourEdge = this.convertToEdge(edge);
+
           // Apply the forward shift to maintain visual state
-          this.#shiftOrigin(edge);
+          this.#shiftOrigin(ourEdge);
           return true;
         }
       }
