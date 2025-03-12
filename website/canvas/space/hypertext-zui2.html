@@ -803,11 +803,11 @@
         );
       }
 
-      function shouldZoomOutToPrevNode(viewportTransform, containerWidth, containerHeight) {
+      function shouldZoomOutToPrevNode(originTransform, containerWidth, containerHeight) {
         // For zooming out, we check if the current reference node no longer covers the screen
         return !Geometry.isScreenCoveredByRectangle(
           { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
-          viewportTransform,
+          originTransform,
           containerWidth,
           containerHeight,
         );
@@ -817,16 +817,16 @@
        * Determines whether a node should be culled based on its position and size
        * @param {string} nodeId - The ID of the node
        * @param {DOMMatrix} transform - The transform from reference node to this node
-       * @param {DOMMatrix} viewportTransform - The current viewport transform
+       * @param {DOMMatrix} originTransform - The current viewport transform
        * @returns {boolean} true if the node should be culled (invisible), false if visible
        */
-      function nodeCullingCallback(nodeId, transform, viewportTransform) {
+      function nodeCullingCallback(nodeId, transform, originTransform) {
         const containerWidth = container.clientWidth;
         const containerHeight = container.clientHeight;
         const padding = 0.5; // Add 50% padding around viewport to account for nodes partially visible
 
         // Combine viewport transform with the node's transform
-        const combinedTransform = viewportTransform.multiply(transform);
+        const combinedTransform = originTransform.multiply(transform);
 
         // Get the scale of the node
         const scale = combinedTransform.a; // Assuming uniform scaling
@@ -887,7 +887,7 @@
         // Get nodes from graph with transforms using our culling callback
         for (const { nodeId, node, transform } of graph.getVisibleNodes(nodeCullingCallback)) {
           // Combine viewport transform with the node's transform
-          const combinedTransform = graph.viewportTransform.multiply(transform);
+          const combinedTransform = graph.originTransform.multiply(transform);
 
           // Get the scale of the node
           const scale = combinedTransform.a; // Assuming uniform scaling
