@@ -552,7 +552,8 @@
 
       // Function to create a node element
       function createNodeElement(nodeId, instanceId, isSimple = false) {
-        const node = graph.nodes[nodeId];
+        // Get the node from the Map-based structure instead of direct access
+        const node = graph.nodes.get(nodeId);
         if (!node) return null;
 
         // Create the node element with performance optimizations
@@ -666,11 +667,7 @@
         return { x, y, width, height };
       }
 
-      /**
-       * Converts link position to a transform matrix
-       * @param {Object} linkPosition - The relative position and size data
-       * @returns {DOMMatrix} - The resulting transform matrix
-       */
+      // Converts link position to a transform matrix
       function linkPositionToTransform(linkPosition) {
         // Calculate the scale factor to make the target node exactly match the link size
         // We need to scale the node (NODE_WIDTH x NODE_HEIGHT) to match the link's dimensions
@@ -688,6 +685,11 @@
         return new DOMMatrix().translate(translateX, translateY).scale(scaleX, scaleY);
       }
 
+      // Generate a unique ID for an edge
+      function generateEdgeId(source, target) {
+        return `e_${source}_${target}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      }
+
       // Setup temporary DOM to find links and build the edge map
       function buildEdgesFromLinks() {
         // If we already have cached link positions for all nodes, use them directly
@@ -702,6 +704,7 @@
             if (positions) {
               for (const [targetId, linkPosition] of Object.entries(positions)) {
                 edges.push({
+                  id: generateEdgeId(nodeId, targetId),
                   source: nodeId,
                   target: targetId,
                   transform: linkPositionToTransform(linkPosition),
@@ -766,8 +769,9 @@
             // Convert to a transform matrix
             const transform = linkPositionToTransform(linkPosition);
 
-            // Add to edges array
+            // Add to edges array with a unique ID
             edges.push({
+              id: generateEdgeId(nodeId, targetId),
               source: nodeId,
               target: targetId,
               transform,
@@ -861,7 +865,7 @@
         const containerHeight = container.clientHeight;
 
         // Update reference node tracking
-        const currentReferenceNodeId = graph.referenceNode;
+        const currentReferenceNodeId = graph.referenceNode.id; // Access id property from the node object
         if (lastReferenceNodeId !== currentReferenceNodeId) {
           // Reference node changed, reset zoom level
           currentZoomLevel = 1.0;

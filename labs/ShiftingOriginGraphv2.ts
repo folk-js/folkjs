@@ -18,13 +18,18 @@ export interface Node<T = any> {
 }
 
 export interface Edge {
+  id?: string; // Optional ID for compatibility with MultiGraph
   source: string; // Source node ID
   target: string; // Target node ID
   transform: DOMMatrix;
 }
 
-type NodeMap<T = any> = Record<string, Node<T>>;
-type EdgeMap = Record<string, Edge[]>;
+// Updated to use Maps instead of Record objects
+type NodeMap<T = any> = Map<string, Node<T>>;
+// Updated to use Maps for edges
+type EdgeMap = Map<string, Edge[]>;
+// Map from target to source edges
+type ReverseEdgeMap = Map<string, Edge[]>;
 
 export type ShouldZoomInCallback = <T>(
   combinedTransform: DOMMatrix,
@@ -44,7 +49,7 @@ export type NodeCullingCallback = <T>(nodeId: string, transform: DOMMatrix, orig
 export class ShiftingOriginGraphv2<T = any> {
   #nodes: NodeMap<T>;
   #edges: EdgeMap; // Directed edges from source to target
-  #reverseEdges: EdgeMap; // Reverse index mapping target to source edges
+  #reverseEdges: ReverseEdgeMap; // Reverse index mapping target to source edges
   originNodeId: string;
   #originTransform: DOMMatrix;
   #maxNodes = 30;
@@ -59,13 +64,14 @@ export class ShiftingOriginGraphv2<T = any> {
   constructor(nodes: Node<T>[] = [], edges: Edge[] = [], initialReferenceNodeId?: string, maxNodes?: number) {
     this.#maxNodes = maxNodes || 30;
 
-    this.#nodes = {};
+    // Initialize with Maps instead of objects
+    this.#nodes = new Map();
     for (const node of nodes) {
-      this.#nodes[node.id] = node;
+      this.#nodes.set(node.id, node);
     }
 
-    this.#edges = {};
-    this.#reverseEdges = {};
+    this.#edges = new Map();
+    this.#reverseEdges = new Map();
 
     // Group edges by source
     for (const edge of edges) {
@@ -73,7 +79,7 @@ export class ShiftingOriginGraphv2<T = any> {
     }
 
     // Use provided initial reference node or default to first node
-    this.originNodeId = initialReferenceNodeId || Object.keys(this.#nodes)[0] || '';
+    this.originNodeId = initialReferenceNodeId || (this.#nodes.size > 0 ? Array.from(this.#nodes.keys())[0] : '');
     this.#originTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
 
@@ -83,10 +89,10 @@ export class ShiftingOriginGraphv2<T = any> {
    * @returns The added node
    */
   addNode(node: Node<T>): Node<T> {
-    this.#nodes[node.id] = node;
+    this.#nodes.set(node.id, node);
 
     // If this is the first node, make it the reference node
-    if (Object.keys(this.#nodes).length === 1) {
+    if (this.#nodes.size === 1) {
       this.originNodeId = node.id;
     }
 
@@ -99,41 +105,44 @@ export class ShiftingOriginGraphv2<T = any> {
    * @returns True if the node was removed, false if it wasn't found
    */
   removeNode(nodeId: string): boolean {
-    if (!this.#nodes[nodeId]) {
+    if (!this.#nodes.has(nodeId)) {
       return false;
     }
 
     // Remove the node
-    delete this.#nodes[nodeId];
+    this.#nodes.delete(nodeId);
 
     // Remove all edges connected to this node
-    if (this.#edges[nodeId]) {
-      delete this.#edges[nodeId];
+    if (this.#edges.has(nodeId)) {
+      this.#edges.delete(nodeId);
     }
 
     // Remove from reverse edges
-    Object.keys(this.#reverseEdges).forEach((targetId) => {
-      this.#reverseEdges[targetId] = (this.#reverseEdges[targetId] || []).filter((edge) => edge.source !== nodeId);
+    for (const [targetId, edges] of this.#reverseEdges.entries()) {
+      const filteredEdges = edges.filter((edge) => edge.source !== nodeId);
 
-      if (this.#reverseEdges[targetId].length === 0) {
-        delete this.#reverseEdges[targetId];
+      if (filteredEdges.length === 0) {
+        this.#reverseEdges.delete(targetId);
+      } else {
+        this.#reverseEdges.set(targetId, filteredEdges);
       }
-    });
+    }
 
     // Remove the node from forward edges of other nodes
-    Object.keys(this.#edges).forEach((sourceId) => {
-      this.#edges[sourceId] = (this.#edges[sourceId] || []).filter((edge) => edge.target !== nodeId);
+    for (const [sourceId, edges] of this.#edges.entries()) {
+      const filteredEdges = edges.filter((edge) => edge.target !== nodeId);
 
-      if (this.#edges[sourceId].length === 0) {
-        delete this.#edges[sourceId];
+      if (filteredEdges.length === 0) {
+        this.#edges.delete(sourceId);
+      } else {
+        this.#edges.set(sourceId, filteredEdges);
       }
-    });
+    }
 
     // If we removed the reference node, pick a new one
     if (nodeId === this.originNodeId) {
-      const keys = Object.keys(this.#nodes);
-      if (keys.length > 0) {
-        this.resetView(keys[0]);
+      if (this.#nodes.size > 0) {
+        this.resetView(Array.from(this.#nodes.keys())[0]);
       }
     }
 
@@ -146,6 +155,11 @@ export class ShiftingOriginGraphv2<T = any> {
    * @returns The added edge
    */
   addEdge(edge: Edge): Edge {
+    // Ensure edge has an ID for compatibility with MultiGraph
+    if (!edge.id) {
+      edge.id = this.#generateEdgeId(edge.source, edge.target);
+    }
+
     this.#addEdgeToMaps(edge);
     return edge;
   }
@@ -159,11 +173,12 @@ export class ShiftingOriginGraphv2<T = any> {
    */
   addEdgeBetween(sourceId: string, targetId: string, transform: DOMMatrix): Edge | null {
     // Verify that both nodes exist
-    if (!this.#nodes[sourceId] || !this.#nodes[targetId]) {
+    if (!this.#nodes.has(sourceId) || !this.#nodes.has(targetId)) {
       return null;
     }
 
     const edge: Edge = {
+      id: this.#generateEdgeId(sourceId, targetId),
       source: sourceId,
       target: targetId,
       transform,
@@ -180,34 +195,40 @@ export class ShiftingOriginGraphv2<T = any> {
    * @returns True if the edge was removed, false if it wasn't found
    */
   removeEdge(sourceId: string, targetId: string): boolean {
-    if (!this.#edges[sourceId]) {
+    if (!this.#edges.has(sourceId)) {
       return false;
     }
 
-    const initialLength = this.#edges[sourceId].length;
-    this.#edges[sourceId] = this.#edges[sourceId].filter((edge) => edge.target !== targetId);
+    const edges = this.#edges.get(sourceId)!;
+    const initialLength = edges.length;
+    const filteredEdges = edges.filter((edge) => edge.target !== targetId);
 
-    if (this.#edges[sourceId].length === 0) {
-      delete this.#edges[sourceId];
+    if (filteredEdges.length === 0) {
+      this.#edges.delete(sourceId);
+    } else {
+      this.#edges.set(sourceId, filteredEdges);
     }
 
     // Also remove from reverse edges
-    if (this.#reverseEdges[targetId]) {
-      this.#reverseEdges[targetId] = this.#reverseEdges[targetId].filter((edge) => edge.source !== sourceId);
+    if (this.#reverseEdges.has(targetId)) {
+      const reverseEdges = this.#reverseEdges.get(targetId)!;
+      const filteredReverseEdges = reverseEdges.filter((edge) => edge.source !== sourceId);
 
-      if (this.#reverseEdges[targetId].length === 0) {
-        delete this.#reverseEdges[targetId];
+      if (filteredReverseEdges.length === 0) {
+        this.#reverseEdges.delete(targetId);
+      } else {
+        this.#reverseEdges.set(targetId, filteredReverseEdges);
       }
     }
 
-    return initialLength !== this.#edges[sourceId]?.length;
+    return initialLength !== filteredEdges.length;
   }
 
   /**
    * Get the current reference node
    */
   get referenceNode(): Node<T> {
-    return this.#nodes[this.originNodeId];
+    return this.#nodes.get(this.originNodeId)!;
   }
 
   /**
@@ -220,7 +241,7 @@ export class ShiftingOriginGraphv2<T = any> {
   /**
    * Get all nodes in the graph
    */
-  get nodes(): NodeMap<T> {
+  get nodes(): Map<string, Node<T>> {
     return this.#nodes;
   }
 
@@ -237,10 +258,13 @@ export class ShiftingOriginGraphv2<T = any> {
   }> {
     // Always yield the reference node first with identity transform
     const identityMatrix = new DOMMatrix();
+    const originNode = this.#nodes.get(this.originNodeId);
+
+    if (!originNode) return;
 
     yield {
       nodeId: this.originNodeId,
-      node: this.#nodes[this.originNodeId],
+      node: originNode,
       transform: identityMatrix,
     };
 
@@ -277,7 +301,7 @@ export class ShiftingOriginGraphv2<T = any> {
       const { nodeId, transform, depth } = queue.shift()!;
 
       // Get the node (skip if it doesn't exist)
-      const node = this.#nodes[nodeId];
+      const node = this.#nodes.get(nodeId);
       if (!node) continue;
 
       // Yield the node
@@ -360,11 +384,21 @@ export class ShiftingOriginGraphv2<T = any> {
    * @param initialNodeId - Optional node ID to reset to, defaults to the first node
    */
   resetView(initialNodeId?: string): void {
-    this.originNodeId = initialNodeId || Object.keys(this.#nodes)[0];
+    this.originNodeId = initialNodeId || (this.#nodes.size > 0 ? Array.from(this.#nodes.keys())[0] : '');
     this.#originTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
 
   /* ---- PRIVATE METHODS ---- */
+
+  /**
+   * Generate a unique ID for an edge based on source and target
+   * @param source - Source node ID
+   * @param target - Target node ID
+   * @returns A unique edge ID
+   */
+  #generateEdgeId(source: string, target: string): string {
+    return `e_${source}_${target}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  }
 
   /**
    * Helper method to add an edge to both the forward and reverse edge maps
@@ -372,31 +406,37 @@ export class ShiftingOriginGraphv2<T = any> {
    */
   #addEdgeToMaps(edge: Edge): void {
     // Forward index
-    if (!this.#edges[edge.source]) {
-      this.#edges[edge.source] = [];
+    if (!this.#edges.has(edge.source)) {
+      this.#edges.set(edge.source, []);
     }
+
+    const edges = this.#edges.get(edge.source)!;
     // Check if the edge already exists
-    const existingEdgeIndex = this.#edges[edge.source].findIndex((e) => e.target === edge.target);
+    const existingEdgeIndex = edges.findIndex((e) => e.target === edge.target);
+
     if (existingEdgeIndex >= 0) {
       // Replace the existing edge
-      this.#edges[edge.source][existingEdgeIndex] = edge;
+      edges[existingEdgeIndex] = edge;
     } else {
       // Add a new edge
-      this.#edges[edge.source].push(edge);
+      edges.push(edge);
     }
 
     // Reverse index
-    if (!this.#reverseEdges[edge.target]) {
-      this.#reverseEdges[edge.target] = [];
+    if (!this.#reverseEdges.has(edge.target)) {
+      this.#reverseEdges.set(edge.target, []);
     }
+
+    const reverseEdges = this.#reverseEdges.get(edge.target)!;
     // Check if the edge already exists in the reverse map
-    const existingReverseEdgeIndex = this.#reverseEdges[edge.target].findIndex((e) => e.source === edge.source);
+    const existingReverseEdgeIndex = reverseEdges.findIndex((e) => e.source === edge.source);
+
     if (existingReverseEdgeIndex >= 0) {
       // Replace the existing edge
-      this.#reverseEdges[edge.target][existingReverseEdgeIndex] = edge;
+      reverseEdges[existingReverseEdgeIndex] = edge;
     } else {
       // Add a new edge
-      this.#reverseEdges[edge.target].push(edge);
+      reverseEdges.push(edge);
     }
   }
 
@@ -406,7 +446,7 @@ export class ShiftingOriginGraphv2<T = any> {
    * @returns Array of edges from the node
    */
   #getEdgesFrom(nodeId: string): Edge[] {
-    return this.#edges[nodeId] || [];
+    return this.#edges.get(nodeId) || [];
   }
 
   /**
@@ -415,7 +455,7 @@ export class ShiftingOriginGraphv2<T = any> {
    * @returns Array of node IDs that have edges to the specified node
    */
   #getPrevNodeIds(nodeId: string): string[] {
-    const edges = this.#reverseEdges[nodeId] || [];
+    const edges = this.#reverseEdges.get(nodeId) || [];
     return edges.map((edge) => edge.source);
   }
 
