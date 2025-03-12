@@ -1,9 +1,36 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
+import htmlGenerator from 'remark-html';
+import markdownParser from 'remark-parse';
+import wikiLink from 'remark-wiki-link';
+import { unified } from 'unified';
 import { defineConfig, IndexHtmlTransformContext, Plugin } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import wasm from 'vite-plugin-wasm';
+
+function remark(): Plugin {
+  const processor = unified()
+    .use(markdownParser)
+    .use(htmlGenerator)
+    .use(wikiLink, {
+      pageResolver: (name: string) => [name],
+      hrefTemplate: (permalink: string) => `#${permalink}`,
+    });
+
+  return {
+    name: 'vite-remark-html',
+    async transform(code, id) {
+      if (id.endsWith('.md')) {
+        const result = await processor.process(code);
+        return {
+          code: `export default ` + JSON.stringify(result.toString('utf8')),
+          map: { mappings: '' },
+        };
+      }
+    },
+  };
+}
 
 const websiteDir = resolve(__dirname, './website');
 const canvasWebsiteDir = resolve(__dirname, './website/canvas');
@@ -108,7 +135,7 @@ export default defineConfig({
       '@propagators': resolve(__dirname, './propagators'),
     },
   },
-  plugins: [fallback(websiteDir), linkGenerator(), mkcert(), wasm(), topLevelAwait()],
+  plugins: [fallback(websiteDir), linkGenerator(), mkcert(), wasm(), topLevelAwait(), remark()],
   build: {
     target: 'esnext',
     rollupOptions: {

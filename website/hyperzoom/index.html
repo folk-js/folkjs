@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hyperzoom</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #f9f9f9;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      #info-container {
+        position: absolute;
+        bottom: 15px;
+        right: 15px;
+        background-color: rgba(255, 255, 255, 0.9);
+        padding: 12px 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+        z-index: 2000;
+        max-width: 300px;
+        font-size: 12px;
+        line-height: 1.4;
+        backdrop-filter: blur(5px);
+        border: 1px solid rgba(220, 220, 220, 0.5);
+
+        & > div:first-child {
+          font-weight: bold;
+          margin-bottom: 5px;
+        }
+      }
+
+      #zui-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      .node {
+        position: absolute;
+        transform-origin: center;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-weight: bold;
+        color: white;
+        border: none;
+        border-radius: 12px;
+        box-sizing: border-box;
+        user-select: none;
+        font-size: 14px;
+        box-shadow:
+          0 8px 25px rgba(0, 0, 0, 0.3),
+          0 2px 5px rgba(0, 0, 0, 0.2);
+        overflow: hidden;
+      }
+
+      .node-content {
+        padding: 50px 25px 20px;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+        position: relative;
+        justify-content: flex-start;
+      }
+
+      .node h3 {
+        margin: 0 0 15px 0;
+        font-size: 1.5em;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+        width: 100%;
+        padding-bottom: 8px;
+        letter-spacing: 0.02em;
+      }
+
+      .node p {
+        margin: 0 0 15px 0;
+        font-size: 0.9em;
+        line-height: 1.5;
+        font-weight: 400;
+      }
+
+      /* Wiki-style formatting */
+      article {
+        font-family: 'Georgia', serif;
+        font-size: 15px;
+
+        blockquote {
+          font-style: italic;
+          border-left: 3px solid rgba(255, 255, 255, 0.5);
+          padding-left: 15px;
+          margin-bottom: 20px;
+          line-height: 1.6;
+          color: rgba(255, 255, 255, 0.95);
+        }
+
+        h3 {
+          margin: 20px 0 4px 0;
+          font-size: 1.1em;
+          font-family: 'Georgia', serif;
+          font-weight: bold;
+          letter-spacing: 0.02em;
+        }
+      }
+
+      /* Inline version of zui-link that flows with text */
+      a {
+        display: inline-block;
+        position: relative;
+        width: 50px; /* Smaller width for inline flow */
+        height: 30px; /* Preserve 5:3 aspect ratio */
+        aspect-ratio: 5/3;
+        margin: 0 5px;
+        vertical-align: middle;
+        opacity: 0;
+      }
+
+      /* Performance optimization classes */
+      .content-hidden {
+        opacity: 0;
+      }
+
+      .content-visible {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info-container">
+      <div>Zoomable Hypertext</div>
+      <div
+        >Navigate through an interconnected wiki using an infinite zoom interface. Memory consumption is finite and
+        you'll never hit floating point precision limits. You can zoom in circles through the graph, re-encountering
+        nodes you've already seen.</div
+      >
+      <br />
+      <div> <kbd>Shift</kbd> to zoom in &nbsp;|&nbsp; <kbd>Alt+Shift</kbd> to zoom out </div>
+    </div>
+
+    <div id="zui-container"></div>
+
+    <script type="module">
+      import { ShiftingOriginGraph } from '@labs/ShiftingOriginGraph.ts';
+      import { Geometry } from '@lib/Geometry.ts';
+
+      // Define constants for node dimensions
+      const NODE_WIDTH = 500 * 2;
+      const NODE_HEIGHT = 300 * 2;
+      // Define zoom limits for when the reference node doesn't change
+      const MAX_ZOOM_LEVEL = 100.0; // Maximum zoom level (zoomed in)
+
+      let currentZoomLevel = 1.0; // Track the current zoom level
+      let lastReferenceNodeId = null; // Track the last reference node
+
+      // Caches for performance optimization
+      const nodeContentCache = {}; // Cache for node content templates
+      const linkPositionsCache = {}; // Cache for link positions within nodes
+
+      const colors = [
+        'rgb(70, 50, 100)',
+        'rgb(40, 80, 120)',
+        'rgb(60, 100, 70)',
+        'rgb(120, 60, 40)',
+        'rgb(100, 30, 100)',
+        'rgb(140, 140, 180)',
+        'rgb(90, 110, 130)',
+        'rgb(160, 120, 40)',
+        'rgb(60, 150, 160)',
+        'rgb(90, 50, 140)',
+        'rgb(130, 90, 50)',
+        'rgb(70, 100, 120)',
+        'rgb(150, 80, 100)',
+        'rgb(60, 130, 70)',
+        'rgb(110, 70, 90)',
+        'rgb(30, 100, 130)',
+        'rgb(180, 120, 60)',
+      ];
+
+      // Define nodes as an array for our simple 3-node cycle
+      const nodesArray = Object.entries(import.meta.glob('./*.md', { eager: true })).map(([path, file], index) => {
+        const id = path.replace('./', '').replace('.md', '');
+        const content = `<article>${file.default}</article>`;
+        return {
+          id,
+          data: {
+            title: id,
+            content,
+            color: colors[index],
+          },
+        };
+      });
+
+      // Function to create a node element
+      function createNodeElement(nodeId, instanceId, isSimple = false) {
+        console.log(nodeId, instanceId);
+        const node = graph.nodes[nodeId];
+
+        if (!node) return null;
+
+        // Create the node element with performance optimizations
+        const nodeElement = document.createElement('div');
+        nodeElement.classList.add('node');
+        nodeElement.id = `node-${nodeId}-${instanceId}`;
+        nodeElement.dataset.nodeId = nodeId;
+        nodeElement.dataset.instanceId = instanceId;
+        nodeElement.style.width = `${NODE_WIDTH}px`;
+        nodeElement.style.height = `${NODE_HEIGHT}px`;
+        nodeElement.style.backgroundColor = node.data.color;
+
+        // If we're creating a simple version, just add the title and return
+        if (isSimple) {
+          return nodeElement;
+        }
+
+        // Create a document fragment to build the element
+        const fragment = document.createDocumentFragment();
+
+        // Create a content container
+        const contentElement = document.createElement('div');
+        contentElement.classList.add('node-content');
+
+        // Check if we have cached content for this nodeId
+        if (!nodeContentCache[nodeId] && node.data.content) {
+          // Create a template element to parse the HTML once
+          const template = document.createElement('template');
+          template.innerHTML = node.data.content.trim();
+
+          // Save the parsed content in the cache
+          nodeContentCache[nodeId] = template.content.cloneNode(true);
+
+          // Cache link positions if not already done
+          if (!linkPositionsCache[nodeId]) {
+            // Create a temporary node to measure link positions
+            const tempNode = document.createElement('div');
+            tempNode.style.width = `${NODE_WIDTH}px`;
+            tempNode.style.height = `${NODE_HEIGHT}px`;
+            tempNode.style.position = 'absolute';
+            tempNode.style.visibility = 'hidden';
+            tempNode.appendChild(template.content.cloneNode(true));
+            document.body.appendChild(tempNode);
+
+            // Force layout calculation
+            void tempNode.offsetHeight;
+
+            // Find all links and cache their positions
+            const links = tempNode.querySelectorAll('a');
+            const positions = {};
+
+            links.forEach((link) => {
+              const targetId = decodeURIComponent(link.hash.replace('#', ''));
+              if (targetId) {
+                positions[targetId] = getLinkPosition(link, tempNode);
+              }
+            });
+
+            linkPositionsCache[nodeId] = positions;
+
+            // Clean up
+            document.body.removeChild(tempNode);
+          }
+        }
+
+        // Use cached content if available, otherwise use the node content or ID
+        if (nodeContentCache[nodeId]) {
+          contentElement.appendChild(nodeContentCache[nodeId].cloneNode(true));
+        } else if (node.data.content) {
+          contentElement.innerHTML = node.data.content;
+        } else {
+          contentElement.textContent = nodeId;
+        }
+
+        // Setup links to prevent default behavior
+        const links = contentElement.querySelectorAll('a');
+        links.forEach((link) => {
+          link.addEventListener('click', (e) => {
+            e.preventDefault();
+          });
+
+          // Set the title without adding visual elements
+          const targetId = decodeURIComponent(link.hash.replace('#', ''));
+          if (targetId) {
+            link.title = `Links to: ${targetId}`;
+          }
+        });
+
+        nodeElement.appendChild(contentElement);
+        return nodeElement;
+      }
+
+      /**
+       * Calculates relative position of a link within its parent node
+       * @param {HTMLElement} linkElement - The link element
+       * @param {HTMLElement} nodeElement - The parent node element
+       * @returns {Object} - The relative position and size data
+       */
+      function getLinkPosition(linkElement, nodeElement) {
+        const nodeRect = nodeElement.getBoundingClientRect();
+        const linkRect = linkElement.getBoundingClientRect();
+
+        // Calculate relative position (0-1) within the node
+        const x = (linkRect.left + linkRect.width / 2 - nodeRect.left) / nodeRect.width;
+        const y = (linkRect.top + linkRect.height / 2 - nodeRect.top) / nodeRect.height;
+
+        // Calculate relative size (0-1) compared to the node
+        const width = linkRect.width / nodeRect.width;
+        const height = linkRect.height / nodeRect.height;
+
+        return { x, y, width, height };
+      }
+
+      /**
+       * Converts link position to a transform matrix
+       * @param {Object} linkPosition - The relative position and size data
+       * @returns {DOMMatrix} - The resulting transform matrix
+       */
+      function linkPositionToTransform(linkPosition) {
+        // Calculate the scale factor to make the target node exactly match the link size
+        // We need to scale the node (NODE_WIDTH x NODE_HEIGHT) to match the link's dimensions
+        const scaleX = linkPosition.width;
+        const scaleY = linkPosition.height;
+
+        // The link's center position in the node's coordinate system
+        // Convert from relative coordinates (where linkPosition.x,linkPosition.y is the relative center)
+        // to the coordinate system of the source node (where 0,0 is center)
+        const translateX = (linkPosition.x - 0.5) * NODE_WIDTH;
+        const translateY = (linkPosition.y - 0.5) * NODE_HEIGHT;
+
+        // Create the transform matrix
+        // First translate to position, then scale to match the link's size
+        return new DOMMatrix().translate(translateX, translateY).scale(scaleX, scaleY);
+      }
+
+      // Setup temporary DOM to find links and build the edge map
+      function buildEdgesFromLinks() {
+        // If we already have cached link positions for all nodes, use them directly
+        if (Object.keys(linkPositionsCache).length === nodesArray.length) {
+          const edges = [];
+
+          // Generate edges from cached positions
+          for (const node of nodesArray) {
+            const nodeId = node.id;
+            const positions = linkPositionsCache[nodeId];
+
+            if (positions) {
+              for (const [targetId, linkPosition] of Object.entries(positions)) {
+                edges.push({
+                  source: nodeId,
+                  target: targetId,
+                  transform: linkPositionToTransform(linkPosition),
+                });
+              }
+            }
+          }
+
+          return edges;
+        }
+
+        // If cache is incomplete, fall back to the original method
+        // Create a temporary container
+        const tempContainer = document.createElement('div');
+        tempContainer.style.position = 'absolute';
+        tempContainer.style.visibility = 'hidden';
+        tempContainer.style['pointer-events'] = 'none';
+        document.body.appendChild(tempContainer);
+
+        // Generate the edges array
+        const edges = [];
+        const renderedNodes = {};
+
+        // First, create a DOM element for each node
+        for (const node of nodesArray) {
+          const nodeElement = document.createElement('div');
+          nodeElement.classList.add('node');
+          nodeElement.style.width = `${NODE_WIDTH}px`;
+          nodeElement.style.height = `${NODE_HEIGHT}px`;
+
+          const contentElement = document.createElement('div');
+          contentElement.classList.add('node-content');
+          contentElement.innerHTML = node.data.content;
+
+          nodeElement.appendChild(contentElement);
+          tempContainer.appendChild(nodeElement);
+          renderedNodes[node.id] = nodeElement;
+        }
+
+        // Force layout calculation
+        void tempContainer.offsetHeight;
+
+        // Now find all links and calculate their positions
+        for (const [nodeId, nodeElement] of Object.entries(renderedNodes)) {
+          const links = nodeElement.querySelectorAll('a');
+          // Create cache entry for this node if it doesn't exist
+          if (!linkPositionsCache[nodeId]) {
+            linkPositionsCache[nodeId] = {};
+          }
+
+          links.forEach((link) => {
+            const targetId = decodeURIComponent(link.hash.replace('#', ''));
+
+            if (!targetId || !renderedNodes[targetId]) return;
+
+            // Get the link's position relative to its parent node
+            const linkPosition = getLinkPosition(link, nodeElement);
+
+            // Cache the position for future use
+            linkPositionsCache[nodeId][targetId] = linkPosition;
+
+            // Convert to a transform matrix
+            const transform = linkPositionToTransform(linkPosition);
+
+            // Add to edges array
+            edges.push({
+              source: nodeId,
+              target: targetId,
+              transform,
+            });
+          });
+        }
+
+        // Clean up
+        document.body.removeChild(tempContainer);
+
+        return edges;
+      }
+
+      // First, build edges from links in node content
+      const edgesArray = buildEdgesFromLinks();
+
+      // Define size threshold for showing content (as a proportion of original size)
+      const CONTENT_VISIBILITY_THRESHOLD = 0.005;
+
+      const container = document.getElementById('zui-container');
+
+      // Create the shifting origin graph with our nodes and edges
+      const graph = new ShiftingOriginGraph(nodesArray, edgesArray, nodesArray[0].id, 50);
+
+      // Define zoom threshold callbacks
+      function shouldZoomInToNextNode(graph, containerWidth, containerHeight, nextNodeId) {
+        const nextNode = graph.nodes[nextNodeId];
+        if (!nextNode) return false;
+
+        // Get the transform from reference node to next node
+        const nextNodeTransform = graph.getAccumulatedTransform(nextNodeId);
+        if (!nextNodeTransform) return false;
+
+        // Calculate effective transform from combined viewport and node transform
+        const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
+
+        // Check if screen is completely covered by the node
+        return Geometry.isScreenCoveredByRectangle(
+          { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
+          combinedTransform,
+          containerWidth,
+          containerHeight,
+        );
+      }
+
+      function shouldZoomOutToPrevNode(graph, containerWidth, containerHeight, prevNodeId) {
+        const currentNode = graph.referenceNode;
+        if (!currentNode) return false;
+
+        // For zooming out, we check if the current reference node no longer covers the screen
+        return !Geometry.isScreenCoveredByRectangle(
+          { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
+          graph.viewportTransform,
+          containerWidth,
+          containerHeight,
+        );
+      }
+
+      /**
+       * Determines whether a node should be culled based on its position and size
+       * @param {string} nodeId - The ID of the node
+       * @param {DOMMatrix} transform - The transform from reference node to this node
+       * @param {DOMMatrix} viewportTransform - The current viewport transform
+       * @returns {boolean} true if the node should be culled (invisible), false if visible
+       */
+      function nodeCullingCallback(nodeId, transform, viewportTransform) {
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const padding = 0.5; // Add 50% padding around viewport to account for nodes partially visible
+
+        // Combine viewport transform with the node's transform
+        const combinedTransform = viewportTransform.multiply(transform);
+
+        // Get the scale of the node
+        const scale = combinedTransform.a; // Assuming uniform scaling
+
+        // Calculate the node's position in viewport coordinates
+        const nodeX = containerWidth / 2 + combinedTransform.e;
+        const nodeY = containerHeight / 2 + combinedTransform.f;
+
+        // Calculate the scaled dimensions of the node
+        const scaledWidth = NODE_WIDTH * scale;
+        const scaledHeight = NODE_HEIGHT * scale;
+
+        // Define the extended viewport bounds with padding
+        const minVisibleX = -containerWidth * padding;
+        const maxVisibleX = containerWidth * (1 + padding);
+        const minVisibleY = -containerHeight * padding;
+        const maxVisibleY = containerHeight * (1 + padding);
+
+        // Check if node is outside the viewport - use a bounding box test
+        return !(
+          nodeX + scaledWidth / 2 >= minVisibleX &&
+          nodeX - scaledWidth / 2 <= maxVisibleX &&
+          nodeY + scaledHeight / 2 >= minVisibleY &&
+          nodeY - scaledHeight / 2 <= maxVisibleY
+        );
+      }
+
+      // Function to update the DOM based on the current graph state
+      function updateDOM() {
+        // Get container dimensions for centering
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+
+        // Update reference node tracking
+        const currentReferenceNodeId = graph.referenceNode;
+        if (lastReferenceNodeId !== currentReferenceNodeId) {
+          // Reference node changed, reset zoom level
+          currentZoomLevel = 1.0;
+          lastReferenceNodeId = currentReferenceNodeId;
+        }
+
+        // Create a map to track which nodes we've processed
+        const processedNodes = new Map();
+
+        const nodePool = new Map();
+
+        // Track existing DOM elements already in the container
+        container.querySelectorAll('.node').forEach((element) => {
+          const key = `${element.dataset.nodeId}-${element.dataset.instanceId}`;
+          // Put existing elements into the pool keyed by nodeId-instanceId
+          nodePool.set(key, element);
+        });
+
+        // Process all visible nodes using the culling callback
+        const visibleNodes = [];
+
+        // Get nodes from graph with transforms using our culling callback
+        for (const { nodeId, node, transform } of graph.getVisibleNodes(nodeCullingCallback)) {
+          // Combine viewport transform with the node's transform
+          const combinedTransform = graph.viewportTransform.multiply(transform);
+
+          // Get the scale of the node
+          const scale = combinedTransform.a; // Assuming uniform scaling
+
+          // Calculate the node's position in viewport coordinates
+          const nodeX = containerWidth / 2 + combinedTransform.e;
+          const nodeY = containerHeight / 2 + combinedTransform.f;
+
+          // Add directly to our visible nodes array (culling already done by the graph)
+          visibleNodes.push({
+            nodeId,
+            node,
+            transform,
+            combinedTransform,
+            nodeX,
+            nodeY,
+            scale,
+          });
+        }
+
+        let instanceCounter = 0;
+
+        // Process all visible nodes
+        for (const { nodeId, node, transform, combinedTransform, nodeX, nodeY, scale } of visibleNodes) {
+          // Create a unique instance ID for this occurrence of the node
+          const instanceId = instanceCounter++;
+          const nodeKey = `${nodeId}-${instanceId}`;
+          const isSimpleNode = scale < CONTENT_VISIBILITY_THRESHOLD;
+
+          // Track that we've processed this node
+          processedNodes.set(nodeKey, true);
+
+          // Get or create node element
+          let nodeElement;
+          let needsReplacement = false;
+
+          // Check if we have this node in our pool already
+          if (nodePool.has(nodeKey)) {
+            nodeElement = nodePool.get(nodeKey);
+
+            // Check if we need to replace a full node with a simple one or vice versa
+            const hasContent = nodeElement.querySelector('.node-content') !== null;
+            if (isSimpleNode && hasContent) {
+              // Need to replace full node with simple node
+              container.removeChild(nodeElement);
+              nodePool.delete(nodeKey);
+              needsReplacement = true;
+            } else if (!isSimpleNode && !hasContent) {
+              // Need to replace simple node with full node
+              container.removeChild(nodeElement);
+              nodePool.delete(nodeKey);
+              needsReplacement = true;
+            } else {
+              // Node type matches what we need, keep using it
+              nodePool.delete(nodeKey);
+            }
+          } else {
+            // No existing node, need to create a new one
+            needsReplacement = true;
+          }
+
+          // Create a new node if needed
+          if (needsReplacement) {
+            nodeElement = createNodeElement(nodeId, instanceId, isSimpleNode);
+            if (!nodeElement) continue;
+            container.appendChild(nodeElement);
+          }
+
+          // Create a CSS transform
+          // The order is important: first translate to center, then apply the transform
+          const cssTransform = `
+            translate(-50%, -50%)
+            translate(${nodeX}px, ${nodeY}px)
+            scale(${scale})
+          `;
+
+          // Apply the transform
+          nodeElement.style.transform = cssTransform;
+        }
+
+        // Remove nodes that are no longer visible
+        for (const [key, element] of nodePool.entries()) {
+          container.removeChild(element);
+        }
+      }
+
+      // Handle window resizing
+      function handleResize() {
+        updateDOM();
+      }
+
+      // Pan handling
+      let isDragging = false;
+      let lastX = 0;
+      let lastY = 0;
+
+      // Add mouse position tracking
+      let currentMouseX = container.clientWidth / 2;
+      let currentMouseY = container.clientHeight / 2;
+
+      function setupEventListeners() {
+        // Mouse down for panning
+        container.addEventListener('mousedown', (e) => {
+          // // Prevent zooming when clicking on links
+          // if (e.target.classList.contains('zui-link')) {
+          //   e.preventDefault();
+          //   return;
+          // }
+
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          container.style.cursor = 'grabbing';
+        });
+
+        // Mouse move for panning and tracking
+        container.addEventListener('mousemove', (e) => {
+          currentMouseX = e.clientX;
+          currentMouseY = e.clientY;
+
+          if (isDragging) {
+            const dx = e.clientX - lastX;
+            const dy = e.clientY - lastY;
+
+            // Update viewport transform for panning
+            graph.pan(dx, dy);
+
+            lastX = e.clientX;
+            lastY = e.clientY;
+
+            updateDOM();
+          }
+        });
+
+        // Mouse up to end panning
+        window.addEventListener('mouseup', () => {
+          if (isDragging) {
+            isDragging = false;
+            container.style.cursor = 'default';
+          }
+        });
+
+        // Wheel for zooming
+        container.addEventListener(
+          'wheel',
+          (e) => {
+            e.preventDefault();
+
+            // Calculate zoom factor
+            const zoomFactor = e.deltaY > 0 ? 0.95 : 1.05;
+
+            // Check if zoom limits would be exceeded
+            const newZoomLevel = currentZoomLevel * zoomFactor;
+            if (zoomFactor > 1 && newZoomLevel > MAX_ZOOM_LEVEL) {
+              // Skip zooming if it would exceed limits
+              return;
+            }
+
+            // Get mouse position relative to container center
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            const mouseX = e.clientX - containerWidth / 2;
+            const mouseY = e.clientY - containerHeight / 2;
+
+            // Apply zoom centered on mouse position and check if reference node changed
+            const referenceChanged = graph.zoomAtPoint(
+              mouseX,
+              mouseY,
+              zoomFactor,
+              containerWidth,
+              containerHeight,
+              shouldZoomInToNextNode,
+              shouldZoomOutToPrevNode,
+            );
+
+            // Update the current zoom level if reference node did not change
+            if (!referenceChanged) {
+              currentZoomLevel = newZoomLevel;
+            } else {
+              // Reference node changed, reset zoom level
+              currentZoomLevel = 1.0;
+            }
+
+            updateDOM();
+          },
+          { passive: false },
+        );
+
+        // Keyboard events for continuous zooming
+        window.addEventListener('keydown', (e) => {
+          if (e.shiftKey && !e.altKey && !isShiftZooming) {
+            isShiftZooming = true;
+            startContinuousZoom(true);
+          } else if (e.shiftKey && e.altKey && !isAltShiftZooming) {
+            isAltShiftZooming = true;
+            startContinuousZoom(false);
+          }
+        });
+
+        window.addEventListener('keyup', (e) => {
+          if (!e.shiftKey || (isAltShiftZooming && !e.altKey)) {
+            isShiftZooming = false;
+            isAltShiftZooming = false;
+            stopContinuousZoom();
+          }
+        });
+
+        // Window resize handler
+        window.addEventListener('resize', handleResize);
+      }
+
+      // Continuous zoom variables and functions
+      let isShiftZooming = false;
+      let isAltShiftZooming = false;
+      let zoomAnimationId = null;
+      let isZooming = false;
+      let zoomDirection = 1;
+      let lastZoomTime = 0;
+      const ZOOM_SPEED = 20;
+
+      function startContinuousZoom(zoomIn) {
+        stopContinuousZoom(); // Cancel any existing animation
+
+        isZooming = true;
+        zoomDirection = zoomIn ? 1 : -1;
+        lastZoomTime = performance.now();
+
+        // Start the animation loop
+        animateZoom();
+      }
+
+      function animateZoom(currentTime) {
+        if (!isZooming) return;
+
+        // Calculate time delta in seconds since last frame
+        if (!currentTime) currentTime = performance.now();
+        const deltaTime = (currentTime - lastZoomTime) / 1000; // Convert to seconds
+        lastZoomTime = currentTime;
+
+        // Calculate framerate-independent zoom factor
+        // Base formula: zoom = baseZoom^(speed * deltaTime)
+        // For zoom in: baseZoom > 1, for zoom out: baseZoom < 1
+        const baseZoomFactor = zoomDirection > 0 ? 1.1 : 0.9;
+        const zoomFactor = Math.pow(baseZoomFactor, ZOOM_SPEED * deltaTime);
+
+        // Check if zoom limits would be exceeded
+        const newZoomLevel = currentZoomLevel * zoomFactor;
+        if (zoomFactor > 1 && newZoomLevel > MAX_ZOOM_LEVEL) {
+          // Skip this frame of zooming if it would exceed limits
+          zoomAnimationId = requestAnimationFrame(animateZoom);
+          return;
+        }
+
+        // Get mouse position relative to container center
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const mouseX = currentMouseX - containerWidth / 2;
+        const mouseY = currentMouseY - containerHeight / 2;
+
+        // Apply zoom centered on mouse position and check if reference node changed
+        const referenceChanged = graph.zoomAtPoint(
+          mouseX,
+          mouseY,
+          zoomFactor,
+          containerWidth,
+          containerHeight,
+          shouldZoomInToNextNode,
+          shouldZoomOutToPrevNode,
+        );
+
+        // Update the current zoom level if reference node did not change
+        if (!referenceChanged) {
+          currentZoomLevel = newZoomLevel;
+        } else {
+          // Reference node changed, reset zoom level
+          currentZoomLevel = 1.0;
+        }
+
+        updateDOM();
+
+        // Continue the animation loop
+        zoomAnimationId = requestAnimationFrame(animateZoom);
+      }
+
+      function stopContinuousZoom() {
+        isZooming = false;
+        if (zoomAnimationId) {
+          cancelAnimationFrame(zoomAnimationId);
+          zoomAnimationId = null;
+        }
+      }
+
+      // Initialize and start the application
+      function init() {
+        setupEventListeners();
+        updateDOM();
+      }
+
+      // Start the application
+      init();
+    </script>
+  </body>
+</html>
