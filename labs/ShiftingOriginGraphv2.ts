@@ -10,6 +10,8 @@
  * @note This is a PoC, lots of optimisations are possible. Graph visibility culling, caching, etc.
  */
 
+import { Matrix } from '@lib/Matrix';
+
 export interface Node<T = any> {
   id: string;
   data: T;
@@ -256,7 +258,7 @@ export class ShiftingOriginGraphv2<T = any> {
     const edges = this.#getEdgesFrom(this.originNodeId);
     for (const edge of edges) {
       // Create a copy of the transform
-      const copiedTransform = this.#copyMatrix(edge.transform);
+      const copiedTransform = Matrix.copyDOMMatrix(edge.transform);
 
       // Check if node should be culled using the callback
       const shouldCull = shouldCullNode ? shouldCullNode(edge.target, copiedTransform, this.#originTransform) : false;
@@ -286,7 +288,7 @@ export class ShiftingOriginGraphv2<T = any> {
       const nextEdges = this.#getEdgesFrom(nodeId);
       for (const edge of nextEdges) {
         // Copy the current transform and multiply by edge transform
-        const nextTransform = this.#copyMatrix(transform).multiply(edge.transform);
+        const nextTransform = Matrix.copyDOMMatrix(transform).multiply(edge.transform);
 
         // Check if node should be culled using the callback
         const shouldCull = shouldCullNode ? shouldCullNode(edge.target, nextTransform, this.#originTransform) : false;
@@ -520,19 +522,5 @@ export class ShiftingOriginGraphv2<T = any> {
     // - After: we want to see from previous node's perspective
     // - So we apply the inverse transform: viewport * edge⁻¹
     this.#originTransform = this.#originTransform.multiply(inverseEdgeTransform);
-  }
-
-  /**
-   * Create a copy of a transform matrix
-   */
-  #copyMatrix(source: DOMMatrix): DOMMatrix {
-    const result = new DOMMatrix();
-    result.a = source.a;
-    result.b = source.b;
-    result.c = source.c;
-    result.d = source.d;
-    result.e = source.e;
-    result.f = source.f;
-    return result;
   }
 }
