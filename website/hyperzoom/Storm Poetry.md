@@ -8,6 +8,6 @@ Storm Poetry represents the primary artistic expression of [[The Mist Sovereigns
 
 To human observers, Storm Poetry appears as a synchronized dance of colored lightning, swirling cloud formations, and harmonic thunder that creates surprisingly melodic sound patterns. Special observation chambers in [[Aetheria:Aetheria's]] lower levels allow visitors to safely experience these performances, though protective shielding necessarily diminishes some of the electrical components.
 
-### Cultural Exchange<
+### Cultural Exchange
 
 Since the [[The Atmospheric Council:Diplomatic Crisis of 2433]], Storm Poetry performances have become an important component of cultural exchange between humans and Sovereigns. Several human poets and musicians have collaborated with Sovereign artists to create hybrid works that attempt to bridge the perceptual gap between species, with the most successful being composer [[Aria Xiang:Aria Xiang's]] "Tempest Symphony."

@@ -204,7 +204,6 @@
 
       // Function to create a node element
       function createNodeElement(nodeId, instanceId, isSimple = false) {
-        console.log(nodeId, instanceId);
         const node = graph.nodes[nodeId];
 
         if (!node) return null;
@@ -443,8 +442,14 @@
 
       const container = document.getElementById('zui-container');
 
+      let initialId = decodeURIComponent(location.hash.replace('#', ''));
+
+      if (!nodesArray.map((node) => node.id).includes(initialId)) {
+        initialId = nodesArray[0].id;
+      }
+
       // Create the shifting origin graph with our nodes and edges
-      const graph = new ShiftingOriginGraph(nodesArray, edgesArray, nodesArray[0].id, 50);
+      const graph = new ShiftingOriginGraph(nodesArray, edgesArray, initialId, 50);
 
       // Define zoom threshold callbacks
       function shouldZoomInToNextNode(graph, containerWidth, containerHeight, nextNodeId) {
@@ -459,12 +464,18 @@
         const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
 
         // Check if screen is completely covered by the node
-        return Geometry.isScreenCoveredByRectangle(
+        const isScreenCoveredByRectangle = Geometry.isScreenCoveredByRectangle(
           { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
           combinedTransform,
           containerWidth,
           containerHeight,
         );
+
+        if (isScreenCoveredByRectangle) {
+          location.hash = nextNodeId;
+        }
+
+        return isScreenCoveredByRectangle;
       }
 
       function shouldZoomOutToPrevNode(graph, containerWidth, containerHeight, prevNodeId) {
@@ -472,12 +483,18 @@
         if (!currentNode) return false;
 
         // For zooming out, we check if the current reference node no longer covers the screen
-        return !Geometry.isScreenCoveredByRectangle(
+        const isScreenCoveredNotByRectangle = !Geometry.isScreenCoveredByRectangle(
           { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
           graph.viewportTransform,
           containerWidth,
           containerHeight,
         );
+
+        if (isScreenCoveredNotByRectangle) {
+          location.hash = prevNodeId;
+        }
+
+        return isScreenCoveredNotByRectangle;
       }
 
       /**
