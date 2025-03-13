@@ -129,7 +129,7 @@ export class FolkAutomerge<T extends TodoListDoc> {
   /**
    * Register a callback to be called when the document changes
    */
-  onDocumentChange(callback: (doc: T) => void): void {
+  onChange(callback: (doc: T) => void): void {
     // Use the 'change' event to get document updates
     this.handle.on('change', ({ doc }) => {
       if (doc) {

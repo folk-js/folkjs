@@ -302,7 +302,7 @@
         documentIdElement.textContent = `ID: ${automerge.getDocumentId()}`;
 
         // Register change handler
-        automerge.onDocumentChange(renderTodoList);
+        automerge.onChange(renderTodoList);
 
         // Get initial document state and render it
         const initialDoc = await automerge.getDocumentAsync();
