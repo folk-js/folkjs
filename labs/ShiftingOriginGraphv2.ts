@@ -272,7 +272,7 @@ export class ShiftingOriginGraphv2<T = any> extends MultiGraph<ZoomNode<T>, Zoom
    */
   reset(initialNodeId?: string): void {
     this.originNodeId = initialNodeId || (this.nodes.size > 0 ? Array.from(this.nodes.keys())[0] : '');
-    this.#originTransform = new DOMMatrix().translate(0, 0).scale(1);
+    this.#originTransform = new DOMMatrix();
   }
 
   /**
