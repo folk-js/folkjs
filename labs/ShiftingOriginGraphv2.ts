@@ -13,41 +13,33 @@
 import { Matrix } from '@lib/Matrix';
 import { BaseEdge, BaseNode, MultiGraph } from './MultiGraph';
 
-/**
- * Node for ShiftingOriginGraph with data property
- */
 export interface ZoomNode<T = any> extends BaseNode {
-  /** Data associated with the node */
   data: T;
 }
 
-/**
- * Edge for ShiftingOriginGraph with transform property
- */
 export interface ZoomEdge extends BaseEdge {
-  /** Transform matrix defining the spatial relationship */
   transform: DOMMatrix;
 }
 
 /**
  * Callback for determining if zooming in should change the reference node
  */
-export type ShouldZoomInCallback = (
+export type ShouldShiftCallback = (
   combinedTransform: DOMMatrix,
   canvasWidth: number,
   canvasHeight: number,
-  nodeId: string,
+  node: ZoomNode,
 ) => boolean;
 
 /**
  * Callback for determining if zooming out should change the reference node
  */
-export type ShouldZoomOutCallback = (originTransform: DOMMatrix, canvasWidth: number, canvasHeight: number) => boolean;
+export type ShouldUnshiftCallback = (originTransform: DOMMatrix, canvasWidth: number, canvasHeight: number) => boolean;
 
 /**
  * Callback for determining if a node should be culled during traversal
  */
-export type NodeCullingCallback = (nodeId: string, transform: DOMMatrix, originTransform: DOMMatrix) => boolean;
+export type NodeCullingCallback = (node: ZoomNode, transform: DOMMatrix, originTransform: DOMMatrix) => boolean;
 
 /**
  * ShiftingOriginGraph - A graph that supports infinite zooming by changing reference frames
@@ -103,24 +95,23 @@ export class ShiftingOriginGraphv2<T = any> extends MultiGraph<ZoomNode<T>, Zoom
   }
 
   /**
-   * Iterate through visible nodes with their accumulated transforms
-   * This provides both the node and its transform relative to the origin node
-   * @param shouldCullNode - Optional callback to determine if a node should be culled
-   * @returns Iterator yielding objects with node, nodeId, and accumulated transform
+   * Unfolds the graph into a tree structure starting from the origin node
+   * This performs a breadth-first traversal, allowing nodes to appear multiple times
+   * with different transforms if they can be reached through different paths.
+   *
+   * @param shouldCullNode - Optional callback to determine if a node and its entire subtree should be culled
+   * @returns Iterator yielding objects with node and accumulated transform
    */
-  *getVisibleNodes(shouldCullNode?: NodeCullingCallback): Generator<{
-    nodeId: string;
+  *getUnfoldedTree(shouldCullNode?: NodeCullingCallback): Generator<{
     node: ZoomNode<T>;
     transform: DOMMatrix;
   }> {
-    // Always yield the origin node first with identity transform
-    const identityMatrix = new DOMMatrix();
     const originNode = this.getNode(this.originNodeId);
-
     if (!originNode) return;
 
+    // Always yield the origin node first with identity transform
+    const identityMatrix = new DOMMatrix();
     yield {
-      nodeId: this.originNodeId,
       node: originNode,
       transform: identityMatrix,
     };
@@ -135,44 +126,40 @@ export class ShiftingOriginGraphv2<T = any> extends MultiGraph<ZoomNode<T>, Zoom
       depth: number;
     }[] = [];
 
-    // Start with all edges from the origin node
-    const edges = this.getEdgesFrom(this.originNodeId);
-    for (const edge of edges) {
-      // Create a copy of the transform
-      const copiedTransform = Matrix.copyDOMMatrix(edge.transform);
-
-      // Check if node should be culled using the callback
-      const shouldCull = shouldCullNode ? shouldCullNode(edge.target, copiedTransform, this.#originTransform) : false;
-
-      if (!shouldCull) {
-        queue.push({
-          nodeId: edge.target,
-          transform: copiedTransform,
-          depth: 1,
-        });
-      }
-    }
+    // Initialize the queue with the origin node
+    queue.push({
+      nodeId: this.originNodeId,
+      transform: identityMatrix,
+      depth: 0,
+    });
 
     // Process the queue until we hit maxNodes limit
     while (queue.length > 0 && nodesYielded < this.#maxNodes) {
       const { nodeId, transform, depth } = queue.shift()!;
 
-      // Get the node (skip if it doesn't exist)
-      const node = this.getNode(nodeId);
-      if (!node) continue;
+      // For non-origin nodes, yield the node (origin was already yielded)
+      if (depth > 0) {
+        const node = this.getNode(nodeId);
+        if (!node) continue;
 
-      // Yield the node
-      yield { nodeId, node, transform };
-      nodesYielded++;
+        yield { node, transform };
+        nodesYielded++;
+      }
 
-      // Add all outgoing edges to the queue
-      const nextEdges = this.getEdgesFrom(nodeId);
-      for (const edge of nextEdges) {
-        // Copy the current transform and multiply by edge transform
-        const nextTransform = Matrix.copyDOMMatrix(transform).multiply(edge.transform);
+      // Process all outgoing edges from this node
+      const edges = this.getEdgesFrom(nodeId);
+      for (const edge of edges) {
+        const targetNode = this.getNode(edge.target);
+        if (!targetNode) continue;
 
-        // Check if node should be culled using the callback
-        const shouldCull = shouldCullNode ? shouldCullNode(edge.target, nextTransform, this.#originTransform) : false;
+        // Calculate the next transform based on whether this is the origin node or not
+        const nextTransform =
+          depth === 0
+            ? Matrix.copyDOMMatrix(edge.transform) // For origin node, just use edge transform
+            : Matrix.copyDOMMatrix(transform).multiply(edge.transform); // For other nodes, multiply with current transform
+
+        // Check if node should be culled
+        const shouldCull = shouldCullNode ? shouldCullNode(targetNode, nextTransform, this.#originTransform) : false;
 
         if (!shouldCull) {
           queue.push({
@@ -192,18 +179,18 @@ export class ShiftingOriginGraphv2<T = any> extends MultiGraph<ZoomNode<T>, Zoom
    * @param zoomFactor - Factor to zoom by (> 1 to zoom in, < 1 to zoom out)
    * @param canvasWidth - Width of the canvas (used for origin node checking)
    * @param canvasHeight - Height of the canvas (used for origin node checking)
-   * @param shouldZoomIn - Optional callback to determine if zooming in should change origin node
-   * @param shouldZoomOut - Optional callback to determine if zooming out should change origin node
+   * @param shouldShiftOrigin - Optional callback to determine if zooming in should change origin node
+   * @param shouldUnshiftOrigin - Optional callback to determine if zooming out should change origin node
    * @returns Boolean indicating if the origin node changed
    */
-  zoomAtPoint(
+  zoom(
     centerX: number,
     centerY: number,
     zoomFactor: number,
     canvasWidth?: number,
     canvasHeight?: number,
-    shouldZoomIn?: ShouldZoomInCallback,
-    shouldZoomOut?: ShouldZoomOutCallback,
+    shouldShiftOrigin?: ShouldShiftCallback,
+    shouldUnshiftOrigin?: ShouldUnshiftCallback,
   ): boolean {
     // Apply zoom transform centered on the specified point
     const tempMatrix = new DOMMatrix().translate(centerX, centerY).scale(zoomFactor).translate(-centerX, -centerY);
@@ -217,7 +204,7 @@ export class ShiftingOriginGraphv2<T = any> extends MultiGraph<ZoomNode<T>, Zoom
     if (
       canvasWidth === undefined ||
       canvasHeight === undefined ||
-      (shouldZoomIn === undefined && shouldZoomOut === undefined)
+      (shouldShiftOrigin === undefined && shouldUnshiftOrigin === undefined)
     ) {
       return false;
     }
@@ -225,9 +212,9 @@ export class ShiftingOriginGraphv2<T = any> extends MultiGraph<ZoomNode<T>, Zoom
     const isZoomingOut = zoomFactor < 1;
 
     // Check if we're zooming out and need to change origin node
-    if (isZoomingOut && shouldZoomOut) {
+    if (isZoomingOut && shouldUnshiftOrigin) {
       // Check if the reference node no longer covers the screen
-      if (shouldZoomOut(this.#originTransform, canvasWidth, canvasHeight)) {
+      if (shouldUnshiftOrigin(this.#originTransform, canvasWidth, canvasHeight)) {
         // Get the first incoming edge to the reference node
         const prevNodeIds = this.getSourceNodes(this.originNodeId);
         if (prevNodeIds.length === 0) return false;
@@ -244,16 +231,20 @@ export class ShiftingOriginGraphv2<T = any> extends MultiGraph<ZoomNode<T>, Zoom
       }
     }
     // Check if we're zooming in and need to change origin node
-    else if (!isZoomingOut && shouldZoomIn) {
+    else if (!isZoomingOut && shouldShiftOrigin) {
       // Get all outgoing edges from the reference node
       const edges = this.getEdgesFrom(this.originNodeId);
 
       // Find the first node that covers the screen
       for (const edge of edges) {
         const nodeId = edge.target;
+        // Get the target node
+        const targetNode = this.getNode(nodeId);
+        if (!targetNode) continue;
+
         // Calculate the combined transform
         const combinedTransform = this.#originTransform.multiply(edge.transform);
-        if (shouldZoomIn(combinedTransform, canvasWidth, canvasHeight, nodeId)) {
+        if (shouldShiftOrigin(combinedTransform, canvasWidth, canvasHeight, targetNode)) {
           // Apply the forward shift to maintain visual state
           this.#shiftOrigin(edge);
           return true;
@@ -279,7 +270,7 @@ export class ShiftingOriginGraphv2<T = any> extends MultiGraph<ZoomNode<T>, Zoom
    * Reset the view to the initial reference node
    * @param initialNodeId - Optional node ID to reset to, defaults to the first node
    */
-  resetView(initialNodeId?: string): void {
+  reset(initialNodeId?: string): void {
     this.originNodeId = initialNodeId || (this.nodes.size > 0 ? Array.from(this.nodes.keys())[0] : '');
     this.#originTransform = new DOMMatrix().translate(0, 0).scale(1);
   }

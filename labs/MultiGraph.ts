@@ -342,7 +342,6 @@ export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = Base
    * Checks if an edge exists in the graph
    * @param edgeId - The ID of the edge to check
    * @returns True if the edge exists, false otherwise
-   * @complexity O(1)
    */
   hasEdge(edgeId: string): boolean {
     return this.edges.has(edgeId);
@@ -401,7 +400,7 @@ export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = Base
    * @param callback - Function to call for each visited node
    * @complexity O(n + e) where n is the number of nodes and e is the number of edges
    */
-  breadthFirstTraversal(startNodeId: string, callback: (nodeId: string, node: N) => void): void {
+  breadthFirstTraversal(startNodeId: string, callback: (node: N) => void): void {
     if (!this.nodes.has(startNodeId)) {
       return;
     }
@@ -418,7 +417,7 @@ export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = Base
 
       visited.add(currentId);
       const node = this.nodes.get(currentId)!;
-      callback(currentId, node);
+      callback(node);
 
       const targetNodeIds = this.getTargetNodes(currentId);
       for (const targetId of targetNodeIds) {
@@ -435,7 +434,7 @@ export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = Base
    * @param callback - Function to call for each visited node
    * @complexity O(n + e) where n is the number of nodes and e is the number of edges
    */
-  depthFirstTraversal(startNodeId: string, callback: (nodeId: string, node: N) => void): void {
+  depthFirstTraversal(startNodeId: string, callback: (node: N) => void): void {
     if (!this.nodes.has(startNodeId)) {
       return;
     }
@@ -449,7 +448,7 @@ export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = Base
 
       visited.add(nodeId);
       const node = this.nodes.get(nodeId)!;
-      callback(nodeId, node);
+      callback(node);
 
       const targetNodeIds = this.getTargetNodes(nodeId);
       for (const targetId of targetNodeIds) {
@@ -462,7 +461,6 @@ export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = Base
 
   /**
    * Clears all nodes and edges from the graph
-   * @complexity O(1)
    */
   clear(): void {
     this.nodes.clear();

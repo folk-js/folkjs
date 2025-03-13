@@ -797,7 +797,7 @@
       const graph = new ShiftingOriginGraphv2(nodesArray, edgesArray, 'nodeA', 50);
 
       // Define zoom threshold callbacks
-      function shouldZoomInToNextNode(combinedTransform, containerWidth, containerHeight, nextNodeId) {
+      function shouldShiftOrigin(combinedTransform, containerWidth, containerHeight, node) {
         // Check if screen is completely covered by the node
         return Geometry.isScreenCoveredByRectangle(
           { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
@@ -807,7 +807,7 @@
         );
       }
 
-      function shouldZoomOutToPrevNode(originTransform, containerWidth, containerHeight) {
+      function shouldUnshiftOrigin(originTransform, containerWidth, containerHeight) {
         // For zooming out, we check if the current reference node no longer covers the screen
         return !Geometry.isScreenCoveredByRectangle(
           { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
@@ -819,12 +819,12 @@
 
       /**
        * Determines whether a node should be culled based on its position and size
-       * @param {string} nodeId - The ID of the node
+       * @param {ZoomNode} node - The node object
        * @param {DOMMatrix} transform - The transform from reference node to this node
        * @param {DOMMatrix} originTransform - The current viewport transform
        * @returns {boolean} true if the node should be culled (invisible), false if visible
        */
-      function nodeCullingCallback(nodeId, transform, originTransform) {
+      function nodeCullingCallback(node, transform, originTransform) {
         const containerWidth = container.clientWidth;
         const containerHeight = container.clientHeight;
         const padding = 0.5; // Add 50% padding around viewport to account for nodes partially visible
@@ -889,7 +889,7 @@
         const visibleNodes = [];
 
         // Get nodes from graph with transforms using our culling callback
-        for (const { nodeId, node, transform } of graph.getVisibleNodes(nodeCullingCallback)) {
+        for (const { node, transform } of graph.getUnfoldedTree(nodeCullingCallback)) {
           // Combine viewport transform with the node's transform
           const combinedTransform = graph.originTransform.multiply(transform);
 
@@ -902,7 +902,7 @@
 
           // Add directly to our visible nodes array (culling already done by the graph)
           visibleNodes.push({
-            nodeId,
+            nodeId: node.id,
             node,
             transform,
             combinedTransform,
@@ -918,7 +918,7 @@
         for (const { nodeId, node, transform, combinedTransform, nodeX, nodeY, scale } of visibleNodes) {
           // Create a unique instance ID for this occurrence of the node
           const instanceId = instanceCounter++;
-          const nodeKey = `${nodeId}-${instanceId}`;
+          const nodeKey = `${node.id}-${instanceId}`;
           const isSimpleNode = scale < CONTENT_VISIBILITY_THRESHOLD;
 
           // Track that we've processed this node
@@ -955,7 +955,7 @@
 
           // Create a new node if needed
           if (needsReplacement) {
-            nodeElement = createNodeElement(nodeId, instanceId, isSimpleNode);
+            nodeElement = createNodeElement(node.id, instanceId, isSimpleNode);
             if (!nodeElement) continue;
             container.appendChild(nodeElement);
           }
@@ -1057,14 +1057,14 @@
             const mouseY = e.clientY - containerHeight / 2;
 
             // Apply zoom centered on mouse position and check if reference node changed
-            const referenceChanged = graph.zoomAtPoint(
+            const referenceChanged = graph.zoom(
               mouseX,
               mouseY,
               zoomFactor,
               containerWidth,
               containerHeight,
-              shouldZoomInToNextNode,
-              shouldZoomOutToPrevNode,
+              shouldShiftOrigin,
+              shouldUnshiftOrigin,
             );
 
             // Update the current zoom level if reference node did not change
@@ -1152,14 +1152,14 @@
         const mouseY = currentMouseY - containerHeight / 2;
 
         // Apply zoom centered on mouse position and check if reference node changed
-        const referenceChanged = graph.zoomAtPoint(
+        const referenceChanged = graph.zoom(
           mouseX,
           mouseY,
           zoomFactor,
           containerWidth,
           containerHeight,
-          shouldZoomInToNextNode,
-          shouldZoomOutToPrevNode,
+          shouldShiftOrigin,
+          shouldUnshiftOrigin,
         );
 
         // Update the current zoom level if reference node did not change
