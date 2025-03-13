@@ -1,4 +1,5 @@
 import type { Point } from './types';
+import { lerp } from './utils';
 
 export const round = (value: number, decimal = 0) => Math.round(value * decimal) / decimal;
 
@@ -28,10 +29,18 @@ export interface IMatrix extends MatrixInit {
   applyToPoints(points: Point[]): Point[];
   rotation(): number;
   point(): Point;
-  decompose(): { x: number; y: number; scaleX: number; scaleY: number; rotation: number };
+  decompose(): DecompsedMatrix;
   clone(): Matrix;
   toCssString(): string;
   toDOMMatrix(): DOMMatrix;
+}
+
+export interface DecompsedMatrix {
+  x: number;
+  y: number;
+  scaleX: number;
+  scaleY: number;
+  rotation: number;
 }
 
 export class Matrix implements IMatrix {
@@ -83,10 +92,10 @@ export class Matrix implements IMatrix {
   }
 
   translate(x: number, y: number): Matrix {
-    return this.multiply(Matrix.Translate(x, y!));
+    return this.multiply(Matrix.Translate(x, y));
   }
 
-  scale(x: number, y: number) {
+  scale(x: number, y: number = x) {
     return this.multiply(Matrix.Scale(x, y));
   }
 
@@ -120,6 +129,10 @@ export class Matrix implements IMatrix {
 
   decompose() {
     return Matrix.Decompose(this);
+  }
+
+  lerp(m: MatrixInit, alpha: number) {
+    return Matrix.Lerp(this, m, alpha);
   }
 
   clone() {
@@ -229,7 +242,7 @@ export class Matrix implements IMatrix {
     return clampRotation(rotation);
   }
 
-  static Decompose(m: MatrixInit) {
+  static Decompose(m: MatrixInit): DecompsedMatrix {
     let scaleX, scaleY, rotation;
 
     if (m.a !== 0 || m.c !== 0) {
@@ -255,6 +268,25 @@ export class Matrix implements IMatrix {
       scaleY,
       rotation: clampRotation(rotation),
     };
+  }
+
+  static Recompose(d: DecompsedMatrix): MatrixInit {
+    return this.Identity().translate(d.x, d.y).rotate(d.rotation).scale(d.scaleX, d.scaleY);
+  }
+
+  static Lerp(m1: MatrixInit, m2: MatrixInit, alpha: number) {
+    if (alpha < 0 || alpha > 1) return;
+
+    const d1 = this.Decompose(m1);
+    const d2 = this.Decompose(m2);
+
+    return this.Recompose({
+      x: lerp(d1.x, d2.x, alpha),
+      y: lerp(d1.y, d2.y, alpha),
+      scaleX: lerp(d1.scaleX, d2.scaleX, alpha),
+      scaleY: lerp(d1.scaleY, d2.scaleY, alpha),
+      rotation: lerp(d1.rotation, d2.rotation, alpha),
+    });
   }
 
   static applyToPoint(m: MatrixInit, point: Point) {

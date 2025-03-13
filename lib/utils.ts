@@ -16,8 +16,8 @@ function distanceToSegmentSq(p: Point, v: Point, w: Point): number {
   return Vector.distanceSquared(p, Vector.lerp(v, w, t));
 }
 
-function lerp(a: Point, b: Point, t: number): Point {
-  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+export function lerp(a: number, b: number, alpha: number): number {
+  return a + (b - a) * alpha;
 }
 
 // Adapted from https://seant23.wordpress.com/2010/11/12/offset-bezier-curves/
@@ -73,14 +73,12 @@ function getPointsOnBezierCurveWithSplitting(
     const p3 = points[offset + 2];
     const p4 = points[offset + 3];
 
-    const q1 = lerp(p1, p2, t);
-    const q2 = lerp(p2, p3, t);
-    const q3 = lerp(p3, p4, t);
-
-    const r1 = lerp(q1, q2, t);
-    const r2 = lerp(q2, q3, t);
-
-    const red = lerp(r1, r2, t);
+    const q1 = Vector.lerp(p1, p2, t);
+    const q2 = Vector.lerp(p2, p3, t);
+    const q3 = Vector.lerp(p3, p4, t);
+    const r1 = Vector.lerp(q1, q2, t);
+    const r2 = Vector.lerp(q2, q3, t);
+    const red = Vector.lerp(r1, r2, t);
 
     getPointsOnBezierCurveWithSplitting([p1, q1, r1, red], 0, tolerance, outPoints);
     getPointsOnBezierCurveWithSplitting([red, r2, q3, p4], 0, tolerance, outPoints);
