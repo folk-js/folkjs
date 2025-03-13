@@ -1,7 +1,6 @@
 import { AnyDocumentId, DocHandle, isValidAutomergeUrl, Repo } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 
-// Define the Todo interface
 export interface Todo {
   id: string;
   text: string;
@@ -9,23 +8,15 @@ export interface Todo {
   createdAt: number;
 }
 
-// Define the TodoList document interface
 export interface TodoListDoc {
   todos: Todo[];
 }
 
-/**
- * FolkAutomerge class for managing automerge-repo with WebSocket sync server
- * Provides methods for creating, reading, updating, and deleting todos
- */
 export class FolkAutomerge<T extends TodoListDoc> {
   private repo: Repo;
-  private handle!: DocHandle<T>; // Using the definite assignment assertion
+  private handle!: DocHandle<T>;
   private networkAdapter: BrowserWebSocketClientAdapter;
 
-  /**
-   * Create a new FolkAutomerge instance
-   */
   constructor() {
     const peerId = this.#createPeerId();
 
@@ -38,8 +29,7 @@ export class FolkAutomerge<T extends TodoListDoc> {
     }
 
     // Set up the WebSocket network adapter
-    const syncServerUrl = 'wss://sync.automerge.org';
-    this.networkAdapter = new BrowserWebSocketClientAdapter(syncServerUrl);
+    this.networkAdapter = new BrowserWebSocketClientAdapter('wss://sync.automerge.org');
 
     // Initialize the repo with proper configuration
     this.repo = new Repo({
