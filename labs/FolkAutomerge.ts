@@ -1,7 +1,5 @@
-import * as Automerge from '@automerge/automerge';
-import { AnyDocumentId, Doc, DocHandle, generateAutomergeUrl, Repo } from '@automerge/automerge-repo';
-import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
-import { FolkMultiPeerAdapter, type PeerNetwork } from '@labs/FolkMultiPeerAdapter';
+import { AnyDocumentId, DocHandle, isValidAutomergeUrl, Repo } from '@automerge/automerge-repo';
+import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 
 // Define the Todo interface
 export interface Todo {
@@ -17,108 +15,80 @@ export interface TodoListDoc {
 }
 
 /**
- * FolkAutomerge class for managing automerge-repo with local storage
+ * FolkAutomerge class for managing automerge-repo with WebSocket sync server
  * Provides methods for creating, reading, updating, and deleting todos
  */
-export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
+export class FolkAutomerge<T extends TodoListDoc> {
   private repo: Repo;
-  private documentId: string = '';
-  private handle: DocHandle<T>;
-  private onChangesCallback: ((doc: T) => void) | null = null;
-  private networkAdapter: FolkMultiPeerAdapter | null = null;
+  private handle!: DocHandle<T>; // Using the definite assignment assertion
+  private networkAdapter: BrowserWebSocketClientAdapter;
 
   /**
    * Create a new FolkAutomerge instance
-   * @param options - Configuration options for the FolkAutomerge instance
    */
-  constructor(options: { peerId?: string; docId?: string }) {
-    const peerId = options.peerId || this.#createPeerId();
-    // Parse URL params to check for document ID
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlDocId = urlParams.get('space');
+  constructor() {
+    const peerId = this.#createPeerId();
 
-    // Use documentId from URL or from constructor parameter
-    let docId = urlDocId || options.docId;
+    // Check if there's a valid Automerge URL in the hash
+    const hashDocId = window.location.hash.slice(1); // Remove the # character
+    let docId: string | undefined;
 
-    // If no document ID is provided, create one
-    if (!docId) {
-      docId = generateAutomergeUrl();
-      console.log(`[Network] No document ID provided, created new ID: ${docId}`);
+    if (hashDocId && isValidAutomergeUrl(hashDocId)) {
+      docId = hashDocId;
     }
 
-    this.networkAdapter = new FolkMultiPeerAdapter({ peerId: peerId, roomId: docId });
+    // Set up the WebSocket network adapter
+    const syncServerUrl = 'wss://sync.automerge.org';
+    this.networkAdapter = new BrowserWebSocketClientAdapter(syncServerUrl);
 
     // Initialize the repo with proper configuration
     this.repo = new Repo({
-      peerId: peerId as any, // Use the same peerId consistently
-      storage: new IndexedDBStorageAdapter(),
+      peerId: peerId as any,
       network: [this.networkAdapter],
     });
 
-    // Add listener for peer connections
-    if (this.networkAdapter) {
-      // Log when adapter is ready
-      this.networkAdapter.on('ready', () => {
-        console.log('[FolkAutomerge] Network adapter is ready');
-      });
-    }
+    // Find or create the document
+    if (docId) {
+      this.handle = this.repo.find<T>(docId as unknown as AnyDocumentId);
 
-    // Try to load document ID from URL or create a new one if not provided
-    if (urlDocId) {
-      console.log(`[Doc] Loading shared document from URL: ${urlDocId}`);
-      this.documentId = urlDocId;
-    } else if (docId) {
-      this.documentId = docId;
-    }
-
-    // Find the document
-    try {
-      // Try to load the document with proper error handling
-      this.handle = this.repo.find<T>(this.documentId as unknown as AnyDocumentId);
-
-      // Set up change handler early so we can catch initialization
-      this.handle.on('change', () => {
-        if (this.onChangesCallback) {
-          const doc = this.handle.docSync();
-          if (doc) {
-            this.onChangesCallback(doc);
+      // Check if we can actually find the document
+      this.whenReady().then(async () => {
+        try {
+          const doc = await this.handle.doc();
+          if (!doc) {
+            // If doc not found, create a new one and update hash
+            this.#createNewDocAndUpdateHash();
           }
+        } catch (error) {
+          console.error('Error finding document:', error);
+          this.#createNewDocAndUpdateHash();
         }
       });
-    } catch (error) {
-      console.error('Error finding document:', error);
-
-      // If there's an IndexedDB error, we might need to create a new document
-      try {
-        // Create a new document with the specified ID
-        this.handle = this.repo.create<T>();
-        // Update the document ID
-        this.documentId = this.handle.documentId;
-        console.log(`[Doc] Created new document with ID: ${this.documentId}`);
-
-        // Set up change handler
-        this.handle.on('change', () => {
-          if (this.onChangesCallback) {
-            const doc = this.handle.docSync();
-            if (doc) {
-              this.onChangesCallback(doc);
-            }
-          }
-        });
-      } catch (createError) {
-        console.error('Error creating document:', createError);
-        throw createError; // Re-throw if we can't recover
-      }
+    } else {
+      this.#createNewDocAndUpdateHash();
     }
 
-    // Initialize the document with empty todos array if it doesn't exist
-    this.handle.update((doc: Doc<T>) => {
-      if (!doc.todos) {
-        return Automerge.change(doc, (d: any) => {
-          d.todos = [];
-        });
-      }
-      return doc;
+    // Initialize todos array if it doesn't exist
+    this.whenReady().then(() => {
+      this.handle.change((doc: any) => {
+        if (!doc.todos) {
+          doc.todos = [];
+        }
+      });
+    });
+  }
+
+  /**
+   * Create a new document and update the URL hash
+   */
+  #createNewDocAndUpdateHash(): void {
+    // Create a new document with initial state
+    const initialState = { todos: [] } as unknown as T;
+    this.handle = this.repo.create<T>(initialState);
+
+    // Update the URL hash with the new document ID
+    this.handle.whenReady().then(() => {
+      window.location.hash = this.handle.url;
     });
   }
 
@@ -127,61 +97,63 @@ export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
   }
 
   /**
-   * Clean up resources when this instance is no longer needed
+   * Returns a promise that resolves when the document is ready
    */
-  public dispose(): void {
-    if (this.networkAdapter) {
-      this.networkAdapter.disconnect();
-    }
-  }
-
-  onPeersChanged(listener: (peers: string[]) => void): void {
-    this.networkAdapter?.onPeersChanged(listener);
-  }
-
-  getPeers(): string[] {
-    return this.networkAdapter?.getPeers() || [];
+  whenReady(): Promise<void> {
+    return this.handle.whenReady();
   }
 
   /**
-   * Get the current state of the document
+   * Get the document asynchronously
+   */
+  async getDocumentAsync(): Promise<T> {
+    const doc = await this.handle.doc();
+    if (!doc) {
+      return { todos: [] } as unknown as T;
+    }
+    return doc as T;
+  }
+
+  /**
+   * Get the document synchronously (use only when you know the document is ready)
    */
   getDocument(): T {
+    if (!this.handle.isReady()) {
+      console.log('[Doc] Handle not ready, returning empty document');
+      return { todos: [] } as unknown as T;
+    }
     const doc = this.handle.docSync();
     if (!doc) {
       return { todos: [] } as unknown as T;
     }
-    return doc;
+    return doc as T;
   }
 
   /**
    * Get the document ID
    */
   getDocumentId(): string {
-    return this.documentId;
+    return this.handle.url;
   }
 
   /**
    * Register a callback to be called when the document changes
    */
-  onChange(callback: (doc: T) => void): void {
-    this.onChangesCallback = callback;
-
-    // Immediately call the callback with the current document
-    const doc = this.handle.docSync();
-    if (doc) {
-      callback(doc);
-    }
+  onDocumentChange(callback: (doc: T) => void): void {
+    // Use the 'change' event to get document updates
+    this.handle.on('change', ({ doc }) => {
+      if (doc) {
+        callback(doc as T);
+      }
+    });
   }
 
   /**
    * Generate a shareable URL for this document
    */
   generateShareableUrl(baseUrl: string = window.location.href): string {
-    console.log(`[Doc] Generating shareable URL for document: ${this.documentId}`);
-    // Fallback to simple URL generation if no network adapter
     const url = new URL(baseUrl);
-    url.searchParams.set('space', this.documentId);
+    url.searchParams.set('space', this.handle.url);
     return url.toString();
   }
 
@@ -189,14 +161,12 @@ export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
    * Add a new todo item
    */
   addTodo(text: string): void {
-    this.handle.update((doc: Doc<T>) => {
-      return Automerge.change(doc, (d) => {
-        d.todos.push({
-          id: crypto.randomUUID(),
-          text,
-          completed: false,
-          createdAt: Date.now(),
-        });
+    this.handle.change((doc: any) => {
+      doc.todos.push({
+        id: crypto.randomUUID(),
+        text,
+        completed: false,
+        createdAt: Date.now(),
       });
     });
   }
@@ -205,13 +175,11 @@ export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
    * Toggle the completed status of a todo
    */
   toggleTodo(id: string): void {
-    this.handle.update((doc: Doc<T>) => {
-      return Automerge.change(doc, (d) => {
-        const todo = d.todos.find((t) => t.id === id);
-        if (todo) {
-          todo.completed = !todo.completed;
-        }
-      });
+    this.handle.change((doc: any) => {
+      const todo = doc.todos.find((t: Todo) => t.id === id);
+      if (todo) {
+        todo.completed = !todo.completed;
+      }
     });
   }
 
@@ -219,13 +187,11 @@ export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
    * Edit a todo's text
    */
   editTodo(id: string, newText: string): void {
-    this.handle.update((doc: Doc<T>) => {
-      return Automerge.change(doc, (d) => {
-        const todo = d.todos.find((t) => t.id === id);
-        if (todo) {
-          todo.text = newText;
-        }
-      });
+    this.handle.change((doc: any) => {
+      const todo = doc.todos.find((t: Todo) => t.id === id);
+      if (todo) {
+        todo.text = newText;
+      }
     });
   }
 
@@ -233,13 +199,11 @@ export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
    * Delete a todo
    */
   deleteTodo(id: string): void {
-    this.handle.update((doc: Doc<T>) => {
-      return Automerge.change(doc, (d) => {
-        const index = d.todos.findIndex((t) => t.id === id);
-        if (index !== -1) {
-          d.todos.splice(index, 1);
-        }
-      });
+    this.handle.change((doc: any) => {
+      const index = doc.todos.findIndex((t: Todo) => t.id === id);
+      if (index !== -1) {
+        doc.todos.splice(index, 1);
+      }
     });
   }
 
@@ -247,16 +211,24 @@ export class FolkAutomerge<T extends TodoListDoc> implements PeerNetwork {
    * Clear all completed todos
    */
   clearCompleted(): void {
-    this.handle.update((doc: Doc<T>) => {
-      return Automerge.change(doc, (d) => {
-        // We need to remove items one by one, starting from the end
-        // to avoid index shifting problems
-        for (let i = d.todos.length - 1; i >= 0; i--) {
-          if (d.todos[i].completed) {
-            d.todos.splice(i, 1);
-          }
+    this.handle.change((doc: any) => {
+      // We need to remove items one by one, starting from the end
+      // to avoid index shifting problems
+      for (let i = doc.todos.length - 1; i >= 0; i--) {
+        if (doc.todos[i].completed) {
+          doc.todos.splice(i, 1);
         }
-      });
+      }
     });
+  }
+
+  /**
+   * Clean up resources when the instance is no longer needed
+   */
+  dispose(): void {
+    // Remove any event listeners
+    if (this.handle) {
+      this.handle.removeAllListeners('change');
+    }
   }
 }

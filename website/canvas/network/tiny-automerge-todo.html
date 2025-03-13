@@ -150,96 +150,6 @@
         font-size: 13px;
       }
 
-      .storage-info .status {
-        display: flex;
-        align-items: center;
-      }
-
-      .storage-info .indicator {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background-color: #4caf50;
-        margin-right: 8px;
-      }
-
-      .storage-info .indicator.disconnected {
-        background-color: #bdbdbd;
-      }
-
-      .share-section {
-        margin-top: 12px;
-        padding: 8px 12px;
-        background-color: #e3f2fd;
-        border-radius: 4px;
-        font-size: 13px;
-      }
-
-      .share-section .peer-status {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 8px;
-      }
-
-      .peer-status .peer-count {
-        display: flex;
-        align-items: center;
-      }
-
-      .peer-status .peer-indicator {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        margin-right: 8px;
-      }
-
-      .peer-status .peer-indicator.connected {
-        background-color: #4caf50;
-      }
-
-      .peer-status .peer-indicator.disconnected {
-        background-color: #bdbdbd;
-      }
-
-      .share-button {
-        width: 100%;
-        padding: 8px;
-        background-color: #2196f3;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 14px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-      }
-
-      .share-button:hover {
-        background-color: #1e88e5;
-      }
-
-      .share-button:disabled {
-        background-color: #bdbdbd;
-        cursor: not-allowed;
-      }
-
-      .shared-url {
-        display: none;
-        margin-top: 8px;
-        width: 100%;
-        padding: 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-size: 12px;
-        background-color: #f5f5f5;
-        color: #555;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
       .notification {
         position: fixed;
         top: 20px;
@@ -263,7 +173,7 @@
   </head>
   <body>
     <!-- Todo List Shape -->
-    <folk-shape x="50" y="50" width="400" height="500">
+    <folk-shape x="50" y="50" width="400" height="400">
       <h3>Automerge Todo List</h3>
 
       <!-- Todo Input -->
@@ -283,38 +193,25 @@
         <button class="clear-completed" id="clearCompletedBtn">Clear completed</button>
       </div>
 
-      <!-- Storage Info -->
+      <!-- Document Info -->
       <div class="storage-info">
         <div class="document-id" id="documentId"></div>
-      </div>
-
-      <!-- Share Section -->
-      <div class="share-section">
-        <div class="peer-status">
-          <div class="peer-count">
-            <span class="peer-indicator disconnected" id="peerIndicator"></span>
-            <span id="peerCount">No peers connected</span>
-          </div>
-          <small id="connectionStatus">Connecting...</small>
-        </div>
-        <button class="share-button" id="shareButton" disabled> Share this Todo List </button>
-        <input type="text" class="shared-url" id="sharedUrl" readonly />
       </div>
     </folk-shape>
 
     <!-- Explanation Shape -->
-    <folk-shape x="50" y="570" width="400">
+    <folk-shape x="50" y="470" width="400">
       <h3>About</h3>
       <p
-        >This todo list uses Automerge to store and synchronize data. Your todos are automatically saved to your
-        browser's local storage and will persist between page refreshes.</p
+        >This todo list uses Automerge to store and synchronize data. Your todos are synchronized automatically using
+        the URL hash.</p
       >
       <ul style="padding-left: 20px; font-size: 14px; color: #555">
         <li><strong>Add:</strong> Type a todo and hit Enter or click Add</li>
         <li><strong>Complete:</strong> Click the checkbox next to a todo</li>
         <li><strong>Edit:</strong> Double-click on a todo to edit it</li>
         <li><strong>Delete:</strong> Click the × button on a todo</li>
-        <li><strong>Share:</strong> Click 'Share this Todo List' to collaborate in real-time</li>
+        <li><strong>Sharing:</strong> Share the URL to collaborate in real-time</li>
       </ul>
     </folk-shape>
 
@@ -332,88 +229,10 @@
       const todoCounts = document.getElementById('todoCounts');
       const clearCompletedBtn = document.getElementById('clearCompletedBtn');
       const documentIdElement = document.getElementById('documentId');
-      const shareButton = document.getElementById('shareButton');
-      const sharedUrl = document.getElementById('sharedUrl');
-      const peerCount = document.getElementById('peerCount');
-      const peerIndicator = document.getElementById('peerIndicator');
-      const connectionStatus = document.getElementById('connectionStatus');
       const notification = document.getElementById('notification');
 
-      // Check for document ID in URL
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlDocId = urlParams.get('space');
-
-      // Initialize FolkAutomerge with local storage
-      let automerge = new FolkAutomerge({
-        docId: urlDocId,
-        storeName: 'folk-todo-list',
-      });
-
-      // Display document ID
-      documentIdElement.textContent = `ID: ${automerge.getDocumentId()}`;
-
-      // Update connection status
-      automerge.onPeersChanged((peers) => {
-        if (peers.length > 0) {
-          peerCount.textContent = `${peers.length} peer${peers.length !== 1 ? 's' : ''} connected`;
-          peerIndicator.classList.remove('disconnected');
-          peerIndicator.classList.add('connected');
-          connectionStatus.textContent = 'Online';
-          shareButton.disabled = false;
-
-          // Show notification when a new peer connects
-          showNotification(`A peer has connected. Total peers: ${peers.length}`);
-        } else {
-          peerCount.textContent = 'No peers connected';
-          peerIndicator.classList.remove('connected');
-          peerIndicator.classList.add('disconnected');
-
-          // Check if URL has a doc parameter
-          if (urlDocId) {
-            connectionStatus.textContent = 'Waiting for peers...';
-          } else {
-            connectionStatus.textContent = 'Ready to connect';
-          }
-
-          shareButton.disabled = false;
-        }
-      });
-
-      // Initialize connection status
-      if (urlDocId) {
-        connectionStatus.textContent = 'Waiting for peers...';
-      } else {
-        // Enable share button after a short delay to ensure network is ready
-        setTimeout(() => {
-          connectionStatus.textContent = 'Ready to connect';
-          shareButton.disabled = false;
-        }, 1000);
-      }
-
-      // Handle share button click
-      shareButton.addEventListener('click', () => {
-        try {
-          // Generate shareable URL
-          const url = automerge.generateShareableUrl();
-          sharedUrl.value = url;
-          sharedUrl.style.display = 'block';
-
-          // Copy to clipboard
-          sharedUrl.select();
-          document.execCommand('copy');
-
-          // Show success notification
-          showNotification('Share link copied to clipboard!');
-
-          // Update UI to indicate sharing is active
-          if (connectionStatus.textContent === 'Ready to connect') {
-            connectionStatus.textContent = 'Waiting for peers...';
-          }
-        } catch (error) {
-          console.error('Error generating share URL:', error);
-          showNotification('Error generating share URL: ' + error.message);
-        }
-      });
+      // Initialize FolkAutomerge
+      const automerge = new FolkAutomerge();
 
       // Show notification function
       function showNotification(message) {
@@ -426,9 +245,7 @@
       }
 
       // Render the todo list
-      function renderTodoList() {
-        const doc = automerge.getDocument();
-
+      function renderTodoList(doc) {
         // Clear the list
         todoList.innerHTML = '';
 
@@ -479,30 +296,43 @@
         todoCounts.textContent = `${remainingCount} item${remainingCount !== 1 ? 's' : ''} left`;
       }
 
-      // Add a new todo when the add button is clicked
-      addTodoBtn.addEventListener('click', () => {
-        const text = todoInput.value.trim();
-        if (text) {
-          automerge.addTodo(text);
-          todoInput.value = '';
-          todoInput.focus();
-        }
-      });
+      // Wait for the document to be ready before setting up the UI
+      automerge.whenReady().then(async () => {
+        // Display document ID
+        documentIdElement.textContent = `ID: ${automerge.getDocumentId()}`;
 
-      // Add a new todo when Enter is pressed
-      todoInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          addTodoBtn.click();
-        }
-      });
+        // Register change handler
+        automerge.onDocumentChange(renderTodoList);
 
-      // Clear completed todos
-      clearCompletedBtn.addEventListener('click', () => {
-        automerge.clearCompleted();
-      });
+        // Get initial document state and render it
+        const initialDoc = await automerge.getDocumentAsync();
+        renderTodoList(initialDoc);
 
-      // Register change handler
-      automerge.onChange(renderTodoList);
+        // Add a new todo when the add button is clicked
+        addTodoBtn.addEventListener('click', () => {
+          const text = todoInput.value.trim();
+          if (text) {
+            automerge.addTodo(text);
+            todoInput.value = '';
+            todoInput.focus();
+          }
+        });
+
+        // Add a new todo when Enter is pressed
+        todoInput.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            addTodoBtn.click();
+          }
+        });
+
+        // Clear completed todos
+        clearCompletedBtn.addEventListener('click', () => {
+          automerge.clearCompleted();
+        });
+
+        // Show notification that the app is ready
+        showNotification('Todo list ready');
+      });
     </script>
   </body>
 </html>
