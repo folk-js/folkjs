@@ -173,7 +173,7 @@
       const MAX_ZOOM_LEVEL = 100.0; // Maximum zoom level (zoomed in)
 
       let currentZoomLevel = 1.0; // Track the current zoom level
-      let lastReferenceNodeId = null; // Track the last reference node
+      let lastOriginNodeId = null; // Track the last reference node
 
       // Caches for performance optimization
       const nodeContentCache = {}; // Cache for node content templates
@@ -865,11 +865,11 @@
         const containerHeight = container.clientHeight;
 
         // Update reference node tracking
-        const currentReferenceNodeId = graph.referenceNode.id;
-        if (lastReferenceNodeId !== currentReferenceNodeId) {
+        const currentOriginNodeId = graph.originNode.id;
+        if (lastOriginNodeId !== currentOriginNodeId) {
           // Reference node changed, reset zoom level
           currentZoomLevel = 1.0;
-          lastReferenceNodeId = currentReferenceNodeId;
+          lastOriginNodeId = currentOriginNodeId;
         }
 
         // Create a map to track which nodes we've processed

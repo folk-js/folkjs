@@ -1,30 +1,17 @@
 /**
- * MultiGraph - A generic implementation of a directed multigraph (a graph that allows multiple edges between the same nodes)
- *
- * This implementation provides:
- * - Fast O(1) node and edge lookups
- * - Fast O(1) bidirectional traversal (source → target and target → source)
- * - Support for multiple edges between the same pair of nodes
- * - Type-safe generic node and edge data
+ * MultiGraph - A directed multigraph is a graph that allows multiple edges between the same nodes
  *
  * Performance characteristics:
+ * - Optimised for fast bidirectional traversal (source → target and target → source)
  * - Space complexity: O(|V| + |E|) where |V| is the number of vertices and |E| is the number of edges
  * - Most operations are O(1) or O(k) where k is the number of adjacent edges/nodes
  */
 
-/**
- * Base interface for nodes with minimum required properties
- */
 export interface BaseNode {
-  /** Unique identifier for the node */
   id: string;
 }
 
-/**
- * Base interface for edges with minimum required properties
- */
 export interface BaseEdge {
-  /** Unique identifier for the edge */
   id: string;
   /** ID of the source node */
   source: string;
@@ -32,34 +19,16 @@ export interface BaseEdge {
   target: string;
 }
 
-/**
- * A generic directed multigraph implementation
- * @template N - The type of nodes in the graph (must extend BaseNode)
- * @template E - The type of edges in the graph (must extend BaseEdge)
- */
 export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = BaseEdge> {
   /** Map of node IDs to node objects - O(1) lookup */
   protected nodes: Map<string, N>;
   /** Map of edge IDs to edge objects - O(1) lookup */
   protected edges: Map<string, E>;
 
-  /**
-   * Index for fast outgoing edge lookup
-   * source → target → Set of edge IDs
-   * Enables O(1) lookup of edges from source to target
-   */
   protected outgoingEdges: Map<string, Map<string, Set<string>>>;
 
-  /**
-   * Index for fast incoming edge lookup
-   * target → source → Set of edge IDs
-   * Enables O(1) lookup of edges from target to source
-   */
   protected incomingEdges: Map<string, Map<string, Set<string>>>;
 
-  /**
-   * Creates a new empty multigraph
-   */
   constructor() {
     this.nodes = new Map();
     this.edges = new Map();
@@ -394,7 +363,6 @@ export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = Base
   /**
    * Gets the number of nodes in the graph
    * @returns The number of nodes
-   * @complexity O(1)
    */
   get nodeCount(): number {
     return this.nodes.size;
@@ -403,7 +371,6 @@ export class MultiGraph<N extends BaseNode = BaseNode, E extends BaseEdge = Base
   /**
    * Gets the number of edges in the graph
    * @returns The number of edges
-   * @complexity O(1)
    */
   get edgeCount(): number {
     return this.edges.size;
