@@ -211,14 +211,4 @@ export class FolkAutomerge<T extends TodoListDoc> {
       }
     });
   }
-
-  /**
-   * Clean up resources when the instance is no longer needed
-   */
-  dispose(): void {
-    // Remove any event listeners
-    if (this.handle) {
-      this.handle.removeAllListeners('change');
-    }
-  }
 }
