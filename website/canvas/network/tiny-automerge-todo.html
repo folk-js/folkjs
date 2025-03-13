@@ -297,15 +297,14 @@
       }
 
       // Wait for the document to be ready before setting up the UI
-      automerge.whenReady().then(async () => {
+      automerge.whenReady((initialDoc) => {
         // Display document ID
         documentIdElement.textContent = `ID: ${automerge.getDocumentId()}`;
 
         // Register change handler
         automerge.onChange(renderTodoList);
 
-        // Get initial document state and render it
-        const initialDoc = await automerge.getDocumentAsync();
+        // Render initial document state
         renderTodoList(initialDoc);
 
         // Add a new todo when the add button is clicked

@@ -88,35 +88,18 @@ export class FolkAutomerge<T extends TodoListDoc> {
 
   /**
    * Returns a promise that resolves when the document is ready
+   * Can also take an optional callback that will be called with the document when ready
    */
-  whenReady(): Promise<void> {
-    return this.handle.whenReady();
-  }
-
-  /**
-   * Get the document asynchronously
-   */
-  async getDocumentAsync(): Promise<T> {
+  async whenReady(callback?: (doc: T) => void): Promise<T> {
+    await this.handle.whenReady();
     const doc = await this.handle.doc();
-    if (!doc) {
-      return { todos: [] } as unknown as T;
-    }
-    return doc as T;
-  }
+    const result = (doc as T) || ({ todos: [] } as unknown as T);
 
-  /**
-   * Get the document synchronously (use only when you know the document is ready)
-   */
-  getDocument(): T {
-    if (!this.handle.isReady()) {
-      console.log('[Doc] Handle not ready, returning empty document');
-      return { todos: [] } as unknown as T;
+    if (callback) {
+      callback(result);
     }
-    const doc = this.handle.docSync();
-    if (!doc) {
-      return { todos: [] } as unknown as T;
-    }
-    return doc as T;
+
+    return result;
   }
 
   /**
