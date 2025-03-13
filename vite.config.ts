@@ -102,7 +102,7 @@ const linkGenerator = (): Plugin => {
             })
             .join('\n');
 
-          return `<h2>${group.replaceAll('-', ' ')}</h2>\n<ul>${groupHtml}</ul>`;
+          return `<h2 id="${group}">${group.replaceAll('-', ' ')}</h2>\n<ul>${groupHtml}</ul>`;
         })
         .join('\n');
 

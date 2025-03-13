@@ -274,6 +274,7 @@ export class Matrix implements IMatrix {
     return this.Identity().translate(d.x, d.y).rotate(d.rotation).scale(d.scaleX, d.scaleY);
   }
 
+  // https://www.w3.org/TR/css-transforms-1/#matrix-interpolation
   static Lerp(m1: MatrixInit, m2: MatrixInit, alpha: number) {
     if (alpha < 0 || alpha > 1) return;
 
