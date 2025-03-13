@@ -139,15 +139,6 @@ export class FolkAutomerge<T extends TodoListDoc> {
   }
 
   /**
-   * Generate a shareable URL for this document
-   */
-  generateShareableUrl(baseUrl: string = window.location.href): string {
-    const url = new URL(baseUrl);
-    url.searchParams.set('space', this.handle.url);
-    return url.toString();
-  }
-
-  /**
    * Add a new todo item
    */
   addTodo(text: string): void {
