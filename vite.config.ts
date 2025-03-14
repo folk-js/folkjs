@@ -81,6 +81,24 @@ const linkGenerator = (): Plugin => {
           {} as Record<string, typeof files>,
         );
 
+      // Extract "temp" and "test" groups separately
+      const specialGroups = ['temp', 'tests'];
+      const specialGroupedHtml = specialGroups
+        .filter((group) => groups[group])
+        .map((group) => {
+          const groupHtml = groups[group]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(({ path, name }) => {
+              const title = name.split('/').pop()?.replace('.html', '').replaceAll('-', ' ') || '';
+              return `<li><a href="/canvas/${path}">${title}</a></li>`;
+            })
+            .join('\n');
+
+          delete groups[group]; // Remove from main groups
+          return `<h2 id="${group}">${group.replaceAll('-', ' ')}</h2>\n<ul>${groupHtml}</ul>`;
+        })
+        .join('\n');
+
       // Generate ungrouped HTML
       const ungroupedHtml = ungroupedFiles
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -90,7 +108,7 @@ const linkGenerator = (): Plugin => {
         })
         .join('\n');
 
-      // Generate grouped HTML
+      // Generate remaining grouped HTML
       const groupedHtml = Object.entries(groups)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([group, groupFiles]) => {
@@ -106,7 +124,10 @@ const linkGenerator = (): Plugin => {
         })
         .join('\n');
 
-      return html.replace('{{ LINKS }}', `${ungroupedHtml}\n${groupedHtml}`);
+      // Combine all HTML with a horizontal line before special groups
+      const finalHtml = `${ungroupedHtml}\n${groupedHtml}\n<hr/>\n${specialGroupedHtml}`;
+
+      return html.replace('{{ LINKS }}', finalHtml);
     },
   };
 };
