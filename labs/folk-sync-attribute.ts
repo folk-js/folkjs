@@ -1,11 +1,37 @@
 import { CustomAttribute } from '@lib';
 import { FolkAutomerge } from './FolkAutomerge';
 
+/**
+ * Interface for DOM node attributes
+ */
+interface DOMNodeAttributes {
+  [key: string]: string;
+}
+
+/**
+ * Interface for a serialized DOM node
+ */
+interface SerializedDOMNode {
+  nodeType: number;
+  nodeName: string;
+  nodeId: string;
+  childNodes: SerializedDOMNode[];
+  attributes?: DOMNodeAttributes;
+  textContent?: string;
+}
+
+/**
+ * Interface for the DOM sync document structure
+ */
+interface DOMSyncDocument {
+  domTree: SerializedDOMNode;
+}
+
 export class FolkSyncAttribute extends CustomAttribute {
   static attributeName = 'folk-sync';
 
   // The FolkAutomerge instance for network sync
-  #automerge!: FolkAutomerge<any>;
+  #automerge!: FolkAutomerge<DOMSyncDocument>;
 
   // MutationObserver instance
   #observer: MutationObserver | null = null;
@@ -27,13 +53,13 @@ export class FolkSyncAttribute extends CustomAttribute {
    * @param path Current path in the Automerge document
    * @returns The serialized node structure
    */
-  #serializeNode(node: Node, path: string[] = []): any {
+  #serializeNode(node: Node, path: string[] = []): SerializedDOMNode {
     const nodeType = node.nodeType;
     const nodeName = node.nodeName.toLowerCase();
     const nodeId = this.#generateNodeId();
 
     // Create the base node object
-    const result: any = {
+    const result: SerializedDOMNode = {
       nodeType,
       nodeName,
       nodeId,
@@ -75,7 +101,7 @@ export class FolkSyncAttribute extends CustomAttribute {
    * @param parent Optional parent node for new nodes
    * @returns The created or updated DOM node
    */
-  #deserializeNode(data: any, path: string[] = [], parent?: Node): Node {
+  #deserializeNode(data: SerializedDOMNode, path: string[] = [], parent?: Node): Node {
     // Add 'domTree' as the first segment in the path if it's not already there
     const fullPath = path.length === 0 ? ['domTree'] : path[0] === 'domTree' ? path : ['domTree', ...path];
     const pathKey = fullPath.join('.');
@@ -119,7 +145,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         // Set or update attributes from the data
         for (const [name, value] of Object.entries(data.attributes)) {
           if (node.getAttribute(name) !== value) {
-            node.setAttribute(name, value as string);
+            node.setAttribute(name, value);
           }
         }
       }
@@ -133,7 +159,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         const existingChildren = Array.from(node.childNodes);
 
         // Create/update children from the data
-        data.childNodes.forEach((childData: any, index: number) => {
+        data.childNodes.forEach((childData, index) => {
           const childPath = [...fullPath, 'childNodes', index.toString()];
           this.#deserializeNode(childData, childPath, node);
         });
@@ -168,7 +194,7 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Completely replaces the DOM subtree with the one derived from the Automerge document
    * @param data The node data from Automerge
    */
-  #replaceDOMSubtree(data: any): void {
+  #replaceDOMSubtree(data: SerializedDOMNode): void {
     console.log('Replacing DOM subtree with Automerge data');
 
     // Clear our mappings
@@ -199,7 +225,7 @@ export class FolkSyncAttribute extends CustomAttribute {
       // Set attributes from the data
       if (data.attributes) {
         for (const [name, value] of Object.entries(data.attributes)) {
-          ownerElement.setAttribute(name, value as string);
+          ownerElement.setAttribute(name, value);
         }
       }
 
@@ -210,7 +236,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
       // Create children from the data
       if (data.childNodes) {
-        data.childNodes.forEach((childData: any, index: number) => {
+        data.childNodes.forEach((childData, index) => {
           const childPath = ['childNodes', index.toString()];
           this.#deserializeNode(childData, childPath, ownerElement);
         });
@@ -250,7 +276,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     console.log('Processing mutations:', mutations);
 
-    this.#automerge.change((doc: any) => {
+    this.#automerge.change((doc: DOMSyncDocument) => {
       console.log('changing');
 
       // Ensure domTree exists
@@ -268,7 +294,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         switch (mutation.type) {
           case 'attributes': {
             // Find the node in the document
-            let node = doc;
+            let node: any = doc;
             for (const segment of targetPath) {
               node = node[segment];
             }
@@ -277,7 +303,9 @@ export class FolkSyncAttribute extends CustomAttribute {
             if (mutation.attributeName) {
               if (mutation.oldValue === null) {
                 // Attribute was removed
-                delete node.attributes[mutation.attributeName];
+                if (node.attributes) {
+                  delete node.attributes[mutation.attributeName];
+                }
               } else {
                 // Attribute was added or changed
                 if (!node.attributes) node.attributes = {};
@@ -290,7 +318,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
           case 'characterData': {
             // Find the node in the document
-            let node = doc;
+            let node: any = doc;
             for (const segment of targetPath) {
               node = node[segment];
             }
@@ -304,7 +332,7 @@ export class FolkSyncAttribute extends CustomAttribute {
             // Handle added nodes
             for (const addedNode of mutation.addedNodes) {
               // Find the parent node in the document
-              let parentNode = doc;
+              let parentNode: any = doc;
               for (const segment of targetPath) {
                 parentNode = parentNode[segment];
               }
@@ -339,7 +367,7 @@ export class FolkSyncAttribute extends CustomAttribute {
             // Handle removed nodes
             for (const removedNode of mutation.removedNodes) {
               // Find the parent node in the document
-              let parentNode = doc;
+              let parentNode: any = doc;
               for (const segment of targetPath) {
                 parentNode = parentNode[segment];
               }
@@ -379,7 +407,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Handle changes from the Automerge document and update DOM
    */
-  #handleDocumentChange(doc: any): void {
+  #handleDocumentChange(doc: DOMSyncDocument): void {
     console.log('Document changed:', doc);
 
     // Stop observing while we update the DOM
@@ -387,8 +415,9 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     try {
       // Update the DOM tree to match the document
-      // Use the domTree property if it exists, otherwise use the root document
-      this.#deserializeNode(doc.domTree || doc, []);
+      if (doc.domTree) {
+        this.#deserializeNode(doc.domTree, []);
+      }
     } finally {
       // Resume observing
       this.#startObserving();
@@ -402,7 +431,14 @@ export class FolkSyncAttribute extends CustomAttribute {
     console.log(`FolkSync connected to <${this.ownerElement.tagName.toLowerCase()}>`);
 
     // Initialize FolkAutomerge for network sync
-    this.#automerge = new FolkAutomerge<any>({});
+    this.#automerge = new FolkAutomerge<DOMSyncDocument>({
+      domTree: {
+        nodeType: Node.ELEMENT_NODE,
+        nodeName: 'div', // Placeholder, will be replaced with actual DOM
+        nodeId: this.#generateNodeId(),
+        childNodes: [],
+      },
+    });
 
     // When the document is ready, either initialize from the document or from the DOM
     this.#automerge.whenReady().then((doc) => {
@@ -410,7 +446,7 @@ export class FolkSyncAttribute extends CustomAttribute {
       this.#stopObserving();
 
       try {
-        if (Object.keys(doc).length === 0) {
+        if (!doc.domTree || Object.keys(doc.domTree).length === 0) {
           // New document: serialize the DOM into the document
           console.log('Initializing new document from DOM');
           this.#automerge.change((newDoc) => {
@@ -422,7 +458,7 @@ export class FolkSyncAttribute extends CustomAttribute {
           // Existing document: update the DOM to match
           console.log('Initializing DOM from existing document');
           // Completely replace the DOM subtree with the one from the Automerge document
-          this.#replaceDOMSubtree(doc.domTree || doc);
+          this.#replaceDOMSubtree(doc.domTree);
         }
       } finally {
         // Resume observing
