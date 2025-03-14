@@ -103,24 +103,6 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
-   * @param doc The Automerge document
-   * @param path The path to the node
-   * @returns The node in the document or undefined
-   */
-  #getDocNodeByPath(doc: DOMNode, path: string[]): any {
-    if (path.length === 0) return doc;
-
-    let node: any = doc;
-    for (const segment of path) {
-      if (node === undefined || node === null) {
-        return undefined;
-      }
-      node = node[segment];
-    }
-    return node;
-  }
-
-  /**
    * Updates paths for all children of a node after structural changes
    * @param parentNode The parent DOM node
    * @param parentPath The path to the parent node
