@@ -165,6 +165,62 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
+   * Completely replaces the DOM subtree with the one derived from the Automerge document
+   * @param data The node data from Automerge
+   */
+  #replaceDOMSubtree(data: any): void {
+    console.log('Replacing DOM subtree with Automerge data');
+
+    // Clear our mappings
+    this.#nodeToPath = new WeakMap<Node, string[]>();
+    this.#pathToNode = new Map<string, Node>();
+
+    // Clear the owner element's content
+    const ownerElement = this.ownerElement;
+
+    // Keep track of the original attributes
+    const originalAttributes: { [key: string]: string } = {};
+    for (const attr of ownerElement.attributes) {
+      originalAttributes[attr.name] = attr.value;
+    }
+
+    // Remove all children
+    while (ownerElement.firstChild) {
+      ownerElement.removeChild(ownerElement.firstChild);
+    }
+
+    // Remove all attributes
+    while (ownerElement.attributes.length > 0) {
+      ownerElement.removeAttribute(ownerElement.attributes[0].name);
+    }
+
+    // Create a new element from the data
+    if (data.nodeType === Node.ELEMENT_NODE) {
+      // Set attributes from the data
+      if (data.attributes) {
+        for (const [name, value] of Object.entries(data.attributes)) {
+          ownerElement.setAttribute(name, value as string);
+        }
+      }
+
+      // Restore the folk-sync attribute if it was removed
+      if (!ownerElement.hasAttribute('folk-sync')) {
+        ownerElement.setAttribute('folk-sync', originalAttributes['folk-sync'] || '');
+      }
+
+      // Create children from the data
+      if (data.childNodes) {
+        data.childNodes.forEach((childData: any, index: number) => {
+          const childPath = ['childNodes', index.toString()];
+          this.#deserializeNode(childData, childPath, ownerElement);
+        });
+      }
+    }
+
+    console.log('DOM subtree replacement complete');
+  }
+
+  /**
    * Start observing DOM mutations
    */
   #startObserving(): void {
@@ -365,8 +421,8 @@ export class FolkSyncAttribute extends CustomAttribute {
         } else {
           // Existing document: update the DOM to match
           console.log('Initializing DOM from existing document');
-          // Use the domTree property instead of the root document
-          this.#deserializeNode(doc.domTree || doc, []);
+          // Completely replace the DOM subtree with the one from the Automerge document
+          this.#replaceDOMSubtree(doc.domTree || doc);
         }
       } finally {
         // Resume observing
