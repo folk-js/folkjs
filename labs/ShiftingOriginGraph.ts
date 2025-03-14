@@ -1,253 +1,113 @@
 /**
- * ShiftingOriginGraph - A graph structure that supports infinite zooming
- * by changing the reference frame node. This allows for zoomable user interfaces that contain cycles,
- * where there is no top or bottom to the zoom. Memory consumption is finite and you'll never hit floating point
- * precision limits.
- *
- * The key concept is that any node can become the center of the universe (reference node),
- * with all other nodes positioned relative to it.
- *
  * @note This is a PoC, lots of optimisations are possible. Graph visibility culling, caching, etc.
  */
 
-export interface Node<T = any> {
-  id: string;
+import { BaseEdge, BaseNode, MultiGraph } from './MultiGraph';
+
+export interface ZoomNode<T = any> extends BaseNode {
   data: T;
 }
 
-export interface Edge {
-  source: string; // Source node ID
-  target: string; // Target node ID
+export interface ZoomEdge extends BaseEdge {
   transform: DOMMatrix;
 }
 
-type NodeMap<T = any> = Record<string, Node<T>>;
-type EdgeMap = Record<string, Edge[]>;
-
-export type ShouldZoomInCallback = <T>(
-  graph: ShiftingOriginGraph<T>,
+/**
+ * Callback for determining if zooming in should change the reference node
+ */
+export type ShouldShiftCallback = (
+  combinedTransform: DOMMatrix,
   canvasWidth: number,
   canvasHeight: number,
-  nextNodeId: string,
+  node: ZoomNode,
 ) => boolean;
 
-export type ShouldZoomOutCallback = <T>(
-  graph: ShiftingOriginGraph<T>,
-  canvasWidth: number,
-  canvasHeight: number,
-  prevNodeId: string,
-) => boolean;
+/**
+ * Callback for determining if zooming out should change the reference node
+ */
+export type ShouldUnshiftCallback = (originTransform: DOMMatrix, canvasWidth: number, canvasHeight: number) => boolean;
 
-export type NodeCullingCallback = <T>(nodeId: string, transform: DOMMatrix, viewportTransform: DOMMatrix) => boolean;
+/**
+ * Callback for determining if a node should be culled during traversal
+ */
+export type NodeCullingCallback = (node: ZoomNode, transform: DOMMatrix, originTransform: DOMMatrix) => boolean;
 
-export class ShiftingOriginGraph<T = any> {
-  #nodes: NodeMap<T>;
-  #edges: EdgeMap; // Directed edges from source to target
-  #reverseEdges: EdgeMap; // Reverse index mapping target to source edges
-  #referenceNodeId: string;
-  #viewportTransform: DOMMatrix;
+/**
+ * ShiftingOriginGraph - A graph that supports infinite zooming by changing reference frames
+ * @template T - The type of data stored in nodes
+ */
+export class ShiftingOriginGraph<T = any> extends MultiGraph<ZoomNode<T>, ZoomEdge> {
+  /** ID of the current origin node */
+  originNodeId: string;
+  /** Transform applied to the viewport */
+  #originTransform: DOMMatrix;
+  /** Maximum number of nodes to track for visibility */
   #maxNodes = 30;
-  #matrixPool: DOMMatrix[] = [];
-  #poolSize = 20; // Configurable pool size
 
   /**
    * Create a new ShiftingOriginGraph
    * @param nodes - Array of nodes
    * @param edges - Array of edges
-   * @param initialReferenceNodeId - The ID of the initial reference node
+   * @param initialOriginNodeId - The ID of the initial origin node
    * @param maxNodes - Maximum number of nodes to track for visibility
    */
-  constructor(nodes: Node<T>[] = [], edges: Edge[] = [], initialReferenceNodeId?: string, maxNodes?: number) {
+  constructor(nodes: ZoomNode<T>[] = [], edges: ZoomEdge[] = [], initialOriginNodeId?: string, maxNodes?: number) {
+    super(); // Initialize the MultiGraph base class
+
     this.#maxNodes = maxNodes || 30;
 
-    this.#nodes = {};
+    // Add nodes to the graph
     for (const node of nodes) {
-      this.#nodes[node.id] = node;
+      this.addNode(node);
     }
 
-    this.#edges = {};
-    this.#reverseEdges = {};
-
-    // Group edges by source
+    // Add edges to the graph
     for (const edge of edges) {
-      this.#addEdgeToMaps(edge);
+      this.addEdge(edge);
     }
 
-    // Use provided initial reference node or default to first node
-    this.#referenceNodeId = initialReferenceNodeId || Object.keys(this.#nodes)[0] || '';
-    this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
+    // Use provided initial origin node or default to first node
+    this.originNodeId = initialOriginNodeId || (this.nodes.size > 0 ? Array.from(this.nodes.keys())[0] : '');
+    this.#originTransform = new DOMMatrix().translate(0, 0).scale(1);
   }
 
   /**
-   * Add a node to the graph
-   * @param node - The node to add
-   * @returns The added node
+   * Get the current origin node
    */
-  addNode(node: Node<T>): Node<T> {
-    this.#nodes[node.id] = node;
-
-    // If this is the first node, make it the reference node
-    if (Object.keys(this.#nodes).length === 1) {
-      this.#referenceNodeId = node.id;
-    }
-
-    return node;
+  get originNode(): ZoomNode<T> {
+    return this.getNode(this.originNodeId)!;
   }
 
   /**
-   * Remove a node from the graph
-   * @param nodeId - The ID of the node to remove
-   * @returns True if the node was removed, false if it wasn't found
+   * Get the current origin transform
    */
-  removeNode(nodeId: string): boolean {
-    if (!this.#nodes[nodeId]) {
-      return false;
-    }
-
-    // Remove the node
-    delete this.#nodes[nodeId];
-
-    // Remove all edges connected to this node
-    if (this.#edges[nodeId]) {
-      delete this.#edges[nodeId];
-    }
-
-    // Remove from reverse edges
-    Object.keys(this.#reverseEdges).forEach((targetId) => {
-      this.#reverseEdges[targetId] = (this.#reverseEdges[targetId] || []).filter((edge) => edge.source !== nodeId);
-
-      if (this.#reverseEdges[targetId].length === 0) {
-        delete this.#reverseEdges[targetId];
-      }
-    });
-
-    // Remove the node from forward edges of other nodes
-    Object.keys(this.#edges).forEach((sourceId) => {
-      this.#edges[sourceId] = (this.#edges[sourceId] || []).filter((edge) => edge.target !== nodeId);
-
-      if (this.#edges[sourceId].length === 0) {
-        delete this.#edges[sourceId];
-      }
-    });
-
-    // If we removed the reference node, pick a new one
-    if (nodeId === this.#referenceNodeId) {
-      const keys = Object.keys(this.#nodes);
-      if (keys.length > 0) {
-        this.resetView(keys[0]);
-      }
-    }
-
-    return true;
+  get originTransform(): DOMMatrix {
+    return this.#originTransform;
   }
 
   /**
-   * Add an edge to the graph
-   * @param edge - The edge to add
-   * @returns The added edge
+   * Unfolds the graph into a tree structure starting from the origin node
+   * This performs a breadth-first traversal, allowing nodes to appear multiple times
+   * with different transforms if they can be reached through different paths.
+   *
+   * @param shouldCullNode - Optional callback to determine if a node and its entire subtree should be culled
+   * @returns Iterator yielding objects with node and accumulated transform
    */
-  addEdge(edge: Edge): Edge {
-    this.#addEdgeToMaps(edge);
-    return edge;
-  }
-
-  /**
-   * Convenience method to add an edge between two nodes
-   * @param sourceId - The source node ID
-   * @param targetId - The target node ID
-   * @param transform - The transform to apply
-   * @returns The created edge or null if the source or target node doesn't exist
-   */
-  addEdgeBetween(sourceId: string, targetId: string, transform: DOMMatrix): Edge | null {
-    // Verify that both nodes exist
-    if (!this.#nodes[sourceId] || !this.#nodes[targetId]) {
-      return null;
-    }
-
-    const edge: Edge = {
-      source: sourceId,
-      target: targetId,
-      transform,
-    };
-
-    this.#addEdgeToMaps(edge);
-    return edge;
-  }
-
-  /**
-   * Remove an edge between two nodes
-   * @param sourceId - The source node ID
-   * @param targetId - The target node ID
-   * @returns True if the edge was removed, false if it wasn't found
-   */
-  removeEdge(sourceId: string, targetId: string): boolean {
-    if (!this.#edges[sourceId]) {
-      return false;
-    }
-
-    const initialLength = this.#edges[sourceId].length;
-    this.#edges[sourceId] = this.#edges[sourceId].filter((edge) => edge.target !== targetId);
-
-    if (this.#edges[sourceId].length === 0) {
-      delete this.#edges[sourceId];
-    }
-
-    // Also remove from reverse edges
-    if (this.#reverseEdges[targetId]) {
-      this.#reverseEdges[targetId] = this.#reverseEdges[targetId].filter((edge) => edge.source !== sourceId);
-
-      if (this.#reverseEdges[targetId].length === 0) {
-        delete this.#reverseEdges[targetId];
-      }
-    }
-
-    return initialLength !== this.#edges[sourceId]?.length;
-  }
-
-  /**
-   * Get the current reference node
-   */
-  get referenceNode(): Node<T> {
-    return this.#nodes[this.#referenceNodeId];
-  }
-
-  /**
-   * Get the current viewport transform
-   */
-  get viewportTransform(): DOMMatrix {
-    return this.#viewportTransform;
-  }
-
-  /**
-   * Get all nodes in the graph
-   */
-  get nodes(): NodeMap<T> {
-    return this.#nodes;
-  }
-
-  /**
-   * Iterate through visible nodes with their accumulated transforms
-   * This provides both the node and its transform relative to the reference node
-   * @param shouldCullNode - Optional callback to determine if a node should be culled
-   * @returns Iterator yielding objects with node, nodeId, and accumulated transform
-   */
-  *getVisibleNodes(shouldCullNode?: NodeCullingCallback): Generator<{
-    nodeId: string;
-    node: Node<T>;
+  *getUnfoldedTree(shouldCullNode?: NodeCullingCallback): Generator<{
+    node: ZoomNode<T>;
     transform: DOMMatrix;
   }> {
-    // Always yield the reference node first with identity transform
-    const identityMatrix = this.#getMatrix(); // Get from pool instead of creating new
+    const originNode = this.getNode(this.originNodeId);
+    if (!originNode) return;
 
+    // Always yield the origin node first with identity transform
+    const identityMatrix = new DOMMatrix();
     yield {
-      nodeId: this.#referenceNodeId,
-      node: this.#nodes[this.#referenceNodeId],
+      node: originNode,
       transform: identityMatrix,
     };
 
-    this.#releaseMatrix(identityMatrix); // Return to pool after use
-
-    // Count of nodes yielded so far (including reference node)
+    // Count of nodes yielded so far (including origin node)
     let nodesYielded = 1;
 
     // Create a queue for breadth-first traversal
@@ -257,45 +117,40 @@ export class ShiftingOriginGraph<T = any> {
       depth: number;
     }[] = [];
 
-    // Start with all edges from the reference node
-    const edges = this.#getEdgesFrom(this.#referenceNodeId);
-    for (const edge of edges) {
-      // Create a copy of the transform by extracting and reapplying its values
-      const originalTransform = edge.transform;
-      const copiedTransform = this.#copyMatrix(originalTransform);
-
-      // Check if node should be culled using the callback
-      const shouldCull = shouldCullNode ? shouldCullNode(edge.target, copiedTransform, this.#viewportTransform) : false;
-
-      if (!shouldCull) {
-        queue.push({
-          nodeId: edge.target,
-          transform: copiedTransform,
-          depth: 1,
-        });
-      }
-    }
+    // Initialize the queue with the origin node
+    queue.push({
+      nodeId: this.originNodeId,
+      transform: identityMatrix,
+      depth: 0,
+    });
 
     // Process the queue until we hit maxNodes limit
     while (queue.length > 0 && nodesYielded < this.#maxNodes) {
       const { nodeId, transform, depth } = queue.shift()!;
 
-      // Get the node (skip if it doesn't exist)
-      const node = this.#nodes[nodeId];
-      if (!node) continue;
+      // For non-origin nodes, yield the node (origin was already yielded)
+      if (depth > 0) {
+        const node = this.getNode(nodeId);
+        if (!node) continue;
 
-      // Yield the node
-      yield { nodeId, node, transform };
-      nodesYielded++;
+        yield { node, transform };
+        nodesYielded++;
+      }
 
-      // Add all outgoing edges to the queue
-      const nextEdges = this.#getEdgesFrom(nodeId);
-      for (const edge of nextEdges) {
-        // Copy the current transform and multiply by edge transform
-        const nextTransform = this.#copyMatrix(transform).multiply(edge.transform);
+      // Process all outgoing edges from this node
+      const edges = this.getEdgesFrom(nodeId);
+      for (const edge of edges) {
+        const targetNode = this.getNode(edge.target);
+        if (!targetNode) continue;
 
-        // Check if node should be culled using the callback
-        const shouldCull = shouldCullNode ? shouldCullNode(edge.target, nextTransform, this.#viewportTransform) : false;
+        // Calculate the next transform based on whether this is the origin node or not
+        const nextTransform =
+          depth === 0
+            ? DOMMatrix.fromMatrix(edge.transform) // For origin node, just use edge transform
+            : DOMMatrix.fromMatrix(transform).multiply(edge.transform); // For other nodes, multiply with current transform
+
+        // Check if node should be culled
+        const shouldCull = shouldCullNode ? shouldCullNode(targetNode, nextTransform, this.#originTransform) : false;
 
         if (!shouldCull) {
           queue.push({
@@ -309,81 +164,83 @@ export class ShiftingOriginGraph<T = any> {
   }
 
   /**
-   * Get the accumulated transform from the reference node to a target node
-   * @param toNodeId - Target node ID
-   * @returns The accumulated transform matrix or null if no path found
-   */
-  getAccumulatedTransform(toNodeId: string): DOMMatrix | null {
-    if (toNodeId === this.#referenceNodeId) {
-      return new DOMMatrix(); // Identity transform for self
-    }
-
-    // Use breadth-first search to find a path from reference to target
-    const visited = new Set<string>([this.#referenceNodeId]);
-    const queue: { nodeId: string; transform: DOMMatrix }[] = [
-      { nodeId: this.#referenceNodeId, transform: new DOMMatrix() },
-    ];
-
-    while (queue.length > 0) {
-      const { nodeId, transform } = queue.shift()!;
-
-      const edges = this.#getEdgesFrom(nodeId);
-      for (const edge of edges) {
-        if (edge.target === toNodeId) {
-          // Found a path to target
-          return transform.multiply(edge.transform);
-        }
-
-        if (!visited.has(edge.target)) {
-          visited.add(edge.target);
-          queue.push({
-            nodeId: edge.target,
-            transform: transform.multiply(edge.transform),
-          });
-        }
-      }
-    }
-
-    // No path found
-    return null;
-  }
-
-  /**
    * Apply zoom transform centered on a point
    * @param centerX - X coordinate of zoom center point
    * @param centerY - Y coordinate of zoom center point
    * @param zoomFactor - Factor to zoom by (> 1 to zoom in, < 1 to zoom out)
-   * @param canvasWidth - Width of the canvas (used for reference node checking)
-   * @param canvasHeight - Height of the canvas (used for reference node checking)
-   * @param shouldZoomIn - Optional callback to determine if zooming in should change reference node
-   * @param shouldZoomOut - Optional callback to determine if zooming out should change reference node
-   * @returns Boolean indicating if the reference node changed
+   * @param canvasWidth - Width of the canvas (used for origin node checking)
+   * @param canvasHeight - Height of the canvas (used for origin node checking)
+   * @param shouldShiftOrigin - Optional callback to determine if zooming in should change origin node
+   * @param shouldUnshiftOrigin - Optional callback to determine if zooming out should change origin node
+   * @returns Boolean indicating if the origin node changed
    */
-  zoomAtPoint(
+  zoom(
     centerX: number,
     centerY: number,
     zoomFactor: number,
     canvasWidth?: number,
     canvasHeight?: number,
-    shouldZoomIn?: ShouldZoomInCallback,
-    shouldZoomOut?: ShouldZoomOutCallback,
+    shouldShiftOrigin?: ShouldShiftCallback,
+    shouldUnshiftOrigin?: ShouldUnshiftCallback,
   ): boolean {
     // Apply zoom transform centered on the specified point
-    const tempMatrix = this.#getMatrix().translate(centerX, centerY).scale(zoomFactor).translate(-centerX, -centerY);
+    const tempMatrix = new DOMMatrix().translate(centerX, centerY).scale(zoomFactor).translate(-centerX, -centerY);
 
     // Multiply with viewport transform
-    const newTransform = tempMatrix.multiply(this.#viewportTransform);
-    this.#releaseMatrix(tempMatrix);
+    const newTransform = tempMatrix.multiply(this.#originTransform);
 
-    this.#viewportTransform = newTransform;
+    this.#originTransform = newTransform;
 
-    // Check if we need to change reference nodes (if canvas dimensions and callbacks are provided)
+    // If we don't have canvas dimensions or callbacks, we can't check for origin node changes
     if (
-      canvasWidth !== undefined &&
-      canvasHeight !== undefined &&
-      (shouldZoomIn !== undefined || shouldZoomOut !== undefined)
+      canvasWidth === undefined ||
+      canvasHeight === undefined ||
+      (shouldShiftOrigin === undefined && shouldUnshiftOrigin === undefined)
     ) {
-      return this.#checkAndUpdateReferenceNode(zoomFactor < 1, canvasWidth, canvasHeight, shouldZoomIn, shouldZoomOut);
+      return false;
+    }
+
+    const isZoomingOut = zoomFactor < 1;
+
+    // Check if we're zooming out and need to change origin node
+    if (isZoomingOut && shouldUnshiftOrigin) {
+      // Check if the reference node no longer covers the screen
+      if (shouldUnshiftOrigin(this.#originTransform, canvasWidth, canvasHeight)) {
+        // Get the first incoming edge to the reference node
+        const prevNodeIds = this.getSourceNodes(this.originNodeId);
+        if (prevNodeIds.length === 0) return false;
+
+        const prevNodeId = prevNodeIds[0];
+
+        // Get the edge from previous node to current node
+        const edge = this.getFirstEdgeBetween(prevNodeId, this.originNodeId);
+        if (!edge) return false;
+
+        // Apply the backward shift to maintain visual state
+        this.#unshiftOrigin(edge);
+        return true;
+      }
+    }
+    // Check if we're zooming in and need to change origin node
+    else if (!isZoomingOut && shouldShiftOrigin) {
+      // Get all outgoing edges from the reference node
+      const edges = this.getEdgesFrom(this.originNodeId);
+
+      // Find the first node that covers the screen
+      for (const edge of edges) {
+        const nodeId = edge.target;
+        // Get the target node
+        const targetNode = this.getNode(nodeId);
+        if (!targetNode) continue;
+
+        // Calculate the combined transform
+        const combinedTransform = this.#originTransform.multiply(edge.transform);
+        if (shouldShiftOrigin(combinedTransform, canvasWidth, canvasHeight, targetNode)) {
+          // Apply the forward shift to maintain visual state
+          this.#shiftOrigin(edge);
+          return true;
+        }
+      }
     }
 
     return false;
@@ -395,320 +252,61 @@ export class ShiftingOriginGraph<T = any> {
    * @param dy - Change in y position
    */
   pan(dx: number, dy: number): void {
-    const newTransform = new DOMMatrix().translate(dx, dy).multiply(this.#viewportTransform);
+    const newTransform = new DOMMatrix().translate(dx, dy).multiply(this.#originTransform);
 
-    this.#viewportTransform = newTransform;
+    this.#originTransform = newTransform;
   }
 
   /**
    * Reset the view to the initial reference node
    * @param initialNodeId - Optional node ID to reset to, defaults to the first node
    */
-  resetView(initialNodeId?: string): void {
-    this.#referenceNodeId = initialNodeId || Object.keys(this.#nodes)[0];
-    this.#viewportTransform = new DOMMatrix().translate(0, 0).scale(1);
-  }
-
-  /* ---- PRIVATE METHODS ---- */
-
-  /**
-   * Helper method to add an edge to both the forward and reverse edge maps
-   * @param edge - The edge to add
-   */
-  #addEdgeToMaps(edge: Edge): void {
-    // Forward index
-    if (!this.#edges[edge.source]) {
-      this.#edges[edge.source] = [];
-    }
-    // Check if the edge already exists
-    const existingEdgeIndex = this.#edges[edge.source].findIndex((e) => e.target === edge.target);
-    if (existingEdgeIndex >= 0) {
-      // Replace the existing edge
-      this.#edges[edge.source][existingEdgeIndex] = edge;
-    } else {
-      // Add a new edge
-      this.#edges[edge.source].push(edge);
-    }
-
-    // Reverse index
-    if (!this.#reverseEdges[edge.target]) {
-      this.#reverseEdges[edge.target] = [];
-    }
-    // Check if the edge already exists in the reverse map
-    const existingReverseEdgeIndex = this.#reverseEdges[edge.target].findIndex((e) => e.source === edge.source);
-    if (existingReverseEdgeIndex >= 0) {
-      // Replace the existing edge
-      this.#reverseEdges[edge.target][existingReverseEdgeIndex] = edge;
-    } else {
-      // Add a new edge
-      this.#reverseEdges[edge.target].push(edge);
-    }
+  reset(initialNodeId?: string): void {
+    this.originNodeId = initialNodeId || (this.nodes.size > 0 ? Array.from(this.nodes.keys())[0] : '');
+    this.#originTransform = new DOMMatrix();
   }
 
   /**
-   * Get all outgoing edges from a node
-   * @param nodeId - The source node ID
-   * @returns Array of edges from the node
+   * Shift the origin to a new node by following an edge
+   * @param edge - The edge connecting current origin node to the new origin node
    */
-  #getEdgesFrom(nodeId: string): Edge[] {
-    return this.#edges[nodeId] || [];
+  #shiftOrigin(edge: ZoomEdge): void {
+    // When we change origin nodes, we need to update the viewport transform
+    // to keep everything looking the same visually.
+
+    // Update origin node to the target of the edge
+    this.originNodeId = edge.target;
+
+    // 1. We combine current viewport with the edge transform
+    // 2. This becomes our new viewport transform
+
+    // Why this works:
+    // - Before: viewport * edge = how target node appears
+    // - After: new target node is at origin (0,0)
+    // - So new viewport must equal: viewport * edge
+    this.#originTransform = this.#originTransform.multiply(edge.transform);
   }
 
   /**
-   * Helper method to get the next node IDs for the current node
-   * @param nodeId - The current node ID
-   * @returns Array of target node IDs
+   * Shift the origin back to a previous node by following an edge in reverse
+   * @param edge - The edge connecting new origin node to the current origin node
    */
-  #getNextNodeIds(nodeId: string): string[] {
-    const edges = this.#getEdgesFrom(nodeId);
-    return edges.map((edge) => edge.target);
-  }
+  #unshiftOrigin(edge: ZoomEdge): void {
+    // When shifting origin backwards, we need to apply the inverse of the edge transform
 
-  /**
-   * Get the IDs of all nodes that have edges to the specified node
-   * @param nodeId - The ID of the node to get previous nodes for
-   * @returns Array of node IDs that have edges to the specified node
-   */
-  #getPrevNodeIds(nodeId: string): string[] {
-    const edges = this.#reverseEdges[nodeId] || [];
-    return edges.map((edge) => edge.source);
-  }
+    // Update origin node to the source of the edge
+    this.originNodeId = edge.source;
 
-  /**
-   * Get the best next node to follow when zooming in
-   * @param nodeId - The current node ID
-   * @returns The next node ID or undefined if none found
-   */
-  #getBestNextNodeId(nodeId: string): string | undefined {
-    const edges = this.#getEdgesFrom(nodeId);
-    return edges.length > 0 ? edges[0].target : undefined;
-  }
+    // 1. Calculate the inverse of the edge transform
+    const inverseEdgeTransform = edge.transform.inverse();
 
-  /**
-   * Get the best previous node to follow when zooming out
-   * @param nodeId - The current node ID
-   * @returns The previous node ID or undefined if none found
-   */
-  #getBestPrevNodeId(nodeId: string): string | undefined {
-    const prevNodeIds = this.#getPrevNodeIds(nodeId);
-    return prevNodeIds.length > 0 ? prevNodeIds[0] : undefined;
-  }
+    // 2. Multiply current viewport by the inverse transform
+    // This undoes the effect of the edge transform
 
-  /**
-   * Get an edge between source and target nodes
-   * @param sourceNodeId - The source node ID
-   * @param targetNodeId - The target node ID
-   * @returns The edge or undefined if not found
-   */
-  #getEdge(sourceNodeId: string, targetNodeId: string): Edge | undefined {
-    const edges = this.#getEdgesFrom(sourceNodeId);
-    return edges.find((edge) => edge.target === targetNodeId);
-  }
-
-  /**
-   * Check if reference node needs to change and update it if needed
-   * @param isZoomingOut - Whether we're zooming out
-   * @param canvasWidth - Width of the canvas
-   * @param canvasHeight - Height of the canvas
-   * @param shouldZoomIn - Callback to determine if zooming in should change reference node
-   * @param shouldZoomOut - Callback to determine if zooming out should change reference node
-   * @returns Boolean indicating if the reference node changed
-   */
-  #checkAndUpdateReferenceNode(
-    isZoomingOut: boolean,
-    canvasWidth: number,
-    canvasHeight: number,
-    shouldZoomIn?: ShouldZoomInCallback,
-    shouldZoomOut?: ShouldZoomOutCallback,
-  ): boolean {
-    if (isZoomingOut && shouldZoomOut) {
-      // Check if we need to go to previous node
-      const prevNodeId = this.#getBestPrevNodeId(this.#referenceNodeId);
-      if (prevNodeId && shouldZoomOut(this, canvasWidth, canvasHeight, prevNodeId)) {
-        return this.#moveReferenceBackward();
-      }
-    } else if (!isZoomingOut && shouldZoomIn) {
-      // Check all connected nodes to see if any fully cover the screen
-      const nextNodeIds = this.#getNextNodeIds(this.#referenceNodeId);
-
-      // First, check if any nodes fully cover the screen according to shouldZoomIn callback
-      const coveringNodes = nextNodeIds.filter((nodeId) => shouldZoomIn(this, canvasWidth, canvasHeight, nodeId));
-
-      if (coveringNodes.length > 0) {
-        // If multiple nodes cover the screen, determine which is closest to the center of view
-        let bestNodeId = coveringNodes[0];
-
-        if (coveringNodes.length > 1) {
-          let bestDistance = Infinity;
-          const centerX = canvasWidth / 2;
-          const centerY = canvasHeight / 2;
-
-          for (const nodeId of coveringNodes) {
-            const position = this.#getNodeScreenPosition(nodeId, canvasWidth, canvasHeight);
-            if (position) {
-              const distance = Math.hypot(position.x - centerX, position.y - centerY);
-
-              if (distance < bestDistance) {
-                bestDistance = distance;
-                bestNodeId = nodeId;
-              }
-            }
-          }
-        }
-
-        // Move reference to the best fully-covering node
-        return this.#moveReferenceForward(bestNodeId);
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Move the reference node to a specified next node
-   * @param targetNodeId - The target node ID to move to (if undefined, will use best next node)
-   * @returns Boolean indicating if the operation was successful
-   */
-  #moveReferenceForward(targetNodeId?: string): boolean {
-    // If no specific target is provided, use the best next node
-    const nextNodeId = targetNodeId || this.#getBestNextNodeId(this.#referenceNodeId);
-    if (!nextNodeId) return false;
-
-    return this.#moveReference(this.#referenceNodeId, nextNodeId, false);
-  }
-
-  /**
-   * Move the reference node to a specified previous node
-   * @param targetNodeId - The target node ID to move to (if undefined, will use best previous node)
-   * @returns Boolean indicating if the operation was successful
-   */
-  #moveReferenceBackward(targetNodeId?: string): boolean {
-    // If no specific target is provided, use the best previous node
-    const prevNodeId = targetNodeId || this.#getBestPrevNodeId(this.#referenceNodeId);
-    if (!prevNodeId) return false;
-
-    return this.#moveReference(prevNodeId, this.#referenceNodeId, true);
-  }
-
-  /**
-   * Shared logic for moving the reference node
-   * @param fromNodeId - The starting node ID
-   * @param toNodeId - The target node ID
-   * @param isBackward - Whether moving backward (true) or forward (false)
-   * @returns Boolean indicating if the operation was successful
-   */
-  #moveReference(fromNodeId: string, toNodeId: string, isBackward: boolean): boolean {
-    // Verify that the edge exists between the nodes
-    const edge = this.#getEdge(fromNodeId, toNodeId);
-    if (!edge) return false;
-
-    if (isBackward) {
-      // Calculate the current visual transform
-      const currentVisualTransform = this.#viewportTransform;
-
-      // Update reference node
-      this.#referenceNodeId = fromNodeId;
-
-      // Apply inverse transform to maintain visual state
-      const invertedEdgeTransform = this.#invertTransform(edge.transform);
-      this.#viewportTransform = currentVisualTransform.multiply(invertedEdgeTransform);
-    } else {
-      // Calculate the visual transform before changing reference
-      const transform = this.getAccumulatedTransform(toNodeId);
-      if (!transform) return false;
-
-      const visualTransformBefore = this.#viewportTransform.multiply(transform);
-
-      // Update reference node
-      this.#referenceNodeId = toNodeId;
-
-      // After changing reference, the target node is at the origin
-      const visualTransformAfter = new DOMMatrix();
-
-      // Calculate and apply compensation transform
-      this.#viewportTransform = visualTransformBefore.multiply(visualTransformAfter.inverse());
-    }
-
-    return true;
-  }
-
-  /**
-   * Calculate screen position of a node
-   * @param nodeId - The ID of the node to get the position for
-   * @param canvasWidth - Width of the canvas
-   * @param canvasHeight - Height of the canvas
-   * @returns The x, y coordinates of the node on screen or null if node not found
-   */
-  #getNodeScreenPosition(nodeId: string, canvasWidth: number, canvasHeight: number): { x: number; y: number } | null {
-    const transform = this.getAccumulatedTransform(nodeId);
-    if (!transform) return null;
-
-    // Apply viewport transform
-    const screenTransform = this.#viewportTransform.multiply(transform);
-
-    // The node is drawn at the canvas center, so apply canvas center offset
-    const screenX = canvasWidth / 2 + screenTransform.e;
-    const screenY = canvasHeight / 2 + screenTransform.f;
-
-    return { x: screenX, y: screenY };
-  }
-
-  /**
-   * Helper function to invert a transform
-   * Optimized to avoid unnecessary matrix creation
-   */
-  #invertTransform(transform: DOMMatrix): DOMMatrix {
-    // For 2D transforms, we can calculate inverse more efficiently than using the built-in inverse()
-    // which does full 4x4 matrix inversion
-    const det = transform.a * transform.d - transform.b * transform.c;
-
-    // Handle zero determinant case
-    if (Math.abs(det) < 1e-10) {
-      return transform.inverse(); // Fall back to default if singular
-    }
-
-    const result = this.#getMatrix();
-
-    const invDet = 1 / det;
-    result.a = transform.d * invDet;
-    result.b = -transform.b * invDet;
-    result.c = -transform.c * invDet;
-    result.d = transform.a * invDet;
-    result.e = (transform.c * transform.f - transform.d * transform.e) * invDet;
-    result.f = (transform.b * transform.e - transform.a * transform.f) * invDet;
-
-    return result;
-  }
-
-  /**
-   * Get a matrix from the pool or create a new one
-   */
-  #getMatrix(): DOMMatrix {
-    return this.#matrixPool.pop() || new DOMMatrix();
-  }
-
-  /**
-   * Return a matrix to the pool
-   */
-  #releaseMatrix(matrix: DOMMatrix): void {
-    if (this.#matrixPool.length < this.#poolSize) {
-      // Reset the matrix to identity before returning to pool
-      matrix.a = matrix.d = 1;
-      matrix.b = matrix.c = matrix.e = matrix.f = 0;
-      this.#matrixPool.push(matrix);
-    }
-  }
-
-  /**
-   * Create a copy of a transform matrix efficiently
-   */
-  #copyMatrix(source: DOMMatrix): DOMMatrix {
-    const result = this.#getMatrix();
-    result.a = source.a;
-    result.b = source.b;
-    result.c = source.c;
-    result.d = source.d;
-    result.e = source.e;
-    result.f = source.f;
-    return result;
+    // Why this works:
+    // - Before: viewport shows current origin node
+    // - After: we want to see from previous node's perspective
+    // - So we apply the inverse transform: viewport * edge⁻¹
+    this.#originTransform = this.#originTransform.multiply(inverseEdgeTransform);
   }
 }
