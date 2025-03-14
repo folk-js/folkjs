@@ -162,11 +162,84 @@
       const MAX_ZOOM_LEVEL = 100.0; // Maximum zoom level (zoomed in)
 
       let currentZoomLevel = 1.0; // Track the current zoom level
-      let lastReferenceNodeId = null; // Track the last reference node
+      let lastOriginNodeId = null; // Track the last reference node
 
       // Caches for performance optimization
       const nodeContentCache = {}; // Cache for node content templates
       const linkPositionsCache = {}; // Cache for link positions within nodes
+
+      // Node element pool for performance optimization
+      class NodePool {
+        constructor() {
+          this.fullPools = new Map(); // Map of nodeId -> array of available full elements
+          this.simplePools = new Map(); // Map of nodeId -> array of available simple elements
+          this.activeElements = new Map(); // Map of element -> {nodeId, isSimple}
+        }
+
+        // Get an element for a specific node type (create if needed)
+        get(nodeId, isSimple) {
+          // Get the appropriate pool
+          const poolMap = isSimple ? this.simplePools : this.fullPools;
+
+          // Initialize pool for this node type if it doesn't exist
+          if (!poolMap.has(nodeId)) {
+            poolMap.set(nodeId, []);
+          }
+
+          const pool = poolMap.get(nodeId);
+          let element = null;
+
+          // Get an element from the pool if available
+          if (pool.length > 0) {
+            element = pool.pop();
+          } else {
+            // Create a new element if none available
+            element = createNodeElement(nodeId, 0, isSimple);
+          }
+
+          // Mark as active
+          this.activeElements.set(element, { nodeId, isSimple });
+          return element;
+        }
+
+        // Release an element back to the pool
+        release(element) {
+          if (this.activeElements.has(element)) {
+            const { nodeId, isSimple } = this.activeElements.get(element);
+            this.activeElements.delete(element);
+
+            // Return to the appropriate pool
+            const poolMap = isSimple ? this.simplePools : this.fullPools;
+            poolMap.get(nodeId).push(element);
+
+            return true;
+          }
+          return false;
+        }
+
+        // Release all elements not in the active set
+        releaseUnused(activeSet) {
+          const elementsToRelease = [];
+
+          // Find elements to release
+          for (const [element, _] of this.activeElements) {
+            if (!activeSet.has(element)) {
+              elementsToRelease.push(element);
+            }
+          }
+
+          // Release them
+          for (const element of elementsToRelease) {
+            this.release(element);
+            if (element.parentNode) {
+              element.parentNode.removeChild(element);
+            }
+          }
+        }
+      }
+
+      // Create the node pool
+      const nodePool = new NodePool();
 
       const colors = [
         'rgb(70, 50, 100)',
@@ -197,14 +270,14 @@
           data: {
             title: id,
             content,
-            color: colors[index],
+            color: colors[index % colors.length],
           },
         };
       });
 
       // Function to create a node element
       function createNodeElement(nodeId, instanceId, isSimple = false) {
-        const node = graph.nodes[nodeId];
+        const node = graph.getNode(nodeId);
 
         if (!node) return null;
 
@@ -222,9 +295,6 @@
         if (isSimple) {
           return nodeElement;
         }
-
-        // Create a document fragment to build the element
-        const fragment = document.createDocumentFragment();
 
         // Create a content container
         const contentElement = document.createElement('div');
@@ -341,6 +411,11 @@
         return new DOMMatrix().translate(translateX, translateY).scale(scaleX, scaleY);
       }
 
+      // Generate a unique ID for an edge
+      function generateEdgeId(source, target) {
+        return `e_${source}_${target}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      }
+
       // Setup temporary DOM to find links and build the edge map
       function buildEdgesFromLinks() {
         // If we already have cached link positions for all nodes, use them directly
@@ -355,6 +430,7 @@
             if (positions) {
               for (const [targetId, linkPosition] of Object.entries(positions)) {
                 edges.push({
+                  id: generateEdgeId(nodeId, targetId),
                   source: nodeId,
                   target: targetId,
                   transform: linkPositionToTransform(linkPosition),
@@ -419,8 +495,9 @@
             // Convert to a transform matrix
             const transform = linkPositionToTransform(linkPosition);
 
-            // Add to edges array
+            // Add to edges array with a unique ID
             edges.push({
+              id: generateEdgeId(nodeId, targetId),
               source: nodeId,
               target: targetId,
               transform,
@@ -452,65 +529,40 @@
       const graph = new ShiftingOriginGraph(nodesArray, edgesArray, initialId, 50);
 
       // Define zoom threshold callbacks
-      function shouldZoomInToNextNode(graph, containerWidth, containerHeight, nextNodeId) {
-        const nextNode = graph.nodes[nextNodeId];
-        if (!nextNode) return false;
-
-        // Get the transform from reference node to next node
-        const nextNodeTransform = graph.getAccumulatedTransform(nextNodeId);
-        if (!nextNodeTransform) return false;
-
-        // Calculate effective transform from combined viewport and node transform
-        const combinedTransform = graph.viewportTransform.multiply(nextNodeTransform);
-
+      function shouldShiftOrigin(combinedTransform, containerWidth, containerHeight, node) {
         // Check if screen is completely covered by the node
-        const isScreenCoveredByRectangle = Geometry.isScreenCoveredByRectangle(
+        return Geometry.isScreenCoveredByRectangle(
           { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
           combinedTransform,
           containerWidth,
           containerHeight,
         );
-
-        if (isScreenCoveredByRectangle) {
-          location.hash = nextNodeId;
-        }
-
-        return isScreenCoveredByRectangle;
       }
 
-      function shouldZoomOutToPrevNode(graph, containerWidth, containerHeight, prevNodeId) {
-        const currentNode = graph.referenceNode;
-        if (!currentNode) return false;
-
+      function shouldUnshiftOrigin(originTransform, containerWidth, containerHeight) {
         // For zooming out, we check if the current reference node no longer covers the screen
-        const isScreenCoveredNotByRectangle = !Geometry.isScreenCoveredByRectangle(
+        return !Geometry.isScreenCoveredByRectangle(
           { x: -NODE_WIDTH / 2, y: -NODE_HEIGHT / 2, width: NODE_WIDTH, height: NODE_HEIGHT },
-          graph.viewportTransform,
+          originTransform,
           containerWidth,
           containerHeight,
         );
-
-        if (isScreenCoveredNotByRectangle) {
-          location.hash = prevNodeId;
-        }
-
-        return isScreenCoveredNotByRectangle;
       }
 
       /**
        * Determines whether a node should be culled based on its position and size
-       * @param {string} nodeId - The ID of the node
+       * @param {ZoomNode} node - The node object
        * @param {DOMMatrix} transform - The transform from reference node to this node
-       * @param {DOMMatrix} viewportTransform - The current viewport transform
+       * @param {DOMMatrix} originTransform - The current viewport transform
        * @returns {boolean} true if the node should be culled (invisible), false if visible
        */
-      function nodeCullingCallback(nodeId, transform, viewportTransform) {
+      function nodeCullingCallback(node, transform, originTransform) {
         const containerWidth = container.clientWidth;
         const containerHeight = container.clientHeight;
         const padding = 0.5; // Add 50% padding around viewport to account for nodes partially visible
 
         // Combine viewport transform with the node's transform
-        const combinedTransform = viewportTransform.multiply(transform);
+        const combinedTransform = originTransform.multiply(transform);
 
         // Get the scale of the node
         const scale = combinedTransform.a; // Assuming uniform scaling
@@ -545,32 +597,26 @@
         const containerHeight = container.clientHeight;
 
         // Update reference node tracking
-        const currentReferenceNodeId = graph.referenceNode;
-        if (lastReferenceNodeId !== currentReferenceNodeId) {
+        const currentOriginNodeId = graph.originNode.id;
+        if (lastOriginNodeId !== currentOriginNodeId) {
           // Reference node changed, reset zoom level
           currentZoomLevel = 1.0;
-          lastReferenceNodeId = currentReferenceNodeId;
+          lastOriginNodeId = currentOriginNodeId;
+
+          // Update URL hash to reflect current node
+          location.hash = currentOriginNodeId;
         }
 
-        // Create a map to track which nodes we've processed
-        const processedNodes = new Map();
-
-        const nodePool = new Map();
-
-        // Track existing DOM elements already in the container
-        container.querySelectorAll('.node').forEach((element) => {
-          const key = `${element.dataset.nodeId}-${element.dataset.instanceId}`;
-          // Put existing elements into the pool keyed by nodeId-instanceId
-          nodePool.set(key, element);
-        });
+        // Set to track active elements in this update
+        const activeElements = new Set();
 
         // Process all visible nodes using the culling callback
         const visibleNodes = [];
 
         // Get nodes from graph with transforms using our culling callback
-        for (const { nodeId, node, transform } of graph.getVisibleNodes(nodeCullingCallback)) {
+        for (const { node, transform } of graph.getUnfoldedTree(nodeCullingCallback)) {
           // Combine viewport transform with the node's transform
-          const combinedTransform = graph.viewportTransform.multiply(transform);
+          const combinedTransform = graph.originTransform.multiply(transform);
 
           // Get the scale of the node
           const scale = combinedTransform.a; // Assuming uniform scaling
@@ -581,7 +627,7 @@
 
           // Add directly to our visible nodes array (culling already done by the graph)
           visibleNodes.push({
-            nodeId,
+            nodeId: node.id,
             node,
             transform,
             combinedTransform,
@@ -591,53 +637,21 @@
           });
         }
 
-        let instanceCounter = 0;
-
         // Process all visible nodes
         for (const { nodeId, node, transform, combinedTransform, nodeX, nodeY, scale } of visibleNodes) {
-          // Create a unique instance ID for this occurrence of the node
-          const instanceId = instanceCounter++;
-          const nodeKey = `${nodeId}-${instanceId}`;
+          // Determine if we should use a simple node based on scale
           const isSimpleNode = scale < CONTENT_VISIBILITY_THRESHOLD;
 
-          // Track that we've processed this node
-          processedNodes.set(nodeKey, true);
+          // Get a node element from the pool
+          const nodeElement = nodePool.get(node.id, isSimpleNode);
 
-          // Get or create node element
-          let nodeElement;
-          let needsReplacement = false;
-
-          // Check if we have this node in our pool already
-          if (nodePool.has(nodeKey)) {
-            nodeElement = nodePool.get(nodeKey);
-
-            // Check if we need to replace a full node with a simple one or vice versa
-            const hasContent = nodeElement.querySelector('.node-content') !== null;
-            if (isSimpleNode && hasContent) {
-              // Need to replace full node with simple node
-              container.removeChild(nodeElement);
-              nodePool.delete(nodeKey);
-              needsReplacement = true;
-            } else if (!isSimpleNode && !hasContent) {
-              // Need to replace simple node with full node
-              container.removeChild(nodeElement);
-              nodePool.delete(nodeKey);
-              needsReplacement = true;
-            } else {
-              // Node type matches what we need, keep using it
-              nodePool.delete(nodeKey);
-            }
-          } else {
-            // No existing node, need to create a new one
-            needsReplacement = true;
-          }
-
-          // Create a new node if needed
-          if (needsReplacement) {
-            nodeElement = createNodeElement(nodeId, instanceId, isSimpleNode);
-            if (!nodeElement) continue;
+          // Add to container if not already there
+          if (!nodeElement.parentNode) {
             container.appendChild(nodeElement);
           }
+
+          // Track as active
+          activeElements.add(nodeElement);
 
           // Create a CSS transform
           // The order is important: first translate to center, then apply the transform
@@ -651,10 +665,8 @@
           nodeElement.style.transform = cssTransform;
         }
 
-        // Remove nodes that are no longer visible
-        for (const [key, element] of nodePool.entries()) {
-          container.removeChild(element);
-        }
+        // Release unused elements back to the pool
+        nodePool.releaseUnused(activeElements);
       }
 
       // Handle window resizing
@@ -674,12 +686,6 @@
       function setupEventListeners() {
         // Mouse down for panning
         container.addEventListener('mousedown', (e) => {
-          // // Prevent zooming when clicking on links
-          // if (e.target.classList.contains('zui-link')) {
-          //   e.preventDefault();
-          //   return;
-          // }
-
           isDragging = true;
           lastX = e.clientX;
           lastY = e.clientY;
@@ -736,14 +742,14 @@
             const mouseY = e.clientY - containerHeight / 2;
 
             // Apply zoom centered on mouse position and check if reference node changed
-            const referenceChanged = graph.zoomAtPoint(
+            const referenceChanged = graph.zoom(
               mouseX,
               mouseY,
               zoomFactor,
               containerWidth,
               containerHeight,
-              shouldZoomInToNextNode,
-              shouldZoomOutToPrevNode,
+              shouldShiftOrigin,
+              shouldUnshiftOrigin,
             );
 
             // Update the current zoom level if reference node did not change
@@ -831,14 +837,14 @@
         const mouseY = currentMouseY - containerHeight / 2;
 
         // Apply zoom centered on mouse position and check if reference node changed
-        const referenceChanged = graph.zoomAtPoint(
+        const referenceChanged = graph.zoom(
           mouseX,
           mouseY,
           zoomFactor,
           containerWidth,
           containerHeight,
-          shouldZoomInToNextNode,
-          shouldZoomOutToPrevNode,
+          shouldShiftOrigin,
+          shouldUnshiftOrigin,
         );
 
         // Update the current zoom level if reference node did not change
