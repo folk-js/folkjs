@@ -7,7 +7,9 @@ type ResizeHandle = 'resize-top-left' | 'resize-top-right' | 'resize-bottom-righ
 
 type RotateHandle = 'rotation-top-left' | 'rotation-top-right' | 'rotation-bottom-right' | 'rotation-bottom-left';
 
-type Handle = ResizeHandle | RotateHandle | 'move';
+type MoveHandle = 'move-top' | 'move-right' | 'movebottom' | 'move-left' | 'move';
+
+type Handle = ResizeHandle | RotateHandle | MoveHandle;
 
 type HandleMap = Record<ResizeHandle, ResizeHandle>;
 
@@ -84,13 +86,14 @@ export class FolkShapeOverlay extends FolkElement {
 
     [part] {
       box-sizing: border-box;
-      aspect-ratio: 1;
       position: absolute;
       padding: 0;
       pointer-events: all;
+      margin: 0;
     }
 
     [part^='resize'] {
+      aspect-ratio: 1;
       background: hsl(210, 20%, 98%);
       width: 9px;
       translate: -50% -50%;
@@ -110,6 +113,7 @@ export class FolkShapeOverlay extends FolkElement {
     }
 
     [part^='rotation'] {
+      aspect-ratio: 1;
       opacity: 0;
       width: 15px;
 
@@ -153,6 +157,27 @@ export class FolkShapeOverlay extends FolkElement {
     [part='rotation-bottom-left'] {
       translate: -100% 0%;
     }
+
+    [part*='move'] {
+      opacity: 0;
+      cursor: move;
+    }
+
+    [part='move-top'] {
+      inset: -15px 0 100% 0;
+    }
+
+    [part='move-right'] {
+      inset: 0 -15px 0 100%;
+    }
+
+    [part='move-bottom'] {
+      inset: 100% 0 -15px 0;
+    }
+
+    [part='move-left'] {
+      inset: 0 100% 0 -15px;
+    }
   `;
 
   #internals = this.attachInternals();
@@ -181,6 +206,10 @@ export class FolkShapeOverlay extends FolkElement {
     this.addEventListener('touchmove', this, { passive: false });
 
     (root as ShadowRoot).setHTMLUnsafe(html`
+      <button part="move-top" tabindex="-1" aria-label="Move shape from top"></button>
+      <button part="move-right" tabindex="-1" aria-label="Move shape from right"></button>
+      <button part="move-bottom" tabindex="-1" aria-label="Move shape from bottom"></button>
+      <button part="move-left" tabindex="-1" aria-label="Move shape from left"></button>
       <button part="rotation-top-left" tabindex="-1" aria-label="Rotate shape from top left"></button>
       <button part="rotation-top-right" tabindex="-1" aria-label="Rotate shape from top right"></button>
       <button part="rotation-bottom-right" tabindex="-1" aria-label="Rotate shape from bottom right"></button>
@@ -314,13 +343,17 @@ export class FolkShapeOverlay extends FolkElement {
       handle = focusedElement.getAttribute('part') as Handle | null;
     }
 
+    if (handle === null) {
+      handle = 'move';
+    }
+
     if (event.type === 'dblclick') {
-      if (handle?.startsWith('resize')) {
+      if (handle.startsWith('resize')) {
         this.#shape.autoHeight = true;
         this.#shape.autoWidth = true;
-      } else if (handle?.startsWith('rotation')) {
+      } else if (handle.startsWith('rotation')) {
         this.#shape.rotation = 0;
-      } else if (handle === null) {
+      } else if (handle.startsWith('move')) {
         this.#shape.autoPosition = true;
       }
       return;
@@ -330,10 +363,8 @@ export class FolkShapeOverlay extends FolkElement {
     if (event instanceof PointerEvent) {
       event.stopPropagation();
       if (event.type === 'pointerdown') {
-        if (target !== this && !handle) return;
-
         // Setup rotation initial state if needed
-        if (handle?.startsWith('rotation')) {
+        if (handle.startsWith('rotation')) {
           const parentRotateOrigin = this.#shape.toParentSpace({
             x: this.#shape.width * this.#shape.rotateOrigin.x,
             y: this.#shape.height * this.#shape.rotateOrigin.y,
@@ -351,14 +382,14 @@ export class FolkShapeOverlay extends FolkElement {
         target.addEventListener('pointermove', this);
         target.addEventListener('lostpointercapture', this);
         target.setPointerCapture(event.pointerId);
-        this.#internals.states.add(handle || 'move');
+        this.#internals.states.add(handle);
         this.focus();
         return;
       }
 
       if (event.type === 'lostpointercapture') {
         (this.#shape.ownerElement as HTMLElement).style.transform = '';
-        this.#internals.states.delete(handle || 'move');
+        this.#internals.states.delete(handle);
         target.removeEventListener('pointermove', this);
         target.removeEventListener('lostpointercapture', this);
         this.#updateCursors();
@@ -389,9 +420,7 @@ export class FolkShapeOverlay extends FolkElement {
     if (!moveDelta) return;
 
     // Handle shape movement and rotation
-    // target === this || (!handle && event instanceof KeyboardEvent) causes movement when content is inside is focused
-    // so removing for now, not sure why it's
-    if (target === this) {
+    if (handle.startsWith('move')) {
       if (event instanceof KeyboardEvent && event.altKey) {
         const ROTATION_MUL = event.shiftKey ? Math.PI / 12 : Math.PI / 36;
         const rotationDelta = moveDelta.x !== 0 ? (moveDelta.x > 0 ? ROTATION_MUL : -ROTATION_MUL) : 0;
@@ -405,8 +434,9 @@ export class FolkShapeOverlay extends FolkElement {
     }
 
     // Handle resize
-    if (handle?.startsWith('resize') || handle?.startsWith('resize')) {
+    if (handle.startsWith('resize')) {
       const rect = this.#shape;
+
       const corner = {
         'resize-top-left': rect.topLeft,
         'resize-top-right': rect.topRight,
@@ -426,7 +456,7 @@ export class FolkShapeOverlay extends FolkElement {
     }
 
     // Handle pointer rotation
-    if (handle?.startsWith('rotation') && event instanceof PointerEvent) {
+    if (handle.startsWith('rotation') && event instanceof PointerEvent) {
       const parentRotateOrigin = this.#shape.toParentSpace({
         x: this.#shape.width * this.#shape.rotateOrigin.x,
         y: this.#shape.height * this.#shape.rotateOrigin.y,

@@ -40,7 +40,6 @@ export class FolkShapeAttribute extends CustomAttribute {
     @layer folk {
       [folk-shape] {
         box-sizing: border-box;
-        cursor: move;
         overflow: scroll;
         transform-origin: center center;
         rotate: var(--folk-rotation);
