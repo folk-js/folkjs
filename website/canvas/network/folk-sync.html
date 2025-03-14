@@ -52,31 +52,114 @@
     </style>
   </head>
   <body folk-sync>
-    <folk-shape x="50" y="50" width="400" height="300">
-      <h3>Editable Content 1</h3>
-      <div class="editable-content" contenteditable="true" id="editableContent1">
-        This is an editable area. Try typing here!
-      </div>
-    </folk-shape>
-
-    <folk-shape x="500" y="50" width="400" height="300">
-      <h3>Editable Content 2</h3>
-      <div class="editable-content" contenteditable="true" id="editableContent2">
-        This is another editable area. Changes should sync between browsers.
-      </div>
-    </folk-shape>
-
-    <!-- About Shape -->
-    <folk-shape x="50" y="400" width="850" height="100">
-      <h3>About</h3>
-      <p>
-        This is a minimal DOM sync demo. Edit the content in either shape and check the browser console to see detected
-        mutations.
-      </p>
+    <folk-shape x="15" y="600">
+      <folk-spreadsheet>
+        <folk-cell row="1" column="A" expression="1" type="number" tabindex="0">1</folk-cell>
+        <folk-cell row="1" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="1" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="1" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="1" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="1" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="1" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="1" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="1" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="1" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="A" expression="$A1 * 2" type="number" tabindex="0">2</folk-cell>
+        <folk-cell row="2" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="2" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="A" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="3" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="A" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="4" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="A" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="5" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="A" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="6" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="A" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="7" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="A" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="8" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="A" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="9" column="J" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="A" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="B" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="C" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="D" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="E" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="F" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="G" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="H" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="I" tabindex="0"></folk-cell>
+        <folk-cell row="10" column="J" tabindex="0"></folk-cell>
+      </folk-spreadsheet>
     </folk-shape>
 
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-spreadsheet.ts';
       import { FolkSyncAttribute } from '@labs/folk-sync-attribute.ts';
     </script>
   </body>
