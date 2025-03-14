@@ -316,22 +316,6 @@ export class Matrix implements IMatrix {
   }
 
   /**
-   * Creates a copy of a DOMMatrix
-   * @param source - The source DOMMatrix to copy
-   * @returns A new DOMMatrix with the same values
-   */
-  static copyDOMMatrix(source: DOMMatrix): DOMMatrix {
-    const result = new DOMMatrix();
-    result.a = source.a;
-    result.b = source.b;
-    result.c = source.c;
-    result.d = source.d;
-    result.e = source.e;
-    result.f = source.f;
-    return result;
-  }
-
-  /**
    * Projects a point onto a plane defined by an orthographic 3D transformation matrix.
    * @param point - The point to project onto the plane.
    * @param matrix - The transformation matrix defining the plane.
