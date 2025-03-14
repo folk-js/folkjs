@@ -2,7 +2,7 @@
 <html lang="en-us">
   <head>
     <meta charset="UTF-8" />
-    <title>DOM Sync Demo</title>
+    <title>Folk Sync</title>
     <style>
       * {
         box-sizing: border-box;
@@ -49,41 +49,21 @@
         border-color: #4caf50;
         box-shadow: 0 0 3px rgba(76, 175, 80, 0.3);
       }
-
-      button {
-        padding: 8px 16px;
-        background-color: #4caf50;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        margin-top: 10px;
-      }
-
-      button:hover {
-        background-color: #45a049;
-      }
     </style>
   </head>
   <body folk-sync>
-    <!-- Editable Shape 1 -->
     <folk-shape x="50" y="50" width="400" height="300">
       <h3>Editable Content 1</h3>
       <div class="editable-content" contenteditable="true" id="editableContent1">
         This is an editable area. Try typing here!
       </div>
-      <button id="boldBtn1">Bold</button>
-      <button id="italicBtn1">Italic</button>
     </folk-shape>
 
-    <!-- Editable Shape 2 -->
     <folk-shape x="500" y="50" width="400" height="300">
       <h3>Editable Content 2</h3>
       <div class="editable-content" contenteditable="true" id="editableContent2">
         This is another editable area. Changes should sync between browsers.
       </div>
-      <button id="boldBtn2">Bold</button>
-      <button id="italicBtn2">Italic</button>
     </folk-shape>
 
     <!-- About Shape -->
