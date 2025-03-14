@@ -20,6 +20,27 @@ interface DOMNode {
   textContent?: string;
 }
 
+/**
+ * Operation represents a single atomic change to either the DOM or the Automerge document
+ */
+interface SyncOperation {
+  // The type of operation
+  type: 'setAttribute' | 'removeAttribute' | 'setText' | 'addNode' | 'removeNode' | 'moveNode';
+
+  // The path to the target node in the document
+  path: string[];
+
+  // Operation-specific data
+  data?: {
+    attributeName?: string;
+    attributeValue?: string;
+    textContent?: string;
+    node?: DOMNode;
+    fromIndex?: number;
+    toIndex?: number;
+  };
+}
+
 // DOMSyncDocument interface is no longer needed as we use DOMNode directly
 
 export class FolkSyncAttribute extends CustomAttribute {
@@ -36,6 +57,9 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   // Automerge path to DOM node mapping (using a string representation of the path)
   #pathToNode = new Map<string, Node>();
+
+  // Flag to prevent recursive updates
+  #isApplyingRemoteChanges = false;
 
   // Generate a unique ID for a node
   #generateNodeId(): string {
@@ -179,6 +203,311 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
+   * Converts a mutation record to a sync operation
+   * @param mutation The DOM mutation record
+   * @returns The corresponding sync operation or null if not applicable
+   */
+  #mutationToOperation(mutation: MutationRecord): SyncOperation | null {
+    // Get the path to the affected node
+    const targetPath = this.#getNodePath(mutation.target);
+
+    // Handle mutations on the owner element
+    if (mutation.target === this.ownerElement) {
+      if (mutation.type === 'attributes' && mutation.attributeName) {
+        const attributeExists = (mutation.target as Element).hasAttribute(mutation.attributeName);
+
+        if (!attributeExists) {
+          return {
+            type: 'removeAttribute',
+            path: [],
+            data: {
+              attributeName: mutation.attributeName,
+            },
+          };
+        } else {
+          return {
+            type: 'setAttribute',
+            path: [],
+            data: {
+              attributeName: mutation.attributeName,
+              attributeValue: (mutation.target as Element).getAttribute(mutation.attributeName) || '',
+            },
+          };
+        }
+      }
+      return null;
+    }
+
+    if (!targetPath) {
+      console.error(`Path not found for mutation target: ${mutation.target.nodeName}`);
+      return null;
+    }
+
+    // Handle different mutation types
+    switch (mutation.type) {
+      case 'attributes': {
+        if (mutation.attributeName) {
+          const target = mutation.target as Element;
+          const attributeExists = target.hasAttribute(mutation.attributeName);
+
+          if (!attributeExists) {
+            return {
+              type: 'removeAttribute',
+              path: targetPath,
+              data: {
+                attributeName: mutation.attributeName,
+              },
+            };
+          } else {
+            return {
+              type: 'setAttribute',
+              path: targetPath,
+              data: {
+                attributeName: mutation.attributeName,
+                attributeValue: target.getAttribute(mutation.attributeName) || '',
+              },
+            };
+          }
+        }
+        break;
+      }
+
+      case 'characterData': {
+        return {
+          type: 'setText',
+          path: targetPath,
+          data: {
+            textContent: mutation.target.textContent || '',
+          },
+        };
+      }
+
+      case 'childList': {
+        const operations: SyncOperation[] = [];
+
+        // Handle added nodes
+        for (const addedNode of mutation.addedNodes) {
+          // Find the index where the node was inserted
+          const childNodes = Array.from(mutation.target.childNodes);
+          const index = childNodes.findIndex((child) => child === addedNode);
+
+          if (index !== -1) {
+            // Create the new node path
+            const newNodePath = this.#createChildPath(targetPath, index);
+
+            // Serialize the added node
+            const serializedNode = this.#serializeNode(addedNode, newNodePath);
+
+            operations.push({
+              type: 'addNode',
+              path: targetPath,
+              data: {
+                node: serializedNode,
+                toIndex: index,
+              },
+            });
+          }
+        }
+
+        // Handle removed nodes
+        for (const removedNode of mutation.removedNodes) {
+          const removedPath = this.#getNodePath(removedNode);
+
+          if (removedPath) {
+            const removedIndex = parseInt(removedPath[removedPath.length - 1]);
+
+            operations.push({
+              type: 'removeNode',
+              path: targetPath,
+              data: {
+                fromIndex: removedIndex,
+              },
+            });
+
+            // Clean up our mappings
+            this.#deleteNodePath(removedNode);
+          }
+        }
+
+        // Return the first operation if any (we'll process them one by one)
+        return operations.length > 0 ? operations[0] : null;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Apply a sync operation to the Automerge document
+   * @param doc The Automerge document
+   * @param operation The operation to apply
+   */
+  #applyOperationToDoc(doc: DOMNode, operation: SyncOperation): void {
+    // Find the target node in the document
+    let target = doc;
+
+    // Navigate to the target node using the path
+    for (let i = 0; i < operation.path.length; i += 2) {
+      const prop = operation.path[i];
+      const index = parseInt(operation.path[i + 1]);
+
+      if (prop === 'childNodes') {
+        target = target.childNodes[index];
+      } else {
+        target = target[prop as keyof DOMNode] as any;
+      }
+
+      if (!target) {
+        console.error(`Target node not found at path: ${operation.path.join('.')}`);
+        return;
+      }
+    }
+
+    // Apply the operation based on its type
+    switch (operation.type) {
+      case 'setAttribute': {
+        if (!target.attributes) target.attributes = {};
+        target.attributes[operation.data!.attributeName!] = operation.data!.attributeValue!;
+        break;
+      }
+
+      case 'removeAttribute': {
+        if (target.attributes) {
+          delete target.attributes[operation.data!.attributeName!];
+        }
+        break;
+      }
+
+      case 'setText': {
+        target.textContent = operation.data!.textContent!;
+        break;
+      }
+
+      case 'addNode': {
+        const index = operation.data!.toIndex!;
+        target.childNodes.splice(index, 0, operation.data!.node!);
+        break;
+      }
+
+      case 'removeNode': {
+        const index = operation.data!.fromIndex!;
+        target.childNodes.splice(index, 1);
+        break;
+      }
+
+      case 'moveNode': {
+        const fromIndex = operation.data!.fromIndex!;
+        const toIndex = operation.data!.toIndex!;
+        const node = target.childNodes[fromIndex];
+        target.childNodes.splice(fromIndex, 1);
+        target.childNodes.splice(toIndex, 0, node);
+        break;
+      }
+    }
+  }
+
+  /**
+   * Apply a sync operation to the DOM
+   * @param operation The operation to apply
+   */
+  #applyOperationToDOM(operation: SyncOperation): void {
+    // Find the target node in the DOM
+    let targetNode: Node;
+
+    if (operation.path.length === 0) {
+      targetNode = this.ownerElement;
+    } else {
+      const foundNode = this.#getNodeByPath(operation.path);
+      if (!foundNode) {
+        console.error(`Target DOM node not found at path: ${operation.path.join('.')}`);
+        return;
+      }
+      targetNode = foundNode;
+    }
+
+    // Apply the operation based on its type
+    switch (operation.type) {
+      case 'setAttribute': {
+        if (targetNode instanceof Element) {
+          targetNode.setAttribute(operation.data!.attributeName!, operation.data!.attributeValue!);
+        }
+        break;
+      }
+
+      case 'removeAttribute': {
+        if (targetNode instanceof Element) {
+          targetNode.removeAttribute(operation.data!.attributeName!);
+        }
+        break;
+      }
+
+      case 'setText': {
+        targetNode.textContent = operation.data!.textContent!;
+        break;
+      }
+
+      case 'addNode': {
+        const parentNode = targetNode;
+        const index = operation.data!.toIndex!;
+        const newNode = this.#deserializeNode(operation.data!.node!);
+
+        // Insert at the correct position
+        const childNodes = Array.from(parentNode.childNodes);
+        if (index >= childNodes.length) {
+          parentNode.appendChild(newNode);
+        } else {
+          parentNode.insertBefore(newNode, childNodes[index]);
+        }
+
+        // Update paths for all subsequent siblings
+        this.#updateChildPaths(parentNode, operation.path, index + 1);
+        break;
+      }
+
+      case 'removeNode': {
+        const parentNode = targetNode;
+        const index = operation.data!.fromIndex!;
+        const childNodes = Array.from(parentNode.childNodes);
+
+        if (index < childNodes.length) {
+          const nodeToRemove = childNodes[index];
+          parentNode.removeChild(nodeToRemove);
+
+          // Update paths for all subsequent siblings
+          this.#updateChildPaths(parentNode, operation.path, index);
+        }
+        break;
+      }
+
+      case 'moveNode': {
+        const parentNode = targetNode;
+        const fromIndex = operation.data!.fromIndex!;
+        const toIndex = operation.data!.toIndex!;
+        const childNodes = Array.from(parentNode.childNodes);
+
+        if (fromIndex < childNodes.length) {
+          const nodeToMove = childNodes[fromIndex];
+
+          // Remove from old position
+          parentNode.removeChild(nodeToMove);
+
+          // Insert at new position
+          const updatedChildNodes = Array.from(parentNode.childNodes);
+          if (toIndex >= updatedChildNodes.length) {
+            parentNode.appendChild(nodeToMove);
+          } else {
+            parentNode.insertBefore(nodeToMove, updatedChildNodes[toIndex]);
+          }
+
+          // Update paths for all affected siblings
+          this.#updateChildPaths(parentNode, operation.path);
+        }
+        break;
+      }
+    }
+  }
+
+  /**
    * Creates or updates a DOM node based on Automerge data
    * @param data The node data from Automerge
    * @param path Current path in the Automerge document
@@ -186,83 +515,261 @@ export class FolkSyncAttribute extends CustomAttribute {
    * @returns The created or updated DOM node
    */
   #deserializeNode(data: DOMNode, path: string[] = [], parent?: Node): Node {
-    const fullPath = path;
-    let node = this.#getNodeByPath(fullPath);
+    let node: Node;
 
-    // Create new node if it doesn't exist
-    if (!node) {
-      if (data.nodeType === Node.ELEMENT_NODE) {
-        node = document.createElement(data.nodeName);
-      } else if (data.nodeType === Node.TEXT_NODE) {
-        node = document.createTextNode(data.textContent || '');
-      } else if (data.nodeType === Node.COMMENT_NODE) {
-        node = document.createComment(data.textContent || '');
-      } else {
-        // Throw error for unsupported node types
-        throw new Error(`Unsupported node type: ${data.nodeType}`);
-      }
-
-      if (parent) {
-        parent.appendChild(node);
-      }
-
-      // Update our mappings
-      this.#setNodePath(node, fullPath);
+    // Create the appropriate node type
+    if (data.nodeType === Node.ELEMENT_NODE) {
+      node = document.createElement(data.nodeName);
+    } else if (data.nodeType === Node.TEXT_NODE) {
+      node = document.createTextNode(data.textContent || '');
+    } else if (data.nodeType === Node.COMMENT_NODE) {
+      node = document.createComment(data.textContent || '');
+    } else {
+      throw new Error(`Unsupported node type: ${data.nodeType}`);
     }
 
-    // Update element properties
-    if (data.nodeType === Node.ELEMENT_NODE && node instanceof Element) {
-      // Update attributes
-      if (data.attributes) {
-        // Remove attributes not in the data
-        for (const attr of node.attributes) {
-          if (!(attr.name in data.attributes)) {
-            node.removeAttribute(attr.name);
-          }
-        }
+    // Update our mappings
+    if (path.length > 0) {
+      this.#setNodePath(node, path);
+    }
 
-        // Set or update attributes from the data
-        for (const [name, value] of Object.entries(data.attributes)) {
-          if (node.getAttribute(name) !== value) {
-            node.setAttribute(name, value);
-          }
-        }
-      }
-
-      // Update children
-      if (data.childNodes) {
-        // Stop observing while we update children
-        this.#stopObserving();
-
-        try {
-          // Process children
-          const existingChildren = Array.from(node.childNodes);
-
-          // Create/update children from the data
-          data.childNodes.forEach((childData, index) => {
-            const childPath = this.#createChildPath(path, index);
-            this.#deserializeNode(childData, childPath, node);
-          });
-
-          // Remove any extra children
-          for (let i = data.childNodes.length; i < existingChildren.length; i++) {
-            node.removeChild(existingChildren[i]);
-            this.#deleteNodePath(existingChildren[i]);
-          }
-        } finally {
-          // Resume observing
-          this.#startObserving();
-        }
+    // Set attributes for element nodes
+    if (data.nodeType === Node.ELEMENT_NODE && node instanceof Element && data.attributes) {
+      for (const [name, value] of Object.entries(data.attributes)) {
+        node.setAttribute(name, value);
       }
     }
-    // Update text node
-    else if (data.nodeType === Node.TEXT_NODE && node instanceof Text) {
-      if (node.textContent !== data.textContent) {
-        node.textContent = data.textContent || '';
-      }
+
+    // Add children for element nodes
+    if (data.nodeType === Node.ELEMENT_NODE && data.childNodes) {
+      data.childNodes.forEach((childData, index) => {
+        const childPath = this.#createChildPath(path, index);
+        const childNode = this.#deserializeNode(childData, childPath);
+        node.appendChild(childNode);
+      });
+    }
+
+    // Add to parent if provided
+    if (parent) {
+      parent.appendChild(node);
     }
 
     return node;
+  }
+
+  /**
+   * Start observing DOM mutations
+   */
+  #startObserving(): void {
+    if (!this.#observer) {
+      this.#observer = new MutationObserver((mutations) => {
+        if (this.#isApplyingRemoteChanges) return;
+        this.#handleMutations(mutations);
+      });
+    }
+
+    this.#observer.observe(this.ownerElement, {
+      attributes: true,
+      characterData: true,
+      childList: true,
+      subtree: true,
+      attributeOldValue: true,
+      characterDataOldValue: true,
+    });
+  }
+
+  /**
+   * Stop observing DOM mutations
+   */
+  #stopObserving(): void {
+    if (this.#observer) {
+      this.#observer.disconnect();
+    }
+  }
+
+  /**
+   * Handle DOM mutations and update Automerge document
+   */
+  #handleMutations(mutations: MutationRecord[]): void {
+    if (!this.#automerge) {
+      throw new Error('Cannot handle mutations: FolkAutomerge instance not initialized');
+    }
+
+    // Process each mutation as an operation
+    for (const mutation of mutations) {
+      const operation = this.#mutationToOperation(mutation);
+      if (operation) {
+        this.#automerge.change((doc: DOMNode) => {
+          // If document is empty, initialize it
+          if (!doc.nodeType) {
+            console.log('Creating document from DOM');
+            // Copy all properties from the serialized node to the document
+            const serialized = this.#serializeNode(this.ownerElement);
+            Object.assign(doc, serialized);
+            return;
+          }
+
+          // Apply the operation to the document
+          this.#applyOperationToDoc(doc, operation);
+        });
+      }
+    }
+  }
+
+  /**
+   * Compare two Automerge documents and generate operations to transform one into the other
+   * @param oldDoc The old document state
+   * @param newDoc The new document state
+   * @returns Array of operations to transform oldDoc into newDoc
+   */
+  #diffDocuments(oldDoc: DOMNode, newDoc: DOMNode): SyncOperation[] {
+    const operations: SyncOperation[] = [];
+
+    // Helper function to recursively diff nodes
+    const diffNodes = (oldNode: DOMNode, newNode: DOMNode, path: string[] = []): void => {
+      // Check attributes
+      if (oldNode.attributes && newNode.attributes) {
+        // Find attributes that were added or changed
+        for (const [name, value] of Object.entries(newNode.attributes)) {
+          if (!oldNode.attributes[name] || oldNode.attributes[name] !== value) {
+            operations.push({
+              type: 'setAttribute',
+              path,
+              data: {
+                attributeName: name,
+                attributeValue: value,
+              },
+            });
+          }
+        }
+
+        // Find attributes that were removed
+        for (const name of Object.keys(oldNode.attributes)) {
+          if (!(name in newNode.attributes)) {
+            operations.push({
+              type: 'removeAttribute',
+              path,
+              data: {
+                attributeName: name,
+              },
+            });
+          }
+        }
+      }
+
+      // Check text content for text and comment nodes
+      if (oldNode.nodeType === Node.TEXT_NODE || oldNode.nodeType === Node.COMMENT_NODE) {
+        if (oldNode.textContent !== newNode.textContent) {
+          operations.push({
+            type: 'setText',
+            path,
+            data: {
+              textContent: newNode.textContent || '',
+            },
+          });
+        }
+        return; // No need to check children for text/comment nodes
+      }
+
+      // Check children
+      const oldChildren = oldNode.childNodes || [];
+      const newChildren = newNode.childNodes || [];
+
+      // Simple diff algorithm - can be improved with a proper diff algorithm
+      let i = 0;
+      while (i < oldChildren.length && i < newChildren.length) {
+        // If node types or names differ, replace the node
+        if (
+          oldChildren[i].nodeType !== newChildren[i].nodeType ||
+          oldChildren[i].nodeName !== newChildren[i].nodeName
+        ) {
+          operations.push({
+            type: 'removeNode',
+            path,
+            data: {
+              fromIndex: i,
+            },
+          });
+
+          operations.push({
+            type: 'addNode',
+            path,
+            data: {
+              node: newChildren[i],
+              toIndex: i,
+            },
+          });
+        } else {
+          // Recursively diff the children
+          diffNodes(oldChildren[i], newChildren[i], [...path, 'childNodes', i.toString()]);
+        }
+        i++;
+      }
+
+      // Handle remaining old children (to be removed)
+      while (i < oldChildren.length) {
+        operations.push({
+          type: 'removeNode',
+          path,
+          data: {
+            fromIndex: i,
+          },
+        });
+        i++;
+      }
+
+      // Handle remaining new children (to be added)
+      while (i < newChildren.length) {
+        operations.push({
+          type: 'addNode',
+          path,
+          data: {
+            node: newChildren[i],
+            toIndex: i,
+          },
+        });
+        i++;
+      }
+    };
+
+    // Start the diff from the root
+    diffNodes(oldDoc, newDoc);
+
+    return operations;
+  }
+
+  /**
+   * Handle changes from the Automerge document and update DOM
+   */
+  #handleDocumentChange(oldDoc: DOMNode | null, newDoc: DOMNode): void {
+    if (!newDoc) {
+      throw new Error('Cannot handle document change: Document is null or undefined');
+    }
+
+    // Stop observing while we update the DOM
+    this.#stopObserving();
+    this.#isApplyingRemoteChanges = true;
+
+    try {
+      if (!oldDoc || !oldDoc.nodeType) {
+        // Complete replacement if we don't have a valid old document
+        this.#replaceDOMSubtree(newDoc);
+      } else {
+        // Generate and apply operations to transform the DOM
+        const operations = this.#diffDocuments(oldDoc, newDoc);
+
+        for (const operation of operations) {
+          this.#applyOperationToDOM(operation);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating DOM from document:', error);
+      throw error;
+    } finally {
+      // Resume observing
+      this.#isApplyingRemoteChanges = false;
+      this.#startObserving();
+    }
   }
 
   /**
@@ -322,207 +829,6 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
-   * Start observing DOM mutations
-   */
-  #startObserving(): void {
-    if (!this.#observer) {
-      this.#observer = new MutationObserver((mutations) => {
-        this.#handleMutations(mutations);
-      });
-    }
-
-    this.#observer.observe(this.ownerElement, {
-      attributes: true,
-      characterData: true,
-      childList: true,
-      subtree: true,
-      attributeOldValue: true,
-      characterDataOldValue: true,
-    });
-  }
-
-  /**
-   * Handle DOM mutations and update Automerge document
-   */
-  #handleMutations(mutations: MutationRecord[]): void {
-    if (!this.#automerge) {
-      throw new Error('Cannot handle mutations: FolkAutomerge instance not initialized');
-    }
-
-    console.log('Processing mutations');
-
-    this.#automerge.change((doc: DOMNode) => {
-      // If document is empty, initialize it
-      if (!doc.nodeType) {
-        console.log('Creating document from DOM');
-        // Copy all properties from the serialized node to the document
-        const serialized = this.#serializeNode(this.ownerElement);
-        Object.assign(doc, serialized);
-        return;
-      }
-
-      for (const mutation of mutations) {
-        // Get the path to the affected node in the Automerge document
-        const targetPath = this.#getNodePath(mutation.target);
-        if (mutation.target === this.ownerElement) {
-          // For the owner element, we use an empty path
-          // Handle mutations directly on the document object
-          if (mutation.type === 'attributes' && mutation.attributeName) {
-            const attributeExists = (mutation.target as Element).hasAttribute(mutation.attributeName);
-
-            if (!attributeExists) {
-              // Attribute was removed
-              if (doc.attributes) {
-                delete doc.attributes[mutation.attributeName];
-              }
-            } else {
-              // Attribute was added or changed
-              if (!doc.attributes) doc.attributes = {};
-              doc.attributes[mutation.attributeName] =
-                (mutation.target as Element).getAttribute(mutation.attributeName) || '';
-            }
-          }
-          continue;
-        }
-
-        if (!targetPath) {
-          throw new Error(`Path not found for mutation target: ${mutation.target.nodeName}`);
-        }
-
-        // Handle different mutation types
-        switch (mutation.type) {
-          case 'attributes': {
-            // Find the node in the document
-            const node = this.#getDocNodeByPath(doc, targetPath);
-            if (!node) {
-              throw new Error(`Node not found in document at path: ${targetPath.join('.')}`);
-            }
-
-            // Update the attribute
-            if (mutation.attributeName) {
-              const target = mutation.target as Element;
-              const attributeExists = target.hasAttribute(mutation.attributeName);
-
-              if (!attributeExists) {
-                // Attribute was removed
-                if (node.attributes) {
-                  delete node.attributes[mutation.attributeName];
-                }
-              } else {
-                // Attribute was added or changed
-                if (!node.attributes) node.attributes = {};
-                node.attributes[mutation.attributeName] = target.getAttribute(mutation.attributeName) || '';
-              }
-            }
-            break;
-          }
-
-          case 'characterData': {
-            // Find the node in the document
-            const node = this.#getDocNodeByPath(doc, targetPath);
-            if (!node) {
-              throw new Error(`Node not found in document at path: ${targetPath.join('.')}`);
-            }
-
-            // Update the text content
-            node.textContent = mutation.target.textContent || '';
-            break;
-          }
-
-          case 'childList': {
-            // Handle added nodes
-            for (const addedNode of mutation.addedNodes) {
-              // Find the parent node in the document
-              const parentNode = this.#getDocNodeByPath(doc, targetPath);
-              if (!parentNode) {
-                throw new Error(`Parent node not found for added node: ${addedNode.nodeName}`);
-              }
-
-              // Find the index where the node was inserted
-              const childNodes = Array.from(mutation.target.childNodes);
-              const index = childNodes.findIndex((child) => child === addedNode);
-              if (index === -1) {
-                throw new Error(`Index not found for added node: ${addedNode.nodeName}`);
-              }
-
-              // Create the new node path
-              const newNodePath = this.#createChildPath(targetPath, index);
-
-              // Serialize the added node
-              const serializedNode = this.#serializeNode(addedNode, newNodePath);
-
-              // Insert the node at the correct position
-              parentNode.childNodes.splice(index, 0, serializedNode);
-
-              // Update paths for all subsequent siblings
-              this.#updateChildPaths(mutation.target, targetPath, index + 1);
-            }
-
-            // Handle removed nodes
-            for (const removedNode of mutation.removedNodes) {
-              // Find the parent node in the document
-              const parentNode = this.#getDocNodeByPath(doc, targetPath);
-              if (!parentNode) {
-                throw new Error(`Parent node not found for removed node: ${removedNode.nodeName}`);
-              }
-
-              // Find the index where the node was removed
-              const removedPath = this.#getNodePath(removedNode);
-              if (!removedPath) {
-                throw new Error(`Path not found for removed node: ${removedNode.nodeName}`);
-              }
-
-              const removedIndex = parseInt(removedPath[removedPath.length - 1]);
-
-              // Remove the node
-              parentNode.childNodes.splice(removedIndex, 1);
-
-              // Clean up our mappings
-              this.#deleteNodePath(removedNode);
-
-              // Update paths for all subsequent siblings
-              this.#updateChildPaths(mutation.target, targetPath, removedIndex);
-            }
-            break;
-          }
-        }
-      }
-    });
-  }
-
-  /**
-   * Handle changes from the Automerge document and update DOM
-   */
-  #handleDocumentChange(doc: DOMNode): void {
-    if (!doc) {
-      throw new Error('Cannot handle document change: Document is null or undefined');
-    }
-
-    // Stop observing while we update the DOM
-    this.#stopObserving();
-
-    try {
-      // Update the DOM tree to match the document
-      if (doc.nodeType) {
-        this.#deserializeNode(doc, []);
-      } else {
-        // If there's no valid document, initialize it from the current DOM
-        console.log('No valid document, initializing from current DOM');
-        this.#automerge.change((newDoc) => {
-          const serialized = this.#serializeNode(this.ownerElement);
-          Object.assign(newDoc, serialized);
-        });
-      }
-    } catch (error) {
-      console.error('Error updating DOM from document:', error);
-      throw error; // Re-throw to ensure the error is not swallowed
-    } finally {
-      // Resume observing
-      this.#startObserving();
-    }
-  }
-
-  /**
    * Initialize when the attribute is connected to the DOM
    */
   connectedCallback(): void {
@@ -560,8 +866,10 @@ export class FolkSyncAttribute extends CustomAttribute {
           }
 
           // Set up the change handler for future updates only after successful initialization
+          let previousDoc = doc;
           this.#automerge.onChange((updatedDoc) => {
-            this.#handleDocumentChange(updatedDoc);
+            this.#handleDocumentChange(previousDoc, updatedDoc);
+            previousDoc = updatedDoc;
           });
 
           // Start observing only after successful initialization
@@ -581,12 +889,11 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
-   * Stop observing DOM mutations
+   * Clean up when the attribute is disconnected from the DOM
    */
-  #stopObserving(): void {
-    if (this.#observer) {
-      this.#observer.disconnect();
-    }
+  disconnectedCallback(): void {
+    this.#stopObserving();
+    console.log(`FolkSync disconnected from <${this.ownerElement.tagName.toLowerCase()}>`);
   }
 }
 
