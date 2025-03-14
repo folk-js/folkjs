@@ -11,27 +11,22 @@ interface DOMNodeAttributes {
 /**
  * Interface for a serialized DOM node
  */
-interface SerializedDOMNode {
+interface DOMNode {
   nodeType: number;
   nodeName: string;
   nodeId: string;
-  childNodes: SerializedDOMNode[];
+  childNodes: DOMNode[];
   attributes?: DOMNodeAttributes;
   textContent?: string;
 }
 
-/**
- * Interface for the DOM sync document structure
- */
-interface DOMSyncDocument {
-  root: SerializedDOMNode;
-}
+// DOMSyncDocument interface is no longer needed as we use DOMNode directly
 
 export class FolkSyncAttribute extends CustomAttribute {
   static attributeName = 'folk-sync';
 
   // The FolkAutomerge instance for network sync
-  #automerge!: FolkAutomerge<DOMSyncDocument>;
+  #automerge!: FolkAutomerge<DOMNode>;
 
   // MutationObserver instance
   #observer: MutationObserver | null = null;
@@ -88,7 +83,9 @@ export class FolkSyncAttribute extends CustomAttribute {
    * @param path The path to the node
    * @returns The node in the document or undefined
    */
-  #getDocNodeByPath(doc: DOMSyncDocument, path: string[]): any {
+  #getDocNodeByPath(doc: DOMNode, path: string[]): any {
+    if (path.length === 0) return doc;
+
     let node: any = doc;
     for (const segment of path) {
       if (node === undefined || node === null) {
@@ -138,13 +135,13 @@ export class FolkSyncAttribute extends CustomAttribute {
    * @param path Current path in the Automerge document
    * @returns The serialized node structure
    */
-  #serializeNode(node: Node, path: string[] = []): SerializedDOMNode {
+  #serializeNode(node: Node, path: string[] = []): DOMNode {
     const nodeType = node.nodeType;
     const nodeName = node.nodeName.toLowerCase();
     const nodeId = this.#generateNodeId();
 
     // Create the base node object
-    const result: SerializedDOMNode = {
+    const result: DOMNode = {
       nodeType,
       nodeName,
       nodeId,
@@ -152,8 +149,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     };
 
     // Store in our bidirectional mapping
-    // Add 'root' as the first segment in the path for the mapping
-    const fullPath = path.length === 0 ? ['root'] : ['root', ...path];
+    const fullPath = path;
     this.#setNodePath(node, fullPath);
 
     // Handle element-specific properties
@@ -189,9 +185,8 @@ export class FolkSyncAttribute extends CustomAttribute {
    * @param parent Optional parent node for new nodes
    * @returns The created or updated DOM node
    */
-  #deserializeNode(data: SerializedDOMNode, path: string[] = [], parent?: Node): Node {
-    // Add 'root' as the first segment in the path if it's not already there
-    const fullPath = path.length === 0 ? ['root'] : path[0] === 'root' ? path : ['root', ...path];
+  #deserializeNode(data: DOMNode, path: string[] = [], parent?: Node): Node {
+    const fullPath = path;
     let node = this.#getNodeByPath(fullPath);
 
     // Create new node if it doesn't exist
@@ -274,7 +269,7 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Completely replaces the DOM subtree with the one derived from the Automerge document
    * @param data The node data from Automerge
    */
-  #replaceDOMSubtree(data: SerializedDOMNode): void {
+  #replaceDOMSubtree(data: DOMNode): void {
     console.log('Replacing DOM subtree with Automerge data');
 
     // Clear our mappings
@@ -356,12 +351,13 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     console.log('Processing mutations');
 
-    this.#automerge.change((doc: DOMSyncDocument) => {
-      // Ensure root exists
-      if (!doc.root) {
-        // Initialize the root if it doesn't exist
-        console.log('Creating root in document');
-        doc.root = this.#serializeNode(this.ownerElement);
+    this.#automerge.change((doc: DOMNode) => {
+      // If document is empty, initialize it
+      if (!doc.nodeType) {
+        console.log('Creating document from DOM');
+        // Copy all properties from the serialized node to the document
+        const serialized = this.#serializeNode(this.ownerElement);
+        Object.assign(doc, serialized);
         return;
       }
 
@@ -369,9 +365,26 @@ export class FolkSyncAttribute extends CustomAttribute {
         // Get the path to the affected node in the Automerge document
         const targetPath = this.#getNodePath(mutation.target);
         if (mutation.target === this.ownerElement) {
-          console.warn('Mutation target is the owner element, skipping');
+          // For the owner element, we use an empty path
+          // Handle mutations directly on the document object
+          if (mutation.type === 'attributes' && mutation.attributeName) {
+            const attributeExists = (mutation.target as Element).hasAttribute(mutation.attributeName);
+
+            if (!attributeExists) {
+              // Attribute was removed
+              if (doc.attributes) {
+                delete doc.attributes[mutation.attributeName];
+              }
+            } else {
+              // Attribute was added or changed
+              if (!doc.attributes) doc.attributes = {};
+              doc.attributes[mutation.attributeName] =
+                (mutation.target as Element).getAttribute(mutation.attributeName) || '';
+            }
+          }
           continue;
         }
+
         if (!targetPath) {
           throw new Error(`Path not found for mutation target: ${mutation.target.nodeName}`);
         }
@@ -436,7 +449,7 @@ export class FolkSyncAttribute extends CustomAttribute {
               const newNodePath = this.#createChildPath(targetPath, index);
 
               // Serialize the added node
-              const serializedNode = this.#serializeNode(addedNode, newNodePath.slice(1)); // Remove 'root'
+              const serializedNode = this.#serializeNode(addedNode, newNodePath);
 
               // Insert the node at the correct position
               parentNode.childNodes.splice(index, 0, serializedNode);
@@ -480,7 +493,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Handle changes from the Automerge document and update DOM
    */
-  #handleDocumentChange(doc: DOMSyncDocument): void {
+  #handleDocumentChange(doc: DOMNode): void {
     if (!doc) {
       throw new Error('Cannot handle document change: Document is null or undefined');
     }
@@ -490,13 +503,14 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     try {
       // Update the DOM tree to match the document
-      if (doc.root) {
-        this.#deserializeNode(doc.root, []);
+      if (doc.nodeType) {
+        this.#deserializeNode(doc, []);
       } else {
-        // If there's no root in the document, initialize it from the current DOM
-        console.log('No root in document, initializing from current DOM');
+        // If there's no valid document, initialize it from the current DOM
+        console.log('No valid document, initializing from current DOM');
         this.#automerge.change((newDoc) => {
-          newDoc.root = this.#serializeNode(this.ownerElement);
+          const serialized = this.#serializeNode(this.ownerElement);
+          Object.assign(newDoc, serialized);
         });
       }
     } catch (error) {
@@ -523,25 +537,26 @@ export class FolkSyncAttribute extends CustomAttribute {
     this.#pathToNode = new Map<string, Node>();
 
     // Initialize FolkAutomerge for network sync with an empty constructor
-    this.#automerge = new FolkAutomerge<DOMSyncDocument>();
+    this.#automerge = new FolkAutomerge<DOMNode>();
 
     // When the document is ready, either initialize from the document or from the DOM
     this.#automerge
       .whenReady((doc) => {
         try {
-          if (!doc.root) {
-            // No root in the document: serialize the DOM into the document
+          if (!doc.nodeType) {
+            // No valid document: serialize the DOM into the document
             console.log('Initializing new document from DOM');
             this.#automerge.change((newDoc) => {
-              // Create a structured document with a dedicated property for the DOM tree
-              newDoc.root = this.#serializeNode(this.ownerElement);
+              // Serialize the owner element and copy all properties to the document
+              const serialized = this.#serializeNode(this.ownerElement);
+              Object.assign(newDoc, serialized);
               console.log('Initialized document with DOM tree:', newDoc);
             });
           } else {
             // Existing document: update the DOM to match
             console.log('Initializing DOM from existing document');
             // Completely replace the DOM subtree with the one from the Automerge document
-            this.#replaceDOMSubtree(doc.root);
+            this.#replaceDOMSubtree(doc);
           }
 
           // Set up the change handler for future updates only after successful initialization
