@@ -518,41 +518,51 @@ export class FolkSyncAttribute extends CustomAttribute {
       throw new Error('FolkSync attribute connected without an owner element');
     }
 
+    // Initialize in a clean state
+    this.#nodeToPath = new WeakMap<Node, string[]>();
+    this.#pathToNode = new Map<string, Node>();
+
     // Initialize FolkAutomerge for network sync with an empty constructor
     this.#automerge = new FolkAutomerge<DOMSyncDocument>();
 
     // When the document is ready, either initialize from the document or from the DOM
-    this.#automerge.whenReady().then((doc) => {
-      // Stop observing while we initialize
-      this.#stopObserving();
+    this.#automerge
+      .whenReady((doc) => {
+        try {
+          if (!doc.root) {
+            // No root in the document: serialize the DOM into the document
+            console.log('Initializing new document from DOM');
+            this.#automerge.change((newDoc) => {
+              // Create a structured document with a dedicated property for the DOM tree
+              newDoc.root = this.#serializeNode(this.ownerElement);
+              console.log('Initialized document with DOM tree:', newDoc);
+            });
+          } else {
+            // Existing document: update the DOM to match
+            console.log('Initializing DOM from existing document');
+            // Completely replace the DOM subtree with the one from the Automerge document
+            this.#replaceDOMSubtree(doc.root);
+          }
 
-      try {
-        if (!doc.root) {
-          // No root in the document: serialize the DOM into the document
-          console.log('Initializing new document from DOM');
-          this.#automerge.change((newDoc) => {
-            // Create a structured document with a dedicated property for the DOM tree
-            newDoc.root = this.#serializeNode(this.ownerElement);
-            console.log('Initialized document with DOM tree:', newDoc);
+          // Set up the change handler for future updates only after successful initialization
+          this.#automerge.onChange((updatedDoc) => {
+            this.#handleDocumentChange(updatedDoc);
           });
-        } else {
-          // Existing document: update the DOM to match
-          console.log('Initializing DOM from existing document');
-          // Completely replace the DOM subtree with the one from the Automerge document
-          this.#replaceDOMSubtree(doc.root);
+
+          // Start observing only after successful initialization
+          this.#startObserving();
+
+          console.log('FolkSync successfully initialized with document ID:', this.#automerge.getDocumentId());
+        } catch (error) {
+          console.error('FolkSync initialization failed:', error);
+          // Fail fast, don't try to recover
+          throw error;
         }
-      } finally {
-        // Resume observing
-        this.#startObserving();
-      }
-
-      // Set up the change handler for future updates
-      this.#automerge.onChange((updatedDoc) => {
-        this.#handleDocumentChange(updatedDoc);
+      })
+      .catch((error) => {
+        console.error('FolkSync initialization promise rejected:', error);
+        throw error; // Ensure errors in the promise chain are not swallowed
       });
-    });
-
-    console.log('FolkSync initialized with document ID:', this.#automerge.getDocumentId());
   }
 
   /**
