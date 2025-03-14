@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Folk Sync</title>
     <style>
-      folk-shape {
+      [folk-shape] {
         background: black;
         border-radius: 5px;
         min-width: 20px;
@@ -14,10 +14,10 @@
     </style>
   </head>
   <body folk-sync>
-    <folk-shape id="box1" x="100" y="100"></folk-shape>
+    <div folk-shape="x:100; y:100;"></div>
 
     <script type="module">
-      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-shape-attribute.ts';
       import '@labs/folk-sync-attribute.ts';
     </script>
   </body>
