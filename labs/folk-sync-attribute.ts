@@ -48,6 +48,91 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
+   * @param node The DOM node
+   * @returns The path array or undefined if not found
+   */
+  #getNodePath(node: Node): string[] | undefined {
+    return this.#nodeToPath.get(node);
+  }
+
+  /**
+   * @param path The path array
+   * @returns The DOM node or undefined if not found
+   */
+  #getNodeByPath(path: string[]): Node | undefined {
+    return this.#pathToNode.get(path.join('.'));
+  }
+
+  /**
+   * @param node The DOM node
+   * @param path The path array
+   */
+  #setNodePath(node: Node, path: string[]): void {
+    this.#nodeToPath.set(node, path);
+    this.#pathToNode.set(path.join('.'), node);
+  }
+
+  /**
+   * @param node The DOM node
+   */
+  #deleteNodePath(node: Node): void {
+    const path = this.#nodeToPath.get(node);
+    if (path) {
+      this.#pathToNode.delete(path.join('.'));
+      this.#nodeToPath.delete(node);
+    }
+  }
+
+  /**
+   * @param doc The Automerge document
+   * @param path The path to the node
+   * @returns The node in the document or undefined
+   */
+  #getDocNodeByPath(doc: DOMSyncDocument, path: string[]): any {
+    let node: any = doc;
+    for (const segment of path) {
+      if (node === undefined || node === null) {
+        return undefined;
+      }
+      node = node[segment];
+    }
+    return node;
+  }
+
+  /**
+   * Updates paths for all children of a node after structural changes
+   * @param parentNode The parent DOM node
+   * @param parentPath The path to the parent node
+   * @param startIndex The index to start updating from
+   */
+  #updateChildPaths(parentNode: Node, parentPath: string[], startIndex: number = 0): void {
+    const childNodes = Array.from(parentNode.childNodes);
+
+    for (let i = startIndex; i < childNodes.length; i++) {
+      const child = childNodes[i];
+      const childPath = this.#createChildPath(parentPath, i);
+
+      // Update this child's path
+      this.#setNodePath(child, childPath);
+
+      // Recursively update grandchildren
+      if (child.hasChildNodes()) {
+        this.#updateChildPaths(child, childPath);
+      }
+    }
+  }
+
+  /**
+   * Creates a path to a child node at the specified index
+   * @param parentPath The parent node's path
+   * @param index The child's index
+   * @returns The child node's path
+   */
+  #createChildPath(parentPath: string[], index: number): string[] {
+    return [...parentPath, 'childNodes', index.toString()];
+  }
+
+  /**
    * Converts a DOM node to our Automerge structure
    * @param node The DOM node to serialize
    * @param path Current path in the Automerge document
@@ -69,8 +154,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Store in our bidirectional mapping
     // Add 'domTree' as the first segment in the path for the mapping
     const fullPath = path.length === 0 ? ['domTree'] : ['domTree', ...path];
-    this.#nodeToPath.set(node, fullPath);
-    this.#pathToNode.set(fullPath.join('.'), node);
+    this.#setNodePath(node, fullPath);
 
     // Handle element-specific properties
     if (nodeType === Node.ELEMENT_NODE && node instanceof Element) {
@@ -82,7 +166,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
       // Serialize children
       Array.from(node.childNodes).forEach((child, index) => {
-        const childPath = [...path, 'childNodes', index.toString()];
+        const childPath = this.#createChildPath(path, index);
         result.childNodes.push(this.#serializeNode(child, childPath));
       });
     }
@@ -104,8 +188,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   #deserializeNode(data: SerializedDOMNode, path: string[] = [], parent?: Node): Node {
     // Add 'domTree' as the first segment in the path if it's not already there
     const fullPath = path.length === 0 ? ['domTree'] : path[0] === 'domTree' ? path : ['domTree', ...path];
-    const pathKey = fullPath.join('.');
-    let node = this.#pathToNode.get(pathKey);
+    let node = this.#getNodeByPath(fullPath);
 
     // Create new node if it doesn't exist
     if (!node) {
@@ -118,17 +201,12 @@ export class FolkSyncAttribute extends CustomAttribute {
         node = document.createComment('Unsupported node type');
       }
 
-      if (!node) {
-        throw new Error('Node is undefined or null');
-      }
-
       if (parent) {
         parent.appendChild(node);
       }
 
       // Update our mappings
-      this.#nodeToPath.set(node, [...fullPath]);
-      this.#pathToNode.set(pathKey, node);
+      this.#setNodePath(node, fullPath);
     }
 
     // Update element properties
@@ -155,29 +233,25 @@ export class FolkSyncAttribute extends CustomAttribute {
         // Stop observing while we update children
         this.#stopObserving();
 
-        // Process children
-        const existingChildren = Array.from(node.childNodes);
+        try {
+          // Process children
+          const existingChildren = Array.from(node.childNodes);
 
-        // Create/update children from the data
-        data.childNodes.forEach((childData, index) => {
-          const childPath = [...fullPath, 'childNodes', index.toString()];
-          this.#deserializeNode(childData, childPath, node);
-        });
+          // Create/update children from the data
+          data.childNodes.forEach((childData, index) => {
+            const childPath = this.#createChildPath(path, index);
+            this.#deserializeNode(childData, childPath, node);
+          });
 
-        // Remove any extra children
-        for (let i = data.childNodes.length; i < existingChildren.length; i++) {
-          node.removeChild(existingChildren[i]);
-
-          // Clean up our mappings
-          const childPath = this.#nodeToPath.get(existingChildren[i]);
-          if (childPath) {
-            this.#pathToNode.delete(childPath.join('.'));
-            this.#nodeToPath.delete(existingChildren[i]);
+          // Remove any extra children
+          for (let i = data.childNodes.length; i < existingChildren.length; i++) {
+            node.removeChild(existingChildren[i]);
+            this.#deleteNodePath(existingChildren[i]);
           }
+        } finally {
+          // Resume observing
+          this.#startObserving();
         }
-
-        // Resume observing
-        this.#startObserving();
       }
     }
     // Update text node
@@ -237,7 +311,7 @@ export class FolkSyncAttribute extends CustomAttribute {
       // Create children from the data
       if (data.childNodes) {
         data.childNodes.forEach((childData, index) => {
-          const childPath = ['childNodes', index.toString()];
+          const childPath = this.#createChildPath([], index);
           this.#deserializeNode(childData, childPath, ownerElement);
         });
       }
@@ -277,8 +351,6 @@ export class FolkSyncAttribute extends CustomAttribute {
     console.log('Processing mutations:', mutations);
 
     this.#automerge.change((doc: DOMSyncDocument) => {
-      console.log('changing');
-
       // Ensure domTree exists
       if (!doc.domTree) {
         // Initialize the domTree if it doesn't exist
@@ -289,17 +361,15 @@ export class FolkSyncAttribute extends CustomAttribute {
 
       for (const mutation of mutations) {
         // Get the path to the affected node in the Automerge document
-        const targetPath = this.#nodeToPath.get(mutation.target);
+        const targetPath = this.#getNodePath(mutation.target);
         if (!targetPath) continue;
 
         // Handle different mutation types
         switch (mutation.type) {
           case 'attributes': {
             // Find the node in the document
-            let node: any = doc;
-            for (const segment of targetPath) {
-              node = node[segment];
-            }
+            const node = this.#getDocNodeByPath(doc, targetPath);
+            if (!node) continue;
 
             // Update the attribute
             if (mutation.attributeName) {
@@ -322,10 +392,8 @@ export class FolkSyncAttribute extends CustomAttribute {
 
           case 'characterData': {
             // Find the node in the document
-            let node: any = doc;
-            for (const segment of targetPath) {
-              node = node[segment];
-            }
+            const node = this.#getDocNodeByPath(doc, targetPath);
+            if (!node) continue;
 
             // Update the text content
             node.textContent = mutation.target.textContent || '';
@@ -336,10 +404,8 @@ export class FolkSyncAttribute extends CustomAttribute {
             // Handle added nodes
             for (const addedNode of mutation.addedNodes) {
               // Find the parent node in the document
-              let parentNode: any = doc;
-              for (const segment of targetPath) {
-                parentNode = parentNode[segment];
-              }
+              const parentNode = this.#getDocNodeByPath(doc, targetPath);
+              if (!parentNode) continue;
 
               // Find the index where the node was inserted
               const childNodes = Array.from(mutation.target.childNodes);
@@ -347,7 +413,7 @@ export class FolkSyncAttribute extends CustomAttribute {
               if (index === -1) continue;
 
               // Create the new node path
-              const newNodePath = [...targetPath, 'childNodes', index.toString()];
+              const newNodePath = this.#createChildPath(targetPath, index);
 
               // Serialize the added node
               const serializedNode = this.#serializeNode(addedNode, newNodePath.slice(1)); // Remove 'domTree'
@@ -356,28 +422,17 @@ export class FolkSyncAttribute extends CustomAttribute {
               parentNode.childNodes.splice(index, 0, serializedNode);
 
               // Update paths for all subsequent siblings
-              for (let i = index + 1; i < mutation.target.childNodes.length; i++) {
-                const sibling = mutation.target.childNodes[i];
-                const oldPath = this.#nodeToPath.get(sibling);
-                if (oldPath) {
-                  const newPath = [...targetPath, 'childNodes', i.toString()];
-                  this.#nodeToPath.set(sibling, newPath);
-                  this.#pathToNode.delete(oldPath.join('.'));
-                  this.#pathToNode.set(newPath.join('.'), sibling);
-                }
-              }
+              this.#updateChildPaths(mutation.target, targetPath, index + 1);
             }
 
             // Handle removed nodes
             for (const removedNode of mutation.removedNodes) {
               // Find the parent node in the document
-              let parentNode: any = doc;
-              for (const segment of targetPath) {
-                parentNode = parentNode[segment];
-              }
+              const parentNode = this.#getDocNodeByPath(doc, targetPath);
+              if (!parentNode) continue;
 
               // Find the index where the node was removed
-              const removedPath = this.#nodeToPath.get(removedNode);
+              const removedPath = this.#getNodePath(removedNode);
               if (!removedPath) continue;
 
               const removedIndex = parseInt(removedPath[removedPath.length - 1]);
@@ -386,20 +441,10 @@ export class FolkSyncAttribute extends CustomAttribute {
               parentNode.childNodes.splice(removedIndex, 1);
 
               // Clean up our mappings
-              this.#pathToNode.delete(removedPath.join('.'));
-              this.#nodeToPath.delete(removedNode);
+              this.#deleteNodePath(removedNode);
 
               // Update paths for all subsequent siblings
-              for (let i = removedIndex; i < mutation.target.childNodes.length; i++) {
-                const sibling = mutation.target.childNodes[i];
-                const oldPath = this.#nodeToPath.get(sibling);
-                if (oldPath) {
-                  const newPath = [...targetPath, 'childNodes', i.toString()];
-                  this.#nodeToPath.set(sibling, newPath);
-                  this.#pathToNode.delete(oldPath.join('.'));
-                  this.#pathToNode.set(newPath.join('.'), sibling);
-                }
-              }
+              this.#updateChildPaths(mutation.target, targetPath, removedIndex);
             }
             break;
           }
