@@ -598,21 +598,24 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Process each mutation as an operation
     for (const mutation of mutations) {
       const operation = this.#mutationToOperation(mutation);
-      if (operation) {
-        this.#automerge.change((doc: DOMNode) => {
-          // If document is empty, initialize it
-          if (!doc.nodeType) {
-            console.log('Creating document from DOM');
-            // Copy all properties from the serialized node to the document
-            const serialized = this.#serializeNode(this.ownerElement);
-            Object.assign(doc, serialized);
-            return;
-          }
-
-          // Apply the operation to the document
-          this.#applyOperationToDoc(doc, operation);
-        });
+      if (!operation) {
+        console.warn('operation is null', mutation);
+        continue;
       }
+
+      this.#automerge.change((doc: DOMNode) => {
+        // If document is empty, initialize it
+        if (!doc.nodeType) {
+          console.log('Creating document from DOM');
+          // Copy all properties from the serialized node to the document
+          const serialized = this.#serializeNode(this.ownerElement);
+          Object.assign(doc, serialized);
+          return;
+        }
+
+        // Apply the operation to the document
+        this.#applyOperationToDoc(doc, operation);
+      });
     }
   }
 
