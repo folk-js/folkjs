@@ -24,7 +24,7 @@ interface SerializedDOMNode {
  * Interface for the DOM sync document structure
  */
 interface DOMSyncDocument {
-  domTree: SerializedDOMNode;
+  root: SerializedDOMNode;
 }
 
 export class FolkSyncAttribute extends CustomAttribute {
@@ -152,8 +152,8 @@ export class FolkSyncAttribute extends CustomAttribute {
     };
 
     // Store in our bidirectional mapping
-    // Add 'domTree' as the first segment in the path for the mapping
-    const fullPath = path.length === 0 ? ['domTree'] : ['domTree', ...path];
+    // Add 'root' as the first segment in the path for the mapping
+    const fullPath = path.length === 0 ? ['root'] : ['root', ...path];
     this.#setNodePath(node, fullPath);
 
     // Handle element-specific properties
@@ -174,6 +174,10 @@ export class FolkSyncAttribute extends CustomAttribute {
     else if (nodeType === Node.TEXT_NODE) {
       result.textContent = node.textContent || '';
     }
+    // Handle comment nodes
+    else if (nodeType === Node.COMMENT_NODE) {
+      result.textContent = node.textContent || '';
+    }
 
     return result;
   }
@@ -186,8 +190,8 @@ export class FolkSyncAttribute extends CustomAttribute {
    * @returns The created or updated DOM node
    */
   #deserializeNode(data: SerializedDOMNode, path: string[] = [], parent?: Node): Node {
-    // Add 'domTree' as the first segment in the path if it's not already there
-    const fullPath = path.length === 0 ? ['domTree'] : path[0] === 'domTree' ? path : ['domTree', ...path];
+    // Add 'root' as the first segment in the path if it's not already there
+    const fullPath = path.length === 0 ? ['root'] : path[0] === 'root' ? path : ['root', ...path];
     let node = this.#getNodeByPath(fullPath);
 
     // Create new node if it doesn't exist
@@ -196,8 +200,10 @@ export class FolkSyncAttribute extends CustomAttribute {
         node = document.createElement(data.nodeName);
       } else if (data.nodeType === Node.TEXT_NODE) {
         node = document.createTextNode(data.textContent || '');
+      } else if (data.nodeType === Node.COMMENT_NODE) {
+        node = document.createComment(data.textContent || '');
       } else {
-        // Throw error for unsupported node types instead of creating a comment
+        // Throw error for unsupported node types
         throw new Error(`Unsupported node type: ${data.nodeType}`);
       }
 
@@ -351,11 +357,11 @@ export class FolkSyncAttribute extends CustomAttribute {
     console.log('Processing mutations');
 
     this.#automerge.change((doc: DOMSyncDocument) => {
-      // Ensure domTree exists
-      if (!doc.domTree) {
-        // Initialize the domTree if it doesn't exist
-        console.log('Creating domTree in document');
-        doc.domTree = this.#serializeNode(this.ownerElement);
+      // Ensure root exists
+      if (!doc.root) {
+        // Initialize the root if it doesn't exist
+        console.log('Creating root in document');
+        doc.root = this.#serializeNode(this.ownerElement);
         return;
       }
 
@@ -430,7 +436,7 @@ export class FolkSyncAttribute extends CustomAttribute {
               const newNodePath = this.#createChildPath(targetPath, index);
 
               // Serialize the added node
-              const serializedNode = this.#serializeNode(addedNode, newNodePath.slice(1)); // Remove 'domTree'
+              const serializedNode = this.#serializeNode(addedNode, newNodePath.slice(1)); // Remove 'root'
 
               // Insert the node at the correct position
               parentNode.childNodes.splice(index, 0, serializedNode);
@@ -484,13 +490,13 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     try {
       // Update the DOM tree to match the document
-      if (doc.domTree) {
-        this.#deserializeNode(doc.domTree, []);
+      if (doc.root) {
+        this.#deserializeNode(doc.root, []);
       } else {
-        // If there's no domTree in the document, initialize it from the current DOM
-        console.log('No domTree in document, initializing from current DOM');
+        // If there's no root in the document, initialize it from the current DOM
+        console.log('No root in document, initializing from current DOM');
         this.#automerge.change((newDoc) => {
-          newDoc.domTree = this.#serializeNode(this.ownerElement);
+          newDoc.root = this.#serializeNode(this.ownerElement);
         });
       }
     } catch (error) {
@@ -521,19 +527,19 @@ export class FolkSyncAttribute extends CustomAttribute {
       this.#stopObserving();
 
       try {
-        if (!doc.domTree) {
-          // No domTree in the document: serialize the DOM into the document
+        if (!doc.root) {
+          // No root in the document: serialize the DOM into the document
           console.log('Initializing new document from DOM');
           this.#automerge.change((newDoc) => {
             // Create a structured document with a dedicated property for the DOM tree
-            newDoc.domTree = this.#serializeNode(this.ownerElement);
+            newDoc.root = this.#serializeNode(this.ownerElement);
             console.log('Initialized document with DOM tree:', newDoc);
           });
         } else {
           // Existing document: update the DOM to match
           console.log('Initializing DOM from existing document');
           // Completely replace the DOM subtree with the one from the Automerge document
-          this.#replaceDOMSubtree(doc.domTree);
+          this.#replaceDOMSubtree(doc.root);
         }
       } finally {
         // Resume observing
