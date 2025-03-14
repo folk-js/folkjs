@@ -281,6 +281,8 @@ export class FolkSyncAttribute extends CustomAttribute {
 
       // Ensure domTree exists
       if (!doc.domTree) {
+        // Initialize the domTree if it doesn't exist
+        console.log('Creating domTree in document');
         doc.domTree = this.#serializeNode(this.ownerElement);
         return;
       }
@@ -417,6 +419,12 @@ export class FolkSyncAttribute extends CustomAttribute {
       // Update the DOM tree to match the document
       if (doc.domTree) {
         this.#deserializeNode(doc.domTree, []);
+      } else {
+        // If there's no domTree in the document, initialize it from the current DOM
+        console.log('No domTree in document, initializing from current DOM');
+        this.#automerge.change((newDoc) => {
+          newDoc.domTree = this.#serializeNode(this.ownerElement);
+        });
       }
     } finally {
       // Resume observing
@@ -430,15 +438,8 @@ export class FolkSyncAttribute extends CustomAttribute {
   connectedCallback(): void {
     console.log(`FolkSync connected to <${this.ownerElement.tagName.toLowerCase()}>`);
 
-    // Initialize FolkAutomerge for network sync
-    this.#automerge = new FolkAutomerge<DOMSyncDocument>({
-      domTree: {
-        nodeType: Node.ELEMENT_NODE,
-        nodeName: 'div', // Placeholder, will be replaced with actual DOM
-        nodeId: this.#generateNodeId(),
-        childNodes: [],
-      },
-    });
+    // Initialize FolkAutomerge for network sync with an empty constructor
+    this.#automerge = new FolkAutomerge<DOMSyncDocument>();
 
     // When the document is ready, either initialize from the document or from the DOM
     this.#automerge.whenReady().then((doc) => {
@@ -446,8 +447,8 @@ export class FolkSyncAttribute extends CustomAttribute {
       this.#stopObserving();
 
       try {
-        if (!doc.domTree || Object.keys(doc.domTree).length === 0) {
-          // New document: serialize the DOM into the document
+        if (!doc.domTree) {
+          // No domTree in the document: serialize the DOM into the document
           console.log('Initializing new document from DOM');
           this.#automerge.change((newDoc) => {
             // Create a structured document with a dedicated property for the DOM tree
