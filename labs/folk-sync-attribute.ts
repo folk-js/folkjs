@@ -197,8 +197,8 @@ export class FolkSyncAttribute extends CustomAttribute {
       } else if (data.nodeType === Node.TEXT_NODE) {
         node = document.createTextNode(data.textContent || '');
       } else {
-        // Handle other node types if needed
-        node = document.createComment('Unsupported node type');
+        // Throw error for unsupported node types instead of creating a comment
+        throw new Error(`Unsupported node type: ${data.nodeType}`);
       }
 
       if (parent) {
@@ -344,7 +344,9 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Handle DOM mutations and update Automerge document
    */
   #handleMutations(mutations: MutationRecord[]): void {
-    if (!this.#automerge) return;
+    if (!this.#automerge) {
+      throw new Error('Cannot handle mutations: FolkAutomerge instance not initialized');
+    }
 
     console.log('Processing mutations');
 
@@ -360,14 +362,18 @@ export class FolkSyncAttribute extends CustomAttribute {
       for (const mutation of mutations) {
         // Get the path to the affected node in the Automerge document
         const targetPath = this.#getNodePath(mutation.target);
-        if (!targetPath) continue;
+        if (!targetPath) {
+          throw new Error(`Path not found for mutation target: ${mutation.target.nodeName}`);
+        }
 
         // Handle different mutation types
         switch (mutation.type) {
           case 'attributes': {
             // Find the node in the document
             const node = this.#getDocNodeByPath(doc, targetPath);
-            if (!node) continue;
+            if (!node) {
+              throw new Error(`Node not found in document at path: ${targetPath.join('.')}`);
+            }
 
             // Update the attribute
             if (mutation.attributeName) {
@@ -391,7 +397,9 @@ export class FolkSyncAttribute extends CustomAttribute {
           case 'characterData': {
             // Find the node in the document
             const node = this.#getDocNodeByPath(doc, targetPath);
-            if (!node) continue;
+            if (!node) {
+              throw new Error(`Node not found in document at path: ${targetPath.join('.')}`);
+            }
 
             // Update the text content
             node.textContent = mutation.target.textContent || '';
@@ -404,16 +412,14 @@ export class FolkSyncAttribute extends CustomAttribute {
               // Find the parent node in the document
               const parentNode = this.#getDocNodeByPath(doc, targetPath);
               if (!parentNode) {
-                console.error('Parent node not found for added node:', addedNode);
-                continue;
+                throw new Error(`Parent node not found for added node: ${addedNode.nodeName}`);
               }
 
               // Find the index where the node was inserted
               const childNodes = Array.from(mutation.target.childNodes);
               const index = childNodes.findIndex((child) => child === addedNode);
               if (index === -1) {
-                console.error('Index not found for added node:', addedNode);
-                continue;
+                throw new Error(`Index not found for added node: ${addedNode.nodeName}`);
               }
 
               // Create the new node path
@@ -433,11 +439,15 @@ export class FolkSyncAttribute extends CustomAttribute {
             for (const removedNode of mutation.removedNodes) {
               // Find the parent node in the document
               const parentNode = this.#getDocNodeByPath(doc, targetPath);
-              if (!parentNode) continue;
+              if (!parentNode) {
+                throw new Error(`Parent node not found for removed node: ${removedNode.nodeName}`);
+              }
 
               // Find the index where the node was removed
               const removedPath = this.#getNodePath(removedNode);
-              if (!removedPath) continue;
+              if (!removedPath) {
+                throw new Error(`Path not found for removed node: ${removedNode.nodeName}`);
+              }
 
               const removedIndex = parseInt(removedPath[removedPath.length - 1]);
 
@@ -461,6 +471,10 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Handle changes from the Automerge document and update DOM
    */
   #handleDocumentChange(doc: DOMSyncDocument): void {
+    if (!doc) {
+      throw new Error('Cannot handle document change: Document is null or undefined');
+    }
+
     // Stop observing while we update the DOM
     this.#stopObserving();
 
@@ -475,6 +489,9 @@ export class FolkSyncAttribute extends CustomAttribute {
           newDoc.domTree = this.#serializeNode(this.ownerElement);
         });
       }
+    } catch (error) {
+      console.error('Error updating DOM from document:', error);
+      throw error; // Re-throw to ensure the error is not swallowed
     } finally {
       // Resume observing
       this.#startObserving();
@@ -486,6 +503,10 @@ export class FolkSyncAttribute extends CustomAttribute {
    */
   connectedCallback(): void {
     console.log(`FolkSync connected to <${this.ownerElement.tagName.toLowerCase()}>`);
+
+    if (!this.ownerElement) {
+      throw new Error('FolkSync attribute connected without an owner element');
+    }
 
     // Initialize FolkAutomerge for network sync with an empty constructor
     this.#automerge = new FolkAutomerge<DOMSyncDocument>();
