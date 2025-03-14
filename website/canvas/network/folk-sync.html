@@ -1,170 +1,93 @@
 <!doctype html>
-<html lang="en-us">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Folk Sync</title>
     <style>
-      * {
-        box-sizing: border-box;
-      }
-
       html {
-        width: 100%;
         height: 100%;
-        position: fixed;
-        overflow: hidden;
       }
 
       body {
+        font-family: monospace;
         min-height: 100%;
         position: relative;
         margin: 0;
-        font-family: Arial, sans-serif;
+      }
+
+      folk-pinch {
+        position: absolute;
+        inset: 0;
       }
 
       folk-shape {
-        background: rgb(248, 248, 248);
-        border-radius: 8px;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-        padding: 12px;
+        background: black;
+        border-radius: 5px;
+        color: white;
+        padding: 0.5rem;
+        min-width: 20px;
+        min-height: 20px;
+
+        h2 {
+          margin: 0;
+          white-space: nowrap;
+        }
+
+        p {
+          font-size: clamp(0rem, calc(1.5rem * (var(--folk-scale) - 0.5)), 1rem);
+          opacity: clamp(0, calc(var(--folk-scale) + 0.25), 1);
+          max-width: 35ch;
+        }
       }
 
-      h3 {
-        margin-top: 0;
-        margin-bottom: 8px;
-        color: #333;
-        font-size: 16px;
-      }
-
-      .editable-content {
-        border: 1px solid #ddd;
-        padding: 10px;
-        margin-bottom: 10px;
-        min-height: 100px;
-        border-radius: 4px;
-      }
-
-      .editable-content:focus {
-        outline: none;
-        border-color: #4caf50;
-        box-shadow: 0 0 3px rgba(76, 175, 80, 0.3);
-      }
-
-      folk-spreadsheet {
-        width: 100%;
-        height: 100%;
+      folk-arrow {
+        pointer-events: none;
       }
     </style>
   </head>
   <body folk-sync>
-    <folk-shape x="15" y="600" width="500" height="400">
-      <folk-spreadsheet>
-        <folk-cell row="1" column="A" expression="1" type="number" tabindex="0">1</folk-cell>
-        <folk-cell row="1" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="1" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="1" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="1" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="1" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="1" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="1" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="1" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="1" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="A" expression="$A1 * 2" type="number" tabindex="0">2</folk-cell>
-        <folk-cell row="2" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="2" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="A" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="3" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="A" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="4" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="A" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="5" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="A" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="6" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="A" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="7" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="A" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="8" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="A" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="9" column="J" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="A" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="B" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="C" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="D" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="E" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="F" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="G" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="H" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="I" tabindex="0"></folk-cell>
-        <folk-cell row="10" column="J" tabindex="0"></folk-cell>
-      </folk-spreadsheet>
-    </folk-shape>
+    <folk-pinch grid>
+      <folk-graph distance="400">
+        <folk-shape id="box1" x="100" y="100">
+          <h2>Lorem ispum</h2>
+          <p>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et
+            dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex
+            ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat
+            nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit
+            anim id est laborum.
+          </p>
+        </folk-shape>
+
+        <folk-shape id="box2" x="500" y="400">
+          <h2>Dolor sit amet</h2>
+          <p>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et
+            dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex
+            ea commodo consequat.
+          </p>
+        </folk-shape>
+
+        <folk-shape id="box3" x="150" y="600">
+          <h2>Consectetur elit</h2>
+          <p>
+            Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et
+            dolore magna aliqua.
+          </p>
+        </folk-shape>
+
+        <folk-arrow source="#box1" target="#box2"></folk-arrow>
+        <folk-arrow source="#box2" target="#box3"></folk-arrow>
+        <folk-arrow source="#box1" target="#box3"></folk-arrow>
+      </folk-graph>
+    </folk-pinch>
 
     <script type="module">
+      import '@labs/standalone/folk-pinch.ts';
       import '@labs/standalone/folk-shape.ts';
-      import '@labs/standalone/folk-spreadsheet.ts';
+      import '@labs/standalone/folk-arrow.ts';
+      import '@labs/standalone/folk-graph.ts';
       import '@labs/folk-sync-attribute.ts';
     </script>
   </body>
