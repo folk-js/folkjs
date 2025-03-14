@@ -11,13 +11,19 @@
         min-width: 20px;
         min-height: 20px;
       }
+      folk-shape {
+        background: grey;
+        border-radius: 5px;
+      }
     </style>
   </head>
   <body folk-sync>
     <div folk-shape="x:100; y:100;"></div>
+    <folk-shape x="200" y="200" width="100" height="100"></folk-shape>
 
     <script type="module">
       import '@labs/standalone/folk-shape-attribute.ts';
+      import '@labs/standalone/folk-shape.ts';
       import '@labs/folk-sync-attribute.ts';
     </script>
   </body>

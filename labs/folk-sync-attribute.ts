@@ -362,6 +362,10 @@ export class FolkSyncAttribute extends CustomAttribute {
       for (const mutation of mutations) {
         // Get the path to the affected node in the Automerge document
         const targetPath = this.#getNodePath(mutation.target);
+        if (mutation.target === this.ownerElement) {
+          console.warn('Mutation target is the owner element, skipping');
+          continue;
+        }
         if (!targetPath) {
           throw new Error(`Path not found for mutation target: ${mutation.target.nodeName}`);
         }
