@@ -1,642 +1,538 @@
-import * as Automerge from '@automerge/automerge';
-import { CustomAttribute, customAttributes } from '@lib';
+import { CustomAttribute } from '@lib';
+import { FolkAutomerge } from './FolkAutomerge';
 
 /**
- * A simplified CRDT DOM synchronization proof-of-concept
- *
- * This implementation focuses only on:
- * 1. Text content changes (e.g. via contenteditable)
- * 2. Attribute changes (modifying values only, not adding/removing elements)
- *
- * It uses path-based IDs for tracking node relationships between DOM and CRDT.
+ * Interface for DOM node attributes
  */
-
-// Type-safe union of all DOM node type constants
-// Using native Node constants instead of our own enum
-export type DOMNodeTypeValue =
-  | typeof Node.ELEMENT_NODE // 1
-  | typeof Node.ATTRIBUTE_NODE // 2
-  | typeof Node.TEXT_NODE // 3
-  | typeof Node.CDATA_SECTION_NODE // 4
-  | typeof Node.ENTITY_REFERENCE_NODE // 5 (deprecated)
-  | typeof Node.ENTITY_NODE // 6 (deprecated)
-  | typeof Node.PROCESSING_INSTRUCTION_NODE // 7
-  | typeof Node.COMMENT_NODE // 8
-  | typeof Node.DOCUMENT_NODE // 9
-  | typeof Node.DOCUMENT_TYPE_NODE // 10
-  | typeof Node.DOCUMENT_FRAGMENT_NODE // 11
-  | typeof Node.NOTATION_NODE; // 12 (deprecated)
-
-// Base interface for all DOM node types in our CRDT
-export interface BaseDOMNode {
-  type: DOMNodeTypeValue;
-  path: string; // Path-based ID format: "0-1-2" (child indexes from root) used for mapping between DOM and CRDT before any changes are made
+interface DOMNodeAttributes {
+  [key: string]: string;
 }
 
-// Element node representation
-export interface ElementNode extends BaseDOMNode {
-  type: typeof Node.ELEMENT_NODE;
-  tagName: string;
-  attributes: { [key: string]: string };
+/**
+ * Interface for a serialized DOM node
+ */
+interface DOMNode {
+  nodeType: number;
+  nodeName: string;
+  nodeId: string;
+  childNodes: DOMNode[];
+  attributes?: DOMNodeAttributes;
+  textContent?: string;
 }
 
-// Text node representation
-export interface TextNode extends BaseDOMNode {
-  type: typeof Node.TEXT_NODE;
-  textContent: string;
+/**
+ * Operation represents a single atomic change to either the DOM or the Automerge document
+ */
+interface SyncOperation {
+  // The type of operation
+  type: 'setAttribute' | 'removeAttribute' | 'setText' | 'addNode' | 'removeNode' | 'moveNode';
+
+  // The path to the target node in the document
+  path: string[];
+
+  // Operation-specific data
+  data?: {
+    attributeName?: string;
+    attributeValue?: string;
+    textContent?: string;
+    node?: DOMNode;
+    fromIndex?: number;
+    toIndex?: number;
+  };
 }
 
-// Comment node representation (stub)
-export interface CommentNode extends BaseDOMNode {
-  type: typeof Node.COMMENT_NODE;
-}
-
-// Document node representation (stub)
-export interface DocumentNode extends BaseDOMNode {
-  type: typeof Node.DOCUMENT_NODE;
-}
-
-// Document type node representation (stub)
-export interface DocumentTypeNode extends BaseDOMNode {
-  type: typeof Node.DOCUMENT_TYPE_NODE;
-}
-
-// Document fragment node representation (stub)
-export interface DocumentFragmentNode extends BaseDOMNode {
-  type: typeof Node.DOCUMENT_FRAGMENT_NODE;
-}
-
-// Attribute node representation (stub)
-export interface AttributeNode extends BaseDOMNode {
-  type: typeof Node.ATTRIBUTE_NODE;
-  name: string;
-  value: string;
-}
-
-// CDATA Section node representation (stub)
-export interface CDATASectionNode extends BaseDOMNode {
-  type: typeof Node.CDATA_SECTION_NODE;
-  textContent: string;
-}
-
-// Processing Instruction node representation (stub)
-export interface ProcessingInstructionNode extends BaseDOMNode {
-  type: typeof Node.PROCESSING_INSTRUCTION_NODE;
-  target: string;
-  data: string;
-}
-
-// Entity Reference node representation (stub, deprecated)
-export interface EntityReferenceNode extends BaseDOMNode {
-  type: typeof Node.ENTITY_REFERENCE_NODE;
-}
-
-// Entity node representation (stub, deprecated)
-export interface EntityNode extends BaseDOMNode {
-  type: typeof Node.ENTITY_NODE;
-}
-
-// Notation node representation (stub, deprecated)
-export interface NotationNode extends BaseDOMNode {
-  type: typeof Node.NOTATION_NODE;
-}
-
-// Union type for all DOM node types
-export type DOMNode =
-  | ElementNode
-  | TextNode
-  | CommentNode
-  | DocumentNode
-  | DocumentTypeNode
-  | DocumentFragmentNode
-  | AttributeNode
-  | CDATASectionNode
-  | ProcessingInstructionNode
-  | EntityReferenceNode
-  | EntityNode
-  | NotationNode;
-
-// Main document structure for the CRDT
-export interface SyncDoc {
-  nodes: { [path: string]: DOMNode };
-}
-
-// Define the custom element for extension
-declare global {
-  interface Element {
-    sync: FolkSyncAttribute | undefined;
-  }
-}
-
-// Extension method to easily get the sync object for an element
-Object.defineProperty(Element.prototype, 'sync', {
-  get() {
-    return this.getAttribute(FolkSyncAttribute.attributeName)
-      ? customAttributes.get(this, FolkSyncAttribute.attributeName)
-      : undefined;
-  },
-});
+// DOMSyncDocument interface is no longer needed as we use DOMNode directly
 
 export class FolkSyncAttribute extends CustomAttribute {
   static attributeName = 'folk-sync';
 
-  // The Automerge document that will store our CRDT state
-  #doc: Automerge.Doc<SyncDoc> = Automerge.init<SyncDoc>();
-
-  // Map from DOM paths to DOM nodes for quick lookup
-  #pathToNodeMap = new Map<string, Node>();
+  // The FolkAutomerge instance for network sync
+  #automerge!: FolkAutomerge<DOMNode>;
 
   // MutationObserver instance
   #observer: MutationObserver | null = null;
 
-  // Configuration for the MutationObserver - only observing attributes and text
-  #observerConfig = {
-    attributes: true,
-    characterData: true,
-    subtree: true,
-    attributeOldValue: true,
-    characterDataOldValue: true,
-  };
+  // DOM node to Automerge path mapping
+  #nodeToPath = new WeakMap<Node, string[]>();
 
-  // Define the custom attribute
-  static define() {
-    super.define();
+  // Automerge path to DOM node mapping (using a string representation of the path)
+  #pathToNode = new Map<string, Node>();
+
+  // Flag to prevent recursive updates
+  #isApplyingRemoteChanges = false;
+
+  // Generate a unique ID for a node
+  #generateNodeId(): string {
+    return `node-${Math.random().toString(36).substring(2, 11)}`;
   }
 
   /**
-   * Generates a path-based ID for a DOM node
-   * Format: "0-1-2" representing child indexes from root
+   * @param node The DOM node
+   * @returns The path array or undefined if not found
    */
-  #generatePathId(node: Node): string {
-    const path: number[] = [];
+  #getNodePath(node: Node): string[] | undefined {
+    return this.#nodeToPath.get(node);
+  }
 
-    // Walk up the tree to build the path
-    let current: Node | null = node;
-    while (current && current !== this.ownerElement) {
-      const parent: Node | null = current.parentNode;
-      if (!parent) break;
+  /**
+   * @param path The path array
+   * @returns The DOM node or undefined if not found
+   */
+  #getNodeByPath(path: string[]): Node | undefined {
+    return this.#pathToNode.get(path.join('.'));
+  }
 
-      // Find the index of the current node among its siblings
-      let index = 0;
-      for (let i = 0; i < parent.childNodes.length; i++) {
-        if (parent.childNodes[i] === current) {
-          index = i;
-          break;
+  /**
+   * @param node The DOM node
+   * @param path The path array
+   */
+  #setNodePath(node: Node, path: string[]): void {
+    this.#nodeToPath.set(node, path);
+    this.#pathToNode.set(path.join('.'), node);
+  }
+
+  /**
+   * @param node The DOM node
+   */
+  #deleteNodePath(node: Node): void {
+    const path = this.#nodeToPath.get(node);
+    if (path) {
+      this.#pathToNode.delete(path.join('.'));
+      this.#nodeToPath.delete(node);
+    }
+  }
+
+  /**
+   * Updates paths for all children of a node after structural changes
+   * @param parentNode The parent DOM node
+   * @param parentPath The path to the parent node
+   * @param startIndex The index to start updating from
+   */
+  #updateChildPaths(parentNode: Node, parentPath: string[], startIndex: number = 0): void {
+    const childNodes = Array.from(parentNode.childNodes);
+
+    for (let i = startIndex; i < childNodes.length; i++) {
+      const child = childNodes[i];
+      const childPath = this.#createChildPath(parentPath, i);
+
+      // Update this child's path
+      this.#setNodePath(child, childPath);
+
+      // Recursively update grandchildren
+      if (child.hasChildNodes()) {
+        this.#updateChildPaths(child, childPath);
+      }
+    }
+  }
+
+  /**
+   * Creates a path to a child node at the specified index
+   * @param parentPath The parent node's path
+   * @param index The child's index
+   * @returns The child node's path
+   */
+  #createChildPath(parentPath: string[], index: number): string[] {
+    return [...parentPath, 'childNodes', index.toString()];
+  }
+
+  /**
+   * Converts a DOM node to our Automerge structure
+   * @param node The DOM node to serialize
+   * @param path Current path in the Automerge document
+   * @returns The serialized node structure
+   */
+  #serializeNode(node: Node, path: string[] = []): DOMNode {
+    const nodeType = node.nodeType;
+    const nodeName = node.nodeName.toLowerCase();
+    const nodeId = this.#generateNodeId();
+
+    // Create the base node object
+    const result: DOMNode = {
+      nodeType,
+      nodeName,
+      nodeId,
+      childNodes: [],
+    };
+
+    // Store in our bidirectional mapping
+    const fullPath = path;
+    this.#setNodePath(node, fullPath);
+
+    // Handle element-specific properties
+    if (nodeType === Node.ELEMENT_NODE && node instanceof Element) {
+      // Serialize attributes
+      result.attributes = {};
+      for (const attr of node.attributes) {
+        result.attributes[attr.name] = attr.value;
+      }
+
+      // Serialize children
+      Array.from(node.childNodes).forEach((child, index) => {
+        const childPath = this.#createChildPath(path, index);
+        result.childNodes.push(this.#serializeNode(child, childPath));
+      });
+    }
+    // Handle text nodes
+    else if (nodeType === Node.TEXT_NODE) {
+      result.textContent = node.textContent || '';
+    }
+    // Handle comment nodes
+    else if (nodeType === Node.COMMENT_NODE) {
+      result.textContent = node.textContent || '';
+    }
+
+    return result;
+  }
+
+  /**
+   * Converts a mutation record to sync operations
+   * @param mutation The DOM mutation record
+   * @returns Array of corresponding sync operations
+   */
+  #mutationToOperations(mutation: MutationRecord): SyncOperation[] {
+    const operations: SyncOperation[] = [];
+    const targetPath = this.#getNodePath(mutation.target);
+
+    // Handle mutations on the owner element
+    if (mutation.target === this.ownerElement) {
+      if (mutation.type === 'attributes' && mutation.attributeName) {
+        const attributeExists = (mutation.target as Element).hasAttribute(mutation.attributeName);
+
+        if (!attributeExists) {
+          operations.push({
+            type: 'removeAttribute',
+            path: [],
+            data: {
+              attributeName: mutation.attributeName,
+            },
+          });
+        } else {
+          operations.push({
+            type: 'setAttribute',
+            path: [],
+            data: {
+              attributeName: mutation.attributeName,
+              attributeValue: (mutation.target as Element).getAttribute(mutation.attributeName) || '',
+            },
+          });
         }
       }
-
-      path.unshift(index);
-      current = parent;
+      return operations;
     }
 
-    // Convert the array of indexes to a string path
-    return path.join('-');
-  }
-
-  /**
-   * Find a DOM node by its path ID
-   */
-  #findNodeByPath(path: string): Node | null {
-    // Check our cache first
-    if (this.#pathToNodeMap.has(path)) {
-      return this.#pathToNodeMap.get(path) || null;
+    if (!targetPath) {
+      console.error(`Path not found for mutation target: ${mutation.target.nodeName}`);
+      return operations; // Return empty array instead of null
     }
 
-    // Parse the path into an array of child indexes
-    const indexes = path.split('-').map(Number);
+    switch (mutation.type) {
+      case 'attributes': {
+        if (mutation.attributeName) {
+          const target = mutation.target as Element;
+          const attributeExists = target.hasAttribute(mutation.attributeName);
 
-    // Start from the root element and traverse the path
-    let current: Node = this.ownerElement;
-    for (const index of indexes) {
-      if (current.childNodes.length <= index) {
-        console.warn(`Path ${path} is invalid: child index ${index} out of bounds`);
-        return null;
+          if (!attributeExists) {
+            operations.push({
+              type: 'removeAttribute',
+              path: targetPath,
+              data: {
+                attributeName: mutation.attributeName,
+              },
+            });
+          } else {
+            operations.push({
+              type: 'setAttribute',
+              path: targetPath,
+              data: {
+                attributeName: mutation.attributeName,
+                attributeValue: target.getAttribute(mutation.attributeName) || '',
+              },
+            });
+          }
+        }
+        break;
       }
-      current = current.childNodes[index];
-    }
 
-    // Cache the result for future lookups
-    this.#pathToNodeMap.set(path, current);
+      case 'characterData': {
+        operations.push({
+          type: 'setText',
+          path: targetPath,
+          data: {
+            textContent: mutation.target.textContent || '',
+          },
+        });
+        break;
+      }
 
-    return current;
-  }
+      case 'childList': {
+        // Handle removed nodes first (important for index consistency)
+        for (const removedNode of mutation.removedNodes) {
+          const removedPath = this.#getNodePath(removedNode);
 
-  /**
-   * Setup CRDT change listeners to update the DOM when CRDT changes
-   */
-  #setupCRDTChangeListeners(): void {
-    // Store the current document for comparison
-    let previousDoc = this.#doc;
+          if (removedPath) {
+            const removedIndex = parseInt(removedPath[removedPath.length - 1]);
 
-    // Listen for local changes by overriding the change method
-    const originalChange = this.change.bind(this);
-    this.change = (changeFn: (doc: SyncDoc) => void): void => {
-      // Call the original method to apply the change
-      originalChange(changeFn);
+            operations.push({
+              type: 'removeNode',
+              path: targetPath,
+              data: {
+                fromIndex: removedIndex,
+              },
+            });
 
-      // After the change is applied, compare and update
-      this.#applyChangesFromCRDT(previousDoc, this.#doc);
-
-      // Update previous doc reference
-      previousDoc = this.#doc;
-    };
-
-    // For remote changes, we need to set up a method to be called
-    // when the document is updated from an external source
-    this.applyRemoteChanges = (remoteDoc: Automerge.Doc<SyncDoc>): void => {
-      // Merge the remote changes into our document
-      const oldDoc = this.#doc;
-      this.#doc = Automerge.merge(this.#doc, remoteDoc);
-
-      // Apply the changes to the DOM
-      this.#applyChangesFromCRDT(oldDoc, this.#doc);
-
-      // Update our reference
-      previousDoc = this.#doc;
-    };
-
-    console.log('Registered change listeners for local and remote updates');
-  }
-
-  /**
-   * Get a CRDT node by its path, if it exists
-   */
-  #getCRDTNode(path: string): DOMNode | undefined {
-    return this.#doc.nodes[path];
-  }
-
-  /**
-   * Create a new CRDT node for a DOM node
-   */
-  #createCRDTNode(domNode: Node): DOMNode {
-    // Generate the path ID for this node
-    const path = this.#generatePathId(domNode);
-
-    // Node doesn't exist in CRDT, create it based on its type
-    return this.#createCRDTNodeFromDOM(domNode, path);
-  }
-
-  /**
-   * Create a new CRDT node from a DOM node
-   */
-  #createCRDTNodeFromDOM(domNode: Node, path: string): DOMNode {
-    // Create different node types based on the DOM node type
-    switch (domNode.nodeType) {
-      case Node.ELEMENT_NODE: {
-        const element = domNode as Element;
-        const attributes: { [key: string]: string } = {};
-
-        // Collect all attributes except our own sync attribute
-        for (let i = 0; i < element.attributes.length; i++) {
-          const attr = element.attributes[i];
-          if (attr.name !== FolkSyncAttribute.attributeName) {
-            attributes[attr.name] = attr.value;
+            // Clean up our mappings
+            this.#deleteNodePath(removedNode);
           }
         }
 
-        // Create the element node
-        const node: ElementNode = {
-          type: Node.ELEMENT_NODE,
-          path,
-          tagName: element.tagName.toLowerCase(),
-          attributes,
-        };
+        // Then handle added nodes
+        for (const addedNode of mutation.addedNodes) {
+          // Find the index where the node was inserted
+          const childNodes = Array.from(mutation.target.childNodes);
+          const index = childNodes.findIndex((child) => child === addedNode);
 
-        // Add the node to the CRDT
-        this.#doc = Automerge.change(this.#doc, (doc) => {
-          doc.nodes[path] = node;
-        });
+          if (index !== -1) {
+            // Create the new node path
+            const newNodePath = this.#createChildPath(targetPath, index);
 
-        console.log(`Created ElementNode for <${element.tagName.toLowerCase()}> with path ${path}`);
-        return node;
-      }
+            // Serialize the added node
+            const serializedNode = this.#serializeNode(addedNode, newNodePath);
 
-      case Node.TEXT_NODE: {
-        const textContent = domNode.textContent || '';
-
-        // Create the text node
-        const node: TextNode = {
-          type: Node.TEXT_NODE,
-          path,
-          textContent,
-        };
-
-        // Add the node to the CRDT
-        this.#doc = Automerge.change(this.#doc, (doc) => {
-          doc.nodes[path] = node;
-        });
-
-        console.log(`Created TextNode with path ${path} and ${textContent.length} characters`);
-        return node;
-      }
-
-      case Node.COMMENT_NODE: {
-        const node: CommentNode = {
-          type: Node.COMMENT_NODE,
-          path,
-        };
-
-        this.#doc = Automerge.change(this.#doc, (doc) => {
-          doc.nodes[path] = node;
-        });
-
-        console.log(`Created CommentNode stub with path ${path}`);
-        return node;
-      }
-
-      case Node.DOCUMENT_NODE: {
-        const node: DocumentNode = {
-          type: Node.DOCUMENT_NODE,
-          path,
-        };
-
-        this.#doc = Automerge.change(this.#doc, (doc) => {
-          doc.nodes[path] = node;
-        });
-
-        console.log(`Created DocumentNode stub with path ${path}`);
-        return node;
-      }
-
-      case Node.DOCUMENT_TYPE_NODE: {
-        const node: DocumentTypeNode = {
-          type: Node.DOCUMENT_TYPE_NODE,
-          path,
-        };
-
-        this.#doc = Automerge.change(this.#doc, (doc) => {
-          doc.nodes[path] = node;
-        });
-
-        console.log(`Created DocumentTypeNode stub with path ${path}`);
-        return node;
-      }
-
-      case Node.DOCUMENT_FRAGMENT_NODE: {
-        const node: DocumentFragmentNode = {
-          type: Node.DOCUMENT_FRAGMENT_NODE,
-          path,
-        };
-
-        this.#doc = Automerge.change(this.#doc, (doc) => {
-          doc.nodes[path] = node;
-        });
-
-        console.log(`Created DocumentFragmentNode stub with path ${path}`);
-        return node;
-      }
-
-      // For all other node types, create a generic node
-      default: {
-        // Log the unsupported node type
-        console.log(`Creating a generic node for unsupported type ${domNode.nodeType} with path ${path}`);
-
-        // For unsupported types, create a base node with the type
-        let nodeType: DOMNodeTypeValue;
-
-        // Safely cast to a supported node type or use ELEMENT_NODE as fallback
-        if (domNode.nodeType === Node.ATTRIBUTE_NODE) {
-          nodeType = Node.ATTRIBUTE_NODE;
-        } else if (domNode.nodeType === Node.CDATA_SECTION_NODE) {
-          nodeType = Node.CDATA_SECTION_NODE;
-        } else if (domNode.nodeType === Node.ENTITY_REFERENCE_NODE) {
-          nodeType = Node.ENTITY_REFERENCE_NODE;
-        } else if (domNode.nodeType === Node.ENTITY_NODE) {
-          nodeType = Node.ENTITY_NODE;
-        } else if (domNode.nodeType === Node.PROCESSING_INSTRUCTION_NODE) {
-          nodeType = Node.PROCESSING_INSTRUCTION_NODE;
-        } else if (domNode.nodeType === Node.NOTATION_NODE) {
-          nodeType = Node.NOTATION_NODE;
-        } else {
-          // Default to ELEMENT_NODE if we encounter an unknown type
-          nodeType = Node.ELEMENT_NODE;
-          console.warn(`Unknown node type ${domNode.nodeType}, defaulting to ELEMENT_NODE`);
+            operations.push({
+              type: 'addNode',
+              path: targetPath,
+              data: {
+                node: serializedNode,
+                toIndex: index,
+              },
+            });
+          }
         }
-
-        // Create a basic node with just the type and path
-        const node: BaseDOMNode = {
-          type: nodeType,
-          path,
-        };
-
-        // Add it to the CRDT
-        this.#doc = Automerge.change(this.#doc, (doc) => {
-          doc.nodes[path] = node as DOMNode;
-        });
-
-        return node as DOMNode;
+        break;
       }
     }
+
+    return operations;
   }
 
   /**
-   * Handle DOM mutations observed by MutationObserver
+   * Apply a sync operation to the Automerge document
+   * @param doc The Automerge document
+   * @param operation The operation to apply
    */
-  #handleMutations(mutations: MutationRecord[]): void {
-    // Process each mutation
-    for (const mutation of mutations) {
-      try {
-        if (mutation.type === 'attributes') {
-          this.#handleAttributeMutation(mutation);
-        } else if (mutation.type === 'characterData') {
-          this.#handleTextMutation(mutation);
-        }
-        // Ignoring childList mutations as per requirements
-      } catch (error) {
-        console.error('Error handling mutation:', error);
-        throw error;
-      }
-    }
-  }
+  #applyOperationToDoc(doc: DOMNode, operation: SyncOperation): void {
+    // Find the target node in the document
+    let target = doc;
 
-  /**
-   * Handle attribute changes in the DOM
-   */
-  #handleAttributeMutation(mutation: MutationRecord): void {
-    const element = mutation.target as Element;
-    const attributeName = mutation.attributeName!;
-    const newValue = element.getAttribute(attributeName);
+    // Navigate to the target node using the path
+    for (let i = 0; i < operation.path.length; i += 2) {
+      const prop = operation.path[i];
+      const index = parseInt(operation.path[i + 1]);
 
-    // Skip our own attribute to avoid infinite loops
-    if (attributeName === FolkSyncAttribute.attributeName) {
-      return;
-    }
-
-    // Get the path for this element
-    const path = this.#generatePathId(element);
-
-    console.log(`Attribute change detected: "${attributeName}" on element at path ${path}`);
-
-    // Check if we already have this node
-    const existingNode = this.#getCRDTNode(path);
-
-    // Update the attribute in the CRDT
-    this.#doc = Automerge.change(this.#doc, (doc) => {
-      if (!existingNode) {
-        // This could happen if we missed the initial scan
-        // Initialize it as an ElementNode
-        doc.nodes[path] = {
-          type: Node.ELEMENT_NODE,
-          path,
-          tagName: element.tagName.toLowerCase(),
-          attributes: {},
-        };
+      if (prop === 'childNodes') {
+        target = target.childNodes[index];
+      } else {
+        target = target[prop as keyof DOMNode] as any;
       }
 
-      // Ensure we're working with an ElementNode
-      const node = doc.nodes[path] as ElementNode;
-      if (node.type !== Node.ELEMENT_NODE) {
-        console.error(`Node at path ${path} is not an ElementNode`);
+      if (!target) {
+        console.error(`Target node not found at path: ${operation.path.join('.')}`);
         return;
       }
+    }
 
-      // Update the attribute
-      if (newValue === null) {
-        // Don't actually delete for this POC, as per requirements
-        // only focusing on changing values, not adding/removing
-        node.attributes[attributeName] = '';
-      } else {
-        node.attributes[attributeName] = newValue;
+    // Apply the operation based on its type
+    switch (operation.type) {
+      case 'setAttribute': {
+        if (!target.attributes) target.attributes = {};
+        target.attributes[operation.data!.attributeName!] = operation.data!.attributeValue!;
+        break;
       }
-    });
+
+      case 'removeAttribute': {
+        if (target.attributes) {
+          delete target.attributes[operation.data!.attributeName!];
+        }
+        break;
+      }
+
+      case 'setText': {
+        target.textContent = operation.data!.textContent!;
+        break;
+      }
+
+      case 'addNode': {
+        const index = operation.data!.toIndex!;
+        target.childNodes.splice(index, 0, operation.data!.node!);
+        break;
+      }
+
+      case 'removeNode': {
+        const index = operation.data!.fromIndex!;
+        target.childNodes.splice(index, 1);
+        break;
+      }
+
+      case 'moveNode': {
+        const fromIndex = operation.data!.fromIndex!;
+        const toIndex = operation.data!.toIndex!;
+        const node = target.childNodes[fromIndex];
+        target.childNodes.splice(fromIndex, 1);
+        target.childNodes.splice(toIndex, 0, node);
+        break;
+      }
+    }
   }
 
   /**
-   * Handle text content changes in the DOM
+   * Apply a sync operation to the DOM
+   * @param operation The operation to apply
    */
-  #handleTextMutation(mutation: MutationRecord): void {
-    const textNode = mutation.target as Text;
-    const newContent = textNode.textContent || '';
+  #applyOperationToDOM(operation: SyncOperation): void {
+    // Find the target node in the DOM
+    let targetNode: Node;
 
-    // Get the path for this text node
-    const path = this.#generatePathId(textNode);
+    if (operation.path.length === 0) {
+      targetNode = this.ownerElement;
+    } else {
+      const foundNode = this.#getNodeByPath(operation.path);
+      if (!foundNode) {
+        console.error(`Target DOM node not found at path: ${operation.path.join('.')}`);
+        return;
+      }
+      targetNode = foundNode;
+    }
 
-    console.log(`Text change detected at path ${path}: ${newContent.length} characters`);
+    // Apply the operation based on its type
+    switch (operation.type) {
+      case 'setAttribute': {
+        if (targetNode instanceof Element) {
+          targetNode.setAttribute(operation.data!.attributeName!, operation.data!.attributeValue!);
+        }
+        break;
+      }
 
-    // Check if we already have this node
-    const existingNode = this.#getCRDTNode(path);
+      case 'removeAttribute': {
+        if (targetNode instanceof Element) {
+          targetNode.removeAttribute(operation.data!.attributeName!);
+        }
+        break;
+      }
 
-    // Update the text content in the CRDT
-    this.#doc = Automerge.change(this.#doc, (doc) => {
-      if (!existingNode) {
-        // Initialize it as a TextNode if it doesn't exist
-        doc.nodes[path] = {
-          type: Node.TEXT_NODE,
-          path,
-          textContent: newContent,
-        };
-      } else {
-        // Update existing text node
-        const node = doc.nodes[path] as TextNode;
-        if (node.type !== Node.TEXT_NODE) {
-          console.error(`Node at path ${path} is not a TextNode`);
-          return;
+      case 'setText': {
+        targetNode.textContent = operation.data!.textContent!;
+        break;
+      }
+
+      case 'addNode': {
+        const parentNode = targetNode;
+        const index = operation.data!.toIndex!;
+        const newNode = this.#deserializeNode(operation.data!.node!);
+
+        // Insert at the correct position
+        const childNodes = Array.from(parentNode.childNodes);
+        if (index >= childNodes.length) {
+          parentNode.appendChild(newNode);
+        } else {
+          parentNode.insertBefore(newNode, childNodes[index]);
         }
 
-        // Update the text content
-        node.textContent = newContent;
+        // Update paths for all subsequent siblings
+        this.#updateChildPaths(parentNode, operation.path, index + 1);
+        break;
       }
-    });
-  }
 
-  /**
-   * Apply changes from the CRDT to the DOM
-   */
-  #applyChangesFromCRDT(oldDoc: Automerge.Doc<SyncDoc>, newDoc: Automerge.Doc<SyncDoc>): void {
-    // Stop observing to prevent loops
-    this.#stopObserving();
+      case 'removeNode': {
+        const parentNode = targetNode;
+        const index = operation.data!.fromIndex!;
+        const childNodes = Array.from(parentNode.childNodes);
 
-    try {
-      // Process each node in the new document
-      for (const path in newDoc.nodes) {
-        const newNode = newDoc.nodes[path];
-        const oldNode = oldDoc.nodes[path];
+        if (index < childNodes.length) {
+          const nodeToRemove = childNodes[index];
+          parentNode.removeChild(nodeToRemove);
 
-        // Skip if node hasn't changed
-        if (oldNode && JSON.stringify(oldNode) === JSON.stringify(newNode)) {
-          continue;
+          // Update paths for all subsequent siblings
+          this.#updateChildPaths(parentNode, operation.path, index);
         }
+        break;
+      }
 
-        // Find the corresponding DOM node
-        const domNode = this.#findNodeByPath(path);
-        if (!domNode) {
-          console.warn(`Could not find DOM node for path: ${path}`);
-          continue;
+      case 'moveNode': {
+        const parentNode = targetNode;
+        const fromIndex = operation.data!.fromIndex!;
+        const toIndex = operation.data!.toIndex!;
+        const childNodes = Array.from(parentNode.childNodes);
+
+        if (fromIndex < childNodes.length) {
+          const nodeToMove = childNodes[fromIndex];
+
+          // Remove from old position
+          parentNode.removeChild(nodeToMove);
+
+          // Insert at new position
+          const updatedChildNodes = Array.from(parentNode.childNodes);
+          if (toIndex >= updatedChildNodes.length) {
+            parentNode.appendChild(nodeToMove);
+          } else {
+            parentNode.insertBefore(nodeToMove, updatedChildNodes[toIndex]);
+          }
+
+          // Update paths for all affected siblings
+          this.#updateChildPaths(parentNode, operation.path);
         }
-
-        // Apply changes based on node type
-        this.#applyNodeChanges(domNode, oldNode, newNode);
-      }
-    } finally {
-      // Resume observation
-      this.#startObserving();
-    }
-  }
-
-  /**
-   * Apply changes to a specific DOM node based on CRDT changes
-   */
-  #applyNodeChanges(domNode: Node, oldNode: DOMNode | undefined, newNode: DOMNode): void {
-    // Use a visitor pattern to handle different node types
-    switch (newNode.type) {
-      case Node.ELEMENT_NODE:
-        this.#applyElementChanges(domNode as Element, oldNode as ElementNode | undefined, newNode as ElementNode);
         break;
-
-      case Node.TEXT_NODE:
-        this.#applyTextChanges(domNode as Text, oldNode as TextNode | undefined, newNode as TextNode);
-        break;
-
-      // Stubs for other node types - no implementation needed for POC
-      case Node.COMMENT_NODE:
-      case Node.DOCUMENT_NODE:
-      case Node.DOCUMENT_TYPE_NODE:
-      case Node.DOCUMENT_FRAGMENT_NODE:
-      case Node.ATTRIBUTE_NODE:
-      case Node.CDATA_SECTION_NODE:
-      case Node.PROCESSING_INSTRUCTION_NODE:
-      case Node.ENTITY_REFERENCE_NODE:
-      case Node.ENTITY_NODE:
-      case Node.NOTATION_NODE:
-        console.log(`Skipping changes for node type ${newNode.type} - not implemented in POC`);
-        break;
-    }
-  }
-
-  /**
-   * Apply changes to an element node
-   */
-  #applyElementChanges(element: Element, oldNode: ElementNode | undefined, newNode: ElementNode): void {
-    // Skip if no old node (new element) or no attributes change
-    if (!oldNode || !oldNode.attributes) return;
-
-    // Update attributes that changed
-    for (const key in newNode.attributes) {
-      const newValue = newNode.attributes[key];
-      const oldValue = oldNode.attributes[key];
-
-      // Update if changed
-      if (oldValue !== newValue && element.getAttribute(key) !== newValue) {
-        console.log(`Updating attribute ${key} on element ${element.tagName}: "${oldValue}" -> "${newValue}"`);
-        element.setAttribute(key, newValue);
       }
     }
   }
 
   /**
-   * Apply changes to a text node
+   * Creates or updates a DOM node based on Automerge data
+   * @param data The node data from Automerge
+   * @param path Current path in the Automerge document
+   * @param parent Optional parent node for new nodes
+   * @returns The created or updated DOM node
    */
-  #applyTextChanges(textNode: Text, oldNode: TextNode | undefined, newNode: TextNode): void {
-    // Skip if content hasn't changed
-    if (oldNode && oldNode.textContent === newNode.textContent) return;
+  #deserializeNode(data: DOMNode, path: string[] = [], parent?: Node): Node {
+    let node: Node;
 
-    // Update text content
-    if (textNode.textContent !== newNode.textContent) {
-      console.log(
-        `Updating text node content: ${textNode.textContent?.length || 0} -> ${newNode.textContent.length} chars`,
-      );
-      textNode.textContent = newNode.textContent;
+    // Create the appropriate node type
+    if (data.nodeType === Node.ELEMENT_NODE) {
+      node = document.createElement(data.nodeName);
+    } else if (data.nodeType === Node.TEXT_NODE) {
+      node = document.createTextNode(data.textContent || '');
+    } else if (data.nodeType === Node.COMMENT_NODE) {
+      node = document.createComment(data.textContent || '');
+    } else {
+      throw new Error(`Unsupported node type: ${data.nodeType}`);
     }
+
+    // Update our mappings
+    if (path.length > 0) {
+      this.#setNodePath(node, path);
+    }
+
+    // Set attributes for element nodes
+    if (data.nodeType === Node.ELEMENT_NODE && node instanceof Element && data.attributes) {
+      for (const [name, value] of Object.entries(data.attributes)) {
+        node.setAttribute(name, value);
+      }
+    }
+
+    // Add children for element nodes
+    if (data.nodeType === Node.ELEMENT_NODE && data.childNodes) {
+      data.childNodes.forEach((childData, index) => {
+        const childPath = this.#createChildPath(path, index);
+        const childNode = this.#deserializeNode(childData, childPath);
+        node.appendChild(childNode);
+      });
+    }
+
+    // Add to parent if provided
+    if (parent) {
+      parent.appendChild(node);
+    }
+
+    return node;
   }
 
   /**
@@ -644,10 +540,20 @@ export class FolkSyncAttribute extends CustomAttribute {
    */
   #startObserving(): void {
     if (!this.#observer) {
-      this.#observer = new MutationObserver((mutations) => this.#handleMutations(mutations));
+      this.#observer = new MutationObserver((mutations) => {
+        if (this.#isApplyingRemoteChanges) return;
+        this.#handleMutations(mutations);
+      });
     }
-    this.#observer.observe(this.ownerElement, this.#observerConfig);
-    console.log('Started observing DOM mutations');
+
+    this.#observer.observe(this.ownerElement, {
+      attributes: true,
+      characterData: true,
+      childList: true,
+      subtree: true,
+      attributeOldValue: true,
+      characterDataOldValue: true,
+    });
   }
 
   /**
@@ -660,17 +566,249 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
-   * Get the current CRDT document
+   * Handle DOM mutations and update Automerge document
    */
-  getDocument(): Automerge.Doc<SyncDoc> {
-    return this.#doc;
+  #handleMutations(mutations: MutationRecord[]): void {
+    if (!this.#automerge) {
+      throw new Error('Cannot handle mutations: FolkAutomerge instance not initialized');
+    }
+
+    // Process each mutation as an operation
+    for (const mutation of mutations) {
+      const operations = this.#mutationToOperations(mutation);
+      if (operations.length === 0) {
+        console.warn('No operations generated for mutation', mutation);
+        continue;
+      }
+
+      this.#automerge.change((doc: DOMNode) => {
+        // If document is empty, initialize it
+        if (!doc.nodeType) {
+          console.log('Creating document from DOM');
+          // Copy all properties from the serialized node to the document
+          const serialized = this.#serializeNode(this.ownerElement);
+          Object.assign(doc, serialized);
+          return;
+        }
+
+        // Apply all operations from this mutation
+        for (const operation of operations) {
+          this.#applyOperationToDoc(doc, operation);
+        }
+      });
+    }
   }
 
   /**
-   * Apply a change to the document using Automerge.change
+   * Compare two Automerge documents and generate operations to transform one into the other
+   * @param oldDoc The old document state
+   * @param newDoc The new document state
+   * @returns Array of operations to transform oldDoc into newDoc
    */
-  change(changeFn: (doc: SyncDoc) => void): void {
-    this.#doc = Automerge.change(this.#doc, changeFn);
+  #diffDocuments(oldDoc: DOMNode, newDoc: DOMNode): SyncOperation[] {
+    const operations: SyncOperation[] = [];
+
+    // Helper function to recursively diff nodes
+    const diffNodes = (oldNode: DOMNode, newNode: DOMNode, path: string[] = []): void => {
+      // Check attributes
+      if (oldNode.attributes && newNode.attributes) {
+        // Find attributes that were added or changed
+        for (const [name, value] of Object.entries(newNode.attributes)) {
+          if (!oldNode.attributes[name] || oldNode.attributes[name] !== value) {
+            operations.push({
+              type: 'setAttribute',
+              path,
+              data: {
+                attributeName: name,
+                attributeValue: value,
+              },
+            });
+          }
+        }
+
+        // Find attributes that were removed
+        for (const name of Object.keys(oldNode.attributes)) {
+          if (!(name in newNode.attributes)) {
+            operations.push({
+              type: 'removeAttribute',
+              path,
+              data: {
+                attributeName: name,
+              },
+            });
+          }
+        }
+      }
+
+      // Check text content for text and comment nodes
+      if (oldNode.nodeType === Node.TEXT_NODE || oldNode.nodeType === Node.COMMENT_NODE) {
+        if (oldNode.textContent !== newNode.textContent) {
+          operations.push({
+            type: 'setText',
+            path,
+            data: {
+              textContent: newNode.textContent || '',
+            },
+          });
+        }
+        return; // No need to check children for text/comment nodes
+      }
+
+      // Check children
+      const oldChildren = oldNode.childNodes || [];
+      const newChildren = newNode.childNodes || [];
+
+      // Simple diff algorithm - can be improved with a proper diff algorithm
+      let i = 0;
+      while (i < oldChildren.length && i < newChildren.length) {
+        // If node types or names differ, replace the node
+        if (
+          oldChildren[i].nodeType !== newChildren[i].nodeType ||
+          oldChildren[i].nodeName !== newChildren[i].nodeName
+        ) {
+          operations.push({
+            type: 'removeNode',
+            path,
+            data: {
+              fromIndex: i,
+            },
+          });
+
+          operations.push({
+            type: 'addNode',
+            path,
+            data: {
+              node: newChildren[i],
+              toIndex: i,
+            },
+          });
+        } else {
+          // Recursively diff the children
+          diffNodes(oldChildren[i], newChildren[i], [...path, 'childNodes', i.toString()]);
+        }
+        i++;
+      }
+
+      // Handle remaining old children (to be removed)
+      while (i < oldChildren.length) {
+        operations.push({
+          type: 'removeNode',
+          path,
+          data: {
+            fromIndex: i,
+          },
+        });
+        i++;
+      }
+
+      // Handle remaining new children (to be added)
+      while (i < newChildren.length) {
+        operations.push({
+          type: 'addNode',
+          path,
+          data: {
+            node: newChildren[i],
+            toIndex: i,
+          },
+        });
+        i++;
+      }
+    };
+
+    // Start the diff from the root
+    diffNodes(oldDoc, newDoc);
+
+    return operations;
+  }
+
+  /**
+   * Handle changes from the Automerge document and update DOM
+   */
+  #handleDocumentChange(oldDoc: DOMNode | null, newDoc: DOMNode): void {
+    if (!newDoc) {
+      throw new Error('Cannot handle document change: Document is null or undefined');
+    }
+
+    // Stop observing while we update the DOM
+    this.#stopObserving();
+    this.#isApplyingRemoteChanges = true;
+
+    try {
+      if (!oldDoc || !oldDoc.nodeType) {
+        // Complete replacement if we don't have a valid old document
+        this.#replaceDOMSubtree(newDoc);
+      } else {
+        // Generate and apply operations to transform the DOM
+        const operations = this.#diffDocuments(oldDoc, newDoc);
+
+        for (const operation of operations) {
+          this.#applyOperationToDOM(operation);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating DOM from document:', error);
+      throw error;
+    } finally {
+      // Resume observing
+      this.#isApplyingRemoteChanges = false;
+      this.#startObserving();
+    }
+  }
+
+  /**
+   * Completely replaces the DOM subtree with the one derived from the Automerge document
+   * @param data The node data from Automerge
+   */
+  #replaceDOMSubtree(data: DOMNode): void {
+    console.log('Replacing DOM subtree with Automerge data');
+
+    // Clear our mappings
+    this.#nodeToPath = new WeakMap<Node, string[]>();
+    this.#pathToNode = new Map<string, Node>();
+
+    // Clear the owner element's content
+    const ownerElement = this.ownerElement;
+
+    // Keep track of the original attributes
+    const originalAttributes: { [key: string]: string } = {};
+    for (const attr of ownerElement.attributes) {
+      originalAttributes[attr.name] = attr.value;
+    }
+
+    // Remove all children
+    while (ownerElement.firstChild) {
+      ownerElement.removeChild(ownerElement.firstChild);
+    }
+
+    // Remove all attributes
+    while (ownerElement.attributes.length > 0) {
+      ownerElement.removeAttribute(ownerElement.attributes[0].name);
+    }
+
+    // Create a new element from the data
+    if (data.nodeType === Node.ELEMENT_NODE) {
+      // Set attributes from the data
+      if (data.attributes) {
+        for (const [name, value] of Object.entries(data.attributes)) {
+          ownerElement.setAttribute(name, value);
+        }
+      }
+
+      // Restore the folk-sync attribute if it was removed
+      if (!ownerElement.hasAttribute('folk-sync')) {
+        ownerElement.setAttribute('folk-sync', originalAttributes['folk-sync'] || '');
+      }
+
+      // Create children from the data
+      if (data.childNodes) {
+        data.childNodes.forEach((childData, index) => {
+          const childPath = this.#createChildPath([], index);
+          this.#deserializeNode(childData, childPath, ownerElement);
+        });
+      }
+    }
+
+    console.log('DOM subtree replacement complete');
   }
 
   /**
@@ -679,84 +817,67 @@ export class FolkSyncAttribute extends CustomAttribute {
   connectedCallback(): void {
     console.log(`FolkSync connected to <${this.ownerElement.tagName.toLowerCase()}>`);
 
-    // Initialize empty document
-    this.#doc = Automerge.init<SyncDoc>();
-    this.#doc = Automerge.change(this.#doc, (doc) => {
-      doc.nodes = {};
-    });
-
-    console.log('Initialized empty CRDT document');
-
-    // Scan and initialize the DOM subtree using TreeWalker
-    console.log('Starting scan of DOM subtree...');
-
-    // Create a CRDT node for the root element
-    this.#createCRDTNode(this.ownerElement);
-
-    // Use TreeWalker to efficiently traverse all nodes
-    const walker = document.createTreeWalker(
-      this.ownerElement,
-      // Focus on elements and text nodes for this POC
-      NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: (node: Node) => {
-          // Only process text nodes with actual content
-          if (node.nodeType === Node.TEXT_NODE) {
-            return node.textContent && node.textContent.trim() !== ''
-              ? NodeFilter.FILTER_ACCEPT
-              : NodeFilter.FILTER_SKIP;
-          }
-          // Accept all elements
-          return NodeFilter.FILTER_ACCEPT;
-        },
-      },
-    );
-
-    // Skip the root node since we already processed it
-    let currentNode = walker.nextNode();
-
-    // Traverse all nodes in the subtree
-    while (currentNode) {
-      // Create new CRDT nodes for each DOM node
-      // We know these are new nodes since we're initializing the document
-      const node = this.#createCRDTNode(currentNode);
-
-      // Store the mapping from path to node
-      const path = this.#generatePathId(currentNode);
-      this.#pathToNodeMap.set(path, currentNode);
-
-      // Move to the next node
-      currentNode = walker.nextNode();
+    if (!this.ownerElement) {
+      throw new Error('FolkSync attribute connected without an owner element');
     }
 
-    console.log(`Initialized ${Object.keys(this.#doc.nodes).length} nodes in the CRDT document`);
+    // Initialize in a clean state
+    this.#nodeToPath = new WeakMap<Node, string[]>();
+    this.#pathToNode = new Map<string, Node>();
 
-    // Set up CRDT change listeners
-    this.#setupCRDTChangeListeners();
+    // Initialize FolkAutomerge for network sync with an empty constructor
+    this.#automerge = new FolkAutomerge<DOMNode>();
 
-    // Start observing mutations
-    this.#startObserving();
+    // When the document is ready, either initialize from the document or from the DOM
+    this.#automerge
+      .whenReady((doc) => {
+        try {
+          if (!doc.nodeType) {
+            // No valid document: serialize the DOM into the document
+            console.log('Initializing new document from DOM');
+            this.#automerge.change((newDoc) => {
+              // Serialize the owner element and copy all properties to the document
+              const serialized = this.#serializeNode(this.ownerElement);
+              Object.assign(newDoc, serialized);
+              console.log('Initialized document with DOM tree:', newDoc);
+            });
+          } else {
+            // Existing document: update the DOM to match
+            console.log('Initializing DOM from existing document');
+            // Completely replace the DOM subtree with the one from the Automerge document
+            this.#replaceDOMSubtree(doc);
+          }
+
+          // Set up the change handler for future updates only after successful initialization
+          let previousDoc = doc;
+          this.#automerge.onRemoteChange((updatedDoc) => {
+            this.#handleDocumentChange(previousDoc, updatedDoc);
+            previousDoc = updatedDoc;
+          });
+
+          // Start observing only after successful initialization
+          this.#startObserving();
+
+          console.log('FolkSync successfully initialized with document ID:', this.#automerge.getDocumentId());
+        } catch (error) {
+          console.error('FolkSync initialization failed:', error);
+          // Fail fast, don't try to recover
+          throw error;
+        }
+      })
+      .catch((error) => {
+        console.error('FolkSync initialization promise rejected:', error);
+        throw error; // Ensure errors in the promise chain are not swallowed
+      });
   }
 
   /**
-   * Clean up when the attribute is removed from the DOM
+   * Clean up when the attribute is disconnected from the DOM
    */
   disconnectedCallback(): void {
-    console.log(`FolkSync disconnected from <${this.ownerElement.tagName.toLowerCase()}>`);
-
-    // Stop observing mutations
     this.#stopObserving();
-
-    // Clear the path map
-    this.#pathToNodeMap.clear();
-  }
-
-  /**
-   * Apply remote changes from another peer
-   * This should be called when receiving updates from a network connection
-   */
-  applyRemoteChanges(remoteDoc: Automerge.Doc<SyncDoc>): void {
-    // Implementation is set up in setupCRDTChangeListeners
-    // This stub is replaced at runtime
+    console.log(`FolkSync disconnected from <${this.ownerElement.tagName.toLowerCase()}>`);
   }
 }
+
+FolkSyncAttribute.define();
