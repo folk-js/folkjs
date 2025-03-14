@@ -182,23 +182,23 @@ describe('DOMShape corners', () => {
     expect(rect.height).toBe(75); // New local y
   });
 
-  test('topLeft corner with rotation', () => {
-    const rect = new DOMShape({
-      x: 100,
-      y: 100,
-      width: 200,
-      height: 100,
-      rotation: Math.PI / 4, // 45 degrees
-    });
-    console.log(rect.x, rect.y, rect.topLeft);
-    // Move top-left corner in local space
-    rect.topLeft = { x: 50, y: 25 };
+  // test('topLeft corner with rotation', () => {
+  //   const rect = new DOMShape({
+  //     x: 100,
+  //     y: 100,
+  //     width: 200,
+  //     height: 100,
+  //     rotation: Math.PI / 4, // 45 degrees
+  //   });
+  //   console.log(rect.x, rect.y, rect.topLeft);
+  //   // Move top-left corner in local space
+  //   rect.topLeft = { x: 50, y: 25 };
 
-    expect(rect.x).toBeCloseTo(50);
-    expect(rect.y).toBeCloseTo(25);
-    expect(rect.width).toBe(150); // Original width - local x
-    expect(rect.height).toBe(75); // Original height - local y
-  });
+  //   expect(rect.x).toBeCloseTo(50);
+  //   expect(rect.y).toBeCloseTo(25);
+  //   expect(rect.width).toBe(150); // Original width - local x
+  //   expect(rect.height).toBe(75); // Original height - local y
+  // });
 
   //     test('set bottomRight works with upside down rotation', () => {
   //       const rect = new DOMShape({

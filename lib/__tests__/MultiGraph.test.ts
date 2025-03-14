@@ -395,8 +395,8 @@ describe('MultiGraph', () => {
       graph.addEdge(edgeBD);
 
       const visited: string[] = [];
-      graph.breadthFirstTraversal('A', (id) => {
-        visited.push(id);
+      graph.breadthFirstTraversal('A', (node) => {
+        visited.push(node.id);
       });
 
       // BFS should visit A, then B and C, then D
@@ -421,8 +421,8 @@ describe('MultiGraph', () => {
       graph.addEdge(edgeBD);
 
       const visited: string[] = [];
-      graph.depthFirstTraversal('A', (id) => {
-        visited.push(id);
+      graph.depthFirstTraversal('A', (node) => {
+        visited.push(node.id);
       });
 
       // DFS should visit A, then follow a path to leaf before backtracking
