@@ -203,12 +203,12 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
-   * Converts a mutation record to a sync operation
+   * Converts a mutation record to sync operations
    * @param mutation The DOM mutation record
-   * @returns The corresponding sync operation or null if not applicable
+   * @returns Array of corresponding sync operations
    */
-  #mutationToOperation(mutation: MutationRecord): SyncOperation | null {
-    // Get the path to the affected node
+  #mutationToOperations(mutation: MutationRecord): SyncOperation[] {
+    const operations: SyncOperation[] = [];
     const targetPath = this.#getNodePath(mutation.target);
 
     // Handle mutations on the owner element
@@ -217,33 +217,32 @@ export class FolkSyncAttribute extends CustomAttribute {
         const attributeExists = (mutation.target as Element).hasAttribute(mutation.attributeName);
 
         if (!attributeExists) {
-          return {
+          operations.push({
             type: 'removeAttribute',
             path: [],
             data: {
               attributeName: mutation.attributeName,
             },
-          };
+          });
         } else {
-          return {
+          operations.push({
             type: 'setAttribute',
             path: [],
             data: {
               attributeName: mutation.attributeName,
               attributeValue: (mutation.target as Element).getAttribute(mutation.attributeName) || '',
             },
-          };
+          });
         }
       }
-      return null;
+      return operations;
     }
 
     if (!targetPath) {
       console.error(`Path not found for mutation target: ${mutation.target.nodeName}`);
-      return null;
+      return operations; // Return empty array instead of null
     }
 
-    // Handle different mutation types
     switch (mutation.type) {
       case 'attributes': {
         if (mutation.attributeName) {
@@ -251,41 +250,60 @@ export class FolkSyncAttribute extends CustomAttribute {
           const attributeExists = target.hasAttribute(mutation.attributeName);
 
           if (!attributeExists) {
-            return {
+            operations.push({
               type: 'removeAttribute',
               path: targetPath,
               data: {
                 attributeName: mutation.attributeName,
               },
-            };
+            });
           } else {
-            return {
+            operations.push({
               type: 'setAttribute',
               path: targetPath,
               data: {
                 attributeName: mutation.attributeName,
                 attributeValue: target.getAttribute(mutation.attributeName) || '',
               },
-            };
+            });
           }
         }
         break;
       }
 
       case 'characterData': {
-        return {
+        operations.push({
           type: 'setText',
           path: targetPath,
           data: {
             textContent: mutation.target.textContent || '',
           },
-        };
+        });
+        break;
       }
 
       case 'childList': {
-        const operations: SyncOperation[] = [];
+        // Handle removed nodes first (important for index consistency)
+        for (const removedNode of mutation.removedNodes) {
+          const removedPath = this.#getNodePath(removedNode);
 
-        // Handle added nodes
+          if (removedPath) {
+            const removedIndex = parseInt(removedPath[removedPath.length - 1]);
+
+            operations.push({
+              type: 'removeNode',
+              path: targetPath,
+              data: {
+                fromIndex: removedIndex,
+              },
+            });
+
+            // Clean up our mappings
+            this.#deleteNodePath(removedNode);
+          }
+        }
+
+        // Then handle added nodes
         for (const addedNode of mutation.addedNodes) {
           // Find the index where the node was inserted
           const childNodes = Array.from(mutation.target.childNodes);
@@ -308,33 +326,11 @@ export class FolkSyncAttribute extends CustomAttribute {
             });
           }
         }
-
-        // Handle removed nodes
-        for (const removedNode of mutation.removedNodes) {
-          const removedPath = this.#getNodePath(removedNode);
-
-          if (removedPath) {
-            const removedIndex = parseInt(removedPath[removedPath.length - 1]);
-
-            operations.push({
-              type: 'removeNode',
-              path: targetPath,
-              data: {
-                fromIndex: removedIndex,
-              },
-            });
-
-            // Clean up our mappings
-            this.#deleteNodePath(removedNode);
-          }
-        }
-
-        // Return the first operation if any (we'll process them one by one)
-        return operations.length > 0 ? operations[0] : null;
+        break;
       }
     }
 
-    return null;
+    return operations;
   }
 
   /**
@@ -597,9 +593,9 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     // Process each mutation as an operation
     for (const mutation of mutations) {
-      const operation = this.#mutationToOperation(mutation);
-      if (!operation) {
-        console.warn('operation is null', mutation);
+      const operations = this.#mutationToOperations(mutation);
+      if (operations.length === 0) {
+        console.warn('No operations generated for mutation', mutation);
         continue;
       }
 
@@ -613,8 +609,10 @@ export class FolkSyncAttribute extends CustomAttribute {
           return;
         }
 
-        // Apply the operation to the document
-        this.#applyOperationToDoc(doc, operation);
+        // Apply all operations from this mutation
+        for (const operation of operations) {
+          this.#applyOperationToDoc(doc, operation);
+        }
       });
     }
   }
