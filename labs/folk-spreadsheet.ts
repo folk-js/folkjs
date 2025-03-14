@@ -439,7 +439,37 @@ export class FolkSpreadSheetCell extends HTMLElement {
 
   attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null) {
     if (name === 'expression' && newValue !== null) {
-      this.expression = newValue;
+      let expression = newValue;
+      expression = String(expression).trim();
+
+      if (expression === this.#expression) return;
+
+      this.#expression = expression;
+
+      this.#dependencies.forEach((dep) => dep.removeEventListener('propagate', this));
+
+      if (expression === '') return;
+
+      if (!expression.includes('return ')) {
+        expression = `return ${expression}`;
+      }
+
+      const argNames: string[] = expression.match(/\$[A-Z]+\d+/g) ?? [];
+
+      this.#dependencies = Object.freeze(
+        argNames
+          .map((dep) => {
+            const [, column, row] = dep.split(/([A-Z]+)(\d+)/s);
+            return this.#getCell(column, row);
+          })
+          .filter((cell) => cell !== null),
+      );
+
+      this.#dependencies.forEach((dep) => dep.addEventListener('propagate', this));
+
+      this.#function = new Function(...argNames, expression);
+
+      this.#evaluate();
     }
   }
 
@@ -490,36 +520,7 @@ export class FolkSpreadSheetCell extends HTMLElement {
     return this.#expression;
   }
   set expression(expression: any) {
-    expression = String(expression).trim();
-
-    if (expression === this.#expression) return;
-
-    this.#expression = expression;
-
-    this.#dependencies.forEach((dep) => dep.removeEventListener('propagate', this));
-
-    if (expression === '') return;
-
-    if (!expression.includes('return ')) {
-      expression = `return ${expression}`;
-    }
-
-    const argNames: string[] = expression.match(/\$[A-Z]+\d+/g) ?? [];
-
-    this.#dependencies = Object.freeze(
-      argNames
-        .map((dep) => {
-          const [, column, row] = dep.split(/([A-Z]+)(\d+)/s);
-          return this.#getCell(column, row);
-        })
-        .filter((cell) => cell !== null),
-    );
-
-    this.#dependencies.forEach((dep) => dep.addEventListener('propagate', this));
-
-    this.#function = new Function(...argNames, expression);
-
-    this.#evaluate();
+    this.setAttribute('expression', expression);
   }
 
   get readonly() {
