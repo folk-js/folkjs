@@ -867,7 +867,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
           // Set up the change handler for future updates only after successful initialization
           let previousDoc = doc;
-          this.#automerge.onChange((updatedDoc) => {
+          this.#automerge.onRemoteChange((updatedDoc) => {
             this.#handleDocumentChange(previousDoc, updatedDoc);
             previousDoc = updatedDoc;
           });

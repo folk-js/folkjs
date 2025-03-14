@@ -9,6 +9,7 @@ export class FolkAutomerge<T> {
   private repo: Repo;
   private handle!: DocHandle<T>;
   private networkAdapter: BrowserWebSocketClientAdapter;
+  private isLocalChange: boolean = false;
 
   /**
    * Creates a new FolkAutomerge instance.
@@ -117,8 +118,27 @@ export class FolkAutomerge<T> {
    * @param changeFunc Function that receives the document and can modify it
    */
   change(changeFunc: (doc: T) => void): void {
-    this.handle.change((doc: any) => {
-      changeFunc(doc as T);
+    this.isLocalChange = true;
+    try {
+      this.handle.change((doc: any) => {
+        changeFunc(doc as T);
+      });
+    } finally {
+      // Reset the flag after the change is applied
+      this.isLocalChange = false;
+    }
+  }
+
+  /**
+   * Registers a callback to be called only when the document changes due to remote updates.
+   * This ignores changes made through the local change() method.
+   * @param callback Function to call with the updated document when remote changes occur
+   */
+  onRemoteChange(callback: (doc: T) => void): void {
+    this.handle.on('change', ({ doc }) => {
+      if (doc && !this.isLocalChange) {
+        callback(doc as T);
+      }
     });
   }
 }
