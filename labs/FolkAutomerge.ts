@@ -1,16 +1,24 @@
 import { AnyDocumentId, DocHandle, isValidAutomergeUrl, Repo } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 
+/**
+ * FolkAutomerge provides a simplified interface for working with Automerge documents.
+ * It handles document creation, sharing via URL, and synchronization over WebSockets.
+ */
 export class FolkAutomerge<T> {
   private repo: Repo;
   private handle!: DocHandle<T>;
   private networkAdapter: BrowserWebSocketClientAdapter;
 
+  /**
+   * Creates a new FolkAutomerge instance.
+   * @param initialState Optional initial state for a new document
+   */
   constructor(initialState?: T) {
-    const peerId = this.#createPeerId();
+    const peerId = this.#generatePeerId();
 
     // Check if there's a valid Automerge URL in the hash
-    const hashDocId = window.location.hash.slice(1); // Remove the # character
+    const hashDocId = window.location.hash.slice(1);
     let docId: string | undefined;
 
     if (hashDocId && isValidAutomergeUrl(hashDocId)) {
@@ -20,22 +28,21 @@ export class FolkAutomerge<T> {
     // Set up the WebSocket network adapter
     this.networkAdapter = new BrowserWebSocketClientAdapter('wss://sync.automerge.org');
 
-    // Initialize the repo with proper configuration
+    // Initialize the repo with network configuration
     this.repo = new Repo({
       peerId: peerId as any,
       network: [this.networkAdapter],
     });
 
-    // Find or create the document
+    // Either connect to existing document or create a new one
     if (docId) {
       this.handle = this.repo.find<T>(docId as unknown as AnyDocumentId);
 
-      // Check if we can actually find the document
+      // Verify document exists or create a new one
       this.whenReady().then(async () => {
         try {
           const doc = await this.handle.doc();
           if (!doc) {
-            // If doc not found, create a new one and update hash
             this.#createNewDocAndUpdateHash(initialState);
           }
         } catch (error) {
@@ -49,25 +56,29 @@ export class FolkAutomerge<T> {
   }
 
   /**
-   * Create a new document and update the URL hash
+   * Creates a new document and updates the URL hash with its ID.
+   * @param initialState Optional initial state for the document
    */
   #createNewDocAndUpdateHash(initialState?: T): void {
-    // Create a new document with initial state
     this.handle = this.repo.create<T>(initialState as any);
 
-    // Update the URL hash with the new document ID
     this.handle.whenReady().then(() => {
       window.location.hash = this.handle.url;
     });
   }
 
-  #createPeerId(): string {
+  /**
+   * Generates a random peer ID for this client.
+   * @returns A unique peer identifier string
+   */
+  #generatePeerId(): string {
     return `peer-${Math.floor(Math.random() * 1_000_000)}`;
   }
 
   /**
-   * Returns a promise that resolves when the document is ready
-   * Can also take an optional callback that will be called with the document when ready
+   * Returns a promise that resolves when the document is ready.
+   * @param callback Optional function to call with the document when ready
+   * @returns Promise resolving to the document
    */
   async whenReady(callback?: (doc: T) => void): Promise<T> {
     await this.handle.whenReady();
@@ -82,17 +93,18 @@ export class FolkAutomerge<T> {
   }
 
   /**
-   * Get the document ID
+   * Gets the current document's unique identifier.
+   * @returns The document URL that can be shared
    */
   getDocumentId(): string {
     return this.handle.url;
   }
 
   /**
-   * Register a callback to be called when the document changes
+   * Registers a callback to be called whenever the document changes.
+   * @param callback Function to call with the updated document
    */
   onChange(callback: (doc: T) => void): void {
-    // Use the 'change' event to get document updates
     this.handle.on('change', ({ doc }) => {
       if (doc) {
         callback(doc as T);
@@ -101,7 +113,8 @@ export class FolkAutomerge<T> {
   }
 
   /**
-   * Convenience method to make changes to the document
+   * Applies changes to the document in a single transaction.
+   * @param changeFunc Function that receives the document and can modify it
    */
   change(changeFunc: (doc: T) => void): void {
     this.handle.change((doc: any) => {
