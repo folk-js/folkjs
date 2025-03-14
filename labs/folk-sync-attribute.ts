@@ -303,7 +303,10 @@ export class FolkSyncAttribute extends CustomAttribute {
 
             // Update the attribute
             if (mutation.attributeName) {
-              if (mutation.oldValue === null) {
+              const target = mutation.target as Element;
+              const attributeExists = target.hasAttribute(mutation.attributeName);
+
+              if (!attributeExists) {
                 // Attribute was removed
                 if (node.attributes) {
                   delete node.attributes[mutation.attributeName];
@@ -311,7 +314,6 @@ export class FolkSyncAttribute extends CustomAttribute {
               } else {
                 // Attribute was added or changed
                 if (!node.attributes) node.attributes = {};
-                const target = mutation.target as Element;
                 node.attributes[mutation.attributeName] = target.getAttribute(mutation.attributeName) || '';
               }
             }
