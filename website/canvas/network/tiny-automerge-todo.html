@@ -231,8 +231,61 @@
       const documentIdElement = document.getElementById('documentId');
       const notification = document.getElementById('notification');
 
-      // Initialize FolkAutomerge
-      const automerge = new FolkAutomerge();
+      // Initialize FolkAutomerge with initial state
+      const automerge = new FolkAutomerge({ todos: [] });
+
+      // Todo-specific methods (moved from FolkAutomerge.ts)
+      const todoActions = {
+        addTodo(text) {
+          automerge.change((doc) => {
+            doc.todos.push({
+              id: crypto.randomUUID(),
+              text,
+              completed: false,
+              createdAt: Date.now(),
+            });
+          });
+        },
+
+        toggleTodo(id) {
+          automerge.change((doc) => {
+            const todo = doc.todos.find((t) => t.id === id);
+            if (todo) {
+              todo.completed = !todo.completed;
+            }
+          });
+        },
+
+        editTodo(id, newText) {
+          automerge.change((doc) => {
+            const todo = doc.todos.find((t) => t.id === id);
+            if (todo) {
+              todo.text = newText;
+            }
+          });
+        },
+
+        deleteTodo(id) {
+          automerge.change((doc) => {
+            const index = doc.todos.findIndex((t) => t.id === id);
+            if (index !== -1) {
+              doc.todos.splice(index, 1);
+            }
+          });
+        },
+
+        clearCompleted() {
+          automerge.change((doc) => {
+            // We need to remove items one by one, starting from the end
+            // to avoid index shifting problems
+            for (let i = doc.todos.length - 1; i >= 0; i--) {
+              if (doc.todos[i].completed) {
+                doc.todos.splice(i, 1);
+              }
+            }
+          });
+        },
+      };
 
       // Show notification function
       function showNotification(message) {
@@ -262,7 +315,7 @@
           checkbox.type = 'checkbox';
           checkbox.checked = todo.completed;
           checkbox.addEventListener('change', () => {
-            automerge.toggleTodo(todo.id);
+            todoActions.toggleTodo(todo.id);
           });
 
           const todoText = document.createElement('span');
@@ -273,7 +326,7 @@
           todoText.addEventListener('dblclick', () => {
             const newText = prompt('Edit todo:', todo.text);
             if (newText !== null && newText.trim() !== '') {
-              automerge.editTodo(todo.id, newText.trim());
+              todoActions.editTodo(todo.id, newText.trim());
             }
           });
 
@@ -281,7 +334,7 @@
           deleteBtn.className = 'delete-btn';
           deleteBtn.textContent = '×';
           deleteBtn.addEventListener('click', () => {
-            automerge.deleteTodo(todo.id);
+            todoActions.deleteTodo(todo.id);
           });
 
           li.appendChild(checkbox);
@@ -311,7 +364,7 @@
         addTodoBtn.addEventListener('click', () => {
           const text = todoInput.value.trim();
           if (text) {
-            automerge.addTodo(text);
+            todoActions.addTodo(text);
             todoInput.value = '';
             todoInput.focus();
           }
@@ -326,7 +379,7 @@
 
         // Clear completed todos
         clearCompletedBtn.addEventListener('click', () => {
-          automerge.clearCompleted();
+          todoActions.clearCompleted();
         });
 
         // Show notification that the app is ready

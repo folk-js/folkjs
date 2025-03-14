@@ -1,23 +1,12 @@
 import { AnyDocumentId, DocHandle, isValidAutomergeUrl, Repo } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 
-export interface Todo {
-  id: string;
-  text: string;
-  completed: boolean;
-  createdAt: number;
-}
-
-export interface TodoListDoc {
-  todos: Todo[];
-}
-
-export class FolkAutomerge<T extends TodoListDoc> {
+export class FolkAutomerge<T> {
   private repo: Repo;
   private handle!: DocHandle<T>;
   private networkAdapter: BrowserWebSocketClientAdapter;
 
-  constructor() {
+  constructor(initialState?: T) {
     const peerId = this.#createPeerId();
 
     // Check if there's a valid Automerge URL in the hash
@@ -47,34 +36,24 @@ export class FolkAutomerge<T extends TodoListDoc> {
           const doc = await this.handle.doc();
           if (!doc) {
             // If doc not found, create a new one and update hash
-            this.#createNewDocAndUpdateHash();
+            this.#createNewDocAndUpdateHash(initialState);
           }
         } catch (error) {
           console.error('Error finding document:', error);
-          this.#createNewDocAndUpdateHash();
+          this.#createNewDocAndUpdateHash(initialState);
         }
       });
     } else {
-      this.#createNewDocAndUpdateHash();
+      this.#createNewDocAndUpdateHash(initialState);
     }
-
-    // Initialize todos array if it doesn't exist
-    this.whenReady().then(() => {
-      this.handle.change((doc: any) => {
-        if (!doc.todos) {
-          doc.todos = [];
-        }
-      });
-    });
   }
 
   /**
    * Create a new document and update the URL hash
    */
-  #createNewDocAndUpdateHash(): void {
+  #createNewDocAndUpdateHash(initialState?: T): void {
     // Create a new document with initial state
-    const initialState = { todos: [] } as unknown as T;
-    this.handle = this.repo.create<T>(initialState);
+    this.handle = this.repo.create<T>(initialState as any);
 
     // Update the URL hash with the new document ID
     this.handle.whenReady().then(() => {
@@ -93,7 +72,7 @@ export class FolkAutomerge<T extends TodoListDoc> {
   async whenReady(callback?: (doc: T) => void): Promise<T> {
     await this.handle.whenReady();
     const doc = await this.handle.doc();
-    const result = (doc as T) || ({ todos: [] } as unknown as T);
+    const result = doc as T;
 
     if (callback) {
       callback(result);
@@ -122,67 +101,11 @@ export class FolkAutomerge<T extends TodoListDoc> {
   }
 
   /**
-   * Add a new todo item
+   * Convenience method to make changes to the document
    */
-  addTodo(text: string): void {
+  change(changeFunc: (doc: T) => void): void {
     this.handle.change((doc: any) => {
-      doc.todos.push({
-        id: crypto.randomUUID(),
-        text,
-        completed: false,
-        createdAt: Date.now(),
-      });
-    });
-  }
-
-  /**
-   * Toggle the completed status of a todo
-   */
-  toggleTodo(id: string): void {
-    this.handle.change((doc: any) => {
-      const todo = doc.todos.find((t: Todo) => t.id === id);
-      if (todo) {
-        todo.completed = !todo.completed;
-      }
-    });
-  }
-
-  /**
-   * Edit a todo's text
-   */
-  editTodo(id: string, newText: string): void {
-    this.handle.change((doc: any) => {
-      const todo = doc.todos.find((t: Todo) => t.id === id);
-      if (todo) {
-        todo.text = newText;
-      }
-    });
-  }
-
-  /**
-   * Delete a todo
-   */
-  deleteTodo(id: string): void {
-    this.handle.change((doc: any) => {
-      const index = doc.todos.findIndex((t: Todo) => t.id === id);
-      if (index !== -1) {
-        doc.todos.splice(index, 1);
-      }
-    });
-  }
-
-  /**
-   * Clear all completed todos
-   */
-  clearCompleted(): void {
-    this.handle.change((doc: any) => {
-      // We need to remove items one by one, starting from the end
-      // to avoid index shifting problems
-      for (let i = doc.todos.length - 1; i >= 0; i--) {
-        if (doc.todos[i].completed) {
-          doc.todos.splice(i, 1);
-        }
-      }
+      changeFunc(doc as T);
     });
   }
 }
