@@ -107,7 +107,6 @@ export class FolkAutomerge<T> {
   onChange(callback: (doc: T) => void): void {
     this.handle.on('change', ({ doc }) => {
       if (doc) {
-        console.log('FA:onChange');
         callback(doc as T);
       }
     });
@@ -119,9 +118,7 @@ export class FolkAutomerge<T> {
    */
   change(changeFunc: (doc: T) => void): void {
     this.handle.change((doc: any) => {
-      console.log('FA:change');
       changeFunc(doc as T);
-      console.log({ doc });
     });
   }
 }

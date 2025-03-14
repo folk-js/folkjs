@@ -338,8 +338,6 @@ export class FolkSyncAttribute extends CustomAttribute {
       attributeOldValue: true,
       characterDataOldValue: true,
     });
-
-    console.log('Started observing DOM mutations');
   }
 
   /**
@@ -348,7 +346,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   #handleMutations(mutations: MutationRecord[]): void {
     if (!this.#automerge) return;
 
-    console.log('Processing mutations:', mutations);
+    console.log('Processing mutations');
 
     this.#automerge.change((doc: DOMSyncDocument) => {
       // Ensure domTree exists
@@ -405,12 +403,18 @@ export class FolkSyncAttribute extends CustomAttribute {
             for (const addedNode of mutation.addedNodes) {
               // Find the parent node in the document
               const parentNode = this.#getDocNodeByPath(doc, targetPath);
-              if (!parentNode) continue;
+              if (!parentNode) {
+                console.error('Parent node not found for added node:', addedNode);
+                continue;
+              }
 
               // Find the index where the node was inserted
               const childNodes = Array.from(mutation.target.childNodes);
               const index = childNodes.findIndex((child) => child === addedNode);
-              if (index === -1) continue;
+              if (index === -1) {
+                console.error('Index not found for added node:', addedNode);
+                continue;
+              }
 
               // Create the new node path
               const newNodePath = this.#createChildPath(targetPath, index);
@@ -457,8 +461,6 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Handle changes from the Automerge document and update DOM
    */
   #handleDocumentChange(doc: DOMSyncDocument): void {
-    console.log('Document changed:', doc);
-
     // Stop observing while we update the DOM
     this.#stopObserving();
 
