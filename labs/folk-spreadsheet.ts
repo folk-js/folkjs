@@ -435,6 +435,14 @@ export class FolkSpreadSheetCell extends HTMLElement {
     customElements.define(this.tagName, this);
   }
 
+  static observedAttributes = ['expression'];
+
+  attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null) {
+    if (name === 'expression' && newValue !== null) {
+      this.expression = newValue;
+    }
+  }
+
   connectedCallback() {
     // this should run after all of the other cells have run
     this.expression = this.getAttribute('expression') || '';
