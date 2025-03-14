@@ -1,7 +1,8 @@
 <!doctype html>
 <html lang="en-us">
   <head>
-    <title>Folk Sync</title>
+    <meta charset="UTF-8" />
+    <title>DOM Sync Demo</title>
     <style>
       * {
         box-sizing: border-box;
@@ -18,816 +19,85 @@
         min-height: 100%;
         position: relative;
         margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',
-          'Helvetica Neue', sans-serif;
-        background-color: #f2f2f2;
+        font-family: Arial, sans-serif;
       }
 
       folk-shape {
-        background: #ffffff;
-        border-radius: 4px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-        padding: 16px;
-        border: 1px solid #e5e5e5;
+        background: rgb(248, 248, 248);
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        padding: 12px;
       }
 
-      .title {
-        font-size: 16px;
-        font-weight: 600;
-        margin-bottom: 12px;
-        color: #111;
-        display: inline-block;
-        letter-spacing: 0.3px;
-      }
-
-      .status {
-        color: #0066cc;
-        font-weight: 600;
-        display: block;
-        margin-top: 8px;
-        font-size: 14px;
-      }
-
-      .connection-state {
-        font-size: 13px;
-        font-weight: 500;
-        margin-left: 10px;
-        padding: 3px 10px;
-        border-radius: 3px;
-        display: inline-block;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
-      .state-waiting {
-        background-color: #9e9e9e;
-        color: white;
-      }
-
-      .state-connecting {
-        background-color: #ff9500;
-        color: white;
-      }
-
-      .state-connected {
-        background-color: #00a854;
-        color: white;
-      }
-
-      .state-failed {
-        background-color: #e50000;
-        color: white;
-      }
-
-      .status.error {
-        color: #e50000;
-      }
-
-      .status.success {
-        color: #00a854;
-      }
-
-      .status.warning {
-        color: #ff9500;
-      }
-
-      textarea {
-        width: 100%;
-        border-radius: 3px;
-        border: 1px solid #d1d1d1;
-        padding: 8px;
+      h3 {
+        margin-top: 0;
         margin-bottom: 8px;
-        resize: none;
-        font-family: inherit;
+        color: #333;
+        font-size: 16px;
+      }
+
+      .editable-content {
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-bottom: 10px;
+        min-height: 100px;
+        border-radius: 4px;
+      }
+
+      .editable-content:focus {
+        outline: none;
+        border-color: #4caf50;
+        box-shadow: 0 0 3px rgba(76, 175, 80, 0.3);
       }
 
       button {
-        padding: 6px 14px;
-        background-color: #0066cc;
+        padding: 8px 16px;
+        background-color: #4caf50;
         color: white;
         border: none;
-        border-radius: 3px;
+        border-radius: 4px;
         cursor: pointer;
-        font-weight: 500;
-        letter-spacing: 0.3px;
-        transition: background-color 0.15s ease;
+        margin-top: 10px;
       }
 
       button:hover {
-        background-color: #0052a3;
-      }
-
-      button:disabled {
-        background-color: #d1d1d1;
-        cursor: not-allowed;
-        color: #666;
-      }
-
-      .log-container {
-        height: 200px;
-        overflow-y: auto;
-        border: 1px solid #d1d1d1;
-        border-radius: 3px;
-        padding: 8px;
-        font-family: 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
-        font-size: 12px;
-        background-color: #ffffff;
-      }
-
-      .log-entry {
-        margin-bottom: 4px;
-        line-height: 1.4;
-        color: #333;
-      }
-
-      .log-entry.gun {
-        color: #0066cc;
-      }
-
-      .log-entry.rtc {
-        color: #00a854;
-      }
-
-      .log-entry.error {
-        color: #e50000;
-      }
-
-      .connection-indicator {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        margin-right: 8px;
-      }
-
-      .connection-indicator.gun {
-        background-color: #0066cc;
-      }
-
-      .connection-indicator.rtc {
-        background-color: #00a854;
-      }
-
-      .connection-indicator.disconnected {
-        background-color: #e50000;
-      }
-
-      .client-info {
-        font-size: 12px;
-        color: #444;
-        margin-bottom: 8px;
-      }
-
-      .chat-container {
-        height: 120px;
-        overflow-y: auto;
-        border: 1px solid #d1d1d1;
-        border-radius: 3px;
-        padding: 8px;
-        margin-bottom: 8px;
-        background-color: #fff;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .chat-message {
-        margin-bottom: 8px;
-        padding: 8px 12px;
-        font-size: 13px;
-        border-radius: 3px;
-        max-width: 85%;
-        word-break: break-word;
-        display: block;
-        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
-      }
-
-      .chat-message.sent {
-        background-color: #f0f7ff;
-        color: #004c99;
-        border: 1px solid #d6e4ff;
-        align-self: flex-end;
-      }
-
-      .chat-message.received {
-        background-color: #f5f5f5;
-        color: #222222;
-        border: 1px solid #e0e0e0;
-        align-self: flex-start;
-      }
-
-      p {
-        margin: 0;
+        background-color: #45a049;
       }
     </style>
   </head>
   <body folk-sync>
-    <!-- Connection Controls Shape -->
-    <folk-shape x="50" y="50" width="350">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px">
-        <div class="title">Folk Sync</div>
-        <div style="display: flex; align-items: center">
-          <div id="connectionStateIndicator" class="connection-state state-waiting">waiting</div>
-        </div>
+    <!-- Editable Shape 1 -->
+    <folk-shape x="50" y="50" width="400" height="300">
+      <h3>Editable Content 1</h3>
+      <div class="editable-content" contenteditable="true" id="editableContent1">
+        This is an editable area. Try typing here!
       </div>
-
-      <div style="display: flex; justify-content: flex-end">
-        <button id="createRoomBtn">Create Link</button>
-      </div>
-
-      <div id="shareUrlContainer" style="display: none">
-        <input type="text" id="shareUrlInput" readonly style="position: absolute; left: -9999px; opacity: 0" />
-      </div>
+      <button id="boldBtn1">Bold</button>
+      <button id="italicBtn1">Italic</button>
     </folk-shape>
 
-    <!-- Connection Log Shape -->
-    <folk-shape x="50" y="200" width="350">
-      <div class="title">Connection Log</div>
-      <div id="connectionLog" class="log-container"></div>
+    <!-- Editable Shape 2 -->
+    <folk-shape x="500" y="50" width="400" height="300">
+      <h3>Editable Content 2</h3>
+      <div class="editable-content" contenteditable="true" id="editableContent2">
+        This is another editable area. Changes should sync between browsers.
+      </div>
+      <button id="boldBtn2">Bold</button>
+      <button id="italicBtn2">Italic</button>
     </folk-shape>
 
-    <!-- Chat Shape -->
-    <folk-shape x="420" y="50" width="350">
-      <div class="title">Chat</div>
-
-      <div id="chatContainer" class="chat-container"></div>
-
-      <textarea id="testMessageInput" style="height: 60px" placeholder="Type a message here to send..."></textarea>
-      <button id="sendTestBtn" disabled>Send Message</button>
-    </folk-shape>
-
-    <!-- Info Shape -->
-    <folk-shape x="420" y="370" width="350">
-      <div class="title">About</div>
+    <!-- About Shape -->
+    <folk-shape x="50" y="400" width="850" height="100">
+      <h3>About</h3>
       <p>
-        This demo establishes a WebRTC connection using GunDB as the signaling channel. Create a room, copy the link,
-        and share it with others to connect.
+        This is a minimal DOM sync demo. Edit the content in either shape and check the browser console to see detected
+        mutations.
       </p>
     </folk-shape>
 
-    <!-- GunDB library -->
-    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
-
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
-      import { FolkRTC } from '@labs/FolkRTC.ts';
       import { FolkSyncAttribute } from '@labs/folk-sync-attribute.ts';
-
-      // Define the custom attribute
-      FolkSyncAttribute.define();
-
-      // DOM Elements
-      const connectionStateIndicator = document.getElementById('connectionStateIndicator');
-      const createRoomBtn = document.getElementById('createRoomBtn');
-      const shareUrlContainer = document.getElementById('shareUrlContainer');
-      const shareUrlInput = document.getElementById('shareUrlInput');
-      const connectionLog = document.getElementById('connectionLog');
-      const chatContainer = document.getElementById('chatContainer');
-      const testMessageInput = document.getElementById('testMessageInput');
-      const sendTestBtn = document.getElementById('sendTestBtn');
-
-      // Core state
-      let gun = null;
-      let room = null;
-      let rtcConnections = {};
-      let clientId = generateClientId();
-      let currentRoomId = null;
-
-      // Track processed data to avoid duplicates
-      let processedOffers = new Set();
-      let processedAnswers = new Set();
-      let knownPeers = new Set();
-
-      // Debug settings
-      const DEBUG = true;
-
-      // Connection states
-      const CONNECTION_STATES = {
-        WAITING: 'waiting',
-        CONNECTING: 'connecting',
-        CONNECTED: 'connected',
-        FAILED: 'failed',
-      };
-
-      // Update connection state
-      function updateConnectionState(state) {
-        connectionStateIndicator.textContent = state;
-        connectionStateIndicator.className = `connection-state state-${state}`;
-      }
-
-      // Log function
-      function log(message, type = 'system') {
-        const entry = document.createElement('div');
-        entry.className = `log-entry ${type}`;
-        entry.textContent = message;
-        connectionLog.appendChild(entry);
-        connectionLog.scrollTop = connectionLog.scrollHeight;
-        console.log(`[${type}] ${message}`);
-      }
-
-      // Debug log - only shows if DEBUG is true
-      function debugLog(message, type = 'debug') {
-        if (DEBUG) {
-          console.log(`[${type}] ${message}`);
-        }
-      }
-
-      // Generate a unique client ID
-      function generateClientId() {
-        return Math.random().toString(36).substring(2, 7);
-      }
-
-      // Generate a unique room ID
-      function generateRoomId() {
-        return Math.random().toString(36).substring(2, 7);
-      }
-
-      // Determine initiator based on client IDs - using string comparison
-      function determineInitiator(id1, id2) {
-        return id1.localeCompare(id2) > 0 ? id1 : id2;
-      }
-
-      // Update connection indicators
-      function updateConnectionStatus() {
-        // Debug output to help diagnose connection issues
-        for (const peerId in rtcConnections) {
-          const rtc = rtcConnections[peerId];
-          debugLog(
-            `Connection state for peer ${peerId}: ${rtc.isConnected() ? 'connected' : 'not connected'}`,
-            'debug',
-          );
-        }
-
-        // Update WebRTC indicator
-        const hasActiveRTC = Object.values(rtcConnections).some((conn) => conn.isConnected());
-        debugLog(`Has any active RTC connection: ${hasActiveRTC}`, 'debug');
-
-        if (hasActiveRTC) {
-          updateConnectionState(CONNECTION_STATES.CONNECTED);
-          sendTestBtn.disabled = false;
-        } else if (Object.keys(rtcConnections).length > 0) {
-          // If we have connection attempts but none are connected
-          updateConnectionState(CONNECTION_STATES.CONNECTING);
-          sendTestBtn.disabled = true;
-        } else if (currentRoomId) {
-          // We're in a room but no connections
-          updateConnectionState(CONNECTION_STATES.WAITING);
-          sendTestBtn.disabled = true;
-        } else {
-          // Not even in a room
-          updateConnectionState(CONNECTION_STATES.WAITING);
-          sendTestBtn.disabled = true;
-        }
-      }
-
-      // Create a new FolkRTC connection for a peer
-      function createRTCConnection(peerId) {
-        if (rtcConnections[peerId]) {
-          return rtcConnections[peerId];
-        }
-
-        log(`Creating RTC connection for peer ${peerId}`, 'rtc');
-
-        // Create new connection with STUN servers
-        const rtc = new FolkRTC();
-
-        rtc.onStatusChange = (status) => {
-          log(`RTC status with ${peerId}: ${status}`, 'rtc');
-
-          // Delay updating the status slightly to allow connection to fully establish
-          setTimeout(() => {
-            updateConnectionStatus();
-
-            // Try sending a test message if we're connected
-            if (status === 'connected' && rtc.isConnected()) {
-              log(`Testing connection with ${peerId}...`, 'rtc');
-              rtc.sendMessage('connection-test');
-            }
-          }, 500);
-        };
-
-        rtc.onMessage = (message) => {
-          log(`Received RTC message from ${peerId}: ${message}`, 'rtc');
-
-          // Connection received a message, make sure we update status
-          updateConnectionStatus();
-
-          // Don't display test messages in the UI
-          if (message === 'connection-test') return;
-
-          // Add to chat interface
-          addChatMessage(message, peerId);
-        };
-
-        rtcConnections[peerId] = rtc;
-        return rtc;
-      }
-
-      // Add message to chat container
-      function addChatMessage(message, senderId) {
-        const entry = document.createElement('div');
-
-        if (senderId === 'self') {
-          entry.className = 'chat-message sent';
-          entry.textContent = message;
-        } else {
-          entry.className = 'chat-message received';
-          entry.textContent = message;
-        }
-
-        chatContainer.appendChild(entry);
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-      }
-
-      // Connect to GunDB room
-      function connectToRoom(roomId) {
-        try {
-          // Initialize Gun with public relay
-          gun = Gun({
-            peers: ['https://gun-manhattan.herokuapp.com/gun'],
-            localStorage: false, // Don't persist data locally
-            radisk: false, // Disable radisk
-          });
-
-          currentRoomId = roomId;
-
-          // Get the room node directly - prefix to avoid conflicts
-          room = gun.get('folksync-' + roomId);
-
-          log(`Connected to room: ${roomId}`, 'gun');
-
-          // Display client ID
-          log(`Your client ID: ${clientId}`, 'system');
-
-          // Update connection indicator
-          updateConnectionStatus();
-
-          // Set our ready state with a unique key to ensure it persists
-          const readyData = {
-            time: Date.now(),
-            id: clientId, // Include ID in the data for easier debugging
-          };
-          room.get('ready').get(clientId).put(readyData);
-          log(`Set ready state in room`, 'gun');
-
-          // Listen for other clients' ready states
-          room
-            .get('ready')
-            .map()
-            .on((data, peerId) => {
-              // Skip our own ready state or invalid data
-              if (peerId === clientId || !data || !data.time) return;
-
-              // Skip already processed peers
-              if (knownPeers.has(peerId)) return;
-
-              knownPeers.add(peerId);
-              log(`Detected peer: ${peerId}`, 'gun');
-              debugLog(`Peer data: ${JSON.stringify(data)}`);
-
-              // Handle peer discovery
-              handlePeerDiscovery(peerId);
-            });
-
-          // Listen for offers directed to us - use once() to prevent duplicate processing
-          room
-            .get('offer')
-            .get(clientId)
-            .on((offerData) => {
-              if (!offerData || !offerData.from || !offerData.sdp) return;
-
-              // Create a unique key for this offer to detect duplicates
-              const offerKey = `${offerData.from}_${offerData.time || Date.now()}`;
-
-              // Skip if we've already processed this offer
-              if (processedOffers.has(offerKey)) {
-                debugLog(`Skipping duplicate offer from ${offerData.from}`, 'gun');
-                return;
-              }
-
-              processedOffers.add(offerKey);
-              log(`Received WebRTC offer from ${offerData.from}`, 'rtc');
-              debugLog(`Offer data: ${JSON.stringify(offerData)}`);
-
-              // Process the offer
-              handleIncomingOffer(offerData);
-            });
-
-          // Listen for answers to our offers
-          room
-            .get('answer')
-            .get(clientId)
-            .on((answerData) => {
-              if (!answerData || !answerData.from || !answerData.sdp) return;
-
-              // Create a unique key for this answer to detect duplicates
-              const answerKey = `${answerData.from}_${answerData.time || Date.now()}`;
-
-              // Skip if we've already processed this answer
-              if (processedAnswers.has(answerKey)) {
-                debugLog(`Skipping duplicate answer from ${answerData.from}`, 'gun');
-                return;
-              }
-
-              processedAnswers.add(answerKey);
-              log(`Received WebRTC answer from ${answerData.from}`, 'rtc');
-              debugLog(`Answer data: ${JSON.stringify(answerData)}`);
-
-              // Process the answer
-              handleIncomingAnswer(answerData);
-            });
-
-          return true;
-        } catch (error) {
-          log(`Error connecting to room: ${error.message}`, 'error');
-          console.error('Full error:', error);
-          updateConnectionState(CONNECTION_STATES.FAILED);
-          return false;
-        }
-      }
-
-      // Handle newly discovered peer
-      function handlePeerDiscovery(peerId) {
-        // Skip if already connected or connecting
-        if (rtcConnections[peerId] && rtcConnections[peerId].isConnected()) {
-          debugLog(`Already connected to ${peerId}, skipping discovery`, 'rtc');
-          return;
-        }
-
-        log(`Handling peer discovery for ${peerId}`, 'rtc');
-        updateConnectionState(CONNECTION_STATES.CONNECTING);
-
-        // Simple role determination - whoever has the "larger" ID initiates
-        const initiatorId = determineInitiator(clientId, peerId);
-        log(`Initiator determined to be: ${initiatorId}`, 'rtc');
-
-        if (initiatorId === clientId) {
-          log(`We are the initiator for peer ${peerId}`, 'rtc');
-
-          // Create an offer after a small delay to allow both sides to set up
-          setTimeout(() => {
-            initiateRTCConnection(peerId);
-          }, 500);
-        } else {
-          log(`We are the receiver for peer ${peerId}, waiting for offer`, 'rtc');
-          // Just create the connection object, wait for offer
-          createRTCConnection(peerId);
-        }
-      }
-
-      // Initiate RTC connection by creating and sending an offer
-      async function initiateRTCConnection(peerId) {
-        // Skip if we're already connected
-        if (rtcConnections[peerId] && rtcConnections[peerId].isConnected()) {
-          debugLog(`Already connected to ${peerId}, skipping initiation`, 'rtc');
-          return;
-        }
-
-        // Create RTC connection if it doesn't exist
-        const rtc = createRTCConnection(peerId);
-
-        try {
-          // Create offer - this automatically creates the data channel
-          log(`Creating WebRTC offer for peer ${peerId}...`, 'rtc');
-          const offer = await rtc.createOffer();
-          log(`Created offer for ${peerId}`, 'rtc');
-
-          // Store the offer directly on the target peer's node
-          const offerData = {
-            from: clientId,
-            sdp: offer,
-            time: Date.now(),
-          };
-
-          debugLog(`Storing offer: ${JSON.stringify(offerData)}`, 'rtc');
-
-          // Use put with a callback to ensure the offer is stored
-          room
-            .get('offer')
-            .get(peerId)
-            .put(offerData, (ack) => {
-              if (ack.err) {
-                log(`Error storing offer: ${ack.err}`, 'error');
-              } else {
-                log(`Stored offer for ${peerId} in GunDB`, 'gun');
-              }
-            });
-        } catch (error) {
-          log(`Error creating offer: ${error.message}`, 'error');
-          console.error('Full error:', error);
-          updateConnectionState(CONNECTION_STATES.FAILED);
-        }
-      }
-
-      // Handle incoming WebRTC offer
-      async function handleIncomingOffer(offerData) {
-        const senderId = offerData.from;
-
-        log(`Processing offer from ${senderId}`, 'rtc');
-
-        // Create RTC connection if it doesn't exist
-        const rtc = createRTCConnection(senderId);
-
-        try {
-          // Create answer from offer - this setup is handled by FolkRTC
-          log(`Creating answer for ${senderId}...`, 'rtc');
-          const answer = await rtc.createAnswer(offerData.sdp);
-          log(`Created answer for ${senderId}`, 'rtc');
-
-          // Store the answer directly on the sender's node
-          const answerData = {
-            from: clientId,
-            sdp: answer,
-            time: Date.now(),
-          };
-
-          debugLog(`Storing answer: ${JSON.stringify(answerData)}`, 'rtc');
-
-          // Use put with a callback to ensure the answer is stored
-          room
-            .get('answer')
-            .get(senderId)
-            .put(answerData, (ack) => {
-              if (ack.err) {
-                log(`Error storing answer: ${ack.err}`, 'error');
-              } else {
-                log(`Stored answer for ${senderId} in GunDB`, 'gun');
-              }
-            });
-        } catch (error) {
-          log(`Error creating answer: ${error.message}`, 'error');
-          console.error('Full error:', error);
-          updateConnectionState(CONNECTION_STATES.FAILED);
-        }
-      }
-
-      // Handle incoming WebRTC answer
-      async function handleIncomingAnswer(answerData) {
-        const senderId = answerData.from;
-
-        log(`Processing answer from ${senderId}`, 'rtc');
-
-        // Get existing RTC connection
-        const rtc = rtcConnections[senderId];
-        if (!rtc) {
-          log(`Received answer from ${senderId} but no RTC connection exists`, 'error');
-          return;
-        }
-
-        try {
-          // Set the answer to complete the connection - this handles adding ICE candidates internally
-          log(`Setting answer from ${senderId}...`, 'rtc');
-          await rtc.setAnswer(answerData.sdp);
-          log(`Set answer from ${senderId}, connection should establish`, 'rtc');
-        } catch (error) {
-          log(`Error setting answer: ${error.message}`, 'error');
-          console.error('Full error:', error);
-          updateConnectionState(CONNECTION_STATES.FAILED);
-        }
-      }
-
-      // Create a room
-      function createRoom() {
-        try {
-          // Generate a room ID
-          const roomId = generateRoomId();
-          log(`Creating room: ${roomId}`, 'gun');
-
-          // Connect to the room
-          if (connectToRoom(roomId)) {
-            // Update UI
-            updateConnectionState(CONNECTION_STATES.WAITING);
-
-            // Generate and store share link (hidden)
-            const shareUrl = window.location.origin + window.location.pathname + '#r=' + roomId;
-            shareUrlInput.value = shareUrl;
-            shareUrlContainer.style.display = 'block';
-
-            // Set URL hash
-            window.location.hash = `#r=${roomId}`;
-
-            // Copy link to clipboard
-            navigator.clipboard
-              .writeText(shareUrl)
-              .then(() => {
-                createRoomBtn.textContent = 'Copied Link';
-                log('Share link copied to clipboard', 'system');
-                log(`Your client ID: ${clientId}`, 'system');
-              })
-              .catch((err) => {
-                log(`Failed to copy link: ${err}`, 'error');
-                createRoomBtn.textContent = 'Copy Room URL';
-              });
-
-            log('Ready for WebRTC connections', 'gun');
-          }
-        } catch (error) {
-          log(`Error creating room: ${error.message}`, 'error');
-          updateConnectionState(CONNECTION_STATES.FAILED);
-        }
-      }
-
-      // Join a room from URL hash
-      function joinRoom(roomId) {
-        try {
-          log(`Joining room: ${roomId}`, 'gun');
-          log(`Your client ID: ${clientId}`, 'system');
-
-          // Connect to the room
-          if (connectToRoom(roomId)) {
-            // Update UI
-            updateConnectionState(CONNECTION_STATES.WAITING);
-
-            // Store share link (hidden)
-            const shareUrl = window.location.origin + window.location.pathname + '#r=' + roomId;
-            shareUrlInput.value = shareUrl;
-            shareUrlContainer.style.display = 'block';
-            createRoomBtn.textContent = 'Copy Room URL';
-
-            log('Ready for WebRTC connections', 'gun');
-          }
-        } catch (error) {
-          log(`Error joining room: ${error.message}`, 'error');
-          updateConnectionState(CONNECTION_STATES.FAILED);
-        }
-      }
-
-      // Send a test message to all connected peers
-      function sendTestMessage() {
-        const message = testMessageInput.value.trim();
-        if (!message) return;
-
-        let sentToAny = false;
-
-        // Send to all connected peers
-        for (const peerId in rtcConnections) {
-          const rtc = rtcConnections[peerId];
-          if (rtc.isConnected()) {
-            rtc.sendMessage(message);
-            sentToAny = true;
-          }
-        }
-
-        if (sentToAny) {
-          // Add message to local display
-          addChatMessage(message, 'self');
-
-          // Clear input
-          testMessageInput.value = '';
-        } else {
-          alert('No connected peers to send to!');
-        }
-      }
-
-      // Check URL hash for room ID on load
-      function checkHashAndJoinRoom() {
-        if (window.location.hash.startsWith('#r=')) {
-          const roomId = window.location.hash.substring(3);
-          if (roomId) {
-            joinRoom(roomId);
-          }
-        } else {
-          updateConnectionState(CONNECTION_STATES.WAITING);
-        }
-      }
-
-      // Event listeners
-      createRoomBtn.addEventListener('click', () => {
-        if (currentRoomId) {
-          // If already in a room, copy URL when clicked
-          navigator.clipboard
-            .writeText(shareUrlInput.value)
-            .then(() => {
-              createRoomBtn.textContent = 'Copied Link';
-              setTimeout(() => {
-                createRoomBtn.textContent = 'Copy Room URL';
-              }, 2000);
-            })
-            .catch((err) => log(`Copy error: ${err}`, 'error'));
-        } else {
-          // If not in a room, create one
-          createRoom();
-        }
-      });
-
-      sendTestBtn.addEventListener('click', sendTestMessage);
-
-      testMessageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          sendTestMessage();
-        }
-      });
-
-      // Initialize
-      window.addEventListener('load', () => {
-        checkHashAndJoinRoom();
-        log('Ready to create or join a room', 'system');
-      });
-
-      window.addEventListener('hashchange', () => {
-        checkHashAndJoinRoom();
-      });
     </script>
   </body>
 </html>
