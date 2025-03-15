@@ -9,8 +9,34 @@
       href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
       rel="stylesheet"
     />
-    <title>Text Trim</title>
+    <title>Typography Design System</title>
     <style>
+      :root {
+        /* Typography Scale */
+        --font-size-detail: 14px;
+        --font-size-body: 18px;
+        --font-size-h3: 24px;
+        --font-size-h2: 32px;
+        --font-size-h1: 48px;
+
+        /* Font Weights */
+        --weight-regular: 400;
+        --weight-medium: 500;
+        --weight-bold: 700;
+
+        /* Spacing System (based on 8px grid) */
+        --space-xs: 8px;
+        --space-s: 16px;
+        --space-m: 24px;
+        --space-l: 32px;
+        --space-xl: 48px;
+
+        /* Spacing Relationships */
+        --space-heading-to-body: var(--space-s);
+        --space-paragraph: var(--space-m);
+        --space-section: var(--space-l);
+      }
+
       html {
         width: 100%;
         height: 100%;
@@ -20,7 +46,11 @@
       }
 
       p,
-      h1 {
+      h1,
+      h2,
+      h3,
+      ul,
+      li {
         margin: 0;
       }
 
@@ -31,10 +61,43 @@
         background: rgb(238, 238, 238);
       }
 
+      /* Typography System */
+      .text-detail {
+        font-size: var(--font-size-detail);
+        font-weight: var(--weight-regular);
+        text-box: trim-both cap alphabetic;
+      }
+
+      .text-body {
+        font-size: var(--font-size-body);
+        font-weight: var(--weight-regular);
+        text-box: trim-both cap alphabetic;
+      }
+
+      h3,
+      .text-h3 {
+        font-size: var(--font-size-h3);
+        font-weight: var(--weight-bold);
+        text-box: trim-both cap alphabetic;
+      }
+
+      h2,
+      .text-h2 {
+        font-size: var(--font-size-h2);
+        font-weight: var(--weight-bold);
+        text-box: trim-both cap alphabetic;
+      }
+
+      h1,
+      .text-h1 {
+        font-size: var(--font-size-h1);
+        font-weight: var(--weight-bold);
+        text-box: trim-both cap alphabetic;
+      }
+
       folk-shape {
         box-sizing: border-box;
         border: 1px solid red;
-        font-size: 24px;
         overflow: visible;
         text-box: trim-both cap alphabetic;
       }
@@ -42,16 +105,70 @@
       folk-shape * {
         text-box: trim-both cap alphabetic;
       }
+
+      /* Spacing Demonstrations */
+      .demo-section {
+        margin-bottom: var(--space-section);
+      }
+
+      /* Fix spacing between headings and body text */
+      .demo-section h1 + p,
+      .demo-section h2 + p,
+      .demo-section h3 + p {
+        margin-top: var(--space-heading-to-body);
+      }
+
+      /* Add spacing between heading elements */
+      .demo-section h1 + h2,
+      .demo-section h1 + h3,
+      .demo-section h2 + h3 {
+        margin-top: var(--space-m);
+      }
+
+      /* Add spacing when body text is followed by a heading */
+      .demo-section p + h2,
+      .demo-section p + h3 {
+        margin-top: var(--space-l);
+      }
+
+      .demo-section p + p {
+        margin-top: var(--space-paragraph);
+      }
+
+      /* Demo container */
+      .demo-container {
+        padding: var(--space-l);
+        max-width: 800px;
+        margin: 0 auto;
+      }
+
+      /* Visual guides */
+      .baseline-guide {
+        position: absolute;
+        width: 100%;
+        height: 1px;
+        background-color: rgba(0, 0, 255, 0.3);
+        pointer-events: none;
+      }
+
+      .capheight-guide {
+        position: absolute;
+        width: 100%;
+        height: 1px;
+        background-color: rgba(255, 0, 0, 0.3);
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
+    <!-- Original demo shapes -->
     <folk-shape id="s1" x="100" y="100">
-      <h1>Hello world.</h1>
+      <h1 class="text-h1">Hello world.</h1>
     </folk-shape>
-    <folk-shape id="s2" x="300" y="100"> End cap alpha. </folk-shape>
-    <folk-shape id="s3" x="500" y="100"> Both cap alpha. </folk-shape>
+    <folk-shape id="s2" x="300" y="100" class="text-body"> End cap alpha. </folk-shape>
+    <folk-shape id="s3" x="500" y="100" class="text-body"> Both cap alpha. </folk-shape>
     <folk-shape id="s4" x="700" y="100">
-      <p
+      <p class="text-body"
         >Here is a longer paragraph. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor
         incididunt ut labore et dolore magna aliqua.</p
       >
@@ -59,8 +176,65 @@
     <folk-shape x="200" y="200" width="50" height="50"></folk-shape>
     <folk-shape x="100" y="300" width="50" height="50" rotation="45"></folk-shape>
 
+    <!-- New design system demonstration -->
+    <div class="demo-container">
+      <div class="demo-section">
+        <h1 class="text-h1">Typography Design System</h1>
+        <p class="text-body"
+          >This demonstrates our typographic scale and spacing system using the text-box property for proper baseline
+          alignment and cap height trimming.</p
+        >
+      </div>
+
+      <div class="demo-section">
+        <h2 class="text-h2">Type Scale</h2>
+        <p class="text-body">Our type scale is built on a modular system with clear hierarchical relationships:</p>
+        <div style="margin-top: var(--space-m)">
+          <h1 class="text-h1">Heading 1 (48px)</h1>
+          <h2 class="text-h2">Heading 2 (32px)</h2>
+          <h3 class="text-h3">Heading 3 (24px)</h3>
+          <p class="text-body">Body Text (18px) - Used for paragraphs and general content.</p>
+          <p class="text-detail">Detail Text (14px) - Used for captions, footnotes, and secondary information.</p>
+        </div>
+      </div>
+
+      <div class="demo-section">
+        <h2 class="text-h2">Spacing System</h2>
+        <p class="text-body"
+          >Our spacing system is based on an 8px grid, with specific relationships between elements:</p
+        >
+        <p class="text-body">This paragraph demonstrates the paragraph-to-paragraph spacing.</p>
+        <h3 class="text-h3">Heading to Body</h3>
+        <p class="text-body">This shows the spacing between a heading and body text.</p>
+      </div>
+    </div>
+
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
+
+      // Add visual guides for baselines and cap heights (optional for demonstration)
+      function addGuides() {
+        const demoContainer = document.querySelector('.demo-container');
+        const headings = demoContainer.querySelectorAll('h1, h2, h3');
+
+        headings.forEach((heading) => {
+          const rect = heading.getBoundingClientRect();
+
+          // Approximate the baseline and cap height positions
+          const baselineGuide = document.createElement('div');
+          baselineGuide.classList.add('baseline-guide');
+          baselineGuide.style.top = `${rect.bottom}px`;
+          document.body.appendChild(baselineGuide);
+
+          const capHeightGuide = document.createElement('div');
+          capHeightGuide.classList.add('capheight-guide');
+          capHeightGuide.style.top = `${rect.top + rect.height * 0.7}px`;
+          document.body.appendChild(capHeightGuide);
+        });
+      }
+
+      // Uncomment to add visual guides
+      window.addEventListener('load', addGuides);
     </script>
   </body>
 </html>
