@@ -9,7 +9,7 @@
       href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
       rel="stylesheet"
     />
-    <title>EditContext API Text Editor</title>
+    <title>Tiny PL</title>
     <style>
       body {
         font-family: 'Recursive', sans-serif;
@@ -26,110 +26,165 @@
         margin: 0 auto;
       }
 
-      .toolbar {
-        display: flex;
-        gap: 10px;
-        padding: 10px;
+      .editor-info {
         background-color: #fff;
         border-radius: 4px;
+        padding: 15px;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin-bottom: 15px;
       }
 
-      .toolbar button {
-        padding: 8px 12px;
-        border: none;
-        border-radius: 4px;
+      .editor-info h2 {
+        margin-top: 0;
+        color: #333;
+      }
+
+      .editor-info code {
         background-color: #f0f0f0;
-        cursor: pointer;
-        font-family: 'Recursive', sans-serif;
-        transition: background-color 0.2s;
+        padding: 2px 4px;
+        border-radius: 2px;
+        font-family: 'Recursive', monospace;
+        font-variation-settings: 'MONO' 1;
       }
 
-      .toolbar button:hover {
-        background-color: #e0e0e0;
-      }
-
-      .toolbar button.active {
-        background-color: #e0e0e0;
-        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
-        font-weight: bold;
-      }
-
-      .editor {
+      #editor {
         min-height: 300px;
         padding: 20px;
         background-color: #fff;
         border-radius: 4px;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        outline: none;
         white-space: pre-wrap;
         overflow-wrap: break-word;
         line-height: 1.5;
+        font-variation-settings: 'MONO' 1;
+        position: relative;
+        outline: none;
+        caret-color: transparent; /* Hide the native caret */
       }
 
-      .custom-span {
-        display: inline;
-        border-radius: 2px;
+      /* Editor content container */
+      .editor-content {
+        position: relative;
+        min-height: 100%;
       }
 
-      .highlight-yellow {
-        background-color: #fff9c4;
+      /* Line container */
+      .editor-line {
+        position: relative;
+        min-height: 1.5em;
       }
 
-      .highlight-green {
-        background-color: #c8e6c9;
+      /* Selection styles */
+      .custom-selection {
+        position: absolute;
+        background-color: rgba(65, 105, 225, 0.3);
+        pointer-events: none;
+        z-index: 1;
       }
 
-      .highlight-blue {
-        background-color: #bbdefb;
+      /* Caret style */
+      .custom-caret {
+        position: absolute;
+        width: 2px;
+        background-color: #000;
+        animation: blink 1s step-end infinite;
+        pointer-events: none;
+        z-index: 2;
       }
 
-      .bold {
-        font-weight: 800;
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
       }
 
-      .italic {
-        font-style: italic;
+      /* Syntax highlighting styles */
+      .variable-declaration {
+        color: #2196f3;
+        font-weight: 600;
+      }
+
+      .expression {
+        color: #4caf50;
+      }
+
+      .expression-result {
+        background-color: #e8f5e9;
+        margin-left: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        color: #388e3c;
+        font-weight: 600;
+      }
+
+      .error {
+        color: #f44336;
+        background-color: #ffebee;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: 10px;
+      }
+
+      /* For screen readers */
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
       }
     </style>
   </head>
   <body>
     <div class="editor-container">
-      <h1>EditContext API Text Editor</h1>
-      <div class="toolbar">
-        <button id="bold-btn">Bold</button>
-        <button id="italic-btn">Italic</button>
-        <button id="highlight-yellow-btn">Highlight Yellow</button>
-        <button id="highlight-green-btn">Highlight Green</button>
-        <button id="highlight-blue-btn">Highlight Blue</button>
+      <h1>Tiny PL</h1>
+
+      <div class="editor-info">
+        <h2>How to use:</h2>
+        <ul>
+          <li>Use <code>#variableName = value</code> to declare variables (e.g., <code>#x = 42</code>)</li>
+          <li>Use <code>=expression</code> to compute expressions (e.g., <code>=x + 10</code>)</li>
+          <li>Expressions will update automatically when variables change</li>
+          <li
+            >Supported operations: <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>,
+            <code>**</code> (power)</li
+          >
+          <li>Try entering multiple lines with different variables and expressions!</li>
+        </ul>
       </div>
-      <div id="editor" class="editor" tabindex="0"></div>
+
+      <div id="editor" tabindex="0"></div>
+
+      <!-- For screen readers accessibility -->
+      <div id="sr-editor-content" class="sr-only" aria-live="polite"></div>
     </div>
 
     <script>
       document.addEventListener('DOMContentLoaded', () => {
-        // Get references to DOM elements
-        const editorElement = document.getElementById('editor');
-        const boldBtn = document.getElementById('bold-btn');
-        const italicBtn = document.getElementById('italic-btn');
-        const highlightYellowBtn = document.getElementById('highlight-yellow-btn');
-        const highlightGreenBtn = document.getElementById('highlight-green-btn');
-        const highlightBlueBtn = document.getElementById('highlight-blue-btn');
+        /**
+         * EditorModel - Handles all data and business logic
+         * Responsible for managing the text content, selection, variables, and expressions
+         */
+        class EditorModel {
+          constructor() {
+            this.text = '';
+            this.selectionStart = 0;
+            this.selectionEnd = 0;
+            this.variables = new Map();
+            this.expressions = [];
+          }
 
-        // Create an EditContext instance
-        const editContext = new EditContext();
-
-        // Attach the EditContext to our editor element
-        editorElement.editContext = editContext;
-
-        // Editor model to store text and formatting
-        const editorModel = {
-          text: '',
-          selectionStart: 0,
-          selectionEnd: 0,
-          formats: [], // Array to store format information for spans
-
-          // Update text content
+          /**
+           * Updates text content and parses for variables and expressions
+           */
           updateText(updateRangeStart, updateRangeEnd, newText) {
             // Remove the text in the specified range
             const beforeText = this.text.substring(0, updateRangeStart);
@@ -138,424 +193,803 @@
             // Insert the new text
             this.text = beforeText + newText + afterText;
 
-            // Adjust formats after text update
-            this.adjustFormatsAfterTextUpdate(updateRangeStart, updateRangeEnd, newText.length);
+            // Parse the text to update variables and expressions
+            this.parseText();
 
             return this.text;
-          },
+          }
 
-          // Update selection
+          /**
+           * Updates selection positions
+           */
           updateSelection(start, end) {
             this.selectionStart = start;
             this.selectionEnd = end;
-          },
+          }
 
-          // Toggle a format for the current selection
-          toggleFormat(type, className) {
-            if (this.selectionStart === this.selectionEnd) return; // No selection
+          /**
+           * Parses text to extract variables and expressions
+           */
+          parseText() {
+            const lines = this.text.split('\n');
+            const newVariables = new Map();
+            const newExpressions = [];
 
-            // Check if this exact format already exists for the selection
-            const existingFormatIndex = this.formats.findIndex(
-              (format) =>
-                format.type === type &&
-                format.className === className &&
-                format.start === this.selectionStart &&
-                format.end === this.selectionEnd,
+            // First pass: collect all variable declarations
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i].trim();
+
+              if (line.startsWith('#')) {
+                // This is a variable declaration
+                const declaration = line.substring(1).trim();
+                const equalsIndex = declaration.indexOf('=');
+
+                if (equalsIndex !== -1) {
+                  const variableName = declaration.substring(0, equalsIndex).trim();
+                  const valueStr = declaration.substring(equalsIndex + 1).trim();
+
+                  try {
+                    // Evaluate the value (allowing variables in value expressions)
+                    const value = this.evaluateExpression(valueStr, newVariables);
+                    newVariables.set(variableName, value);
+                  } catch (error) {
+                    // If there's an error, we'll show it in the rendering
+                  }
+                }
+              }
+            }
+
+            // Second pass: collect all expressions
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i].trim();
+
+              if (line.startsWith('=')) {
+                // This is an expression
+                const expressionText = line.substring(1).trim();
+
+                try {
+                  // Collect variable dependencies in this expression
+                  const dependencies = this.findDependencies(expressionText, newVariables);
+
+                  newExpressions.push({
+                    line: i,
+                    text: expressionText,
+                    dependencies,
+                  });
+                } catch (error) {
+                  // If there's an error, we'll show it in the rendering
+                }
+              }
+            }
+
+            this.variables = newVariables;
+            this.expressions = newExpressions;
+          }
+
+          /**
+           * Finds variable dependencies in an expression
+           */
+          findDependencies(expression, varsMap = this.variables) {
+            const dependencies = new Set();
+            const variableNames = Array.from(varsMap.keys());
+
+            // Sort variable names by length (longest first) to handle substring cases
+            variableNames.sort((a, b) => b.length - a.length);
+
+            for (const varName of variableNames) {
+              // Use a regex to find whole word matches
+              const regex = new RegExp(`\\b${varName}\\b`, 'g');
+              if (regex.test(expression)) {
+                dependencies.add(varName);
+              }
+            }
+
+            return Array.from(dependencies);
+          }
+
+          /**
+           * Evaluates an expression using the current variables
+           */
+          evaluateExpression(expression, varsMap = this.variables) {
+            // Create a safe evaluation context with only allowed operations
+            const context = {};
+
+            // Add all variables to the context
+            for (const [name, value] of varsMap.entries()) {
+              context[name] = value;
+            }
+
+            // Create a safe function to evaluate the expression
+            const safeEval = new Function(
+              ...Object.keys(context),
+              `
+              return ${expression
+                .replace(/\*\*/g, 'Math.pow') // Replace ** with Math.pow
+                .replace(/[^\w\s+\-*/.()]/g, '')}; // Remove any potentially unsafe characters
+            `,
             );
 
-            if (existingFormatIndex !== -1) {
-              // Remove the format if it exists
-              this.formats.splice(existingFormatIndex, 1);
+            try {
+              // Execute the safe evaluation function with variable values
+              return safeEval(...Object.values(context));
+            } catch (error) {
+              throw new Error(`Error evaluating expression: ${error.message}`);
+            }
+          }
+
+          /**
+           * Gets the line and column for a position in text
+           */
+          getLineAndColumn(position) {
+            // Get all text up to the position
+            const textUpToPosition = this.text.substring(0, position);
+
+            // Find all line breaks
+            const lines = textUpToPosition.split('\n');
+
+            // The line number is the number of line breaks
+            const line = lines.length - 1;
+
+            // The column is the length of the last line
+            const column = lines[line].length;
+
+            return { line, column };
+          }
+
+          /**
+           * Gets the position from line and column
+           */
+          getPositionFromLineAndColumn(line, column) {
+            const lines = this.text.split('\n');
+            let position = 0;
+
+            // Add up lengths of all lines before the target line
+            for (let i = 0; i < line; i++) {
+              position += lines[i].length + 1; // +1 for each newline
+            }
+
+            // Add the column position (clamped to line length)
+            if (line < lines.length) {
+              position += Math.min(column, lines[line].length);
+            }
+
+            return position;
+          }
+
+          /**
+           * Moves the cursor by character, line, word, or document
+           */
+          moveCursor(direction, unit = 'character', extendSelection = false) {
+            const currentPosition = this.selectionEnd;
+            let newPosition = currentPosition;
+
+            switch (unit) {
+              case 'character': {
+                // Move by one character
+                if (direction === 'backward') {
+                  newPosition = Math.max(0, currentPosition - 1);
+                } else {
+                  newPosition = Math.min(this.text.length, currentPosition + 1);
+                }
+                break;
+              }
+
+              case 'line': {
+                // Get current line and column
+                const { line, column } = this.getLineAndColumn(currentPosition);
+
+                // Calculate new line
+                const newLine =
+                  direction === 'backward'
+                    ? Math.max(0, line - 1)
+                    : Math.min(this.text.split('\n').length - 1, line + 1);
+
+                // Get position at the same column in the new line
+                newPosition = this.getPositionFromLineAndColumn(newLine, column);
+                break;
+              }
+
+              case 'word': {
+                if (direction === 'backward') {
+                  // Find previous word boundary
+                  const textBefore = this.text.substring(0, currentPosition);
+                  const match = textBefore.match(/\b\w+\s*$/);
+                  if (match) {
+                    newPosition = textBefore.lastIndexOf(match[0]);
+                  } else {
+                    newPosition = Math.max(0, currentPosition - 1);
+                  }
+                } else {
+                  // Find next word boundary
+                  const textAfter = this.text.substring(currentPosition);
+                  const match = textAfter.match(/^\s*\w+\b/);
+                  if (match) {
+                    newPosition = currentPosition + match[0].length;
+                  } else {
+                    newPosition = Math.min(this.text.length, currentPosition + 1);
+                  }
+                }
+                break;
+              }
+
+              case 'document': {
+                // Move to beginning or end of document
+                newPosition = direction === 'backward' ? 0 : this.text.length;
+                break;
+              }
+            }
+
+            // Update selection
+            if (extendSelection) {
+              // Extend selection to new position
+              this.selectionEnd = newPosition;
             } else {
-              // Add the format if it doesn't exist
-              this.formats.push({
-                start: this.selectionStart,
-                end: this.selectionEnd,
-                type,
-                className,
-              });
+              // Move both selection start and end
+              this.selectionStart = newPosition;
+              this.selectionEnd = newPosition;
             }
-
-            // Sort formats by start position for easier rendering
-            this.formats.sort((a, b) => a.start - b.start);
-          },
-
-          // Adjust formats after text update
-          adjustFormatsAfterTextUpdate(updateStart, updateEnd, newTextLength) {
-            const lengthDiff = newTextLength - (updateEnd - updateStart);
-
-            this.formats = this.formats.filter((format) => {
-              // Remove formats that are completely within the updated range
-              if (format.start >= updateStart && format.end <= updateEnd) {
-                return false;
-              }
-
-              // Adjust formats that start after the update
-              if (format.start >= updateEnd) {
-                format.start += lengthDiff;
-                format.end += lengthDiff;
-              }
-              // Adjust formats that end after the update but start before it
-              else if (format.end >= updateEnd && format.start < updateStart) {
-                format.end += lengthDiff;
-              }
-              // Adjust formats that are partially within the update range
-              else if (format.start < updateEnd && format.start >= updateStart) {
-                format.start = updateStart;
-                format.end += lengthDiff;
-              }
-
-              return true;
-            });
-          },
-
-          // Check if a format is active for the current selection
-          isFormatActive(type, className) {
-            if (this.selectionStart === this.selectionEnd) return false;
-
-            return this.formats.some(
-              (format) =>
-                format.type === type &&
-                format.className === className &&
-                format.start === this.selectionStart &&
-                format.end === this.selectionEnd,
-            );
-          },
-        };
-
-        // Render the editor content with formats
-        function renderEditor() {
-          // Clear the editor
-          editorElement.innerHTML = '';
-
-          // Create a map to track which positions have which formats
-          const formatMap = new Map();
-
-          // Initialize the format map for each character position
-          for (let i = 0; i <= editorModel.text.length; i++) {
-            formatMap.set(i, new Set());
-          }
-
-          // Add format information to the map
-          for (const format of editorModel.formats) {
-            for (let i = format.start; i < format.end; i++) {
-              const formatSet = formatMap.get(i);
-              formatSet.add(`${format.type}:${format.className}`);
-            }
-          }
-
-          // Find ranges with the same format combinations
-          const ranges = [];
-          let currentStart = 0;
-          let currentFormats = formatMap.get(0);
-
-          for (let i = 1; i <= editorModel.text.length; i++) {
-            const formats = formatMap.get(i);
-            const formatsEqual = areSetsEqual(currentFormats, formats);
-
-            if (!formatsEqual) {
-              // Add the current range
-              ranges.push({
-                start: currentStart,
-                end: i,
-                formats: [...currentFormats],
-              });
-
-              // Start a new range
-              currentStart = i;
-              currentFormats = formats;
-            }
-          }
-
-          // Add the last range if needed
-          if (currentStart < editorModel.text.length) {
-            ranges.push({
-              start: currentStart,
-              end: editorModel.text.length,
-              formats: [...currentFormats],
-            });
-          }
-
-          // Render each range
-          for (const range of ranges) {
-            const text = editorModel.text.substring(range.start, range.end);
-
-            if (range.formats.length === 0) {
-              // Plain text
-              const textNode = document.createTextNode(text);
-              editorElement.appendChild(textNode);
-            } else {
-              // Create a span with all the necessary classes
-              const span = document.createElement('span');
-              span.className = 'custom-span';
-
-              for (const formatStr of range.formats) {
-                const [, className] = formatStr.split(':');
-                span.classList.add(className);
-              }
-
-              span.textContent = text;
-              editorElement.appendChild(span);
-            }
-          }
-
-          // If there's no content, add a placeholder
-          if (editorModel.text.length === 0) {
-            editorElement.innerHTML = '<br>';
-          }
-
-          // Update the selection
-          updateSelectionInDOM();
-
-          // Update button states
-          updateButtonStates();
-        }
-
-        // Helper function to compare sets
-        function areSetsEqual(a, b) {
-          if (a.size !== b.size) return false;
-          for (const item of a) {
-            if (!b.has(item)) return false;
-          }
-          return true;
-        }
-
-        // Update button states based on active formats
-        function updateButtonStates() {
-          boldBtn.classList.toggle('active', editorModel.isFormatActive('bold', 'bold'));
-          italicBtn.classList.toggle('active', editorModel.isFormatActive('italic', 'italic'));
-          highlightYellowBtn.classList.toggle('active', editorModel.isFormatActive('highlight', 'highlight-yellow'));
-          highlightGreenBtn.classList.toggle('active', editorModel.isFormatActive('highlight', 'highlight-green'));
-          highlightBlueBtn.classList.toggle('active', editorModel.isFormatActive('highlight', 'highlight-blue'));
-        }
-
-        // Update the selection in the DOM
-        function updateSelectionInDOM() {
-          const selection = window.getSelection();
-          const range = document.createRange();
-
-          // Find the node and offset for the selection start
-          let startNodeInfo = findNodeAndOffsetForPosition(editorModel.selectionStart);
-          let endNodeInfo = findNodeAndOffsetForPosition(editorModel.selectionEnd);
-
-          if (startNodeInfo && endNodeInfo) {
-            range.setStart(startNodeInfo.node, startNodeInfo.offset);
-            range.setEnd(endNodeInfo.node, endNodeInfo.offset);
-
-            selection.removeAllRanges();
-            selection.addRange(range);
           }
         }
 
-        // Find the DOM node and offset for a given position in the text
-        function findNodeAndOffsetForPosition(position) {
-          if (position === 0 && editorElement.childNodes.length === 0) {
-            return { node: editorElement, offset: 0 };
+        /**
+         * TextLayout - Responsible for text positioning calculations
+         * Handles measuring text dimensions and converting between text positions and coordinates
+         */
+        class TextLayout {
+          constructor(editorElement) {
+            this.editorElement = editorElement;
+            this.lineHeight = 24; // Default, will be measured
+            this.charWidth = 9.6; // Default, will be measured
+            this.paddingLeft = 0; // Will be measured
+            this.paddingTop = 0; // Will be measured
+
+            this.measureDimensions();
           }
 
-          let currentPos = 0;
+          /**
+           * Measure text dimensions and editor padding
+           */
+          measureDimensions() {
+            // Measure character dimensions
+            const testSpan = document.createElement('span');
+            const editorStyle = getComputedStyle(this.editorElement);
 
-          for (const node of editorElement.childNodes) {
-            const nodeLength = node.textContent.length;
+            testSpan.style.fontFamily = editorStyle.fontFamily;
+            testSpan.style.fontSize = editorStyle.fontSize;
+            testSpan.style.fontVariationSettings = editorStyle.fontVariationSettings;
+            testSpan.style.visibility = 'hidden';
+            testSpan.style.position = 'absolute';
+            testSpan.style.whiteSpace = 'pre';
+            testSpan.textContent = 'X'.repeat(10);
+            document.body.appendChild(testSpan);
 
-            if (currentPos + nodeLength >= position) {
-              if (node.nodeType === Node.TEXT_NODE) {
-                return { node, offset: position - currentPos };
+            const rect = testSpan.getBoundingClientRect();
+            this.charWidth = rect.width / 10;
+            this.lineHeight = rect.height;
+
+            document.body.removeChild(testSpan);
+
+            // Get editor padding
+            this.paddingLeft = parseFloat(editorStyle.paddingLeft);
+            this.paddingTop = parseFloat(editorStyle.paddingTop);
+          }
+
+          /**
+           * Gets the coordinates for a text position
+           */
+          getCoordinatesForPosition(text, position) {
+            // Get text up to position
+            const textUpToPosition = text.substring(0, position);
+            const lines = textUpToPosition.split('\n');
+            const lineCount = lines.length;
+            const lastLine = lines[lineCount - 1];
+
+            // Calculate coordinates with padding
+            const x = lastLine.length * this.charWidth + this.paddingLeft;
+            const y = (lineCount - 1) * this.lineHeight + this.paddingTop;
+
+            return {
+              x,
+              y,
+              height: this.lineHeight,
+            };
+          }
+
+          /**
+           * Gets the text position from coordinates
+           */
+          getPositionFromCoordinates(text, x, y) {
+            // Adjust for padding
+            const adjustedX = Math.max(0, x - this.paddingLeft);
+            const adjustedY = Math.max(0, y - this.paddingTop);
+
+            // Calculate line number
+            const lineIndex = Math.floor(adjustedY / this.lineHeight);
+
+            // Calculate character index
+            const charIndex = Math.round(adjustedX / this.charWidth);
+
+            // Get position in text
+            const lines = text.split('\n');
+            let position = 0;
+
+            // Add lengths of preceding lines
+            for (let i = 0; i < Math.min(lineIndex, lines.length); i++) {
+              position += lines[i].length + 1; // +1 for newline
+            }
+
+            // Add character index in current line
+            if (lineIndex < lines.length) {
+              position += Math.min(charIndex, lines[lineIndex].length);
+            }
+
+            return position;
+          }
+
+          /**
+           * Calculates character bounds for a range
+           */
+          calculateCharacterBounds(text, rangeStart, rangeEnd) {
+            const bounds = [];
+
+            for (let i = rangeStart; i < rangeEnd; i++) {
+              const coords = this.getCoordinatesForPosition(text, i);
+              bounds.push(new DOMRect(coords.x, coords.y, this.charWidth, this.lineHeight));
+            }
+
+            return bounds;
+          }
+        }
+
+        /**
+         * EditorView - Responsible for rendering
+         * Handles rendering the text, selection, caret, and syntax highlighting
+         */
+        class EditorView {
+          constructor(editorElement, srElement, model, layout) {
+            this.editorElement = editorElement;
+            this.srElement = srElement;
+            this.model = model;
+            this.layout = layout;
+
+            this.caretElement = null;
+            this.selectionElements = [];
+
+            // Create a container for content
+            this.contentContainer = document.createElement('div');
+            this.contentContainer.className = 'editor-content';
+            this.editorElement.appendChild(this.contentContainer);
+
+            // Create and add caret
+            this.createCaret();
+          }
+
+          /**
+           * Creates the caret element
+           */
+          createCaret() {
+            this.caretElement = document.createElement('div');
+            this.caretElement.className = 'custom-caret';
+            this.editorElement.appendChild(this.caretElement);
+          }
+
+          /**
+           * Clears all selection elements
+           */
+          clearSelectionElements() {
+            for (const element of this.selectionElements) {
+              if (element.parentNode === this.editorElement) {
+                this.editorElement.removeChild(element);
+              }
+            }
+            this.selectionElements = [];
+          }
+
+          /**
+           * Updates the caret position
+           */
+          updateCaret(position) {
+            const coords = this.layout.getCoordinatesForPosition(this.model.text, position);
+
+            this.caretElement.style.left = `${coords.x}px`;
+            this.caretElement.style.top = `${coords.y}px`;
+            this.caretElement.style.height = `${coords.height}px`;
+            this.caretElement.style.display = 'block';
+          }
+
+          /**
+           * Updates the selection visualization
+           */
+          updateSelection(start, end) {
+            this.clearSelectionElements();
+
+            if (start === end) {
+              // Just a caret position
+              this.updateCaret(start);
+              return;
+            }
+
+            // Ensure start <= end
+            if (start > end) {
+              [start, end] = [end, start];
+            }
+
+            // Hide caret when selection is active
+            this.caretElement.style.display = 'none';
+
+            // Get line information for the selection
+            const startLineInfo = this.model.getLineAndColumn(start);
+            const endLineInfo = this.model.getLineAndColumn(end);
+
+            // Create selection elements for each line
+            const lines = this.model.text.split('\n');
+
+            for (let lineNum = startLineInfo.line; lineNum <= endLineInfo.line; lineNum++) {
+              // Calculate selection start and end for this line
+              const lineStart = lineNum === startLineInfo.line ? startLineInfo.column : 0;
+              const lineEnd = lineNum === endLineInfo.line ? endLineInfo.column : lines[lineNum].length;
+
+              if (lineEnd > lineStart) {
+                // Create selection element for this line
+                const selectionElement = document.createElement('div');
+                selectionElement.className = 'custom-selection';
+
+                // Convert to positions in the full text
+                const startPos = this.model.getPositionFromLineAndColumn(lineNum, lineStart);
+                const endPos = this.model.getPositionFromLineAndColumn(lineNum, lineEnd);
+
+                // Get coordinates for the positions
+                const startCoords = this.layout.getCoordinatesForPosition(this.model.text, startPos);
+                const endCoords = this.layout.getCoordinatesForPosition(this.model.text, endPos);
+
+                // Set position and size
+                selectionElement.style.left = `${startCoords.x}px`;
+                selectionElement.style.top = `${startCoords.y}px`;
+                selectionElement.style.width = `${endCoords.x - startCoords.x}px`;
+                selectionElement.style.height = `${this.layout.lineHeight}px`;
+
+                this.editorElement.appendChild(selectionElement);
+                this.selectionElements.push(selectionElement);
+              }
+            }
+          }
+
+          /**
+           * Escapes HTML special characters
+           */
+          escapeHTML(text) {
+            return text
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;')
+              .replace(/'/g, '&#039;');
+          }
+
+          /**
+           * Renders the editor content with syntax highlighting
+           */
+          render() {
+            const lines = this.model.text.split('\n');
+            const fragments = [];
+
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i];
+
+              // Create a container for the line
+              fragments.push('<div class="editor-line">');
+
+              if (line.trim().startsWith('#')) {
+                // Variable declaration
+                fragments.push(`<span class="variable-declaration">${this.escapeHTML(line)}</span>`);
+
+                // Check if the variable declaration is valid
+                const declaration = line.substring(1).trim();
+                const equalsIndex = declaration.indexOf('=');
+
+                if (equalsIndex !== -1) {
+                  const variableName = declaration.substring(0, equalsIndex).trim();
+                  if (!this.model.variables.has(variableName)) {
+                    fragments.push('<span class="error">Invalid value</span>');
+                  }
+                }
+              } else if (line.trim().startsWith('=')) {
+                // Expression
+                fragments.push(`<span class="expression">${this.escapeHTML(line)}</span>`);
+
+                // Find the corresponding expression
+                const expression = this.model.expressions.find((e) => e.line === i);
+
+                if (expression) {
+                  try {
+                    // Evaluate the expression
+                    const result = this.model.evaluateExpression(expression.text);
+                    fragments.push(`<span class="expression-result">→ ${result}</span>`);
+                  } catch (error) {
+                    fragments.push(`<span class="error">${error.message}</span>`);
+                  }
+                } else {
+                  fragments.push('<span class="error">Invalid expression</span>');
+                }
               } else {
-                // For element nodes (spans), we need to find the text node inside
-                if (node.childNodes.length > 0 && node.childNodes[0].nodeType === Node.TEXT_NODE) {
-                  return { node: node.childNodes[0], offset: position - currentPos };
-                }
-                return { node, offset: 0 };
+                // Regular text
+                fragments.push(this.escapeHTML(line));
               }
+
+              // Close the line container
+              fragments.push('</div>');
             }
 
-            currentPos += nodeLength;
-          }
-
-          // If we get here, the position is at the end
-          const lastNode = editorElement.lastChild;
-          if (lastNode) {
-            if (lastNode.nodeType === Node.TEXT_NODE) {
-              return { node: lastNode, offset: lastNode.textContent.length };
-            } else if (lastNode.childNodes.length > 0 && lastNode.lastChild.nodeType === Node.TEXT_NODE) {
-              return { node: lastNode.lastChild, offset: lastNode.lastChild.textContent.length };
+            // If there's no content, add an empty line
+            if (fragments.length === 0) {
+              fragments.push('<div class="editor-line"><br></div>');
             }
-          }
 
-          return { node: editorElement, offset: editorElement.childNodes.length };
-        }
+            // Update HTML content
+            this.contentContainer.innerHTML = fragments.join('');
 
-        // Calculate character bounds for a range of text
-        function calculateCharacterBounds(rangeStart, rangeEnd) {
-          const bounds = [];
+            // Update selection
+            this.updateSelection(this.model.selectionStart, this.model.selectionEnd);
 
-          for (let i = rangeStart; i < rangeEnd; i++) {
-            const range = document.createRange();
-            const nodeInfo = findNodeAndOffsetForPosition(i);
-
-            if (nodeInfo) {
-              range.setStart(nodeInfo.node, nodeInfo.offset);
-              range.setEnd(nodeInfo.node, nodeInfo.offset + 1);
-
-              const rect = range.getBoundingClientRect();
-              bounds.push(new DOMRect(rect.x, rect.y, rect.width, rect.height));
-            }
-          }
-
-          return bounds;
-        }
-
-        // Update the EditContext when the selection changes
-        function updateEditContextSelection() {
-          const selection = window.getSelection();
-
-          if (selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-
-            // Convert DOM positions to text positions
-            const startPosition = getTextPositionFromNode(range.startContainer, range.startOffset);
-            const endPosition = getTextPositionFromNode(range.endContainer, range.endOffset);
-
-            if (startPosition !== null && endPosition !== null) {
-              editorModel.updateSelection(startPosition, endPosition);
-              editContext.updateSelection(startPosition, endPosition);
-
-              // Update selection bounds
-              const selectionRect = range.getBoundingClientRect();
-              editContext.updateSelectionBounds(selectionRect);
-            }
+            // Update screen reader content for accessibility
+            this.srElement.textContent = this.model.text;
           }
         }
 
-        // Get text position from a DOM node and offset
-        function getTextPositionFromNode(node, offset) {
-          let position = 0;
+        /**
+         * EditorController - Coordinates interactions between model, view, and input
+         * Handles events, user interactions, and EditContext integration
+         */
+        class EditorController {
+          constructor(editorElement, srElement) {
+            this.editorElement = editorElement;
+            this.model = new EditorModel();
+            this.layout = new TextLayout(editorElement);
+            this.view = new EditorView(editorElement, srElement, this.model, this.layout);
 
-          // If the node is not inside the editor, return null
-          if (!editorElement.contains(node) && node !== editorElement) {
-            return null;
+            // Set up EditContext
+            this.editContext = new EditContext();
+            this.editorElement.editContext = this.editContext;
+
+            this.setupEventListeners();
           }
 
-          // If the node is a text node, we need to find its position in the text
-          if (node.nodeType === Node.TEXT_NODE) {
-            // Find all previous text nodes and add their lengths
-            const walker = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
-            let currentNode;
+          /**
+           * Sets up all event listeners
+           */
+          setupEventListeners() {
+            // EditContext text update
+            this.editContext.addEventListener('textupdate', this.handleTextUpdate.bind(this));
 
-            while ((currentNode = walker.nextNode()) !== null) {
-              if (currentNode === node) {
-                return position + offset;
-              }
-              position += currentNode.textContent.length;
-            }
-          }
-          // If the node is an element node
-          else if (node.nodeType === Node.ELEMENT_NODE) {
-            // If it's the editor itself
-            if (node === editorElement) {
-              if (offset === 0) return 0;
+            // EditContext character bounds update
+            this.editContext.addEventListener('characterboundsupdate', this.handleCharacterBoundsUpdate.bind(this));
 
-              // Count the text length of all children before the offset
-              let length = 0;
-              for (let i = 0; i < offset; i++) {
-                if (i < node.childNodes.length) {
-                  length += node.childNodes[i].textContent.length;
-                }
-              }
-              return length;
-            }
-            // If it's a span or other element inside the editor
-            else {
-              // Find all previous text nodes and add their lengths
-              const walker = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
-              let currentNode;
-              let foundParent = false;
+            // Focus handling
+            this.editorElement.addEventListener('focus', this.handleFocus.bind(this));
 
-              while ((currentNode = walker.nextNode()) !== null) {
-                if (node.contains(currentNode)) {
-                  foundParent = true;
-                  if (offset === 0) return position;
-                  return position + currentNode.textContent.length;
-                }
-                if (!foundParent) {
-                  position += currentNode.textContent.length;
-                }
-              }
-            }
+            // Mouse event handling for selection
+            this.editorElement.addEventListener('mousedown', this.handleMouseDown.bind(this));
+
+            // Keyboard event handling for navigation
+            this.editorElement.addEventListener('keydown', this.handleKeyDown.bind(this));
           }
 
-          return null;
+          /**
+           * Updates the EditContext selection
+           */
+          updateEditContextSelection() {
+            this.editContext.updateSelection(this.model.selectionStart, this.model.selectionEnd);
+
+            // Calculate selection bounds for the EditContext
+            const startCoords = this.layout.getCoordinatesForPosition(this.model.text, this.model.selectionStart);
+
+            const endCoords = this.layout.getCoordinatesForPosition(this.model.text, this.model.selectionEnd);
+
+            // Create a rectangle that encompasses the selection
+            const left = Math.min(startCoords.x, endCoords.x);
+            const top = Math.min(startCoords.y, endCoords.y);
+            const right = Math.max(startCoords.x, endCoords.x);
+            const bottom = Math.max(startCoords.y + startCoords.height, endCoords.y + endCoords.height);
+
+            const selectionRect = new DOMRect(left, top, right - left, bottom - top);
+
+            this.editContext.updateSelectionBounds(selectionRect);
+          }
+
+          /**
+           * Handles text updates from EditContext
+           */
+          handleTextUpdate(e) {
+            // Update the model with the new text
+            this.model.updateText(e.updateRangeStart, e.updateRangeEnd, e.text);
+
+            // Update the selection
+            this.model.updateSelection(e.selectionStart, e.selectionEnd);
+
+            // Render the updated content
+            this.view.render();
+
+            // Update EditContext control bounds
+            this.editContext.updateControlBounds(this.editorElement.getBoundingClientRect());
+          }
+
+          /**
+           * Handles character bounds update requests
+           */
+          handleCharacterBoundsUpdate(e) {
+            // Calculate character bounds for the requested range
+            const bounds = this.layout.calculateCharacterBounds(this.model.text, e.rangeStart, e.rangeEnd);
+
+            // Update the EditContext with the bounds
+            this.editContext.updateCharacterBounds(e.rangeStart, bounds);
+          }
+
+          /**
+           * Handles focus events
+           */
+          handleFocus() {
+            // Update control bounds when focused
+            this.editContext.updateControlBounds(this.editorElement.getBoundingClientRect());
+
+            // Update selection
+            this.updateEditContextSelection();
+          }
+
+          /**
+           * Handles mouse down events for selection
+           */
+          handleMouseDown(e) {
+            e.preventDefault();
+
+            // Calculate text position from mouse coordinates
+            const rect = this.editorElement.getBoundingClientRect();
+            const position = this.layout.getPositionFromCoordinates(
+              this.model.text,
+              e.clientX - rect.left,
+              e.clientY - rect.top,
+            );
+
+            // Update selection in model
+            this.model.updateSelection(position, position);
+
+            // Update view
+            this.view.updateSelection(position, position);
+
+            // Update EditContext
+            this.updateEditContextSelection();
+
+            // Set up mouse move and up handlers
+            const handleMouseMove = (moveEvent) => {
+              const newPosition = this.layout.getPositionFromCoordinates(
+                this.model.text,
+                moveEvent.clientX - rect.left,
+                moveEvent.clientY - rect.top,
+              );
+
+              // Update selection end
+              this.model.updateSelection(this.model.selectionStart, newPosition);
+
+              // Update view
+              this.view.updateSelection(this.model.selectionStart, newPosition);
+
+              // Update EditContext
+              this.updateEditContextSelection();
+            };
+
+            const handleMouseUp = () => {
+              // Clean up event listeners
+              document.removeEventListener('mousemove', handleMouseMove);
+              document.removeEventListener('mouseup', handleMouseUp);
+            };
+
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+          }
+
+          /**
+           * Handles keyboard events for navigation and selection
+           */
+          handleKeyDown(e) {
+            let handled = true;
+            const shift = e.shiftKey;
+
+            switch (e.key) {
+              case 'ArrowLeft':
+                this.model.moveCursor('backward', 'character', shift);
+                break;
+
+              case 'ArrowRight':
+                this.model.moveCursor('forward', 'character', shift);
+                break;
+
+              case 'ArrowUp':
+                this.model.moveCursor('backward', 'line', shift);
+                break;
+
+              case 'ArrowDown':
+                this.model.moveCursor('forward', 'line', shift);
+                break;
+
+              case 'Home':
+                if (e.ctrlKey || e.metaKey) {
+                  this.model.moveCursor('backward', 'document', shift);
+                } else {
+                  // Move to start of line
+                  const { line } = this.model.getLineAndColumn(this.model.selectionEnd);
+                  const lineStart = this.model.getPositionFromLineAndColumn(line, 0);
+                  if (shift) {
+                    this.model.selectionEnd = lineStart;
+                  } else {
+                    this.model.selectionStart = this.model.selectionEnd = lineStart;
+                  }
+                }
+                break;
+
+              case 'End':
+                if (e.ctrlKey || e.metaKey) {
+                  this.model.moveCursor('forward', 'document', shift);
+                } else {
+                  // Move to end of line
+                  const { line } = this.model.getLineAndColumn(this.model.selectionEnd);
+                  const lines = this.model.text.split('\n');
+                  const lineEnd = this.model.getPositionFromLineAndColumn(line, lines[line].length);
+                  if (shift) {
+                    this.model.selectionEnd = lineEnd;
+                  } else {
+                    this.model.selectionStart = this.model.selectionEnd = lineEnd;
+                  }
+                }
+                break;
+
+              default:
+                handled = false;
+            }
+
+            if (handled) {
+              e.preventDefault();
+
+              // Update view
+              this.view.updateSelection(this.model.selectionStart, this.model.selectionEnd);
+
+              // Update EditContext selection
+              this.updateEditContextSelection();
+            }
+          }
+
+          /**
+           * Initializes the editor with content
+           */
+          init(content = '') {
+            // Set initial text
+            if (content) {
+              this.editContext.updateText(0, 0, content);
+              this.model.updateText(0, 0, content);
+
+              // Position cursor at the end
+              this.model.updateSelection(content.length, content.length);
+            }
+
+            // Render initial content
+            this.view.render();
+
+            // Update EditContext
+            this.editContext.updateControlBounds(this.editorElement.getBoundingClientRect());
+            this.updateEditContextSelection();
+
+            // Focus the editor
+            this.editorElement.focus();
+          }
         }
-
-        // Event listeners for EditContext
-        editContext.addEventListener('textupdate', (e) => {
-          editorModel.updateText(e.updateRangeStart, e.updateRangeEnd, e.text);
-          editorModel.updateSelection(e.selectionStart, e.selectionEnd);
-          renderEditor();
-
-          // Update control bounds
-          const editorRect = editorElement.getBoundingClientRect();
-          editContext.updateControlBounds(editorRect);
-        });
-
-        editContext.addEventListener('characterboundsupdate', (e) => {
-          const bounds = calculateCharacterBounds(e.rangeStart, e.rangeEnd);
-          editContext.updateCharacterBounds(e.rangeStart, bounds);
-        });
-
-        // Handle selection changes in the DOM
-        document.addEventListener('selectionchange', () => {
-          const selection = window.getSelection();
-          if (selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-            if (editorElement.contains(range.commonAncestorContainer)) {
-              updateEditContextSelection();
-            }
-          }
-        });
 
         // Initialize the editor
-        function initEditor() {
-          // Set initial control bounds
-          const editorRect = editorElement.getBoundingClientRect();
-          editContext.updateControlBounds(editorRect);
+        const editorController = new EditorController(
+          document.getElementById('editor'),
+          document.getElementById('sr-editor-content'),
+        );
 
-          // Render initial content
-          renderEditor();
-
-          // Focus the editor
-          editorElement.focus();
-        }
-
-        // Format buttons event listeners
-        boldBtn.addEventListener('click', () => {
-          editorModel.toggleFormat('bold', 'bold');
-          renderEditor();
-        });
-
-        italicBtn.addEventListener('click', () => {
-          editorModel.toggleFormat('italic', 'italic');
-          renderEditor();
-        });
-
-        highlightYellowBtn.addEventListener('click', () => {
-          editorModel.toggleFormat('highlight', 'highlight-yellow');
-          renderEditor();
-        });
-
-        highlightGreenBtn.addEventListener('click', () => {
-          editorModel.toggleFormat('highlight', 'highlight-green');
-          renderEditor();
-        });
-
-        highlightBlueBtn.addEventListener('click', () => {
-          editorModel.toggleFormat('highlight', 'highlight-blue');
-          renderEditor();
-        });
-
-        // Initialize the editor
-        initEditor();
+        // Add example content
+        const exampleContent = '#x = 10\n#y = 20\n=x + y\n=x * y\n#z = x + y\n=z * 2';
+        editorController.init(exampleContent);
       });
     </script>
   </body>
