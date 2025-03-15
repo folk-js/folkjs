@@ -1,6 +1,6 @@
 # Folk Canvas
 
-> ⚠️ This project is still in an active research phase. It hasn't been published to NPM yet, but our work is open and you're more than welcome to take a look, poke around, and try things out.
+> ⚠️ This project is in an active research phase. It hasn't been published to NPM yet, but our work is open and you're more than welcome to take a look, poke around, and try things out.
 
 ## Explorations
 
@@ -13,10 +13,19 @@
 
 ## Development
 
-1. Install [Bun](https://bun.sh/docs/installation)
+Install [Bun](https://bun.sh/docs/installation)
 
 ```bash
 bun i
 # then
 bun dev
+```
+
+you can also do
+
+```bash
+bun types # type check
+bun test # run tests
+bun bench # run benchmarks
+bun dev:extension # watch for changes in the extension
 ```
