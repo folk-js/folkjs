@@ -1,7 +1,7 @@
 {
-  "name": "@folk-systems/math",
+  "name": "@folk-systems/geometry",
   "version": "0.0.1",
-  "description": "Math utilities for Folk Canvas",
+  "description": "Geometry utilities",
   "keywords": [
     "matrix",
     "matrices",
