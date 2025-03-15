@@ -19,7 +19,7 @@ const CONSTANTS = glsl`
 #define FIRE 9.0
 #define STEAM 10.0
 
-const vec3 bgColor = vec3(1.0, 1.0, 1.0);
+const vec3 bgColor = pow(vec3(31, 34, 36) / 255.0, vec3(2));
 `;
 
 const UTILS = glsl`
@@ -969,57 +969,59 @@ vec3 getParticleColor(vec4 data)
 		return bgColor;
 	}
 	else if (data.a == STEAM) {
-		return mix(bgColor, vec3(0.7, 0.7, 0.7), 0.6 + rand * 0.2);
+		return mix(bgColor, vec3(0.8), 0.4 + rand * 0.2);
 	}
 	else if (data.a == SMOKE) {
-		return mix(bgColor, vec3(0.2), 0.6 + rand * 0.2);
+		return mix(bgColor, vec3(0.15), 0.4 + rand * 0.2);
 	}
 	else if (data.a == WATER) {
-		// Deeper blue for better contrast on white
-		vec3 waterColor = vec3(0.1, 0.3, 0.8);
-		return mix(bgColor, waterColor, 0.7 + rand * 0.2);
+		// More subtle water with slight color variation
+		vec3 waterColor = vec3(0.2, 0.4, 0.8);
+		return mix(bgColor, waterColor, 0.6 + rand * 0.2);
 	}
 	else if (data.a == LAVA) {
-		// More saturated lava colors for white bg
-		vec3 baseColor = vec3(0.9, 0.2, 0.05);
-		vec3 glowColor = vec3(1.0, 0.4, 0.1);
+		// Darker base color for internal lava
+		vec3 baseColor = vec3(0.7, 0.1, 0.03);
+		vec3 glowColor = vec3(0.8, 0.2, 0.05);
 		return mix(baseColor, glowColor, rand) * (0.8 + rand * 0.4);
 	}
 	else if (data.a == SAND) {
-		// Deeper sand colors for contrast
-		vec3 baseColor = vec3(0.76, 0.52, 0.17);
-		vec3 altColor = vec3(0.72, 0.48, 0.13);
+		vec3 baseColor = vec3(0.86, 0.62, 0.27);
+		vec3 altColor = vec3(0.82, 0.58, 0.23);
 		return mix(baseColor, altColor, rand) * (0.8 + rand * 0.3);
 	}
 	else if (data.a == PLANT) {
-		// Darker green for contrast
-		vec3 darkGreen = vec3(0.1, 0.45, 0.1);
-		vec3 lightGreen = vec3(0.15, 0.55, 0.15);
+		// More varied plant colors
+		vec3 darkGreen = vec3(0.13, 0.55, 0.13);
+		vec3 lightGreen = vec3(0.2, 0.65, 0.2);
 		vec3 baseColor = mix(darkGreen, lightGreen, rand);
+		// Use data.b instead of data.r for water level
 		return baseColor * (0.7 + data.b * 0.5);
 	}
 	else if (data.a == STONE) {
-		// Darker stone
-		vec3 baseColor = vec3(0.3, 0.32, 0.34);
-		vec3 altColor = vec3(0.25, 0.27, 0.29);
+		vec3 baseColor = vec3(0.08, 0.1, 0.12);
+		vec3 altColor = vec3(0.12, 0.14, 0.16);
 		return mix(baseColor, altColor, rand) * (0.7 + rand * 0.3);
 	}
 	else if (data.a == WALL) {
-		return vec3(0.4, 0.4, 0.4) * (rand * 0.4 + 0.6); // Darker wall
+		return bgColor * 0.5 * (rand * 0.4 + 0.6);
 	}
 	else if (data.a == ICE) {
-		// More blue for ice to stand out on white
-		vec3 baseColor = vec3(0.7, 0.8, 1.0);
-		vec3 altColor = vec3(0.6, 0.75, 0.95);
-		return mix(baseColor, altColor, rand) * (0.85 + rand * 0.2);
+		// Subtle ice color variation
+		vec3 baseColor = vec3(0.8, 0.9, 1.0);
+		vec3 altColor = vec3(0.7, 0.85, 0.95);
+		return mix(baseColor, altColor, rand) * (0.9 + rand * 0.2);
 	}
 	else if (data.a == FIRE) {
-		// More saturated fire colors
-		vec3 coolColor = vec3(0.9, 0.3, 0.0);  // More orange
-		vec3 hotColor = vec3(1.0, 0.8, 0.2);   // More yellow
+		// Base colors for fire
+		vec3 coolColor = vec3(0.8, 0.2, 0.0);  // More orange
+		vec3 hotColor = vec3(1.0, 0.7, 0.2);   // More yellow
 		
+		// Mix between colors based on heat
 		vec3 fireColor = mix(coolColor, hotColor, data.b);
-		return fireColor * (0.9 + data.r * 0.3);
+		
+		// Add some variation based on random value
+		return fireColor * (0.8 + data.r * 0.4);
 	}
 	return bgColor;
 }
@@ -1056,7 +1058,7 @@ void main() {
 	float shaB = shaDataB.xy != vec2(-1) ? shaDataB.z : 16.0;
 
 	vec3 sha = clamp(1.0 - vec3(shaR, shaG, shaB) / 16.0, vec3(0.0), vec3(1.0));
-	sha = mix(vec3(0.7), vec3(1.0), sha * sha); // Less dramatic shadows for white bg
+	sha *= sha;
 
 	// Add extra lava glow contribution
 	if (data.a == LAVA) {
