@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <title>EditContext API Text Editor</title>
+    <style>
+      body {
+        font-family: 'Recursive', sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+
+      .editor-container {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        padding: 10px;
+        background-color: #fff;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      .toolbar button {
+        padding: 8px 12px;
+        border: none;
+        border-radius: 4px;
+        background-color: #f0f0f0;
+        cursor: pointer;
+        font-family: 'Recursive', sans-serif;
+        transition: background-color 0.2s;
+      }
+
+      .toolbar button:hover {
+        background-color: #e0e0e0;
+      }
+
+      .toolbar button.active {
+        background-color: #e0e0e0;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+        font-weight: bold;
+      }
+
+      .editor {
+        min-height: 300px;
+        padding: 20px;
+        background-color: #fff;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        outline: none;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        line-height: 1.5;
+      }
+
+      .custom-span {
+        display: inline;
+        border-radius: 2px;
+      }
+
+      .highlight-yellow {
+        background-color: #fff9c4;
+      }
+
+      .highlight-green {
+        background-color: #c8e6c9;
+      }
+
+      .highlight-blue {
+        background-color: #bbdefb;
+      }
+
+      .bold {
+        font-weight: 800;
+      }
+
+      .italic {
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="editor-container">
+      <h1>EditContext API Text Editor</h1>
+      <div class="toolbar">
+        <button id="bold-btn">Bold</button>
+        <button id="italic-btn">Italic</button>
+        <button id="highlight-yellow-btn">Highlight Yellow</button>
+        <button id="highlight-green-btn">Highlight Green</button>
+        <button id="highlight-blue-btn">Highlight Blue</button>
+      </div>
+      <div id="editor" class="editor" tabindex="0"></div>
+    </div>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        // Get references to DOM elements
+        const editorElement = document.getElementById('editor');
+        const boldBtn = document.getElementById('bold-btn');
+        const italicBtn = document.getElementById('italic-btn');
+        const highlightYellowBtn = document.getElementById('highlight-yellow-btn');
+        const highlightGreenBtn = document.getElementById('highlight-green-btn');
+        const highlightBlueBtn = document.getElementById('highlight-blue-btn');
+
+        // Create an EditContext instance
+        const editContext = new EditContext();
+
+        // Attach the EditContext to our editor element
+        editorElement.editContext = editContext;
+
+        // Editor model to store text and formatting
+        const editorModel = {
+          text: '',
+          selectionStart: 0,
+          selectionEnd: 0,
+          formats: [], // Array to store format information for spans
+
+          // Update text content
+          updateText(updateRangeStart, updateRangeEnd, newText) {
+            // Remove the text in the specified range
+            const beforeText = this.text.substring(0, updateRangeStart);
+            const afterText = this.text.substring(updateRangeEnd);
+
+            // Insert the new text
+            this.text = beforeText + newText + afterText;
+
+            // Adjust formats after text update
+            this.adjustFormatsAfterTextUpdate(updateRangeStart, updateRangeEnd, newText.length);
+
+            return this.text;
+          },
+
+          // Update selection
+          updateSelection(start, end) {
+            this.selectionStart = start;
+            this.selectionEnd = end;
+          },
+
+          // Toggle a format for the current selection
+          toggleFormat(type, className) {
+            if (this.selectionStart === this.selectionEnd) return; // No selection
+
+            // Check if this exact format already exists for the selection
+            const existingFormatIndex = this.formats.findIndex(
+              (format) =>
+                format.type === type &&
+                format.className === className &&
+                format.start === this.selectionStart &&
+                format.end === this.selectionEnd,
+            );
+
+            if (existingFormatIndex !== -1) {
+              // Remove the format if it exists
+              this.formats.splice(existingFormatIndex, 1);
+            } else {
+              // Add the format if it doesn't exist
+              this.formats.push({
+                start: this.selectionStart,
+                end: this.selectionEnd,
+                type,
+                className,
+              });
+            }
+
+            // Sort formats by start position for easier rendering
+            this.formats.sort((a, b) => a.start - b.start);
+          },
+
+          // Adjust formats after text update
+          adjustFormatsAfterTextUpdate(updateStart, updateEnd, newTextLength) {
+            const lengthDiff = newTextLength - (updateEnd - updateStart);
+
+            this.formats = this.formats.filter((format) => {
+              // Remove formats that are completely within the updated range
+              if (format.start >= updateStart && format.end <= updateEnd) {
+                return false;
+              }
+
+              // Adjust formats that start after the update
+              if (format.start >= updateEnd) {
+                format.start += lengthDiff;
+                format.end += lengthDiff;
+              }
+              // Adjust formats that end after the update but start before it
+              else if (format.end >= updateEnd && format.start < updateStart) {
+                format.end += lengthDiff;
+              }
+              // Adjust formats that are partially within the update range
+              else if (format.start < updateEnd && format.start >= updateStart) {
+                format.start = updateStart;
+                format.end += lengthDiff;
+              }
+
+              return true;
+            });
+          },
+
+          // Check if a format is active for the current selection
+          isFormatActive(type, className) {
+            if (this.selectionStart === this.selectionEnd) return false;
+
+            return this.formats.some(
+              (format) =>
+                format.type === type &&
+                format.className === className &&
+                format.start === this.selectionStart &&
+                format.end === this.selectionEnd,
+            );
+          },
+        };
+
+        // Render the editor content with formats
+        function renderEditor() {
+          // Clear the editor
+          editorElement.innerHTML = '';
+
+          // Create a map to track which positions have which formats
+          const formatMap = new Map();
+
+          // Initialize the format map for each character position
+          for (let i = 0; i <= editorModel.text.length; i++) {
+            formatMap.set(i, new Set());
+          }
+
+          // Add format information to the map
+          for (const format of editorModel.formats) {
+            for (let i = format.start; i < format.end; i++) {
+              const formatSet = formatMap.get(i);
+              formatSet.add(`${format.type}:${format.className}`);
+            }
+          }
+
+          // Find ranges with the same format combinations
+          const ranges = [];
+          let currentStart = 0;
+          let currentFormats = formatMap.get(0);
+
+          for (let i = 1; i <= editorModel.text.length; i++) {
+            const formats = formatMap.get(i);
+            const formatsEqual = areSetsEqual(currentFormats, formats);
+
+            if (!formatsEqual) {
+              // Add the current range
+              ranges.push({
+                start: currentStart,
+                end: i,
+                formats: [...currentFormats],
+              });
+
+              // Start a new range
+              currentStart = i;
+              currentFormats = formats;
+            }
+          }
+
+          // Add the last range if needed
+          if (currentStart < editorModel.text.length) {
+            ranges.push({
+              start: currentStart,
+              end: editorModel.text.length,
+              formats: [...currentFormats],
+            });
+          }
+
+          // Render each range
+          for (const range of ranges) {
+            const text = editorModel.text.substring(range.start, range.end);
+
+            if (range.formats.length === 0) {
+              // Plain text
+              const textNode = document.createTextNode(text);
+              editorElement.appendChild(textNode);
+            } else {
+              // Create a span with all the necessary classes
+              const span = document.createElement('span');
+              span.className = 'custom-span';
+
+              for (const formatStr of range.formats) {
+                const [, className] = formatStr.split(':');
+                span.classList.add(className);
+              }
+
+              span.textContent = text;
+              editorElement.appendChild(span);
+            }
+          }
+
+          // If there's no content, add a placeholder
+          if (editorModel.text.length === 0) {
+            editorElement.innerHTML = '<br>';
+          }
+
+          // Update the selection
+          updateSelectionInDOM();
+
+          // Update button states
+          updateButtonStates();
+        }
+
+        // Helper function to compare sets
+        function areSetsEqual(a, b) {
+          if (a.size !== b.size) return false;
+          for (const item of a) {
+            if (!b.has(item)) return false;
+          }
+          return true;
+        }
+
+        // Update button states based on active formats
+        function updateButtonStates() {
+          boldBtn.classList.toggle('active', editorModel.isFormatActive('bold', 'bold'));
+          italicBtn.classList.toggle('active', editorModel.isFormatActive('italic', 'italic'));
+          highlightYellowBtn.classList.toggle('active', editorModel.isFormatActive('highlight', 'highlight-yellow'));
+          highlightGreenBtn.classList.toggle('active', editorModel.isFormatActive('highlight', 'highlight-green'));
+          highlightBlueBtn.classList.toggle('active', editorModel.isFormatActive('highlight', 'highlight-blue'));
+        }
+
+        // Update the selection in the DOM
+        function updateSelectionInDOM() {
+          const selection = window.getSelection();
+          const range = document.createRange();
+
+          // Find the node and offset for the selection start
+          let startNodeInfo = findNodeAndOffsetForPosition(editorModel.selectionStart);
+          let endNodeInfo = findNodeAndOffsetForPosition(editorModel.selectionEnd);
+
+          if (startNodeInfo && endNodeInfo) {
+            range.setStart(startNodeInfo.node, startNodeInfo.offset);
+            range.setEnd(endNodeInfo.node, endNodeInfo.offset);
+
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        }
+
+        // Find the DOM node and offset for a given position in the text
+        function findNodeAndOffsetForPosition(position) {
+          if (position === 0 && editorElement.childNodes.length === 0) {
+            return { node: editorElement, offset: 0 };
+          }
+
+          let currentPos = 0;
+
+          for (const node of editorElement.childNodes) {
+            const nodeLength = node.textContent.length;
+
+            if (currentPos + nodeLength >= position) {
+              if (node.nodeType === Node.TEXT_NODE) {
+                return { node, offset: position - currentPos };
+              } else {
+                // For element nodes (spans), we need to find the text node inside
+                if (node.childNodes.length > 0 && node.childNodes[0].nodeType === Node.TEXT_NODE) {
+                  return { node: node.childNodes[0], offset: position - currentPos };
+                }
+                return { node, offset: 0 };
+              }
+            }
+
+            currentPos += nodeLength;
+          }
+
+          // If we get here, the position is at the end
+          const lastNode = editorElement.lastChild;
+          if (lastNode) {
+            if (lastNode.nodeType === Node.TEXT_NODE) {
+              return { node: lastNode, offset: lastNode.textContent.length };
+            } else if (lastNode.childNodes.length > 0 && lastNode.lastChild.nodeType === Node.TEXT_NODE) {
+              return { node: lastNode.lastChild, offset: lastNode.lastChild.textContent.length };
+            }
+          }
+
+          return { node: editorElement, offset: editorElement.childNodes.length };
+        }
+
+        // Calculate character bounds for a range of text
+        function calculateCharacterBounds(rangeStart, rangeEnd) {
+          const bounds = [];
+
+          for (let i = rangeStart; i < rangeEnd; i++) {
+            const range = document.createRange();
+            const nodeInfo = findNodeAndOffsetForPosition(i);
+
+            if (nodeInfo) {
+              range.setStart(nodeInfo.node, nodeInfo.offset);
+              range.setEnd(nodeInfo.node, nodeInfo.offset + 1);
+
+              const rect = range.getBoundingClientRect();
+              bounds.push(new DOMRect(rect.x, rect.y, rect.width, rect.height));
+            }
+          }
+
+          return bounds;
+        }
+
+        // Update the EditContext when the selection changes
+        function updateEditContextSelection() {
+          const selection = window.getSelection();
+
+          if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+
+            // Convert DOM positions to text positions
+            const startPosition = getTextPositionFromNode(range.startContainer, range.startOffset);
+            const endPosition = getTextPositionFromNode(range.endContainer, range.endOffset);
+
+            if (startPosition !== null && endPosition !== null) {
+              editorModel.updateSelection(startPosition, endPosition);
+              editContext.updateSelection(startPosition, endPosition);
+
+              // Update selection bounds
+              const selectionRect = range.getBoundingClientRect();
+              editContext.updateSelectionBounds(selectionRect);
+            }
+          }
+        }
+
+        // Get text position from a DOM node and offset
+        function getTextPositionFromNode(node, offset) {
+          let position = 0;
+
+          // If the node is not inside the editor, return null
+          if (!editorElement.contains(node) && node !== editorElement) {
+            return null;
+          }
+
+          // If the node is a text node, we need to find its position in the text
+          if (node.nodeType === Node.TEXT_NODE) {
+            // Find all previous text nodes and add their lengths
+            const walker = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
+            let currentNode;
+
+            while ((currentNode = walker.nextNode()) !== null) {
+              if (currentNode === node) {
+                return position + offset;
+              }
+              position += currentNode.textContent.length;
+            }
+          }
+          // If the node is an element node
+          else if (node.nodeType === Node.ELEMENT_NODE) {
+            // If it's the editor itself
+            if (node === editorElement) {
+              if (offset === 0) return 0;
+
+              // Count the text length of all children before the offset
+              let length = 0;
+              for (let i = 0; i < offset; i++) {
+                if (i < node.childNodes.length) {
+                  length += node.childNodes[i].textContent.length;
+                }
+              }
+              return length;
+            }
+            // If it's a span or other element inside the editor
+            else {
+              // Find all previous text nodes and add their lengths
+              const walker = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
+              let currentNode;
+              let foundParent = false;
+
+              while ((currentNode = walker.nextNode()) !== null) {
+                if (node.contains(currentNode)) {
+                  foundParent = true;
+                  if (offset === 0) return position;
+                  return position + currentNode.textContent.length;
+                }
+                if (!foundParent) {
+                  position += currentNode.textContent.length;
+                }
+              }
+            }
+          }
+
+          return null;
+        }
+
+        // Event listeners for EditContext
+        editContext.addEventListener('textupdate', (e) => {
+          editorModel.updateText(e.updateRangeStart, e.updateRangeEnd, e.text);
+          editorModel.updateSelection(e.selectionStart, e.selectionEnd);
+          renderEditor();
+
+          // Update control bounds
+          const editorRect = editorElement.getBoundingClientRect();
+          editContext.updateControlBounds(editorRect);
+        });
+
+        editContext.addEventListener('characterboundsupdate', (e) => {
+          const bounds = calculateCharacterBounds(e.rangeStart, e.rangeEnd);
+          editContext.updateCharacterBounds(e.rangeStart, bounds);
+        });
+
+        // Handle selection changes in the DOM
+        document.addEventListener('selectionchange', () => {
+          const selection = window.getSelection();
+          if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            if (editorElement.contains(range.commonAncestorContainer)) {
+              updateEditContextSelection();
+            }
+          }
+        });
+
+        // Initialize the editor
+        function initEditor() {
+          // Set initial control bounds
+          const editorRect = editorElement.getBoundingClientRect();
+          editContext.updateControlBounds(editorRect);
+
+          // Render initial content
+          renderEditor();
+
+          // Focus the editor
+          editorElement.focus();
+        }
+
+        // Format buttons event listeners
+        boldBtn.addEventListener('click', () => {
+          editorModel.toggleFormat('bold', 'bold');
+          renderEditor();
+        });
+
+        italicBtn.addEventListener('click', () => {
+          editorModel.toggleFormat('italic', 'italic');
+          renderEditor();
+        });
+
+        highlightYellowBtn.addEventListener('click', () => {
+          editorModel.toggleFormat('highlight', 'highlight-yellow');
+          renderEditor();
+        });
+
+        highlightGreenBtn.addEventListener('click', () => {
+          editorModel.toggleFormat('highlight', 'highlight-green');
+          renderEditor();
+        });
+
+        highlightBlueBtn.addEventListener('click', () => {
+          editorModel.toggleFormat('highlight', 'highlight-blue');
+          renderEditor();
+        });
+
+        // Initialize the editor
+        initEditor();
+      });
+    </script>
+  </body>
+</html>
