@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Matrix vs DOMMatrix Benchmark</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        margin: 0;
+        padding: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      h1,
+      h2 {
+        margin-bottom: 10px;
+      }
+      .results-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+      }
+      .benchmark-card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 15px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+      }
+      .benchmark-title {
+        font-weight: bold;
+        margin-bottom: 10px;
+        font-size: 16px;
+      }
+      .benchmark-result {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 5px;
+      }
+      .benchmark-result span:first-child {
+        color: #666;
+      }
+      .benchmark-result span:last-child {
+        font-family: monospace;
+      }
+      .winner {
+        color: #4caf50;
+        font-weight: bold;
+      }
+      .controls {
+        margin-bottom: 20px;
+      }
+      button {
+        padding: 8px 16px;
+        background: #0066ff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-right: 10px;
+      }
+      button:hover {
+        background: #0055dd;
+      }
+      #iterations {
+        padding: 8px;
+        width: 80px;
+      }
+      .summary {
+        margin-top: 20px;
+        padding: 15px;
+        background: #f5f5f5;
+        border-radius: 8px;
+      }
+      .performance-bar-container {
+        margin-bottom: 15px;
+        position: relative;
+        height: 16px;
+        background-color: #f0f0f0;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .performance-bar {
+        height: 100%;
+        transition: width 0.3s ease;
+      }
+      .speed-text {
+        position: absolute;
+        right: 5px;
+        top: 0;
+        font-size: 12px;
+        color: #333;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Matrix vs DOMMatrix Performance Benchmark</h1>
+    <p>Comparing the performance of custom Matrix implementation against browser's DOMMatrix.</p>
+
+    <div class="controls">
+      <label for="iterations">Iterations: </label>
+      <input type="number" id="iterations" value="10000" min="1000" max="1000000" step="1000" />
+      <button id="runAll">Run All Benchmarks</button>
+      <button id="clearResults">Clear Results</button>
+    </div>
+
+    <div class="summary" id="summary"></div>
+    <div class="results-container" id="results"></div>
+
+    <script type="module">
+      import { Matrix } from '@lib/Matrix.ts';
+
+      const resultsContainer = document.getElementById('results');
+      const summaryContainer = document.getElementById('summary');
+      const runAllButton = document.getElementById('runAll');
+      const clearResultsButton = document.getElementById('clearResults');
+      const iterationsInput = document.getElementById('iterations');
+
+      // Object to store all benchmark results
+      const benchmarkResults = {};
+
+      // Define all benchmarks to run
+      const benchmarks = [
+        // Basic creation benchmarks
+        {
+          name: 'Creation',
+          tests: [
+            {
+              name: 'Matrix creation',
+              fn: () => new Matrix(1, 0, 0, 1, 10, 20),
+            },
+            {
+              name: 'DOMMatrix creation',
+              fn: () => new DOMMatrix([1, 0, 0, 1, 10, 20]),
+            },
+          ],
+        },
+        {
+          name: 'Identity',
+          tests: [
+            {
+              name: 'Matrix.Identity()',
+              fn: () => Matrix.Identity(),
+            },
+            {
+              name: 'DOMMatrix identity',
+              fn: () => new DOMMatrix(),
+            },
+          ],
+        },
+        // Transform operations
+        {
+          name: 'Translation',
+          tests: [
+            {
+              name: 'Matrix.translate',
+              fn: () => new Matrix().translate(10, 20),
+            },
+            {
+              name: 'DOMMatrix.translateSelf',
+              fn: () => new DOMMatrix().translateSelf(10, 20),
+            },
+          ],
+        },
+        {
+          name: 'Rotation',
+          tests: [
+            {
+              name: 'Matrix.rotate',
+              fn: () => new Matrix().rotate(Math.PI / 4),
+            },
+            {
+              name: 'DOMMatrix.rotateSelf',
+              fn: () => new DOMMatrix().rotateSelf(((Math.PI / 4) * 180) / Math.PI),
+            },
+          ],
+        },
+        {
+          name: 'Scaling',
+          tests: [
+            {
+              name: 'Matrix.scale',
+              fn: () => new Matrix().scale(2, 3),
+            },
+            {
+              name: 'DOMMatrix.scaleSelf',
+              fn: () => new DOMMatrix().scaleSelf(2, 3),
+            },
+          ],
+        },
+        // Complex transformations
+        {
+          name: 'Combined Transforms',
+          tests: [
+            {
+              name: 'Matrix combined',
+              fn: () =>
+                new Matrix()
+                  .translate(10, 20)
+                  .rotate(Math.PI / 4)
+                  .scale(2, 3),
+            },
+            {
+              name: 'DOMMatrix combined',
+              fn: () =>
+                new DOMMatrix()
+                  .translateSelf(10, 20)
+                  .rotateSelf(((Math.PI / 4) * 180) / Math.PI)
+                  .scaleSelf(2, 3),
+            },
+          ],
+        },
+        // Matrix multiplication
+        {
+          name: 'Matrix Multiplication',
+          tests: [
+            {
+              name: 'Matrix.multiply',
+              fn: () => {
+                const m1 = new Matrix(1, 0, 0, 1, 10, 20);
+                const m2 = new Matrix(2, 0, 0, 2, 30, 40);
+                return m1.multiply(m2);
+              },
+            },
+            {
+              name: 'DOMMatrix.multiplySelf',
+              fn: () => {
+                const m1 = new DOMMatrix([1, 0, 0, 1, 10, 20]);
+                const m2 = new DOMMatrix([2, 0, 0, 2, 30, 40]);
+                return m1.multiplySelf(m2);
+              },
+            },
+          ],
+        },
+        // Inversion
+        {
+          name: 'Matrix Inversion',
+          tests: [
+            {
+              name: 'Matrix.invert',
+              fn: () => new Matrix(1, 0, 0, 1, 10, 20).invert(),
+            },
+            {
+              name: 'DOMMatrix.invertSelf',
+              fn: () => new DOMMatrix([1, 0, 0, 1, 10, 20]).invertSelf(),
+            },
+          ],
+        },
+        // Point transformation
+        {
+          name: 'Point Transformation',
+          tests: [
+            {
+              name: 'Matrix.applyToPoint',
+              fn: () => {
+                const m = new Matrix(1, 0, 0, 1, 10, 20);
+                return m.applyToPoint({ x: 5, y: 10 });
+              },
+            },
+            {
+              name: 'DOMMatrix.transformPoint',
+              fn: () => {
+                const m = new DOMMatrix([1, 0, 0, 1, 10, 20]);
+                return m.transformPoint(new DOMPoint(5, 10));
+              },
+            },
+          ],
+        },
+        // Decomposition
+        {
+          name: 'Matrix Decomposition',
+          tests: [
+            {
+              name: 'Matrix.decompose',
+              fn: () => {
+                const m = new Matrix(
+                  Math.cos(Math.PI / 4),
+                  Math.sin(Math.PI / 4),
+                  -Math.sin(Math.PI / 4),
+                  Math.cos(Math.PI / 4),
+                  10,
+                  20,
+                );
+                return m.decompose();
+              },
+            },
+            {
+              name: 'DOMMatrix properties',
+              fn: () => {
+                const m = new DOMMatrix([
+                  Math.cos(Math.PI / 4),
+                  Math.sin(Math.PI / 4),
+                  -Math.sin(Math.PI / 4),
+                  Math.cos(Math.PI / 4),
+                  10,
+                  20,
+                ]);
+                return {
+                  x: m.e,
+                  y: m.f,
+                  scaleX: m.a,
+                  scaleY: m.d,
+                  rotation: Math.atan2(m.b, m.a),
+                };
+              },
+            },
+          ],
+        },
+        // Conversion
+        {
+          name: 'Matrix Conversion',
+          tests: [
+            {
+              name: 'Matrix to DOMMatrix',
+              fn: () => {
+                const m = new Matrix(1, 0, 0, 1, 10, 20);
+                return m.toDOMMatrix();
+              },
+            },
+            {
+              name: 'DOMMatrix to Matrix',
+              fn: () => {
+                const dm = new DOMMatrix([1, 0, 0, 1, 10, 20]);
+                return Matrix.FromDOMMatrix(dm);
+              },
+            },
+          ],
+        },
+        // String conversion
+        {
+          name: 'String Conversion',
+          tests: [
+            {
+              name: 'Matrix.toCssString',
+              fn: () => {
+                const m = new Matrix(1, 0, 0, 1, 10, 20);
+                return m.toCssString();
+              },
+            },
+            {
+              name: 'DOMMatrix.toString',
+              fn: () => {
+                const m = new DOMMatrix([1, 0, 0, 1, 10, 20]);
+                return m.toString();
+              },
+            },
+          ],
+        },
+        // Many point operations - real-world use case
+        {
+          name: 'Batch Point Transform (100 points)',
+          tests: [
+            {
+              name: 'Matrix.applyToPoints',
+              fn: () => {
+                const points = Array(100)
+                  .fill()
+                  .map((_, i) => ({ x: i, y: i * 2 }));
+                const m = new Matrix(1, 0, 0, 1, 10, 20);
+                return Matrix.applyToPoints(m, points);
+              },
+            },
+            {
+              name: 'DOMMatrix manual transform',
+              fn: () => {
+                const points = Array(100)
+                  .fill()
+                  .map((_, i) => ({ x: i, y: i * 2 }));
+                const m = new DOMMatrix([1, 0, 0, 1, 10, 20]);
+                return points.map((p) => {
+                  const transformed = m.transformPoint(new DOMPoint(p.x, p.y));
+                  return { x: transformed.x, y: transformed.y };
+                });
+              },
+            },
+          ],
+        },
+        // Real-world use case: manipulating many matrices
+        {
+          name: 'Many Matrix Operations (100 matrices)',
+          tests: [
+            {
+              name: 'Matrix chain',
+              fn: () => {
+                let m = new Matrix();
+                for (let i = 0; i < 100; i++) {
+                  m = m
+                    .clone()
+                    .translate(i, i)
+                    .rotate(i * 0.01)
+                    .scale(1 + i * 0.01, 1 - i * 0.005);
+                }
+                return m;
+              },
+            },
+            {
+              name: 'DOMMatrix chain',
+              fn: () => {
+                let m = new DOMMatrix();
+                for (let i = 0; i < 100; i++) {
+                  m = new DOMMatrix(m)
+                    .translateSelf(i, i)
+                    .rotateSelf((i * 0.01 * 180) / Math.PI)
+                    .scaleSelf(1 + i * 0.01, 1 - i * 0.005);
+                }
+                return m;
+              },
+            },
+          ],
+        },
+      ];
+
+      // Function to run a single benchmark
+      function runBenchmark(benchmark, iterations) {
+        const results = {};
+        let fastest = Infinity;
+        let fastestName = '';
+
+        // Run each test in the benchmark
+        for (const test of benchmark.tests) {
+          // Warm up
+          for (let i = 0; i < 1000; i++) {
+            test.fn();
+          }
+
+          // Run the test
+          const start = performance.now();
+          for (let i = 0; i < iterations; i++) {
+            test.fn();
+          }
+          const end = performance.now();
+
+          const time = end - start;
+          const timePerOp = time / iterations;
+
+          results[test.name] = {
+            totalTime: time,
+            timePerOp: timePerOp,
+            opsPerSec: 1000 / timePerOp,
+          };
+
+          // Track fastest
+          if (timePerOp < fastest) {
+            fastest = timePerOp;
+            fastestName = test.name;
+          }
+        }
+
+        // Mark the fastest test
+        for (const testName in results) {
+          results[testName].isFastest = testName === fastestName;
+        }
+
+        return results;
+      }
+
+      // Function to display results for a benchmark
+      function displayBenchmarkResults(benchmarkName, results) {
+        // Create card for this benchmark
+        const card = document.createElement('div');
+        card.className = 'benchmark-card';
+
+        // Add benchmark title
+        const title = document.createElement('div');
+        title.className = 'benchmark-title';
+        title.textContent = benchmarkName;
+        card.appendChild(title);
+
+        // Find the fastest time to calculate relative performance
+        let fastestTime = Infinity;
+        for (const testName in results) {
+          fastestTime = Math.min(fastestTime, results[testName].timePerOp);
+        }
+
+        // Add results for each test
+        for (const testName in results) {
+          const result = results[testName];
+
+          const resultElement = document.createElement('div');
+          resultElement.className = 'benchmark-result';
+
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = testName;
+
+          // Convert all times to microseconds (μs) for consistency
+          const timeUs = result.timePerOp * 1000; // Convert ms to μs
+
+          const timeSpan = document.createElement('span');
+          timeSpan.textContent = `${timeUs.toFixed(3)} μs`;
+          if (result.isFastest) {
+            timeSpan.classList.add('winner');
+          }
+
+          resultElement.appendChild(nameSpan);
+          resultElement.appendChild(timeSpan);
+
+          // Add a visual bar to show relative performance
+          const barContainer = document.createElement('div');
+          barContainer.className = 'performance-bar-container';
+
+          const relativeSpeed = result.timePerOp / fastestTime;
+          const speedRatio = Math.min(relativeSpeed, 10); // Cap at 10x slower for visualization
+
+          const bar = document.createElement('div');
+          bar.className = 'performance-bar';
+          bar.style.width = `${(1 / speedRatio) * 100}%`;
+          bar.style.backgroundColor = result.isFastest ? '#4caf50' : '#ff9800';
+
+          // Show relative speed text
+          const speedText = document.createElement('span');
+          speedText.className = 'speed-text';
+          if (result.isFastest) {
+            speedText.textContent = 'fastest';
+          } else {
+            speedText.textContent = `${relativeSpeed.toFixed(2)}x slower`;
+          }
+
+          barContainer.appendChild(bar);
+          barContainer.appendChild(speedText);
+
+          card.appendChild(resultElement);
+          card.appendChild(barContainer);
+        }
+
+        resultsContainer.appendChild(card);
+      }
+
+      // Run all benchmarks
+      function runAllBenchmarks() {
+        const iterations = parseInt(iterationsInput.value, 10);
+        resultsContainer.innerHTML = '';
+        summaryContainer.innerHTML = '';
+        benchmarkResults.wins = { Matrix: 0, DOMMatrix: 0 };
+
+        // Change button text and disable
+        runAllButton.textContent = 'Running...';
+        runAllButton.disabled = true;
+
+        // Use setTimeout to allow UI to update before running benchmarks
+        setTimeout(() => {
+          // Run each benchmark
+          for (const benchmark of benchmarks) {
+            const results = runBenchmark(benchmark, iterations);
+            benchmarkResults[benchmark.name] = results;
+            displayBenchmarkResults(benchmark.name, results);
+
+            // Count wins
+            for (const testName in results) {
+              if (results[testName].isFastest) {
+                if (testName.includes('Matrix.') || testName.includes('Matrix combined')) {
+                  benchmarkResults.wins['Matrix']++;
+                } else {
+                  benchmarkResults.wins['DOMMatrix']++;
+                }
+              }
+            }
+          }
+
+          // Display summary
+          displaySummary();
+
+          // Re-enable button
+          runAllButton.textContent = 'Run All Benchmarks';
+          runAllButton.disabled = false;
+        }, 100);
+      }
+
+      // Display summary of results
+      function displaySummary() {
+        const matrixWins = benchmarkResults.wins['Matrix'];
+        const domMatrixWins = benchmarkResults.wins['DOMMatrix'];
+        const iterations = parseInt(iterationsInput.value, 10);
+
+        summaryContainer.innerHTML = `
+        <h2>Summary</h2>
+        <p>Ran ${benchmarks.length} benchmarks with ${iterations} iterations each.</p>
+        <p><strong>Matrix wins:</strong> ${matrixWins} categories</p>
+        <p><strong>DOMMatrix wins:</strong> ${domMatrixWins} categories</p>
+        <p><strong>Overall winner:</strong> ${matrixWins > domMatrixWins ? 'Matrix' : 'DOMMatrix'}</p>
+      `;
+      }
+
+      // Clear all results
+      function clearResults() {
+        resultsContainer.innerHTML = '';
+        summaryContainer.innerHTML = '';
+      }
+
+      // Add event listeners
+      runAllButton.addEventListener('click', runAllBenchmarks);
+      clearResultsButton.addEventListener('click', clearResults);
+    </script>
+  </body>
+</html>
