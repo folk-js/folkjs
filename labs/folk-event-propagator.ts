@@ -1,6 +1,6 @@
+import { Propagator } from '@folk-systems/propagators';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { property } from '@lit/reactive-element/decorators.js';
-import { Propagator } from '@propagators';
 import { FolkRope } from './folk-rope.ts';
 
 export class FolkEventPropagator extends FolkRope {

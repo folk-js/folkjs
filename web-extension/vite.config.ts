@@ -9,7 +9,6 @@ export default defineConfig({
     alias: {
       '@lib': resolve(__dirname, '../lib'),
       '@labs': resolve(__dirname, '../labs'),
-      '@propagators': resolve(__dirname, '../propagators'),
     },
   },
   build: {

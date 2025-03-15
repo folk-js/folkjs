@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    /* Base Options: */
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "target": "es2022",
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "erasableSyntaxOnly": true,
+
+    /* If transpiling with TypeScript: */
+    "moduleResolution": "bundler",
+    "module": "es2022",
+    "sourceMap": true,
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "composite": true,
+    "declarationMap": true
+  }
+}

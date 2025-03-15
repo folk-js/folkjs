@@ -1,7 +1,10 @@
 {
   "name": "folk-canvas",
-  "version": "0.0.1",
+  "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "vite",
     "dev:host": "vite --host --port 5174",
@@ -38,7 +41,8 @@
     "uuid": "^11.1.0",
     "vite-plugin-top-level-await": "^1.5.0",
     "vite-plugin-wasm": "^3.3.0",
-    "webcola": "^3.4.0"
+    "webcola": "^3.4.0",
+    "@folk-systems/propagators": "workspace:*"
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.14",
@@ -49,7 +53,7 @@
     "bun-types": "^1.1.38",
     "mitata": "^1.0.20",
     "prettier-plugin-organize-imports": "^4.1.0",
-    "typescript": "^5.7.2",
+    "typescript": "^5.8.2",
     "vite": "^6.0.3",
     "vite-plugin-mkcert": "^1.17.6"
   }

@@ -1,0 +1,29 @@
+{
+  "name": "@folk-systems/math",
+  "version": "0.0.1",
+  "description": "Math utilities for Folk Canvas",
+  "keywords": [
+    "matrix",
+    "matrices",
+    "vector"
+  ],
+  "author": "Christopher Shank <chris.shank.23@gmail.com>",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "import": "./dist/*.js",
+      "types": "./dist/*.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc --build --pretty"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}

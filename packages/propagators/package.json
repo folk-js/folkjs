@@ -1,0 +1,27 @@
+{
+  "name": "@folk-systems/propagators",
+  "version": "0.0.1",
+  "description": "Core utilities for creating propagators",
+  "keywords": [
+    "propagators"
+  ],
+  "author": "Christopher Shank <chris.shank.23@gmail.com>",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc --build --pretty"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}

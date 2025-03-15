@@ -25,9 +25,7 @@
       "@lib": ["lib"],
       "@lib/*": ["lib/*"],
       "@labs": ["labs"],
-      "@labs/*": ["labs/*"],
-      "@propagators": ["propagators"],
-      "@propagators/*": ["propagators/*"]
+      "@labs/*": ["labs/*"]
     }
   },
   "include": ["**/*.ts", "vite.config.ts"],
