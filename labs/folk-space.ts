@@ -32,12 +32,6 @@ export class FolkSpace extends FolkElement {
       width: 100%;
       height: 100%;
       transform-origin: 0 0;
-      will-change: transform;
-    }
-
-    ::slotted(folk-shape) {
-      position: absolute;
-      z-index: 1;
     }
 
     .grid {
