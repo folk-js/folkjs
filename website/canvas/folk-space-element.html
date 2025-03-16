@@ -4,7 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>folk-space element</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
     <style>
+      /* Base styles */
       html,
       body {
         height: 100%;
@@ -18,6 +25,7 @@
       folk-space {
         width: 100%;
         height: 100%;
+        background-color: #f8f9fa;
       }
 
       folk-shape {
@@ -26,24 +34,176 @@
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
       }
 
+      #box3 {
+        mix-blend-mode: difference;
+      }
+
+      /* Debug info */
       .debug-info {
         position: fixed;
         bottom: 10px;
         right: 10px;
         background: rgba(0, 0, 0, 0.7);
         color: #ffffff;
-        font-family: monospace;
+        font-family: 'Recursive', sans-serif;
+        font-variation-settings: 'CASL' 1;
         font-size: 14px;
         padding: 8px;
         border-radius: 4px;
         z-index: 1000;
       }
+
+      /* Collaborators panel */
+      .collaborators {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        background-color: white;
+        border-radius: 4px;
+        padding: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        z-index: 1000;
+        width: 130px;
+        font-family: 'Recursive', sans-serif;
+        font-variation-settings: 'CASL' 1;
+        max-height: 200px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .collaborators h3 {
+        margin: 0 0 6px 0;
+        font-size: 15px;
+        color: #333;
+        font-weight: 600;
+      }
+
+      /* Collaborator list */
+      .collaborator-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: #ccc transparent;
+      }
+
+      .collaborator-list::-webkit-scrollbar {
+        width: 4px;
+      }
+
+      .collaborator-list::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      .collaborator-list::-webkit-scrollbar-thumb {
+        background-color: #ccc;
+        border-radius: 4px;
+      }
+
+      /* Collaborator items */
+      .collaborator-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 4px;
+        font-size: 13px;
+      }
+
+      .collaborator-color {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        margin-right: 5px;
+        flex-shrink: 0;
+      }
+
+      .collaborator-name {
+        flex-grow: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* Current user styles */
+      .you .collaborator-color {
+        cursor: pointer;
+        width: 8px;
+        height: 8px;
+      }
+
+      .you .collaborator-color:hover {
+        transform: scale(1.2);
+        box-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+      }
+
+      .you .collaborator-name {
+        font-weight: 600;
+        cursor: pointer;
+        color: #000;
+      }
+
+      .you .collaborator-name:hover {
+        text-decoration: underline;
+      }
+
+      /* Name input field */
+      .name-input-field {
+        flex-grow: 1;
+        border: none;
+        border-bottom: 1px solid #3498db;
+        background-color: transparent;
+        padding: 0;
+        margin: 0;
+        font-family: 'Recursive', sans-serif;
+        font-variation-settings: 'CASL' 1;
+        font-size: 13px;
+        font-weight: 600;
+        outline: none;
+        width: 100%;
+        color: #000;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+      }
+
+      /* Color picker */
+      .color-picker {
+        position: absolute;
+        display: flex;
+        flex-wrap: wrap;
+        background: white;
+        border-radius: 4px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        padding: 4px;
+        width: 120px;
+        z-index: 1001;
+      }
+
+      .color-option {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        margin: 3px;
+        cursor: pointer;
+        transition: transform 0.1s;
+      }
+
+      .color-option:hover {
+        transform: scale(1.2);
+      }
     </style>
   </head>
   <body>
-    <div class="debug-info" id="debug-info"> scale: 1.00 | pos: 0, 0 </div>
+    <div class="debug-info" id="debug-info">scale: 1.00 | pos: 0, 0</div>
+
+    <div class="collaborators">
+      <h3>Peers</h3>
+      <ul class="collaborator-list" id="collaborator-list"></ul>
+    </div>
 
     <folk-space id="space">
+      <folk-multiplayer-pointers id="pointers"></folk-multiplayer-pointers>
       <folk-shape id="box1" x="100" y="100" width="100" height="100"></folk-shape>
       <folk-shape id="box2" x="300" y="200" width="80" height="80"></folk-shape>
       <folk-shape id="box3" x="500" y="300" width="120" height="120"></folk-shape>
@@ -60,12 +220,182 @@
     <script type="module">
       import '@labs/standalone/folk-space.ts';
       import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-multiplayer-pointers.ts';
 
+      // DOM elements
       const space = document.getElementById('space');
       const debugInfo = document.getElementById('debug-info');
+      const collaboratorList = document.getElementById('collaborator-list');
+      const pointers = document.getElementById('pointers');
 
-      // Initialize displays
+      // State tracking
+      let isEditingName = false;
+      let isColorPickerOpen = false;
+
+      // Color options
+      const colorOptions = [
+        '#e74c3c',
+        '#e67e22',
+        '#f1c40f',
+        '#2ecc71',
+        '#1abc9c',
+        '#3498db',
+        '#9b59b6',
+        '#34495e',
+        '#7f8c8d',
+        '#d35400',
+        '#27ae60',
+        '#2980b9',
+        '#8e44ad',
+      ];
+
+      // Initialize
       updateDisplays(1, { x: 0, y: 0 });
+
+      // Set up collaborator list updates
+      if (pointers) {
+        setTimeout(() => updateCollaboratorList(), 1000);
+        setInterval(updateCollaboratorList, 2000);
+      }
+
+      function updateCollaboratorList() {
+        if (!pointers?.automerge || isEditingName || isColorPickerOpen) return;
+
+        pointers.automerge.whenReady((doc) => {
+          if (!doc.pointers) return;
+
+          collaboratorList.innerHTML = '';
+          const allPointers = Object.values(doc.pointers);
+          const yourPointer = allPointers.find((p) => p.id === pointers.localPointerId);
+          const otherPointers = allPointers
+            .filter((p) => p.id !== pointers.localPointerId)
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+          if (yourPointer) {
+            addCollaboratorToList(yourPointer, true);
+          }
+
+          otherPointers.forEach((p) => addCollaboratorToList(p, false));
+        });
+      }
+
+      function addCollaboratorToList(pointer, isYou) {
+        const li = document.createElement('li');
+        li.className = 'collaborator-item' + (isYou ? ' you' : '');
+
+        const colorSpan = document.createElement('span');
+        colorSpan.className = 'collaborator-color';
+        colorSpan.style.backgroundColor = pointer.color;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'collaborator-name';
+        nameSpan.textContent = pointer.name + (isYou ? ' (you)' : '');
+
+        li.appendChild(colorSpan);
+        li.appendChild(nameSpan);
+
+        if (isYou) {
+          nameSpan.addEventListener('click', () => startEditingName(nameSpan, pointer.name));
+          colorSpan.addEventListener('click', (event) => {
+            event.stopPropagation();
+            showColorPicker(colorSpan, pointer.color);
+          });
+        }
+
+        collaboratorList.appendChild(li);
+      }
+
+      function showColorPicker(colorSpan, currentColor) {
+        isColorPickerOpen = true;
+
+        const colorPicker = document.createElement('div');
+        colorPicker.className = 'color-picker';
+
+        const rect = colorSpan.getBoundingClientRect();
+        colorPicker.style.left = rect.left - 50 + 'px';
+        colorPicker.style.top = rect.bottom + 5 + 'px';
+
+        colorOptions.forEach((color) => {
+          const colorOption = document.createElement('div');
+          colorOption.className = 'color-option';
+          colorOption.style.backgroundColor = color;
+
+          if (color === currentColor) {
+            colorOption.style.boxShadow = '0 0 0 2px #000';
+          }
+
+          colorOption.addEventListener('click', () => {
+            if (pointers) {
+              pointers.usercolor = color;
+              if (document.body.contains(colorPicker)) {
+                document.body.removeChild(colorPicker);
+              }
+              isColorPickerOpen = false;
+              colorSpan.style.backgroundColor = color;
+              setTimeout(() => updateCollaboratorList(), 100);
+            }
+          });
+
+          colorPicker.appendChild(colorOption);
+        });
+
+        function handleClickOutside(e) {
+          if (!colorPicker.contains(e.target) && e.target !== colorSpan) {
+            if (document.body.contains(colorPicker)) {
+              document.body.removeChild(colorPicker);
+            }
+            document.removeEventListener('click', handleClickOutside);
+            isColorPickerOpen = false;
+            setTimeout(() => updateCollaboratorList(), 100);
+          }
+        }
+
+        setTimeout(() => document.addEventListener('click', handleClickOutside), 10);
+        document.body.appendChild(colorPicker);
+      }
+
+      function startEditingName(nameSpan, currentName) {
+        isEditingName = true;
+
+        const input = document.createElement('input');
+        input.className = 'name-input-field';
+        input.type = 'text';
+        input.value = currentName;
+        input.placeholder = 'Enter your name';
+        input.setAttribute('autocomplete', 'new-password');
+        input.setAttribute('autocorrect', 'off');
+        input.setAttribute('autocapitalize', 'off');
+        input.setAttribute('spellcheck', 'false');
+        input.setAttribute('data-form-type', 'other');
+
+        const parent = nameSpan.parentNode;
+        parent.replaceChild(input, nameSpan);
+        input.focus();
+
+        function saveName() {
+          const newName = input.value.trim();
+          if (newName && pointers) {
+            pointers.username = newName;
+            setTimeout(() => {
+              isEditingName = false;
+              updateCollaboratorList();
+            }, 100);
+          } else {
+            parent.replaceChild(nameSpan, input);
+            isEditingName = false;
+          }
+        }
+
+        input.addEventListener('blur', saveName);
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            saveName();
+          } else if (event.key === 'Escape') {
+            parent.replaceChild(nameSpan, input);
+            isEditingName = false;
+          }
+        });
+      }
 
       if (space) {
         space.onTransformChange = (scale, position) => {

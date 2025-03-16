@@ -141,4 +141,22 @@ export class FolkAutomerge<T> {
       }
     });
   }
+
+  /**
+   * Broadcasts ephemeral data to all connected peers.
+   * This is ideal for frequently changing data that doesn't need to be persisted,
+   * such as cursor positions.
+   * @param data The data to broadcast
+   */
+  broadcast(data: any): void {
+    this.handle.broadcast(data);
+  }
+
+  /**
+   * Registers a callback to be called when ephemeral messages are received.
+   * @param callback Function to call with the received ephemeral message
+   */
+  onEphemeralMessage(callback: (message: any) => void): void {
+    this.handle.on('ephemeral-message', callback);
+  }
 }
