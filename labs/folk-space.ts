@@ -99,6 +99,11 @@ export class FolkSpace extends FolkElement implements IPointTransform {
   #onTransformChange: TransformChangeCallback | null = null;
   #isPanning = false; // Track if we're currently in a panning operation
 
+  // Touch handling state
+  #lastTouchDistance = 0;
+  #lastTouchCenter: Point = { x: 0, y: 0 };
+  #isTouching = false;
+
   constructor() {
     super();
     this.#contentElement = document.createElement('div');
@@ -249,6 +254,12 @@ export class FolkSpace extends FolkElement implements IPointTransform {
     window.addEventListener('mouseup', this.#onMouseUp);
     // Add blur listener to reset panning state if window loses focus
     window.addEventListener('blur', this.#onBlur);
+
+    // Add touch event listeners
+    this.addEventListener('touchstart', this.#onTouchStart, { passive: false });
+    this.addEventListener('touchmove', this.#onTouchMove, { passive: false });
+    this.addEventListener('touchend', this.#onTouchEnd, { passive: false });
+    this.addEventListener('touchcancel', this.#onTouchEnd, { passive: false });
   }
 
   disconnectedCallback(): void {
@@ -256,6 +267,12 @@ export class FolkSpace extends FolkElement implements IPointTransform {
     window.removeEventListener('wheel', this.#onWheel);
     window.removeEventListener('mouseup', this.#onMouseUp);
     window.removeEventListener('blur', this.#onBlur);
+
+    // Remove touch event listeners
+    this.removeEventListener('touchstart', this.#onTouchStart);
+    this.removeEventListener('touchmove', this.#onTouchMove);
+    this.removeEventListener('touchend', this.#onTouchEnd);
+    this.removeEventListener('touchcancel', this.#onTouchEnd);
   }
 
   #updateRequested = false;
@@ -354,6 +371,90 @@ export class FolkSpace extends FolkElement implements IPointTransform {
     }
 
     return false;
+  }
+
+  /**
+   * Handle touch start event
+   */
+  #onTouchStart = (event: TouchEvent) => {
+    // Prevent default to avoid browser's native handling
+    event.preventDefault();
+
+    if (event.touches.length === 2) {
+      this.#isTouching = true;
+
+      // Calculate initial distance between two fingers
+      const touch1 = event.touches[0];
+      const touch2 = event.touches[1];
+      this.#lastTouchDistance = this.#getDistance(touch1.clientX, touch1.clientY, touch2.clientX, touch2.clientY);
+
+      // Calculate center point between the two touches
+      this.#lastTouchCenter = this.#getTouchCenter(touch1, touch2);
+    }
+  };
+
+  /**
+   * Handle touch move event
+   */
+  #onTouchMove = (event: TouchEvent) => {
+    // Prevent default to avoid browser's native handling
+    event.preventDefault();
+
+    if (!this.#isTouching || event.touches.length !== 2) return;
+
+    const touch1 = event.touches[0];
+    const touch2 = event.touches[1];
+
+    // Calculate new distance between fingers
+    const currentDistance = this.#getDistance(touch1.clientX, touch1.clientY, touch2.clientX, touch2.clientY);
+
+    // Calculate new center point
+    const currentCenter = this.#getTouchCenter(touch1, touch2);
+
+    // Calculate scale change
+    const scaleFactor = currentDistance / this.#lastTouchDistance;
+
+    // Calculate pan change
+    const deltaX = currentCenter.x - this.#lastTouchCenter.x;
+    const deltaY = currentCenter.y - this.#lastTouchCenter.y;
+
+    // Get the rect for coordinate conversion
+    const rect = this.getBoundingClientRect();
+
+    // Apply the transformation
+    this.applyChange(deltaX, deltaY, scaleFactor, currentCenter.x - rect.left, currentCenter.y - rect.top);
+
+    // Update last values for next move
+    this.#lastTouchDistance = currentDistance;
+    this.#lastTouchCenter = currentCenter;
+  };
+
+  /**
+   * Handle touch end event
+   */
+  #onTouchEnd = (event: TouchEvent) => {
+    if (event.touches.length < 2) {
+      this.#isTouching = false;
+    }
+  };
+
+  /**
+   * Calculate distance between two points
+   */
+  #getDistance(x1: number, y1: number, x2: number, y2: number): number {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  /**
+   * Calculate center point between two touches
+   */
+  #getTouchCenter(touch1: Touch, touch2: Touch): Point {
+    return {
+      x: (touch1.clientX + touch2.clientX) / 2,
+      y: (touch1.clientY + touch2.clientY) / 2,
+    };
   }
 
   /**
