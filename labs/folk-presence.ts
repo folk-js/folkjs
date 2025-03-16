@@ -5,7 +5,7 @@ import { FolkSpace } from './folk-space';
 
 declare global {
   interface HTMLElementTagNameMap {
-    'folk-multiplayer-pointers': FolkMultiplayerPointers;
+    'folk-presence': FolkPresence;
   }
 }
 
@@ -57,12 +57,12 @@ const shortNouns = [
 ];
 
 /**
- * FolkMultiplayerPointers is a custom element that adds real-time collaborative cursors
+ * FolkPresence is a custom element that adds real-time collaborative cursors
  * to a folk-space element. It handles both the visual representation of pointers and
  * the synchronization of pointer positions across clients using FolkAutomerge.
  */
-export class FolkMultiplayerPointers extends FolkElement {
-  static tagName = 'folk-multiplayer-pointers';
+export class FolkPresence extends FolkElement {
+  static tagName = 'folk-presence';
 
   static styles = css`
     :host {
@@ -528,8 +528,8 @@ export class FolkMultiplayerPointers extends FolkElement {
   }
 
   static define() {
-    if (!customElements.get(FolkMultiplayerPointers.tagName)) {
-      customElements.define(FolkMultiplayerPointers.tagName, FolkMultiplayerPointers);
+    if (!customElements.get(FolkPresence.tagName)) {
+      customElements.define(FolkPresence.tagName, FolkPresence);
     }
   }
 }
