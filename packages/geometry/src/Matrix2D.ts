@@ -2,14 +2,14 @@ import type { Point } from './Point.js';
 import { clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.js';
 import type { Vector2 } from './Vector.js';
 
-export type Matrix2D = {
+export interface Matrix2D {
   a: number;
   b: number;
   c: number;
   d: number;
   e: number;
   f: number;
-};
+}
 
 export type Matrix2DReadonly = Readonly<Matrix2D>;
 
@@ -21,35 +21,38 @@ export interface DecomposedMatrix2D {
   rotation: number;
 }
 
-export function clone(m: Matrix2DReadonly): Matrix2D {
+// Factories utilities
+
+export function fromIdentity(): Matrix2D {
   return {
-    a: m.a,
-    b: m.b,
-    c: m.c,
-    d: m.d,
-    e: m.e,
-    f: m.f,
+    a: 1,
+    b: 0,
+    c: 0,
+    d: 1,
+    e: 0,
+    f: 0,
   };
 }
 
-export function multiplySelf(m1: Matrix2D, m2: Matrix2D) {
-  m1.a = m1.a * m2.a + m1.c * m2.b;
-  m1.b = m1.b * m2.a + m1.d * m2.b;
-  m1.c = m1.a * m2.c + m1.c * m2.d;
-  m1.d = m1.b * m2.c + m1.d * m2.d;
-  m1.e = m1.a * m2.e + m1.c * m2.f + m1.e;
-  m1.f = m1.b * m2.e + m1.d * m2.f + m1.f;
-  return m1;
+export function fromTranslate(x: number, y: number) {
+  return {
+    a: 1,
+    b: 0,
+    c: 0,
+    d: 1,
+    e: x,
+    f: y,
+  };
 }
 
-export function multiply(m1: Matrix2DReadonly, m2: Matrix2DReadonly): Matrix2D {
+export function fromScale(x: number, y: number) {
   return {
-    a: m1.a * m2.a + m1.c * m2.b,
-    b: m1.b * m2.a + m1.d * m2.b,
-    c: m1.a * m2.c + m1.c * m2.d,
-    d: m1.b * m2.c + m1.d * m2.d,
-    e: m1.a * m2.e + m1.c * m2.f + m1.e,
-    f: m1.b * m2.e + m1.d * m2.f + m1.f,
+    a: x,
+    b: 0,
+    c: 0,
+    d: y,
+    e: 0,
+    f: 0,
   };
 }
 
@@ -64,6 +67,61 @@ export function fromRotate(angle: number) {
     e: 0,
     f: 0,
   };
+}
+
+export function clone(m: Matrix2DReadonly): Matrix2D {
+  return {
+    a: m.a,
+    b: m.b,
+    c: m.c,
+    d: m.d,
+    e: m.e,
+    f: m.f,
+  };
+}
+
+// Mutable operations
+
+export function multiplySelf(m1: Matrix2D, m2: Matrix2D) {
+  m1.a = m1.a * m2.a + m1.c * m2.b;
+  m1.b = m1.b * m2.a + m1.d * m2.b;
+  m1.c = m1.a * m2.c + m1.c * m2.d;
+  m1.d = m1.b * m2.c + m1.d * m2.d;
+  m1.e = m1.a * m2.e + m1.c * m2.f + m1.e;
+  m1.f = m1.b * m2.e + m1.d * m2.f + m1.f;
+  return m1;
+}
+
+export function identitySelf(m: Matrix2D): Matrix2D {
+  m.a = 1.0;
+  m.b = 0.0;
+  m.c = 0.0;
+  m.d = 1.0;
+  m.e = 0.0;
+  m.f = 0.0;
+  return m;
+}
+
+export function translateSelf(m: Matrix2D, x: number, y: number): Matrix2D {
+  m.e = m.a * x + m.c * y + m.e;
+  m.f = m.b * x + m.d * y + m.f;
+  return m;
+}
+
+export function scaleSelf(m: Matrix2D, x: number, y: number, origin?: Vector2): Matrix2D {
+  if (origin !== undefined) {
+    translateSelf(m, origin.x, origin.y);
+  }
+
+  m.a *= x;
+  m.b *= x;
+  m.c *= y;
+  m.d *= y;
+
+  if (origin !== undefined) {
+    translateSelf(m, -origin.x, -origin.y);
+  }
+  return m;
 }
 
 export function rotateSelf(m: Matrix2D, angle: number, origin?: Vector2): Matrix2D {
@@ -88,41 +146,6 @@ export function rotateSelf(m: Matrix2D, angle: number, origin?: Vector2): Matrix
   return m;
 }
 
-export function rotate(m: Matrix2DReadonly, angle: number, origin?: Vector2): Matrix2D {
-  return rotateSelf(clone(m), angle, origin);
-}
-
-export function fromScale(x: number, y: number) {
-  return {
-    a: x,
-    b: 0,
-    c: 0,
-    d: y,
-    e: 0,
-    f: 0,
-  };
-}
-
-export function scaleSelf(m: Matrix2D, x: number, y: number, origin?: Vector2): Matrix2D {
-  if (origin !== undefined) {
-    translateSelf(m, origin.x, origin.y);
-  }
-
-  m.a *= x;
-  m.b *= x;
-  m.c *= y;
-  m.d *= y;
-
-  if (origin !== undefined) {
-    translateSelf(m, -origin.x, -origin.y);
-  }
-  return m;
-}
-
-export function scale(m: Matrix2DReadonly, x: number, y: number, origin?: Vector2): Matrix2D {
-  return scaleSelf(clone(m), x, y, origin);
-}
-
 export function invertSelf(m: Matrix2D): Matrix2D {
   const denominator = m.a * m.d - m.b * m.c;
   m.a = m.d / denominator;
@@ -132,10 +155,6 @@ export function invertSelf(m: Matrix2D): Matrix2D {
   m.e = (m.d * m.e - m.c * m.f) / -denominator;
   m.f = (m.b * m.e - m.a * m.f) / denominator;
   return m;
-}
-
-export function invert(m: Matrix2DReadonly): Matrix2D {
-  return invertSelf(clone(m));
 }
 
 export function absoluteSelf(m: Matrix2D): Matrix2D {
@@ -149,6 +168,31 @@ export function absoluteSelf(m: Matrix2D): Matrix2D {
   return m;
 }
 
+// Immutable Operations
+
+export function multiply(m1: Matrix2DReadonly, m2: Matrix2DReadonly): Matrix2D {
+  return {
+    a: m1.a * m2.a + m1.c * m2.b,
+    b: m1.b * m2.a + m1.d * m2.b,
+    c: m1.a * m2.c + m1.c * m2.d,
+    d: m1.b * m2.c + m1.d * m2.d,
+    e: m1.a * m2.e + m1.c * m2.f + m1.e,
+    f: m1.b * m2.e + m1.d * m2.f + m1.f,
+  };
+}
+
+export function rotate(m: Matrix2DReadonly, angle: number, origin?: Vector2): Matrix2D {
+  return rotateSelf(clone(m), angle, origin);
+}
+
+export function scale(m: Matrix2DReadonly, x: number, y: number, origin?: Vector2): Matrix2D {
+  return scaleSelf(clone(m), x, y, origin);
+}
+
+export function invert(m: Matrix2DReadonly): Matrix2D {
+  return invertSelf(clone(m));
+}
+
 export function absolute(m: Matrix2DReadonly): Matrix2D {
   return absolute(clone(m));
 }
@@ -159,44 +203,6 @@ export function compose(...matrices: Matrix2DReadonly[]): Matrix2D {
     multiply(matrix, m);
   }
   return matrix;
-}
-
-export function identitySelf(m: Matrix2D): Matrix2D {
-  m.a = 1.0;
-  m.b = 0.0;
-  m.c = 0.0;
-  m.d = 1.0;
-  m.e = 0.0;
-  m.f = 0.0;
-  return m;
-}
-
-export function fromIdentity(): Matrix2D {
-  return {
-    a: 1,
-    b: 0,
-    c: 0,
-    d: 1,
-    e: 0,
-    f: 0,
-  };
-}
-
-export function fromTranslate(x: number, y: number) {
-  return {
-    a: 1,
-    b: 0,
-    c: 0,
-    d: 1,
-    e: x,
-    f: y,
-  };
-}
-
-export function translateSelf(m: Matrix2D, x: number, y: number): Matrix2D {
-  m.e = m.a * x + m.c * y + m.e;
-  m.f = m.b * x + m.d * y + m.f;
-  return m;
 }
 
 export function translate(m: Matrix2DReadonly, x: number, y: number): Matrix2D {
