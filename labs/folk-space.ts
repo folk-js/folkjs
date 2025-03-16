@@ -7,13 +7,59 @@ const MAX_SCALE = 8;
 // Define the transform change callback type
 export type TransformChangeCallback = (scale: number, position: Point) => void;
 
+/**
+ * Interface for space transformations
+ * This allows different spaces to implement their own transformation logic
+ */
+export interface PointTransform {
+  /**
+   * Converts a point from parent coordinates to local space coordinates.
+   *
+   * @param point The point in parent coordinates
+   * @returns The point in local space coordinates
+   */
+  mapPointFromParent(point: Point): Point;
+
+  /**
+   * Converts a vector from parent coordinates to local space coordinates.
+   * Vectors are affected by scale and rotation, but not by translation.
+   *
+   * @param vector The vector in parent coordinates
+   * @returns The vector in local space coordinates
+   */
+  mapVectorFromParent(vector: Point): Point;
+
+  /**
+   * Converts a point from local space coordinates to parent coordinates.
+   *
+   * @param point The point in local space coordinates
+   * @returns The point in parent coordinates
+   */
+  mapPointToParent(point: Point): Point;
+
+  /**
+   * Converts a vector from local space coordinates to parent coordinates.
+   *
+   * @param vector The vector in local space coordinates
+   * @returns The vector in parent coordinates
+   */
+  mapVectorToParent(vector: Point): Point;
+}
+
 declare global {
   interface HTMLElementTagNameMap {
     'folk-space': FolkSpace;
   }
 }
 
-export class FolkSpace extends FolkElement {
+/**
+ * FolkSpace is a zoomable and pannable container.
+ *
+ * It provides transformation methods for converting between page coordinates
+ * and space coordinates, which is essential for proper interaction with
+ * elements inside the space.
+ */
+export class FolkSpace extends FolkElement implements PointTransform {
   static tagName = 'folk-space';
 
   static styles = css`
@@ -151,6 +197,62 @@ export class FolkSpace extends FolkElement {
 
   get matrix(): Matrix {
     return new Matrix().translate(this.#x, this.#y).scale(this.#scale, this.#scale);
+  }
+
+  /**
+   * Converts a point from parent coordinates to local space coordinates.
+   *
+   * @param point The point in parent coordinates
+   * @returns The point in local space coordinates
+   */
+  mapPointFromParent(point: Point): Point {
+    // Create an inverse of the current transformation matrix
+    const inverseMatrix = this.matrix.clone().invert();
+
+    // Apply the inverse transformation to convert from parent to space coordinates
+    return inverseMatrix.applyToPoint(point);
+  }
+
+  /**
+   * Converts a vector from parent coordinates to local space coordinates.
+   * Vectors are affected by scale and rotation, but not by translation.
+   *
+   * @param vector The vector in parent coordinates
+   * @returns The vector in local space coordinates
+   */
+  mapVectorFromParent(vector: Point): Point {
+    // For vectors, we only need to apply scale (and rotation if present)
+    // Create a matrix with just the scale component
+    const scaleMatrix = new Matrix(this.#scale, 0, 0, this.#scale, 0, 0);
+
+    // Apply the inverse transformation to the vector
+    return scaleMatrix.clone().invert().applyToPoint(vector);
+  }
+
+  /**
+   * Converts a point from local space coordinates to parent coordinates.
+   *
+   * @param point The point in local space coordinates
+   * @returns The point in parent coordinates
+   */
+  mapPointToParent(point: Point): Point {
+    // Apply the space's transformation matrix directly
+    return this.matrix.applyToPoint(point);
+  }
+
+  /**
+   * Converts a vector from local space coordinates to parent coordinates.
+   *
+   * @param vector The vector in local space coordinates
+   * @returns The vector in parent coordinates
+   */
+  mapVectorToParent(vector: Point): Point {
+    // For vectors, we only need to apply scale (and rotation if present)
+    // Create a matrix with just the scale component
+    const scaleMatrix = new Matrix(this.#scale, 0, 0, this.#scale, 0, 0);
+
+    // Apply the transformation to the vector
+    return scaleMatrix.applyToPoint(vector);
   }
 
   get onTransformChange(): TransformChangeCallback | null {

@@ -13,6 +13,7 @@ import { ResizeManager } from '@lib/resize-manger';
 import { html } from '@lib/tags';
 import { MAX_Z_INDEX } from '@lib/utils';
 import { css } from '@lit/reactive-element';
+import { FolkSpace, PointTransform } from './folk-space';
 
 const resizeManager = new ResizeManager();
 
@@ -212,6 +213,9 @@ export class FolkShape extends FolkElement {
 
   #startAngle = 0;
 
+  // List of ancestor folk-space point transforms
+  #spacePointTransforms: PointTransform[] = [];
+
   get x() {
     return this.#rect.x;
   }
@@ -348,6 +352,63 @@ export class FolkShape extends FolkElement {
     return root;
   }
 
+  connectedCallback(): void {
+    super.connectedCallback();
+    // Find all ancestor folk-space elements when connected to the DOM
+    this.#updateSpacePointTransforms();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+  }
+
+  /**
+   * Updates the list of ancestor folk-space elements
+   */
+  #updateSpacePointTransforms(): void {
+    this.#spacePointTransforms = [];
+    let parent = this.parentElement;
+
+    while (parent) {
+      if (parent instanceof FolkSpace) {
+        this.#spacePointTransforms.push(parent);
+      }
+      parent = parent.parentElement;
+    }
+  }
+
+  /**
+   * Transforms a point from page coordinates to local space coordinates
+   * accounting for all ancestor folk-space transformations
+   */
+  #transformPointFromPage(point: Point): Point {
+    // Start with the original point
+    let transformedPoint = { ...point };
+
+    // Apply transformations from each space in reverse order (innermost to outermost)
+    for (const transform of this.#spacePointTransforms) {
+      transformedPoint = transform.mapPointFromParent(transformedPoint);
+    }
+
+    return transformedPoint;
+  }
+
+  /**
+   * Transforms a movement delta from page coordinates to local space coordinates
+   * Vectors are like points, but they're not affected by translation - only by scale and rotation
+   */
+  #transformDeltaFromPage(delta: Point): Point {
+    // Start with the original vector
+    let transformedDelta = { ...delta };
+
+    // Apply transformations from each space
+    for (const transform of this.#spacePointTransforms) {
+      transformedDelta = transform.mapVectorFromParent(transformedDelta);
+    }
+
+    return transformedDelta;
+  }
+
   // todo: rename to `getDOMRectTransform`
   getTransformDOMRect() {
     return this.#readonlyRect;
@@ -395,8 +456,10 @@ export class FolkShape extends FolkElement {
             y: this.#rect.height * this.#rect.rotateOrigin.y,
           });
           // Calculate initial angle including current rotation
-          const mousePos = { x: event.pageX, y: event.pageY };
-          this.#startAngle = Vector.angleFromOrigin(mousePos, parentRotateOrigin) - this.#rect.rotation;
+          // Transform the mouse position through any folk-space ancestors
+          const pageMousePos = { x: event.pageX, y: event.pageY };
+          const transformedMousePos = this.#transformPointFromPage(pageMousePos);
+          this.#startAngle = Vector.angleFromOrigin(transformedMousePos, parentRotateOrigin) - this.#rect.rotation;
         }
 
         // If we're resizing and
@@ -435,6 +498,9 @@ export class FolkShape extends FolkElement {
         x: (event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0) * MOVEMENT_MUL,
         y: (event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0) * MOVEMENT_MUL,
       };
+
+      // Transform the keyboard delta through any folk-space ancestors
+      moveDelta = this.#transformDeltaFromPage(moveDelta);
     } else if (event.type === 'pointermove') {
       if (!target) return;
       const zoom = window.visualViewport?.scale ?? 1;
@@ -442,6 +508,9 @@ export class FolkShape extends FolkElement {
         x: event.movementX / zoom,
         y: event.movementY / zoom,
       };
+
+      // Transform the pointer movement delta through any folk-space ancestors
+      moveDelta = this.#transformDeltaFromPage(moveDelta);
     }
 
     if (!moveDelta) return;
@@ -476,7 +545,7 @@ export class FolkShape extends FolkElement {
       const mousePos =
         event instanceof KeyboardEvent
           ? { x: currentPos.x + moveDelta.x, y: currentPos.y + moveDelta.y }
-          : { x: event.pageX, y: event.pageY };
+          : this.#transformPointFromPage({ x: event.pageX, y: event.pageY });
 
       this.#handleResize(handle as ResizeHandle, mousePos, target, event instanceof PointerEvent ? event : undefined);
       event.preventDefault();
@@ -489,8 +558,16 @@ export class FolkShape extends FolkElement {
         x: this.#rect.width * this.#rect.rotateOrigin.x,
         y: this.#rect.height * this.#rect.rotateOrigin.y,
       });
-      const currentAngle = Vector.angleFromOrigin({ x: event.pageX, y: event.pageY }, parentRotateOrigin);
+
+      // Transform the mouse position through any folk-space ancestors
+      const pageMousePos = { x: event.pageX, y: event.pageY };
+      const transformedMousePos = this.#transformPointFromPage(pageMousePos);
+
+      const currentAngle = Vector.angleFromOrigin(transformedMousePos, parentRotateOrigin);
+
       // Apply rotation relative to start angle
+      // If the spaces had rotation, the angle would already be transformed correctly
+      // since we're using transformed points to calculate it
       this.rotation = currentAngle - this.#startAngle;
 
       const degrees = (this.#rect.rotation * 180) / Math.PI;
