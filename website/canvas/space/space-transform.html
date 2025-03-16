@@ -11,8 +11,7 @@
         overflow: hidden;
       }
 
-      #space1,
-      #space2 {
+      transform-plane {
         position: absolute;
         width: 100%;
         height: 100%;
@@ -92,16 +91,16 @@
     </style>
   </head>
   <body>
-    <div id="space1">
+    <transform-plane id="space1">
       <folk-shape id="source1" x="250" y="100" width="50" height="50"></folk-shape>
       <folk-shape id="source2" x="400" y="300" width="75" height="75" rotation="45"></folk-shape>
       <folk-shape id="source3" x="150" y="400" width="100" height="100" rotation="90"></folk-shape>
-    </div>
-    <div id="space2">
+    </transform-plane>
+    <transform-plane id="space2">
       <folk-shape id="target1" x="550" y="150" width="50" height="50" rotation="45"></folk-shape>
       <folk-shape id="target2" x="300" y="400" width="75" height="75" rotation="90"></folk-shape>
       <folk-shape id="target3" x="250" y="250" width="100" height="100" rotation="135"></folk-shape>
-    </div>
+    </transform-plane>
 
     <div id="info-container">
       <div>Testing utilities for transforming points between coordinate spaces. All transforms are in simple CSS.</div>
@@ -115,6 +114,64 @@
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-rope.ts';
       import { Matrix } from '@lib/Matrix.ts';
+      import { IPointTransform } from '@lib/interfaces/IPointTransform.ts';
+
+      // Define the transform-plane custom element
+      class TransformPlane extends HTMLElement {
+        [IPointTransform] = true;
+
+        // Get the current transform matrix for the space
+        getMatrix() {
+          return new DOMMatrix(window.getComputedStyle(this).transform);
+        }
+
+        // IPointTransform implementation
+        mapPointFromParent(point) {
+          return Matrix.projectPointOntoPlane(point, this.getMatrix());
+        }
+
+        mapVectorFromParent(vector) {
+          // For vectors, we need to transform the direction properly in 3D space
+          // We'll do this by transforming two points and finding the difference
+
+          // Create a point at the origin
+          const origin = { x: 0, y: 0 };
+
+          // Create a point representing the vector from origin
+          const vectorPoint = { x: vector.x, y: vector.y };
+
+          // Transform both points using the same projection method as mapPointFromParent
+          const transformedOrigin = Matrix.projectPointOntoPlane(origin, this.getMatrix());
+          const transformedVectorPoint = Matrix.projectPointOntoPlane(vectorPoint, this.getMatrix());
+
+          // The transformed vector is the difference between these points
+          return {
+            x: transformedVectorPoint.x - transformedOrigin.x,
+            y: transformedVectorPoint.y - transformedOrigin.y,
+          };
+        }
+
+        mapPointToParent(point) {
+          return Matrix.projectPointFromPlane(point, this.getMatrix());
+        }
+
+        mapVectorToParent(vector) {
+          const matrix = this.getMatrix();
+          // Inverse transform for vectors (ignoring translation)
+          // Calculate determinant for inverse
+          const det = matrix.a * matrix.d - matrix.b * matrix.c;
+          if (Math.abs(det) < 1e-6) return vector; // Avoid division by near-zero
+
+          const invDet = 1 / det;
+          return {
+            x: (vector.x * matrix.d - vector.y * matrix.c) * invDet,
+            y: (-vector.x * matrix.b + vector.y * matrix.a) * invDet,
+          };
+        }
+      }
+
+      // Register the custom element
+      customElements.define('transform-plane', TransformPlane);
 
       // Create ropes for each shape pair
       const shapePairs = [
@@ -137,6 +194,9 @@
       // Get plane elements
       const frontPlane = document.getElementById('space1');
       const backPlane = document.getElementById('space2');
+      document.querySelectorAll('folk-shape').forEach((shape) => {
+        shape.refreshTransformStack();
+      });
 
       // Animation parameters
       const frontPlaneAnimation = {
@@ -191,20 +251,13 @@
       let isAnimating = true;
       let lastTimestamp = 0;
 
-      // Track the currently dragged shape
-      let draggedShape = null;
-      let dragInfo = null;
-      let lastMousePosition = { x: 0, y: 0 };
-
       // Animation loop
       function animate(timestamp) {
         if (isAnimating) {
           updatePlaneTransforms(timestamp);
-          updateRopeConnections();
-
-          // Update dragged shape
-          updateDraggedShapes();
         }
+        // Always update rope connections, even when animation is paused
+        updateRopeConnections();
         requestAnimationFrame(animate);
       }
 
@@ -298,11 +351,6 @@
 
       // Update rope connections
       function updateRopeConnections() {
-        // Get computed transforms for both planes
-        const frontMatrix = new DOMMatrix(window.getComputedStyle(frontPlane).transform);
-        const backMatrix = new DOMMatrix(window.getComputedStyle(backPlane).transform);
-
-        let _sourceId;
         ropes.forEach(({ rope, sourceId, targetId }) => {
           const sourceElement = document.getElementById(sourceId);
           const targetElement = document.getElementById(targetId);
@@ -317,9 +365,13 @@
               y: targetElement.y + targetElement.height / 2,
             };
 
-            // Project points onto their respective planes
-            const projectedSourcePoint = Matrix.projectPointFromPlane(sourcePos, frontMatrix);
-            const projectedTargetPoint = Matrix.projectPointFromPlane(targetPos, backMatrix);
+            // Use the element directly instead of trying to access through Symbol
+            const frontTransform = frontPlane;
+            const backTransform = backPlane;
+
+            // Project points to parent (global) space
+            const projectedSourcePoint = frontTransform.mapPointToParent(sourcePos);
+            const projectedTargetPoint = backTransform.mapPointToParent(targetPos);
 
             // Create zero-width/height rects at the projected points
             const sourceRectForRope = {
@@ -342,84 +394,6 @@
           }
         });
       }
-
-      // Simplified handler for dragging shapes within transformed coordinate spaces
-      function handlePointerEvent(event) {
-        // Store last known mouse position
-        lastMousePosition = { x: event.clientX, y: event.clientY };
-
-        // Check if the event target is a shape
-        if (event.target.tagName.toLowerCase() === 'folk-shape') {
-          // Determine which plane the shape belongs to
-          const plane = event.target.closest('#space1, #space2');
-          if (!plane) return;
-
-          // Get the matrix for the relevant plane
-          const planeMatrix = new DOMMatrix(window.getComputedStyle(plane).transform);
-
-          // Original event coordinates in global space
-          const globalPoint = { x: event.clientX, y: event.clientY };
-
-          // Project point onto the plane's local coordinate space
-          const localPoint = Matrix.projectPointOntoPlane(globalPoint, planeMatrix);
-
-          // Get the shape element
-          const shape = event.target;
-
-          // Basic dragging functionality
-          if (event.type === 'pointerdown') {
-            // Store initial position for drag operations
-            draggedShape = shape;
-            dragInfo = {
-              offsetX: localPoint.x - shape.x,
-              offsetY: localPoint.y - shape.y,
-              plane: plane,
-            };
-
-            // Set pointer capture to handle movement outside the element
-            shape.setPointerCapture(event.pointerId);
-          } else if (event.type === 'pointermove' && event.buttons > 0) {
-            // Update is handled in the animation loop
-          } else if (event.type === 'pointerup' || event.type === 'pointercancel') {
-            // Clear dragged shape
-            draggedShape = null;
-            dragInfo = null;
-
-            // Release pointer capture
-            if (event.pointerId) {
-              try {
-                shape.releasePointerCapture(event.pointerId);
-              } catch (e) {
-                // Ignore errors from releasing pointer capture
-              }
-            }
-          }
-
-          // Prevent the original event from being processed by the shape's normal handler
-          event.stopPropagation();
-          event.preventDefault();
-        }
-      }
-
-      // Function to update the dragged shape based on current mouse position
-      function updateDraggedShapes() {
-        if (!draggedShape || !dragInfo) return;
-
-        const planeMatrix = new DOMMatrix(window.getComputedStyle(dragInfo.plane).transform);
-
-        // Project current mouse position onto the plane
-        const localPoint = Matrix.projectPointOntoPlane(lastMousePosition, planeMatrix);
-
-        // Update shape position, accounting for the initial drag offset
-        draggedShape.x = localPoint.x - dragInfo.offsetX;
-        draggedShape.y = localPoint.y - dragInfo.offsetY;
-      }
-
-      // Add event listeners for pointer events
-      document.addEventListener('pointerdown', handlePointerEvent, true);
-      document.addEventListener('pointermove', handlePointerEvent, true);
-      document.addEventListener('pointerup', handlePointerEvent, true);
-      document.addEventListener('pointercancel', handlePointerEvent, true);
     </script>
   </body>
 </html>

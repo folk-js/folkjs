@@ -355,11 +355,16 @@ export class FolkShape extends FolkElement {
   connectedCallback(): void {
     super.connectedCallback();
     // Find all ancestor folk-space elements when connected to the DOM
-    this.#transformStack = TransformStack.fromElement(this);
+    this.refreshTransformStack();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+  }
+
+  refreshTransformStack() {
+    this.#transformStack = TransformStack.fromElement(this);
+    console.log(this.#transformStack);
   }
 
   // todo: rename to `getDOMRectTransform`
