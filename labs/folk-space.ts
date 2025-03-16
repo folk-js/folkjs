@@ -94,6 +94,7 @@ export class FolkSpace extends FolkElement {
   #minScale = MIN_SCALE;
   #maxScale = MAX_SCALE;
   #onTransformChange: TransformChangeCallback | null = null;
+  #isPanning = false; // Track if we're currently in a panning operation
 
   constructor() {
     super();
@@ -185,11 +186,17 @@ export class FolkSpace extends FolkElement {
 
     // Set up event listeners
     window.addEventListener('wheel', this.#onWheel, { passive: false });
+    // Add mouseup listener to reset panning state
+    window.addEventListener('mouseup', this.#onMouseUp);
+    // Add blur listener to reset panning state if window loses focus
+    window.addEventListener('blur', this.#onBlur);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('wheel', this.#onWheel);
+    window.removeEventListener('mouseup', this.#onMouseUp);
+    window.removeEventListener('blur', this.#onBlur);
   }
 
   #updateRequested = false;
@@ -221,11 +228,22 @@ export class FolkSpace extends FolkElement {
   }
 
   #onWheel = (event: WheelEvent) => {
-    // Check if the wheel event is happening inside this element
-    if (!this.#isElementBeingScrolled(event)) return;
+    // If we're already panning, continue regardless of what element we're over
+    if (this.#isPanning) {
+      event.preventDefault();
+      this.#handleWheelEvent(event);
+      return;
+    }
 
-    event.preventDefault();
+    // If we're not panning yet, check if we should start panning
+    if (this.#shouldStartPanning(event)) {
+      this.#isPanning = true;
+      event.preventDefault();
+      this.#handleWheelEvent(event);
+    }
+  };
 
+  #handleWheelEvent(event: WheelEvent) {
     const rect = this.getBoundingClientRect();
     const { clientX, clientY } = event;
     let { deltaX, deltaY } = event;
@@ -243,12 +261,22 @@ export class FolkSpace extends FolkElement {
     } else {
       this.applyChange(-1 * deltaX, -1 * deltaY, 1, clientX - rect.left, clientY - rect.top);
     }
+  }
+
+  #onMouseUp = () => {
+    // Reset panning state when mouse is released
+    this.#isPanning = false;
+  };
+
+  #onBlur = () => {
+    // Reset panning state when window loses focus
+    this.#isPanning = false;
   };
 
   /**
-   * Check if the element is being scrolled
+   * Check if we should start panning based on the initial wheel event
    */
-  #isElementBeingScrolled(wheelEvent: WheelEvent): boolean {
+  #shouldStartPanning(wheelEvent: WheelEvent): boolean {
     let el = wheelEvent.target as Element | null;
 
     while (el) {
@@ -307,7 +335,8 @@ export class FolkSpace extends FolkElement {
     if (!this.#gridElement) {
       this.#gridElement = document.createElement('div');
       this.#gridElement.className = 'grid';
-      this.shadowRoot.appendChild(this.#gridElement);
+      // Insert the grid before the content element instead of appending it after
+      this.shadowRoot.insertBefore(this.#gridElement, this.#contentElement);
     }
     this.#gridElement.style.setProperty('--scale', `${toDOMPrecision(this.scale)}`);
     this.#gridElement.style.setProperty('--x', `${toDOMPrecision(this.x)}px`);

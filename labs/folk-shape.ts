@@ -68,7 +68,6 @@ const styles = css`
     rotate: calc(var(--folk-rotation) * 1rad);
     outline: solid 0 hsl(214, 84%, 56%);
     transition: outline-width 75ms ease-out;
-    overflow: scroll;
   }
 
   :host(:state(auto-height)) {
@@ -89,7 +88,7 @@ const styles = css`
   div {
     height: 100%;
     width: 100%;
-    overflow: inherit;
+    overflow: scroll;
     pointer-events: none;
   }
 

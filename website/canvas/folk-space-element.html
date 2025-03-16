@@ -12,6 +12,7 @@
         padding: 0;
         overflow: hidden;
         overscroll-behavior-x: none;
+        touch-action: none;
       }
 
       folk-space {
@@ -23,7 +24,6 @@
         background-color: #3498db;
         border-radius: 5px;
         box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-        z-index: 1000;
       }
 
       .debug-info {
@@ -47,7 +47,14 @@
       <folk-shape id="box1" x="100" y="100" width="100" height="100"></folk-shape>
       <folk-shape id="box2" x="300" y="200" width="80" height="80"></folk-shape>
       <folk-shape id="box3" x="500" y="300" width="120" height="120"></folk-shape>
-      <folk-shape id="box4" x="200" y="400" width="150" height="150"></folk-shape>
+      <folk-shape id="box4" x="200" y="400" width="150" height="150">
+        Lets add some long content to check scrolling behaviour. Lorem ipsum dolor sit amet consectetur adipisicing
+        elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor
+        sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit.
+        Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit
+        amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit.
+        Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos.
+      </folk-shape>
     </folk-space>
 
     <script type="module">
