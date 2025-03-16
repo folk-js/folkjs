@@ -1,5 +1,6 @@
 import { CustomAttribute, customAttributes, Matrix, toDOMPrecision } from '@lib';
 import { css } from '@lib/tags';
+import { FolkShapeAttribute, ShapeConnectedEvent, ShapeDisconnectedEvent } from './folk-shape-attribute';
 
 declare global {
   interface Element {
@@ -132,7 +133,11 @@ export class FolkZoomable extends CustomAttribute {
     this.#requestUpdate();
   }
 
+  #shapes = new Set<FolkShapeAttribute>();
+
   connectedCallback(): void {
+    this.ownerElement.addEventListener('shape-connected', this.#onShapeConnected);
+    this.ownerElement.addEventListener('shape-disconnected', this.#onShapeDisconnected);
     window.addEventListener('wheel', this.#onWheel, { passive: false });
   }
 
@@ -163,6 +168,8 @@ export class FolkZoomable extends CustomAttribute {
   }
 
   disconnectedCallback(): void {
+    this.ownerElement.removeEventListener('shape-connected', this.#onShapeConnected);
+    this.ownerElement.removeEventListener('shape-disconnected', this.#onShapeDisconnected);
     window.removeEventListener('wheel', this.#onWheel);
     // this.#pointerTracker.stop();
   }
@@ -220,6 +227,15 @@ export class FolkZoomable extends CustomAttribute {
     } else {
       this.applyChange(-1 * deltaX, -1 * deltaY, 1, clientX - left, clientY - top);
     }
+  };
+
+  #onShapeConnected = (event: ShapeConnectedEvent) => {
+    this.#shapes.add(event.shape);
+    event.registerSpace(this);
+  };
+
+  #onShapeDisconnected = (event: ShapeDisconnectedEvent) => {
+    this.#shapes.delete(event.shape);
   };
 
   applyChange(panX = 0, panY = 0, scaleDiff = 1, originX = 0, originY = 0) {

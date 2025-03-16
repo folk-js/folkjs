@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Shape Attribute</title>
     <style>
-      div[folk-shape] {
-        background: rgb(187, 178, 178);
+      body {
+        height: 100vh;
       }
 
       h1 {
@@ -14,7 +14,7 @@
       }
     </style>
   </head>
-  <body>
+  <body folk-zoomable="grid:true">
     <h1 folk-shape>Heading</h1>
     <input folk-shape value="Input 1" />
     <input folk-shape value="Input 2" />
@@ -23,9 +23,8 @@
     <audio src="/Feather.mov" controls folk-shape></audio>
 
     <script type="module">
-      import { FolkShapeAttribute } from '@labs/folk-shape-attribute.ts';
-
-      FolkShapeAttribute.define();
+      import '@labs/standalone/folk-zoomable.ts';
+      import '@labs/standalone/folk-shape-attribute.ts';
     </script>
   </body>
 </html>

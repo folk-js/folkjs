@@ -25,6 +25,53 @@ Object.defineProperty(Element.prototype, 'shape', {
 
 const resizeManager = new ResizeManager();
 
+interface Space {}
+
+export class ShapeConnectedEvent extends Event {
+  #spaces: Space[] = [];
+
+  get spaces() {
+    return this.#spaces;
+  }
+
+  #shape;
+
+  get shape() {
+    return this.#shape;
+  }
+
+  constructor(shape: FolkShapeAttribute) {
+    super('shape-connected', { bubbles: true });
+
+    this.#shape = shape;
+  }
+
+  registerSpace(space: Space) {
+    this.#spaces.unshift(space);
+  }
+}
+
+export class ShapeDisconnectedEvent extends Event {
+  #shape;
+
+  get shape() {
+    return this.#shape;
+  }
+
+  constructor(shape: FolkShapeAttribute) {
+    super('shape-disconnected', { bubbles: true });
+
+    this.#shape = shape;
+  }
+}
+
+declare global {
+  interface ElementEventMap {
+    'shape-connected': ShapeConnectedEvent;
+    'shape-disconnected': ShapeDisconnectedEvent;
+  }
+}
+
 // TODO: if an auto position/size is defined as a style then we should probably save it and set it back
 export class FolkShapeAttribute extends CustomAttribute {
   static attributeName = 'folk-shape';
@@ -320,6 +367,8 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#rect.getBounds();
   }
 
+  #spaces: Space[] = [];
+
   constructor(ownerElement: Element, name: string, value: string) {
     super(ownerElement, name, value);
 
@@ -334,6 +383,10 @@ export class FolkShapeAttribute extends CustomAttribute {
     if (el.tabIndex === -1) {
       el.tabIndex = 0;
     }
+
+    const event = new ShapeConnectedEvent(this);
+    this.ownerElement.dispatchEvent(event);
+    this.#spaces = Array.from(event.spaces);
   }
 
   changedCallback(_oldValue: string, newValue: string): void {
@@ -387,6 +440,8 @@ export class FolkShapeAttribute extends CustomAttribute {
     el.style.removeProperty('--folk-height');
     el.style.removeProperty('--folk-width');
     el.style.removeProperty('--folk-rotation');
+
+    this.ownerElement.dispatchEvent(new ShapeDisconnectedEvent(this));
   }
 
   handleEvent(event: FocusEvent) {
