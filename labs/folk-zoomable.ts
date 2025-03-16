@@ -1,5 +1,4 @@
-import { CustomAttribute, customAttributes, Matrix, toDOMPrecision, Vector } from '@lib';
-import PointerTracker, { Pointer } from '@lib/pointer-tracker';
+import { CustomAttribute, customAttributes, Matrix, toDOMPrecision } from '@lib';
 import { css } from '@lib/tags';
 
 declare global {
@@ -133,24 +132,6 @@ export class FolkZoomable extends CustomAttribute {
     this.#requestUpdate();
   }
 
-  // #pointerTracker = new PointerTracker(this.ownerElement as HTMLElement, {
-  //   start: (_, event) => {
-  //     // We only want to track 2 pointers at most
-  //     if (this.#pointerTracker.currentPointers.length === 2) return false;
-
-  //     // is this needed, when it happens it prevents the blur of other elements
-  //     // event.preventDefault();
-  //     document.documentElement.style.userSelect = 'none';
-  //     return true;
-  //   },
-  //   move: (previousPointers) => {
-  //     this.#onPointerMove(previousPointers, this.#pointerTracker.currentPointers);
-  //   },
-  //   end: () => {
-  //     document.documentElement.style.userSelect = '';
-  //   },
-  // });
-
   connectedCallback(): void {
     window.addEventListener('wheel', this.#onWheel, { passive: false });
   }
@@ -240,30 +221,6 @@ export class FolkZoomable extends CustomAttribute {
       this.applyChange(-1 * deltaX, -1 * deltaY, 1, clientX - left, clientY - top);
     }
   };
-
-  // #onPointerMove = (previousPointers: Pointer[], currentPointers: Pointer[]) => {
-  //   // Combine next points with previous points
-  //   const currentRect = this.ownerElement.getBoundingClientRect();
-
-  //   const previousPoints = previousPointers.slice(0, 2).map((pointer) => ({ x: pointer.clientX, y: pointer.clientY }));
-
-  //   const currentPoints = currentPointers.slice(0, 2).map((pointer) => ({ x: pointer.clientX, y: pointer.clientY }));
-
-  //   // For calculating panning movement
-  //   const prevMidpoint = Vector.center(previousPoints);
-  //   const newMidpoint = Vector.center(currentPoints);
-
-  //   // Midpoint within the element
-  //   const originX = prevMidpoint.x - currentRect.left;
-  //   const originY = prevMidpoint.y - currentRect.top;
-
-  //   // Calculate the desired change in scale
-  //   const prevDistance = previousPoints.length === 1 ? 0 : Vector.distance(previousPoints[0], previousPoints[1]);
-  //   const newDistance = currentPoints.length === 1 ? 0 : Vector.distance(currentPoints[0], currentPoints[1]);
-  //   const scaleDiff = prevDistance ? newDistance / prevDistance : 1;
-
-  //   this.applyChange(newMidpoint.x - prevMidpoint.x, newMidpoint.y - prevMidpoint.y, scaleDiff, originX, originY);
-  // };
 
   applyChange(panX = 0, panY = 0, scaleDiff = 1, originX = 0, originY = 0) {
     const matrix = new Matrix()
