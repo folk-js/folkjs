@@ -1,6 +1,5 @@
-import type { Point } from './Point.js';
 import { clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.js';
-import type { Vector2 } from './Vector.js';
+import type { Vector2 } from './Vector2.js';
 
 export interface Matrix2D {
   a: number;
@@ -209,7 +208,7 @@ export function translate(m: Matrix2DReadonly, x: number, y: number): Matrix2D {
   return translateSelf(clone(m), x, y);
 }
 
-export function toPoint(m: Matrix2DReadonly): Point {
+export function toPoint(m: Matrix2DReadonly): Vector2 {
   return { x: m.e, y: m.f };
 }
 
@@ -277,11 +276,11 @@ export function lerp(m1: Matrix2DReadonly, m2: Matrix2DReadonly, alpha: number) 
   });
 }
 
-export function applyToPoint(m: Matrix2DReadonly, point: Point) {
+export function applyToPoint(m: Matrix2DReadonly, point: Vector2) {
   return { x: m.a * point.x + m.c * point.y + m.e, y: m.b * point.x + m.d * point.y + m.f };
 }
 
-export function applyToPoints(m: Matrix2DReadonly, points: Point[]): Point[] {
+export function applyToPoints(m: Matrix2DReadonly, points: Vector2[]): Vector2[] {
   return points.map((point) => applyToPoint(m, point));
 }
 

@@ -1,4 +1,4 @@
-import type { Point } from './Point.js';
+import type { Vector2 } from './Vector2';
 
 /**
  * Projects a point onto a plane defined by an orthographic 3D transformation matrix.
@@ -7,7 +7,7 @@ import type { Point } from './Point.js';
  * @returns The projected point in the plane's local coordinates.
  * @note Currently assumes 0-0 transform origin.
  */
-export function projectPointOntoPlane(point: Point, matrix: DOMMatrix) {
+export function projectPointOntoPlane(point: Vector2, matrix: DOMMatrix) {
   // Create a ray from camera (assuming orthographic projection)
   const rayOrigin = { x: point.x, y: point.y, z: -1000 }; // Camera positioned behind screen
   const rayDirection = { x: 0, y: 0, z: 1 }; // Pointing forward along z-axis
@@ -96,7 +96,7 @@ export function projectPointOntoPlane(point: Point, matrix: DOMMatrix) {
  * @param matrix - The transformation matrix defining the plane.
  * @returns The corresponding screen-space point.
  */
-export function projectPointFromPlane(planePoint: Point, matrix: DOMMatrix): Point {
+export function projectPointFromPlane(planePoint: Vector2, matrix: DOMMatrix): Vector2 {
   // Transform the point from the plane's local space to world space
   const worldPoint = matrix.transformPoint(planePoint);
 
