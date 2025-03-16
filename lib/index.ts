@@ -35,3 +35,6 @@ export * from './custom-attribute-registry';
 
 // Experimental features
 export * from './CanIUse';
+
+// Interfaces
+export * from './interfaces/satisfies';

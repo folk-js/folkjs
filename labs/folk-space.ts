@@ -1,4 +1,5 @@
 import { FolkElement, Matrix, Point, toDOMPrecision } from '@lib';
+import { IPointTransform } from '@lib/interfaces/IPointTransform';
 import { css } from '@lib/tags';
 
 const MIN_SCALE = 0.05;
@@ -6,45 +7,6 @@ const MAX_SCALE = 8;
 
 // Define the transform change callback type
 export type TransformChangeCallback = (scale: number, position: Point) => void;
-
-/**
- * Interface for space transformations
- * This allows different spaces to implement their own transformation logic
- */
-export interface PointTransform {
-  /**
-   * Converts a point from parent coordinates to local space coordinates.
-   *
-   * @param point The point in parent coordinates
-   * @returns The point in local space coordinates
-   */
-  mapPointFromParent(point: Point): Point;
-
-  /**
-   * Converts a vector from parent coordinates to local space coordinates.
-   * Vectors are affected by scale and rotation, but not by translation.
-   *
-   * @param vector The vector in parent coordinates
-   * @returns The vector in local space coordinates
-   */
-  mapVectorFromParent(vector: Point): Point;
-
-  /**
-   * Converts a point from local space coordinates to parent coordinates.
-   *
-   * @param point The point in local space coordinates
-   * @returns The point in parent coordinates
-   */
-  mapPointToParent(point: Point): Point;
-
-  /**
-   * Converts a vector from local space coordinates to parent coordinates.
-   *
-   * @param vector The vector in local space coordinates
-   * @returns The vector in parent coordinates
-   */
-  mapVectorToParent(vector: Point): Point;
-}
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -59,7 +21,8 @@ declare global {
  * and space coordinates, which is essential for proper interaction with
  * elements inside the space.
  */
-export class FolkSpace extends FolkElement implements PointTransform {
+export class FolkSpace extends FolkElement implements IPointTransform {
+  [IPointTransform] = true;
   static tagName = 'folk-space';
 
   static styles = css`

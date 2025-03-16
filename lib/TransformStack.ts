@@ -1,4 +1,5 @@
-import type { PointTransform } from '@labs/folk-space';
+import { satisfies } from '@lib';
+import { IPointTransform } from '@lib/interfaces/IPointTransform';
 import type { Point } from '@lib/types';
 
 /**
@@ -6,13 +7,13 @@ import type { Point } from '@lib/types';
  * to convert coordinates between different spaces.
  */
 export class TransformStack {
-  private transforms: PointTransform[] = [];
+  private transforms: IPointTransform[] = [];
 
   /**
    * Creates a new TransformStack with the given transforms
    * @param transforms The transforms to include, ordered from parent to child
    */
-  constructor(transforms: PointTransform[] = []) {
+  constructor(transforms: IPointTransform[] = []) {
     this.transforms = [...transforms];
   }
 
@@ -86,13 +87,13 @@ export class TransformStack {
    * @returns A new TransformStack with all transforms in the hierarchy
    */
   static fromElement(element: Element): TransformStack {
-    const transforms: PointTransform[] = [];
+    const transforms: IPointTransform[] = [];
     let current: Element | null = element;
 
     // Walk up the DOM tree and collect all transforms
     while (current) {
-      if ('mapPointFromParent' in current && typeof (current as any).mapPointFromParent === 'function') {
-        transforms.unshift(current as unknown as PointTransform);
+      if (satisfies<IPointTransform>(current, IPointTransform)) {
+        transforms.unshift(current);
       }
       current = current.parentElement;
     }
