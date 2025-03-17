@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>folk-space element - Copy-Paste Test (No Shapes)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* Base styles */
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior-x: none;
+        touch-action: none;
+      }
+
+      folk-space {
+        width: 100%;
+        height: 100%;
+        background-color: #f8f9fa;
+      }
+
+      folk-shape {
+        background-color: #8a34db;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+      }
+
+      .status {
+        position: fixed;
+        bottom: 10px;
+        left: 10px;
+        background: white;
+        padding: 10px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+        font-size: 14px;
+        color: #333;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      .selected {
+        outline: 2px solid #e74c3c !important;
+      }
+
+      .instructions {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+        font-size: 16px;
+        color: #333;
+        text-align: center;
+        max-width: 80%;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="status" id="status">
+      Paste shapes with Ctrl+V/Cmd+V. Then use SHIFT+click to select multiple elements.
+    </div>
+
+    <folk-space id="space">
+      <!-- Empty space - we'll paste shapes here -->
+    </folk-space>
+
+    <script type="module">
+      import '@labs/standalone/folk-space.ts';
+      import { CopyPasteHandler } from '@labs/standalone/folk-copy-paste-handler.ts';
+
+      const space = document.getElementById('space');
+      const statusEl = document.getElementById('status');
+
+      if (space) {
+        const handler = new CopyPasteHandler(space, {
+          statusElement: statusEl,
+          selectionClass: 'selected',
+          mimeType: 'application/folk-elements',
+        });
+      }
+    </script>
+  </body>
+</html>

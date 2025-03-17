@@ -1,6 +1,8 @@
 /**
  * CopyPasteHandler - Manages copying and pasting of custom elements with support for
  * cross-page clipboard operations and dynamic import of unregistered elements.
+ *
+ * NOTE: All very hacky, just wanted to get *something* working.
  */
 export class CopyPasteHandler {
   private selectedElements = new Set<Element>();
@@ -188,6 +190,8 @@ export class CopyPasteHandler {
     }
 
     // Get computed position if it's a folk-shape
+    // NOTE: this is a hack to get the position of the element
+    // TODO: sort out attribute reflection for folk-shape so we can make this generic
     if (element.tagName.toLowerCase() === 'folk-shape') {
       // Get the computed style of the element
       const computedStyle = window.getComputedStyle(element);
@@ -229,12 +233,25 @@ export class CopyPasteHandler {
 
     // If not defined, import it dynamically
     if (!constructor && importSrc) {
+      //  NOTE: this is a hack to get the base URL of the project
+      // TODO: find a better way to do this
+      const baseUrl = new URL('.', import.meta.url).href.replace(/\/labs$/, '');
+      const path = `${baseUrl}${importSrc}`;
+
       try {
-        await import(importSrc);
-        constructor = customElements.get(tagName);
+        console.log(`Trying to import ${tagName} from: ${path}`);
+        await import(path);
+
+        // Check if the element is now defined
+        if (customElements.get(tagName)) {
+          console.log(`Successfully imported ${tagName} from ${path}`);
+        }
       } catch (error) {
-        console.error(`Failed to import ${tagName} from ${importSrc}:`, error);
+        console.error(`Failed to import ${tagName} from ${path}:`, error);
       }
+
+      // Get the constructor again after import attempts
+      constructor = customElements.get(tagName);
     } else if (!constructor && !importSrc) {
       console.error(`Cannot create ${tagName} element: No importSrc defined and element is not registered.`);
     }
