@@ -5,9 +5,11 @@ export type Vector2 = {
   y: number;
 };
 
+export type Vector2Readonly = Readonly<Vector2>;
+
 /**
  * Creates a zero vector (0,0)
- * @returns {Vector2} A Vector2 representing a zero vector
+ * @returns A Vector2 representing a zero vector
  */
 export function fromZero(): Vector2 {
   return { x: 0, y: 0 };
@@ -15,7 +17,7 @@ export function fromZero(): Vector2 {
 
 /**
  * Unit vector Vector2ing right (1,0)
- * @returns {Vector2} A Vector2 representing a right vector
+ * @returns A Vector2 representing a right vector
  */
 export function fromRight(): Vector2 {
   return { x: 1, y: 0 };
@@ -23,7 +25,7 @@ export function fromRight(): Vector2 {
 
 /**
  * Unit vector Vector2ing left (-1,0)
- * @returns {Vector2} A Vector2 representing a left vector
+ * @returns A Vector2 representing a left vector
  */
 export function fromLeft(): Vector2 {
   return { x: -1, y: 0 };
@@ -31,7 +33,7 @@ export function fromLeft(): Vector2 {
 
 /**
  * Unit vector Vector2ing up (0,-1)
- * @returns {Vector2} A Vector2 representing an up vector
+ * @returns A Vector2 representing an up vector
  */
 export function fromUp(): Vector2 {
   return { x: 0, y: -1 };
@@ -39,7 +41,7 @@ export function fromUp(): Vector2 {
 
 /**
  * Unit vector Vector2ing down (0,1)
- * @returns {Vector2} A Vector2 representing a down vector
+ * @returns A Vector2 representing a down vector
  */
 export function fromDown(): Vector2 {
   return { x: 0, y: 1 };
@@ -49,7 +51,7 @@ export function fromDown(): Vector2 {
  * Subtracts vector b from vector a
  * @param {Vector2} a - The first vector
  * @param {Vector2} b - The vector to subtract
- * @returns {Vector2} The resulting vector
+ * @returns The resulting vector
  */
 export function subtract(a: Vector2, b: Vector2): Vector2 {
   return { x: a.x - b.x, y: a.y - b.y };
@@ -59,7 +61,7 @@ export function subtract(a: Vector2, b: Vector2): Vector2 {
  * Adds two vectors together
  * @param {Vector2} a - The first vector
  * @param {Vector2} b - The second vector
- * @returns {Vector2} The sum of the two vectors
+ * @returns The sum of the two vectors
  */
 export function add(a: Vector2, b: Vector2): Vector2 {
   return { x: a.x + b.x, y: a.y + b.y };
@@ -69,7 +71,7 @@ export function add(a: Vector2, b: Vector2): Vector2 {
  * Multiplies two vectors component-wise
  * @param {Vector2} a - The first vector
  * @param {Vector2} b - The second vector
- * @returns {Vector2} The component-wise product of the two vectors
+ * @returns The component-wise product of the two vectors
  */
 export function multiply(a: Vector2, b: Vector2): Vector2 {
   return { x: a.x * b.x, y: a.y * b.y };
@@ -79,7 +81,7 @@ export function multiply(a: Vector2, b: Vector2): Vector2 {
  * Scales a vector by a scalar value
  * @param {Vector2} v - The vector to scale
  * @param {number} scaleFactor - The scaling factor
- * @returns {Vector2} The scaled vector
+ * @returns The scaled vector
  */
 export function scale(v: Vector2, scaleFactor: number): Vector2 {
   return { x: v.x * scaleFactor, y: v.y * scaleFactor };
@@ -88,7 +90,7 @@ export function scale(v: Vector2, scaleFactor: number): Vector2 {
 /**
  * Calculates the magnitude (length) of a vector
  * @param {Vector2} v - The vector
- * @returns {number} The magnitude of the vector
+ * @returns The magnitude of the vector
  */
 export function magnitude(v: Vector2): number {
   return Math.sqrt(v.x * v.x + v.y * v.y);
@@ -98,7 +100,7 @@ export function magnitude(v: Vector2): number {
  * Calculates the cross product of two vectors
  * @param {Vector2} a - The first vector
  * @param {Vector2} b - The second vector
- * @returns {number} The cross product of the two vectors
+ * @returns The cross product of the two vectors
  */
 export function cross(a: Vector2, b: Vector2): number {
   return a.x * b.y - a.y * b.x;
@@ -107,7 +109,7 @@ export function cross(a: Vector2, b: Vector2): number {
 /**
  * Returns a normalized (unit) vector in the same direction
  * @param {Vector2} v - The vector to normalize
- * @returns {Vector2} The normalized vector
+ * @returns The normalized vector
  */
 export function normalized(v: Vector2): Vector2 {
   const { x, y } = v;
@@ -120,7 +122,7 @@ export function normalized(v: Vector2): Vector2 {
 /**
  * Returns a vector perpendicular to the given vector
  * @param {Vector2} v - The vector to get the perpendicular of
- * @returns {Vector2} The perpendicular vector
+ * @returns The perpendicular vector
  */
 export function normal(v: Vector2): Vector2 {
   return { x: -v.y, y: v.x };
@@ -162,11 +164,11 @@ export function distanceSquared(a: Vector2, b: Vector2): number {
 }
 
 /**
- * Linearly interpolates between two Vector2s
+ * Linearly interpolates between two `Vector2`s
  * @param {Vector2} a - The starting Vector2
  * @param {Vector2} b - The ending Vector2
  * @param {number} t - The interpolation parameter (0-1)
- * @returns {Vector2} The interpolated Vector2
+ * @returns The interpolated Vector2
  */
 export function lerp(a: Vector2, b: Vector2, t: number): Vector2 {
   return {
@@ -179,7 +181,7 @@ export function lerp(a: Vector2, b: Vector2, t: number): Vector2 {
  * Rotates a vector by a given angle (in radians)
  * @param {Vector2} v - The vector to rotate
  * @param {number} angle - The angle in radians
- * @returns {Vector2} The rotated vector
+ * @returns The rotated vector
  */
 export function rotate(v: Vector2, angle: number): Vector2 {
   const _cos = cos(angle);
@@ -195,7 +197,7 @@ export function rotate(v: Vector2, angle: number): Vector2 {
  * @param {Vector2} Vector2 - The Vector2 to rotate
  * @param {Vector2} pivot - The Vector2 to rotate around
  * @param {number} angle - The angle in radians
- * @returns {Vector2} The rotated Vector2
+ * @returns The rotated Vector2
  */
 export function rotateAround(Vector2: Vector2, pivot: Vector2, angle: number): Vector2 {
   const dx = Vector2.x - pivot.x;
@@ -272,7 +274,7 @@ export function bounds(Vector2s: Vector2[]): { min: Vector2; max: Vector2 } {
 /**
  * Calculates the center Vector2 of a set of Vector2s
  * @param {Vector2[]} Vector2s - Array of Vector2s to find center for
- * @returns {Vector2} The center Vector2
+ * @returns The center Vector2
  */
 export function center(Vector2s: Vector2[]): Vector2 {
   const { min, max } = bounds(Vector2s);
@@ -286,7 +288,7 @@ export function center(Vector2s: Vector2[]): Vector2 {
  * Projects a Vector2 onto an axis
  * @param {Vector2} Vector2 - The Vector2 to project
  * @param {Vector2} axis - The axis to project onto
- * @returns {Vector2} The projected Vector2
+ * @returns The projected Vector2
  */
 export function project(Vector2: Vector2, axis: Vector2): Vector2 {
   const n = normalized(axis);
