@@ -197,6 +197,7 @@ declare global {
 
 export class FolkShape extends FolkElement {
   static tagName = 'folk-shape';
+  static importSrc = '@labs/standalone/folk-shape.ts';
 
   static styles = styles;
 
