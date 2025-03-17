@@ -1,5 +1,5 @@
-import { FolkShapeAttribute } from '@labs/folk-shape-attribute.ts';
-import { FolkZoomable } from '@labs/folk-zoomable.ts';
+import { FolkShapeAttribute } from '@folk-systems/labs/folk-shape-attribute.ts';
+import { FolkZoomable } from '@folk-systems/labs/folk-zoomable.ts';
 
 FolkShapeAttribute.define();
 FolkZoomable.define();

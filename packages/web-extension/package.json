@@ -1,0 +1,21 @@
+{
+  "name": "@folk-systems/web-extension",
+  "private": true,
+  "description": "Folk Canvas web extension",
+  "keywords": [
+    "matrix",
+    "matrices",
+    "vector"
+  ],
+  "author": "Christopher Shank <chris.shank.23@gmail.com>",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc --build --pretty && vite build"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2"
+  }
+}

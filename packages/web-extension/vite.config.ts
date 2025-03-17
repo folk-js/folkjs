@@ -3,14 +3,6 @@ import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
 export default defineConfig({
-  root: 'website',
-  mode: '',
-  resolve: {
-    alias: {
-      '@lib': resolve(__dirname, '../lib'),
-      '@labs': resolve(__dirname, '../labs'),
-    },
-  },
   build: {
     target: 'esnext',
     lib: {
