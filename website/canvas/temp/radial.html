@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Radial Menu</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior-x: none;
+        touch-action: none;
+      }
+
+      folk-space {
+        width: 100%;
+        height: 100%;
+        background-color: #f8f9fa;
+      }
+
+      folk-shape {
+        background-color: #3498db;
+        border-radius: 5px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+      }
+
+      /* Radial menu container */
+      .radial-menu {
+        position: absolute;
+        display: none;
+        pointer-events: none;
+        z-index: 10000;
+      }
+
+      /* Center indicator */
+      .center-indicator {
+        position: absolute;
+        width: 30px;
+        height: 30px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        background-color: transparent;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 2;
+        left: 0;
+        top: 0;
+      }
+
+      /* Dividing lines */
+      .divider {
+        position: absolute;
+        height: 1px;
+        background-color: rgba(0, 0, 0, 0.2);
+        transform-origin: 0 0;
+        pointer-events: none;
+        left: 0;
+        top: 0;
+      }
+
+      /* Option label */
+      .option-label {
+        position: absolute;
+        color: #333;
+        font-family: 'Recursive', sans-serif;
+        font-weight: 600;
+        font-size: 14px;
+        white-space: nowrap;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+        background-color: rgba(255, 255, 255, 0.95);
+        padding: 3px 4px;
+        border-radius: 3px;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+        text-wrap: balance;
+        text-overflow: ellipsis;
+        text-box: trim-both cap alphabetic;
+        z-index: 3;
+      }
+
+      /* Option sector */
+      .option-sector {
+        position: absolute;
+        opacity: 0;
+      }
+
+      .option-sector.active {
+        opacity: 1;
+      }
+
+      /* SVG styling */
+      .sector-path {
+        fill: rgba(52, 152, 219, 0.15);
+        stroke: rgba(52, 152, 219, 0.3);
+        stroke-width: 1;
+      }
+
+      .option-sector.active .sector-path {
+        fill: rgba(52, 152, 219, 0.3);
+        stroke: rgba(52, 152, 219, 0.5);
+      }
+    </style>
+  </head>
+  <body>
+    <folk-space id="space">
+      <folk-shape id="box1" x="100" y="100" width="100" height="100"></folk-shape>
+      <folk-shape id="box2" x="300" y="200" width="80" height="80"></folk-shape>
+      <folk-shape id="box3" x="500" y="300" width="120" height="120"></folk-shape>
+      <folk-shape id="box4" x="200" y="400" width="150" height="150">
+        Lets add some long content to check scrolling behaviour. Lorem ipsum dolor sit amet consectetur adipisicing
+        elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor
+        sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit.
+        Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit
+        amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit.
+        Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos.
+      </folk-shape>
+    </folk-space>
+
+    <div id="radialMenu" class="radial-menu"></div>
+
+    <script type="module">
+      import '@labs/standalone/folk-space.ts';
+      import '@labs/standalone/folk-shape.ts';
+
+      class RadialMenu {
+        constructor(options, menuElement) {
+          this.options = options;
+          this.menuElement = menuElement;
+          this.isShiftPressed = false;
+          this.menuX = 0;
+          this.menuY = 0;
+          this.activeOption = null;
+          this.lastMouseX = 0;
+          this.lastMouseY = 0;
+          this.radius = 120;
+          this.deadZoneRadius = 15;
+
+          // Create the menu structure
+          this.createMenu();
+
+          // Bind event handlers
+          this.handleMouseMove = this.handleMouseMove.bind(this);
+          this.handleKeyDown = this.handleKeyDown.bind(this);
+          this.handleKeyUp = this.handleKeyUp.bind(this);
+
+          // Add event listeners
+          document.addEventListener('mousemove', this.handleMouseMove);
+          document.addEventListener('keydown', this.handleKeyDown);
+          document.addEventListener('keyup', this.handleKeyUp);
+        }
+
+        createMenu() {
+          // Clear existing content
+          this.menuElement.innerHTML = '';
+
+          // Add center indicator
+          const center = document.createElement('div');
+          center.className = 'center-indicator';
+          this.menuElement.appendChild(center);
+
+          // Calculate angles
+          const angleStep = (2 * Math.PI) / this.options.length;
+
+          // Create dividers, labels and sectors
+          this.options.forEach((option, index) => {
+            const angle = index * angleStep;
+            const nextAngle = (index + 1) * angleStep;
+            const midAngle = angle + angleStep / 2;
+
+            this.createDivider(angle);
+            this.createLabel(option.label, midAngle);
+            this.createSector(index, angle, nextAngle);
+          });
+        }
+
+        createDivider(angle) {
+          const divider = document.createElement('div');
+          divider.className = 'divider';
+
+          const startX = Math.cos(angle) * this.deadZoneRadius;
+          const startY = Math.sin(angle) * this.deadZoneRadius;
+          const endX = Math.cos(angle) * this.radius;
+          const endY = Math.sin(angle) * this.radius;
+
+          const lineLength = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
+
+          divider.style.width = `${lineLength}px`;
+          divider.style.left = `${startX}px`;
+          divider.style.top = `${startY}px`;
+          divider.style.transform = `rotate(${angle}rad)`;
+
+          this.menuElement.appendChild(divider);
+        }
+
+        createLabel(labelText, angle) {
+          const label = document.createElement('div');
+          label.className = 'option-label';
+          label.textContent = labelText;
+
+          const labelDistance = this.radius * 0.6;
+          const labelX = Math.cos(angle) * labelDistance;
+          const labelY = Math.sin(angle) * labelDistance;
+
+          label.style.left = `${labelX}px`;
+          label.style.top = `${labelY}px`;
+
+          this.menuElement.appendChild(label);
+        }
+
+        createSector(index, startAngle, endAngle) {
+          const sector = document.createElement('div');
+          sector.className = 'option-sector';
+          sector.dataset.index = index;
+          sector.setAttribute('role', 'menuitem');
+          sector.setAttribute('aria-label', this.options[index].label);
+
+          const sectorSVG = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          sectorSVG.setAttribute('width', this.radius * 2);
+          sectorSVG.setAttribute('height', this.radius * 2);
+          sectorSVG.style.position = 'absolute';
+          sectorSVG.style.left = `-${this.radius}px`;
+          sectorSVG.style.top = `-${this.radius}px`;
+
+          const sectorPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          sectorPath.classList.add('sector-path');
+
+          const centerX = this.radius;
+          const centerY = this.radius;
+
+          // Outer arc points
+          const outerStartX = centerX + Math.cos(startAngle) * this.radius;
+          const outerStartY = centerY + Math.sin(startAngle) * this.radius;
+          const outerEndX = centerX + Math.cos(endAngle) * this.radius;
+          const outerEndY = centerY + Math.sin(endAngle) * this.radius;
+
+          // Inner arc points
+          const innerEndX = centerX + Math.cos(endAngle) * this.deadZoneRadius;
+          const innerEndY = centerY + Math.sin(endAngle) * this.deadZoneRadius;
+          const innerStartX = centerX + Math.cos(startAngle) * this.deadZoneRadius;
+          const innerStartY = centerY + Math.sin(startAngle) * this.deadZoneRadius;
+
+          const angleStep = endAngle - startAngle;
+          const largeArcFlag = angleStep > Math.PI ? 1 : 0;
+
+          const path = `
+            M ${outerStartX},${outerStartY}
+            A ${this.radius},${this.radius} 0 ${largeArcFlag} 1 ${outerEndX},${outerEndY}
+            L ${innerEndX},${innerEndY}
+            A ${this.deadZoneRadius},${this.deadZoneRadius} 0 ${largeArcFlag} 0 ${innerStartX},${innerStartY}
+            Z
+          `;
+
+          sectorPath.setAttribute('d', path);
+
+          sectorSVG.appendChild(sectorPath);
+          sector.appendChild(sectorSVG);
+
+          this.menuElement.appendChild(sector);
+        }
+
+        showMenu(x, y) {
+          this.menuX = x;
+          this.menuY = y;
+
+          this.menuElement.style.display = 'block';
+          this.menuElement.style.left = `${x}px`;
+          this.menuElement.style.top = `${y}px`;
+          this.menuElement.setAttribute('role', 'menu');
+          this.menuElement.setAttribute('aria-hidden', 'false');
+        }
+
+        hideMenu() {
+          this.menuElement.style.display = 'none';
+          this.menuElement.setAttribute('aria-hidden', 'true');
+
+          if (this.activeOption) {
+            this.activeOption.classList.remove('active');
+            this.activeOption = null;
+          }
+        }
+
+        getActiveOption(mouseX, mouseY) {
+          const dx = mouseX - this.menuX;
+          const dy = mouseY - this.menuY;
+
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance < this.deadZoneRadius) return null;
+
+          let angle = Math.atan2(dy, dx);
+          if (angle < 0) angle += 2 * Math.PI;
+
+          const optionAngle = (2 * Math.PI) / this.options.length;
+          const optionIndex = Math.floor(angle / optionAngle);
+
+          return this.menuElement.querySelector(`.option-sector[data-index="${optionIndex}"]`);
+        }
+
+        handleMouseMove(e) {
+          this.lastMouseX = e.clientX;
+          this.lastMouseY = e.clientY;
+
+          if (this.isShiftPressed) {
+            const newActiveOption = this.getActiveOption(this.lastMouseX, this.lastMouseY);
+
+            if (newActiveOption !== this.activeOption) {
+              if (this.activeOption) {
+                this.activeOption.classList.remove('active');
+              }
+
+              if (newActiveOption) {
+                newActiveOption.classList.add('active');
+              }
+
+              this.activeOption = newActiveOption;
+            }
+          }
+        }
+
+        handleKeyDown(e) {
+          if (e.key === 'Shift' && !this.isShiftPressed) {
+            this.isShiftPressed = true;
+            this.showMenu(this.lastMouseX, this.lastMouseY);
+          }
+        }
+
+        handleKeyUp(e) {
+          if (e.key === 'Shift') {
+            this.isShiftPressed = false;
+
+            if (this.activeOption) {
+              const index = parseInt(this.activeOption.dataset.index);
+              this.options[index].action();
+            }
+
+            this.hideMenu();
+          }
+        }
+
+        destroy() {
+          // Remove event listeners when no longer needed
+          document.removeEventListener('mousemove', this.handleMouseMove);
+          document.removeEventListener('keydown', this.handleKeyDown);
+          document.removeEventListener('keyup', this.handleKeyUp);
+        }
+      }
+
+      const options = [
+        { label: 'Copy', action: () => console.log('Copy action') },
+        { label: 'Cut', action: () => console.log('Cut action') },
+        { label: 'Paste', action: () => console.log('Paste action') },
+        { label: 'Delete', action: () => console.log('Delete action') },
+        { label: 'Group', action: () => console.log('Group action') },
+        { label: 'Edit', action: () => console.log('Edit action') },
+      ];
+
+      const radialMenuElement = document.getElementById('radialMenu');
+      const radialMenuController = new RadialMenu(options, radialMenuElement);
+    </script>
+  </body>
+</html>
