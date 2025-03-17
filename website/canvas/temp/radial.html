@@ -121,6 +121,8 @@
         sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit.
         Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit
         amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit.
+        Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit
+        amet consectetur adipisicing elit. Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit.
         Quisquam, quos. Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos.
       </folk-shape>
     </folk-space>
@@ -132,7 +134,7 @@
       import '@labs/standalone/folk-shape.ts';
 
       class RadialMenu {
-        constructor(options, menuElement) {
+        constructor(options, menuElement, config = {}) {
           this.options = options;
           this.menuElement = menuElement;
           this.isShiftPressed = false;
@@ -141,11 +143,18 @@
           this.activeOption = null;
           this.lastMouseX = 0;
           this.lastMouseY = 0;
-          this.radius = 120;
-          this.deadZoneRadius = 15;
+          this.radius = config.radius || 120;
+          this.deadZoneRadius = config.deadZoneRadius || 15;
 
-          // Create the menu structure
-          this.createMenu();
+          // Default angles - will be overridden when showing the menu
+          this.startAngle = 0;
+          this.endAngle = 2 * Math.PI;
+
+          // Store default config for use when not specified in showMenu
+          this.defaultConfig = {
+            startAngle: config.startAngle !== undefined ? config.startAngle : 0,
+            endAngle: config.endAngle !== undefined ? config.endAngle : 2 * Math.PI,
+          };
 
           // Bind event handlers
           this.handleMouseMove = this.handleMouseMove.bind(this);
@@ -158,6 +167,11 @@
           document.addEventListener('keyup', this.handleKeyUp);
         }
 
+        normalizeAngle(angle) {
+          // Normalize angle to be between 0 and 2π
+          return ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        }
+
         createMenu() {
           // Clear existing content
           this.menuElement.innerHTML = '';
@@ -167,19 +181,25 @@
           center.className = 'center-indicator';
           this.menuElement.appendChild(center);
 
-          // Calculate angles
-          const angleStep = (2 * Math.PI) / this.options.length;
+          // Calculate total angle range and step
+          const totalAngleRange = this.endAngle - this.startAngle;
+          const angleStep = totalAngleRange / this.options.length;
 
           // Create dividers, labels and sectors
           this.options.forEach((option, index) => {
-            const angle = index * angleStep;
-            const nextAngle = (index + 1) * angleStep;
+            const angle = this.startAngle + index * angleStep;
+            const nextAngle = this.startAngle + (index + 1) * angleStep;
             const midAngle = angle + angleStep / 2;
 
             this.createDivider(angle);
             this.createLabel(option.label, midAngle);
             this.createSector(index, angle, nextAngle);
           });
+
+          // Add final divider if not a full circle
+          if (Math.abs(totalAngleRange - 2 * Math.PI) > 0.001) {
+            this.createDivider(this.endAngle);
+          }
         }
 
         createDivider(angle) {
@@ -206,7 +226,33 @@
           label.className = 'option-label';
           label.textContent = labelText;
 
-          const labelDistance = this.radius * 0.6;
+          // Calculate how "compressed" the menu is - a quarter circle is most compressed
+          const totalAngleRange = this.endAngle - this.startAngle;
+          const compressionRatio = Math.min(1, totalAngleRange / (2 * Math.PI));
+
+          // Base distance is inversely proportional to the angle range
+          // For a full circle (2π), use 0.6 radius
+          // For a quarter circle (π/2), use 0.9 radius
+          const baseDistance = this.radius * (0.9 - compressionRatio * 0.3);
+
+          // Further adjust distance based on angle position within the range
+          // Labels near the edges of partial circles need more space
+          let distanceMultiplier = 1.0;
+          if (totalAngleRange < 2 * Math.PI) {
+            // Calculate how close this angle is to either edge of the range
+            const normalizedAngle = (angle - this.startAngle) / totalAngleRange;
+            const edgeProximity = Math.min(normalizedAngle, 1 - normalizedAngle);
+
+            // Apply stronger adjustment for smaller angle ranges
+            const edgeEffect = Math.max(0, 0.2 - compressionRatio * 0.2);
+
+            // Increase distance for labels near the edges (within 20% of the edge)
+            if (edgeProximity < 0.2) {
+              distanceMultiplier += edgeEffect * (1 - edgeProximity / 0.2);
+            }
+          }
+
+          const labelDistance = baseDistance * distanceMultiplier;
           const labelX = Math.cos(angle) * labelDistance;
           const labelY = Math.sin(angle) * labelDistance;
 
@@ -267,9 +313,25 @@
           this.menuElement.appendChild(sector);
         }
 
-        showMenu(x, y) {
+        showMenu(x, y, config = {}) {
           this.menuX = x;
           this.menuY = y;
+
+          // Set angles from config or use defaults
+          this.startAngle = config.startAngle !== undefined ? config.startAngle : this.defaultConfig.startAngle;
+          this.endAngle = config.endAngle !== undefined ? config.endAngle : this.defaultConfig.endAngle;
+
+          // Normalize angles
+          this.startAngle = this.normalizeAngle(this.startAngle);
+          this.endAngle = this.normalizeAngle(this.endAngle);
+
+          // If end angle is less than start angle, add 2π to make it go clockwise
+          if (this.endAngle <= this.startAngle) {
+            this.endAngle += 2 * Math.PI;
+          }
+
+          // Create the menu with the new angles
+          this.createMenu();
 
           this.menuElement.style.display = 'block';
           this.menuElement.style.left = `${x}px`;
@@ -298,10 +360,27 @@
           let angle = Math.atan2(dy, dx);
           if (angle < 0) angle += 2 * Math.PI;
 
-          const optionAngle = (2 * Math.PI) / this.options.length;
-          const optionIndex = Math.floor(angle / optionAngle);
+          // Check if angle is within our range
+          if (angle < this.startAngle || angle > this.endAngle) {
+            // Special case: if our range crosses the 0 angle
+            if (this.endAngle > 2 * Math.PI && angle < this.endAngle - 2 * Math.PI) {
+              angle += 2 * Math.PI;
+            } else {
+              return null;
+            }
+          }
 
-          return this.menuElement.querySelector(`.option-sector[data-index="${optionIndex}"]`);
+          // Calculate which option this angle corresponds to
+          const totalAngleRange = this.endAngle - this.startAngle;
+          const optionAngle = totalAngleRange / this.options.length;
+          const optionIndex = Math.floor((angle - this.startAngle) / optionAngle);
+
+          // Ensure the index is valid
+          if (optionIndex >= 0 && optionIndex < this.options.length) {
+            return this.menuElement.querySelector(`.option-sector[data-index="${optionIndex}"]`);
+          }
+
+          return null;
         }
 
         handleMouseMove(e) {
@@ -328,7 +407,10 @@
         handleKeyDown(e) {
           if (e.key === 'Shift' && !this.isShiftPressed) {
             this.isShiftPressed = true;
-            this.showMenu(this.lastMouseX, this.lastMouseY);
+
+            // Determine which menu style to show based on cursor position
+            const menuConfig = this.getMenuConfigForPosition(this.lastMouseX, this.lastMouseY);
+            this.showMenu(this.lastMouseX, this.lastMouseY, menuConfig);
           }
         }
 
@@ -351,6 +433,91 @@
           document.removeEventListener('keydown', this.handleKeyDown);
           document.removeEventListener('keyup', this.handleKeyUp);
         }
+
+        // New method to determine menu configuration based on cursor position
+        getMenuConfigForPosition(x, y) {
+          // Use much tighter thresholds for edge detection
+          const windowWidth = window.innerWidth;
+          const windowHeight = window.innerHeight;
+
+          // Define tighter edge thresholds (5% of screen dimensions)
+          const edgeThreshold = {
+            x: windowWidth * 0.05,
+            y: windowHeight * 0.05,
+          };
+
+          // Corner detection - only in the extreme corners (within 5% of edges)
+          // Top-left corner - show quarter circle in bottom-right direction
+          if (x < edgeThreshold.x && y < edgeThreshold.y) {
+            return {
+              startAngle: 0,
+              endAngle: Math.PI / 2,
+            };
+          }
+
+          // Top-right corner - show quarter circle in bottom-left direction
+          if (x > windowWidth - edgeThreshold.x && y < edgeThreshold.y) {
+            return {
+              startAngle: Math.PI / 2,
+              endAngle: Math.PI,
+            };
+          }
+
+          // Bottom-right corner - show quarter circle in top-left direction
+          if (x > windowWidth - edgeThreshold.x && y > windowHeight - edgeThreshold.y) {
+            return {
+              startAngle: Math.PI,
+              endAngle: (3 * Math.PI) / 2,
+            };
+          }
+
+          // Bottom-left corner - show quarter circle in top-right direction
+          if (x < edgeThreshold.x && y > windowHeight - edgeThreshold.y) {
+            return {
+              startAngle: (3 * Math.PI) / 2,
+              endAngle: 2 * Math.PI,
+            };
+          }
+
+          // Edge detection - only very close to edges (within 5% of screen)
+          // Near the top edge - show bottom half circle (extending downward)
+          if (y < edgeThreshold.y) {
+            return {
+              startAngle: 0,
+              endAngle: Math.PI,
+            };
+          }
+
+          // Near the bottom edge - show top half circle (extending upward)
+          if (y > windowHeight - edgeThreshold.y) {
+            return {
+              startAngle: Math.PI,
+              endAngle: 2 * Math.PI,
+            };
+          }
+
+          // Near the left edge - show right half circle (extending rightward)
+          if (x < edgeThreshold.x) {
+            return {
+              startAngle: -Math.PI / 2,
+              endAngle: Math.PI / 2,
+            };
+          }
+
+          // Near the right edge - show left half circle (extending leftward)
+          if (x > windowWidth - edgeThreshold.x) {
+            return {
+              startAngle: Math.PI / 2,
+              endAngle: (3 * Math.PI) / 2,
+            };
+          }
+
+          // Default: full circle when not near any edge
+          return {
+            startAngle: 0,
+            endAngle: 2 * Math.PI,
+          };
+        }
       }
 
       const options = [
@@ -364,6 +531,82 @@
 
       const radialMenuElement = document.getElementById('radialMenu');
       const radialMenuController = new RadialMenu(options, radialMenuElement);
+
+      // Add a visual demo to test different configurations
+      const demoButton = document.createElement('button');
+      demoButton.textContent = 'Show Demo Menu';
+      demoButton.style.position = 'fixed';
+      demoButton.style.bottom = '20px';
+      demoButton.style.right = '20px';
+      demoButton.style.zIndex = '1000';
+      demoButton.style.padding = '8px 16px';
+      demoButton.style.backgroundColor = '#3498db';
+      demoButton.style.color = 'white';
+      demoButton.style.border = 'none';
+      demoButton.style.borderRadius = '4px';
+      demoButton.style.cursor = 'pointer';
+
+      let demoMode = 0;
+      demoButton.addEventListener('click', () => {
+        demoMode = (demoMode + 1) % 9;
+
+        let config;
+        let centerX = window.innerWidth / 2;
+        let centerY = window.innerHeight / 2;
+
+        switch (demoMode) {
+          case 0: // Full circle
+            config = { startAngle: 0, endAngle: 2 * Math.PI };
+            demoButton.textContent = 'Full Circle';
+            break;
+          case 1: // Half circle
+            config = { startAngle: Math.PI / 2, endAngle: (3 * Math.PI) / 2 };
+            demoButton.textContent = 'Half Circle';
+            break;
+          case 2: // Quarter circle
+            config = { startAngle: 0, endAngle: Math.PI / 2 };
+            demoButton.textContent = 'Quarter Circle';
+            break;
+          case 3: // Eighth circle
+            config = { startAngle: 0, endAngle: Math.PI / 4 };
+            demoButton.textContent = 'Eighth Circle';
+            break;
+          case 4: // Top edge
+            centerX = window.innerWidth / 2;
+            centerY = window.innerHeight * 0.03;
+            config = radialMenuController.getMenuConfigForPosition(centerX, centerY);
+            demoButton.textContent = 'Top Edge';
+            break;
+          case 5: // Right edge
+            centerX = window.innerWidth * 0.97;
+            centerY = window.innerHeight / 2;
+            config = radialMenuController.getMenuConfigForPosition(centerX, centerY);
+            demoButton.textContent = 'Right Edge';
+            break;
+          case 6: // Bottom edge
+            centerX = window.innerWidth / 2;
+            centerY = window.innerHeight * 0.97;
+            config = radialMenuController.getMenuConfigForPosition(centerX, centerY);
+            demoButton.textContent = 'Bottom Edge';
+            break;
+          case 7: // Left edge
+            centerX = window.innerWidth * 0.03;
+            centerY = window.innerHeight / 2;
+            config = radialMenuController.getMenuConfigForPosition(centerX, centerY);
+            demoButton.textContent = 'Left Edge';
+            break;
+          case 8: // Top-left corner
+            centerX = window.innerWidth * 0.03;
+            centerY = window.innerHeight * 0.03;
+            config = radialMenuController.getMenuConfigForPosition(centerX, centerY);
+            demoButton.textContent = 'Top-Left Corner';
+            break;
+        }
+
+        radialMenuController.showMenu(centerX, centerY, config);
+      });
+
+      document.body.appendChild(demoButton);
     </script>
   </body>
 </html>
