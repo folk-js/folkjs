@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Menu Selection Study: Dropdown vs Pie Menu</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior-x: none;
+        touch-action: none;
+        font-family: 'Recursive', sans-serif;
+        background-color: #f5f5f5;
+      }
+
+      .container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        padding: 20px;
+      }
+
+      .experiment-area {
+        position: relative;
+        width: 100%;
+        max-width: 800px;
+        height: 400px;
+        margin: 20px 0;
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        overflow: visible; /* Allow menus to overflow */
+      }
+
+      .controls {
+        margin: 20px 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        border-radius: 4px;
+      }
+
+      button:hover {
+        background-color: #2980b9;
+      }
+
+      .results {
+        width: 100%;
+        max-width: 800px;
+      }
+
+      .chart-container {
+        width: 100%;
+        height: 300px;
+        margin: 20px 0;
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+
+      .instructions {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+
+      .experiment-title {
+        font-size: 24px;
+        font-weight: bold;
+        margin: 20px 0;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      /* Menu trigger button */
+      .menu-trigger {
+        padding: 10px 15px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+
+      /* Dropdown menu styles */
+      .dropdown-menu {
+        position: fixed;
+        background-color: white;
+        min-width: 160px;
+        box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
+        z-index: 9999;
+        border-radius: 4px;
+        display: none;
+      }
+
+      .dropdown-menu.show {
+        display: block;
+      }
+
+      .dropdown-item {
+        color: black;
+        padding: 12px 16px;
+        text-decoration: none;
+        display: block;
+        cursor: pointer;
+      }
+
+      .dropdown-item:hover {
+        background-color: #f1f1f1;
+      }
+
+      /* Radial menu container */
+      .radial-menu {
+        position: fixed;
+        display: none;
+        z-index: 10000;
+      }
+
+      .radial-menu.show {
+        display: block;
+        pointer-events: auto;
+      }
+
+      /* Center indicator */
+      .center-indicator {
+        position: absolute;
+        width: 30px;
+        height: 30px;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        background-color: transparent;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 2;
+        left: 0;
+        top: 0;
+      }
+
+      /* Dividing lines */
+      .divider {
+        position: absolute;
+        height: 1px;
+        background-color: rgba(0, 0, 0, 0.2);
+        transform-origin: 0 0;
+        pointer-events: none;
+        left: 0;
+        top: 0;
+      }
+
+      /* Option label */
+      .option-label {
+        position: absolute;
+        color: #333;
+        font-family: 'Recursive', sans-serif;
+        font-weight: 600;
+        font-size: 14px;
+        white-space: nowrap;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+        background-color: rgba(255, 255, 255, 0.95);
+        padding: 3px 4px;
+        border-radius: 3px;
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+        z-index: 3;
+      }
+
+      .option-sector {
+        position: absolute;
+        opacity: 0;
+      }
+
+      .option-sector.active {
+        opacity: 1;
+      }
+
+      /* SVG styling */
+      .sector-path {
+        fill: rgba(52, 152, 219, 0.15);
+        stroke: rgba(52, 152, 219, 0.3);
+        stroke-width: 1;
+      }
+
+      .option-sector.active .sector-path {
+        fill: rgba(52, 152, 219, 0.3);
+        stroke: rgba(52, 152, 219, 0.5);
+      }
+
+      .target-display {
+        position: absolute;
+        top: 20px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 24px;
+        font-weight: bold;
+        color: #2c3e50;
+      }
+
+      /* Style for the target item text specifically */
+      .target-display span {
+        font-size: 32px;
+        color: #e74c3c;
+        display: block;
+        margin-top: 10px;
+      }
+
+      .progress-display {
+        position: absolute;
+        bottom: 20px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 14px;
+        color: #7f8c8d;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Menu Selection Study: Dropdown vs Pie Menu</h1>
+
+      <div id="intro" class="controls">
+        <p>This study compares the speed and accuracy of selecting items from:</p>
+        <p>1. Traditional dropdown menus</p>
+        <p>2. Pie/radial menus</p>
+        <p>In each experiment, you'll be asked to select specific items from menus.</p>
+        <button id="start-btn">Start Experiment 1</button>
+      </div>
+
+      <div id="experiment1" class="hidden">
+        <div class="experiment-title">Experiment 1: Dropdown Menu</div>
+        <div class="instructions"
+          >Right-click anywhere in the experiment area to open the dropdown menu, then select the target item.</div
+        >
+        <div class="experiment-area" id="dropdown-area">
+          <div class="target-display">Find and select: <span id="target-item-exp1"></span></div>
+          <div id="dropdown-menu" class="dropdown-menu"></div>
+          <div class="progress-display"
+            >Trial <span id="trial-count-exp1">1</span> of <span id="total-trials-exp1">10</span></div
+          >
+        </div>
+      </div>
+
+      <div id="experiment2" class="hidden">
+        <div class="experiment-title">Experiment 2: Pie Menu</div>
+        <div class="instructions"
+          >Hold SHIFT key anywhere in the experiment area to open the pie menu, then select the target item.</div
+        >
+        <div class="experiment-area" id="pie-area">
+          <div class="target-display">Find and select: <span id="target-item-exp2"></span></div>
+          <div id="radial-menu" class="radial-menu"></div>
+          <div class="progress-display"
+            >Trial <span id="trial-count-exp2">1</span> of <span id="total-trials-exp2">10</span></div
+          >
+        </div>
+      </div>
+
+      <div id="results" class="results hidden">
+        <h2>Results</h2>
+        <div class="chart-container">
+          <canvas id="chart"></canvas>
+        </div>
+        <div class="controls">
+          <button id="restart-btn">Restart Tests</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      // Menu options for both experiments - reduced to 6
+      const menuOptions = ['Copy', 'Cut', 'Paste', 'Delete', 'Rename', 'Share'];
+
+      // Configuration
+      const TOTAL_TRIALS = 10;
+      const TRIALS_PER_ROUND = 5;
+
+      // State variables
+      let currentExperiment = 1;
+      let currentTrial = 0;
+      let currentTarget = '';
+      let startTime = 0;
+      let currentRound = 1;
+      let totalRounds = 2;
+
+      // Results storage
+      const results = {
+        experiment1: [], // Dropdown menu
+        experiment2: [], // Pie menu
+      };
+
+      // DOM Elements
+      const intro = document.getElementById('intro');
+      const experiment1 = document.getElementById('experiment1');
+      const experiment2 = document.getElementById('experiment2');
+      const resultsSection = document.getElementById('results');
+
+      const targetItemExp1 = document.getElementById('target-item-exp1');
+      const targetItemExp2 = document.getElementById('target-item-exp2');
+      const trialCountExp1 = document.getElementById('trial-count-exp1');
+      const trialCountExp2 = document.getElementById('trial-count-exp2');
+      const totalTrialsExp1 = document.getElementById('total-trials-exp1');
+      const totalTrialsExp2 = document.getElementById('total-trials-exp2');
+
+      const dropdownMenu = document.getElementById('dropdown-menu');
+      const radialMenu = document.getElementById('radial-menu');
+
+      const startBtn = document.getElementById('start-btn');
+      const restartBtn = document.getElementById('restart-btn');
+
+      // Initialize the experiments
+      function initExperiments() {
+        // Set total trials display
+        totalTrialsExp1.textContent = TOTAL_TRIALS;
+        totalTrialsExp2.textContent = TOTAL_TRIALS;
+
+        // Create dropdown menu items
+        createDropdownMenu();
+
+        // Initialize RadialMenu class
+        initRadialMenu();
+
+        // Set up event listeners for right-click and shift key
+        setupEventListeners();
+      }
+
+      // Create dropdown menu items
+      function createDropdownMenu() {
+        dropdownMenu.innerHTML = '';
+
+        menuOptions.forEach((option) => {
+          const item = document.createElement('div');
+          item.className = 'dropdown-item';
+          item.textContent = option;
+          item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleDropdownSelection(option);
+          });
+          dropdownMenu.appendChild(item);
+        });
+      }
+
+      // Initialize the radial menu
+      function initRadialMenu() {
+        // Create RadialMenu instance
+        window.radialMenuController = new RadialMenu(
+          menuOptions.map((option) => ({
+            label: option,
+            action: () => handlePieSelection(option),
+          })),
+          radialMenu,
+        );
+      }
+
+      // Start a new trial
+      function startNewTrial() {
+        // Reset UI
+        if (currentExperiment === 1) {
+          dropdownMenu.classList.remove('show');
+          dropdownMenu.style.display = 'none';
+          trialCountExp1.textContent = currentTrial + 1;
+        } else {
+          radialMenu.classList.remove('show');
+          radialMenu.style.display = 'none';
+          trialCountExp2.textContent = currentTrial + 1;
+        }
+
+        // Select a random target
+        const targetIndex = Math.floor(Math.random() * menuOptions.length);
+        currentTarget = menuOptions[targetIndex];
+
+        // Update target display
+        if (currentExperiment === 1) {
+          targetItemExp1.textContent = currentTarget;
+
+          // Remove target highlighting
+          // const dropdownItems = dropdownMenu.querySelectorAll('.dropdown-item');
+          // dropdownItems.forEach((item) => {
+          //   if (item.textContent === currentTarget) {
+          //     item.classList.add('target');
+          //   } else {
+          //     item.classList.remove('target');
+          //   }
+          // });
+        } else {
+          targetItemExp2.textContent = currentTarget;
+          // The pie menu will be updated when opened
+        }
+      }
+
+      // Handle dropdown menu selection
+      function handleDropdownSelection(option) {
+        const endTime = performance.now();
+        const selectionTime = endTime - startTime;
+
+        // Record result
+        results.experiment1.push({
+          trial: currentTrial + 1,
+          round: currentRound,
+          target: currentTarget,
+          selected: option,
+          correct: option === currentTarget,
+          time: selectionTime,
+        });
+
+        // Hide dropdown
+        dropdownMenu.classList.remove('show');
+        dropdownMenu.style.display = 'none';
+
+        // Move to next trial or experiment
+        advanceTrial();
+      }
+
+      // Handle pie menu selection
+      function handlePieSelection(option) {
+        const endTime = performance.now();
+        const selectionTime = endTime - startTime;
+
+        // Record result
+        results.experiment2.push({
+          trial: currentTrial + 1,
+          round: currentRound,
+          target: currentTarget,
+          selected: option,
+          correct: option === currentTarget,
+          time: selectionTime,
+        });
+
+        // Hide pie menu
+        radialMenu.classList.remove('show');
+        radialMenu.style.display = 'none';
+
+        // Move to next trial or experiment
+        advanceTrial();
+      }
+
+      // Advance to next trial or experiment
+      function advanceTrial() {
+        currentTrial++;
+
+        if (currentTrial >= TRIALS_PER_ROUND) {
+          currentTrial = 0;
+          currentRound++;
+
+          if (currentRound > totalRounds) {
+            currentRound = 1;
+
+            if (currentExperiment === 1) {
+              // Move to experiment 2
+              currentExperiment = 2;
+              experiment1.classList.add('hidden');
+              experiment2.classList.remove('hidden');
+            } else {
+              // End of all experiments, show results
+              experiment2.classList.add('hidden');
+              resultsSection.classList.remove('hidden');
+              displayResults();
+              return;
+            }
+          }
+        }
+
+        // Start next trial
+        startNewTrial();
+      }
+
+      // Display results in a chart
+      function displayResults() {
+        const ctx = document.getElementById('chart').getContext('2d');
+
+        // Calculate average times and accuracy for each experiment
+        const exp1Data = processResults(results.experiment1);
+        const exp2Data = processResults(results.experiment2);
+
+        new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: ['Selection Time (ms)', 'Accuracy (%)'],
+            datasets: [
+              {
+                label: 'Dropdown Menu',
+                data: [exp1Data.avgTime, exp1Data.accuracy * 100],
+                backgroundColor: 'rgba(52, 152, 219, 0.5)',
+                borderColor: 'rgba(52, 152, 219, 1)',
+                borderWidth: 1,
+              },
+              {
+                label: 'Pie Menu',
+                data: [exp2Data.avgTime, exp2Data.accuracy * 100],
+                backgroundColor: 'rgba(46, 204, 113, 0.5)',
+                borderColor: 'rgba(46, 204, 113, 1)',
+                borderWidth: 1,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                title: {
+                  display: true,
+                  text: 'Value',
+                },
+              },
+            },
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label: function (context) {
+                    const label = context.dataset.label || '';
+                    const value = context.raw;
+                    const index = context.dataIndex;
+
+                    if (index === 0) {
+                      return `${label}: ${value.toFixed(2)} ms`;
+                    } else {
+                      return `${label}: ${value.toFixed(2)}%`;
+                    }
+                  },
+                },
+              },
+              legend: {
+                position: 'top',
+              },
+              title: {
+                display: true,
+                text: 'Dropdown vs Pie Menu Performance (6 Options)',
+              },
+            },
+          },
+        });
+
+        // Also display detailed results
+        const detailsDiv = document.createElement('div');
+        detailsDiv.innerHTML = `
+          <h3>Detailed Results</h3>
+          <p><strong>Dropdown Menu:</strong> Avg Time: ${exp1Data.avgTime.toFixed(2)}ms, Accuracy: ${(exp1Data.accuracy * 100).toFixed(2)}%</p>
+          <p><strong>Pie Menu:</strong> Avg Time: ${exp2Data.avgTime.toFixed(2)}ms, Accuracy: ${(exp2Data.accuracy * 100).toFixed(2)}%</p>
+          <p><em>Test conducted with 6 menu options</em></p>
+        `;
+        resultsSection.insertBefore(detailsDiv, restartBtn.parentNode);
+      }
+
+      // Process results data
+      function processResults(data) {
+        const totalTrials = data.length;
+        const correctSelections = data.filter((item) => item.correct).length;
+        const accuracy = correctSelections / totalTrials;
+
+        // Calculate average time
+        const totalTime = data.reduce((sum, item) => sum + item.time, 0);
+        const avgTime = totalTime / totalTrials;
+
+        return {
+          avgTime,
+          accuracy,
+        };
+      }
+
+      // RadialMenu class implementation
+      class RadialMenu {
+        constructor(options, menuElement, config = {}) {
+          this.options = options;
+          this.menuElement = menuElement;
+          this.activeOption = null;
+          this.radius = config.radius || 120;
+          this.deadZoneRadius = config.deadZoneRadius || 15;
+          this.startAngle = 0;
+          this.endAngle = 2 * Math.PI;
+          this.menuX = 0;
+          this.menuY = 0;
+        }
+
+        createMenu() {
+          // Clear existing content
+          this.menuElement.innerHTML = '';
+
+          // Add center indicator
+          const center = document.createElement('div');
+          center.className = 'center-indicator';
+          this.menuElement.appendChild(center);
+
+          // Calculate total angle range and step
+          const totalAngleRange = this.endAngle - this.startAngle;
+          const angleStep = totalAngleRange / this.options.length;
+
+          // Create dividers, labels and sectors
+          this.options.forEach((option, index) => {
+            const angle = this.startAngle + index * angleStep;
+            const nextAngle = this.startAngle + (index + 1) * angleStep;
+            const midAngle = angle + angleStep / 2;
+
+            this.createDivider(angle);
+            this.createLabel(option.label, midAngle, option.label === currentTarget);
+            this.createSector(index, angle, nextAngle);
+          });
+
+          // Add final divider if not a full circle
+          if (Math.abs(totalAngleRange - 2 * Math.PI) > 0.001) {
+            this.createDivider(this.endAngle);
+          }
+        }
+
+        createDivider(angle) {
+          const divider = document.createElement('div');
+          divider.className = 'divider';
+
+          const startX = Math.cos(angle) * this.deadZoneRadius;
+          const startY = Math.sin(angle) * this.deadZoneRadius;
+          const endX = Math.cos(angle) * this.radius;
+          const endY = Math.sin(angle) * this.radius;
+
+          const lineLength = Math.sqrt((endX - startX) ** 2 + (endY - startY) ** 2);
+
+          divider.style.width = `${lineLength}px`;
+          divider.style.left = `${startX}px`;
+          divider.style.top = `${startY}px`;
+          divider.style.transform = `rotate(${angle}rad)`;
+
+          this.menuElement.appendChild(divider);
+        }
+
+        createLabel(labelText, angle, isTarget) {
+          const label = document.createElement('div');
+          label.className = 'option-label';
+          // Remove target highlighting
+          // if (isTarget) {
+          //   label.classList.add('target');
+          // }
+          label.textContent = labelText;
+
+          const labelDistance = this.radius * 0.7;
+          const labelX = Math.cos(angle) * labelDistance;
+          const labelY = Math.sin(angle) * labelDistance;
+
+          label.style.left = `${labelX}px`;
+          label.style.top = `${labelY}px`;
+
+          this.menuElement.appendChild(label);
+        }
+
+        createSector(index, startAngle, endAngle) {
+          const sector = document.createElement('div');
+          sector.className = 'option-sector';
+          sector.dataset.index = index;
+          sector.setAttribute('role', 'menuitem');
+          sector.setAttribute('aria-label', this.options[index].label);
+
+          const sectorSVG = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          sectorSVG.setAttribute('width', this.radius * 2);
+          sectorSVG.setAttribute('height', this.radius * 2);
+          sectorSVG.style.position = 'absolute';
+          sectorSVG.style.left = `-${this.radius}px`;
+          sectorSVG.style.top = `-${this.radius}px`;
+
+          const sectorPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          sectorPath.classList.add('sector-path');
+
+          const centerX = this.radius;
+          const centerY = this.radius;
+
+          // Outer arc points
+          const outerStartX = centerX + Math.cos(startAngle) * this.radius;
+          const outerStartY = centerY + Math.sin(startAngle) * this.radius;
+          const outerEndX = centerX + Math.cos(endAngle) * this.radius;
+          const outerEndY = centerY + Math.sin(endAngle) * this.radius;
+
+          // Inner arc points
+          const innerEndX = centerX + Math.cos(endAngle) * this.deadZoneRadius;
+          const innerEndY = centerY + Math.sin(endAngle) * this.deadZoneRadius;
+          const innerStartX = centerX + Math.cos(startAngle) * this.deadZoneRadius;
+          const innerStartY = centerY + Math.sin(startAngle) * this.deadZoneRadius;
+
+          const angleStep = endAngle - startAngle;
+          const largeArcFlag = angleStep > Math.PI ? 1 : 0;
+
+          const path = `
+            M ${outerStartX},${outerStartY}
+            A ${this.radius},${this.radius} 0 ${largeArcFlag} 1 ${outerEndX},${outerEndY}
+            L ${innerEndX},${innerEndY}
+            A ${this.deadZoneRadius},${this.deadZoneRadius} 0 ${largeArcFlag} 0 ${innerStartX},${innerStartY}
+            Z
+          `;
+
+          sectorPath.setAttribute('d', path);
+
+          sectorSVG.appendChild(sectorPath);
+          sector.appendChild(sectorSVG);
+
+          // Add click event listener
+          sector.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const optionIndex = parseInt(sector.dataset.index);
+            this.options[optionIndex].action();
+          });
+
+          // Add mouseover event for highlighting
+          sector.addEventListener('mouseover', () => {
+            sector.classList.add('active');
+          });
+
+          sector.addEventListener('mouseout', () => {
+            sector.classList.remove('active');
+          });
+
+          this.menuElement.appendChild(sector);
+        }
+
+        showMenu(x, y) {
+          this.menuX = x;
+          this.menuY = y;
+
+          // Create the menu
+          this.createMenu();
+
+          // Move to body to avoid positioning issues
+          document.body.appendChild(this.menuElement);
+
+          this.menuElement.style.display = 'block';
+          this.menuElement.classList.add('show');
+          this.menuElement.style.left = `${x}px`;
+          this.menuElement.style.top = `${y}px`;
+          this.menuElement.style.pointerEvents = 'auto';
+
+          // Set up mousemove listener for highlighting sectors
+          document.addEventListener('mousemove', this.handleMouseMove);
+        }
+
+        hideMenu() {
+          this.menuElement.classList.remove('show');
+          this.menuElement.style.display = 'none';
+
+          // Remove mousemove listener
+          document.removeEventListener('mousemove', this.handleMouseMove);
+        }
+
+        // Method to handle mouse movement for highlighting sectors
+        handleMouseMove = (e) => {
+          const dx = e.clientX - this.menuX;
+          const dy = e.clientY - this.menuY;
+
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          // Only check for dead zone, but no maximum distance
+          if (distance < this.deadZoneRadius) {
+            // Inside dead zone, remove all highlights
+            const activeSectors = this.menuElement.querySelectorAll('.option-sector.active');
+            activeSectors.forEach((sector) => sector.classList.remove('active'));
+            return;
+          }
+
+          // Calculate angle
+          let angle = Math.atan2(dy, dx);
+          if (angle < 0) angle += 2 * Math.PI;
+
+          // Find which sector this angle corresponds to
+          const totalAngleRange = this.endAngle - this.startAngle;
+          const angleStep = totalAngleRange / this.options.length;
+
+          for (let i = 0; i < this.options.length; i++) {
+            const sectorStartAngle = this.startAngle + i * angleStep;
+            const sectorEndAngle = this.startAngle + (i + 1) * angleStep;
+
+            if (angle >= sectorStartAngle && angle < sectorEndAngle) {
+              // Highlight this sector and remove highlight from others
+              const sectors = this.menuElement.querySelectorAll('.option-sector');
+              sectors.forEach((sector) => {
+                if (parseInt(sector.dataset.index) === i) {
+                  sector.classList.add('active');
+                } else {
+                  sector.classList.remove('active');
+                }
+              });
+              break;
+            }
+          }
+        };
+      }
+
+      // Set up event listeners for right-click and shift key
+      function setupEventListeners() {
+        // Right-click for dropdown menu in experiment 1
+        const dropdownArea = document.getElementById('dropdown-area');
+        dropdownArea.addEventListener('contextmenu', (e) => {
+          if (currentExperiment === 1) {
+            e.preventDefault();
+
+            // Position the dropdown at the mouse position
+            dropdownMenu.style.top = `${e.clientY}px`;
+            dropdownMenu.style.left = `${e.clientX}px`;
+            dropdownMenu.style.display = 'block';
+            dropdownMenu.classList.add('show');
+
+            // Move to body to avoid positioning issues
+            document.body.appendChild(dropdownMenu);
+
+            // Start timing
+            startTime = performance.now();
+          }
+        });
+
+        // Shift key for pie menu in experiment 2
+        const pieArea = document.getElementById('pie-area');
+        let isShiftPressed = false;
+        let mouseX = 0;
+        let mouseY = 0;
+
+        // Track mouse position in experiment 2
+        pieArea.addEventListener('mousemove', (e) => {
+          if (currentExperiment === 2) {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+          }
+        });
+
+        // Show pie menu on shift key down
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Shift' && currentExperiment === 2 && !isShiftPressed) {
+            isShiftPressed = true;
+
+            // Show the radial menu at the current mouse position
+            radialMenuController.showMenu(mouseX, mouseY);
+
+            // Start timing
+            startTime = performance.now();
+          }
+        });
+
+        // Hide pie menu on shift key up and select active option if any
+        document.addEventListener('keyup', (e) => {
+          if (e.key === 'Shift' && isShiftPressed) {
+            isShiftPressed = false;
+
+            // If an option is active, select it
+            const activeOption = radialMenu.querySelector('.option-sector.active');
+            if (activeOption) {
+              const optionIndex = parseInt(activeOption.dataset.index);
+              radialMenuController.options[optionIndex].action();
+            } else {
+              // Hide the menu without selection
+              radialMenu.classList.remove('show');
+              radialMenu.style.display = 'none';
+            }
+          }
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+          if (dropdownMenu.classList.contains('show') && !dropdownMenu.contains(e.target)) {
+            dropdownMenu.classList.remove('show');
+            dropdownMenu.style.display = 'none';
+          }
+        });
+      }
+
+      // Event Listeners
+      startBtn.addEventListener('click', () => {
+        intro.classList.add('hidden');
+        experiment1.classList.remove('hidden');
+        currentExperiment = 1;
+        currentTrial = 0;
+        currentRound = 1;
+        startNewTrial();
+      });
+
+      restartBtn.addEventListener('click', () => {
+        // Reset everything
+        currentExperiment = 1;
+        currentTrial = 0;
+        currentRound = 1;
+        results.experiment1 = [];
+        results.experiment2 = [];
+
+        // Remove detailed results if present
+        const detailsDiv = resultsSection.querySelector('div:not(.chart-container):not(.controls)');
+        if (detailsDiv) {
+          resultsSection.removeChild(detailsDiv);
+        }
+
+        // Show intro again
+        resultsSection.classList.add('hidden');
+        intro.classList.remove('hidden');
+      });
+
+      // Initialize experiments
+      initExperiments();
+    </script>
+  </body>
+</html>
