@@ -7,8 +7,8 @@
 export class CopyPasteHandler {
   private selectedElements = new Set<Element>();
   private container: HTMLElement;
-  private statusElement: HTMLElement | null;
   private mimeType: string;
+  private onSelectionChange: ((selectedCount: number) => void) | null;
 
   /**
    * Creates a new CopyPasteHandler
@@ -18,42 +18,47 @@ export class CopyPasteHandler {
   constructor(
     container: HTMLElement,
     options: {
-      statusElement?: HTMLElement | null;
       selectionClass?: string;
       mimeType?: string;
+      onSelectionChange?: (selectedCount: number) => void;
     } = {},
   ) {
     this.container = container;
-    this.statusElement = options.statusElement || null;
     this.mimeType = options.mimeType || 'application/folk-elements';
+    this.onSelectionChange = options.onSelectionChange || null;
 
     const selectionClass = options.selectionClass || 'selected';
 
     // Set up click handler for selection
     this.container.addEventListener('click', (e) => {
-      // Only select elements that are direct children of the container
+      // Get the actual target element
       const target = e.target as HTMLElement;
 
-      if (target !== this.container && this.container.contains(target)) {
+      // Check if we clicked directly on the container (empty space)
+      if (target === this.container) {
+        // Deselect all when clicking on empty space (without shift)
+        if (!e.shiftKey) {
+          this.clearSelection();
+          this.notifySelectionChange();
+        }
+        return;
+      }
+
+      // Check if we clicked on a child element
+      if (this.container.contains(target)) {
         if (!e.shiftKey) {
           // Clear previous selection if not shift-clicking
           this.clearSelection();
         }
 
         // Toggle selection for the clicked element
-        this.toggleSelection(target);
+        this.toggleSelection(target, selectionClass);
 
-        // Update status
-        this.updateStatus();
+        // Notify about selection change
+        this.notifySelectionChange();
 
         // Stop propagation to prevent container from handling the click
         e.stopPropagation();
-      } else if (target === this.container || e.currentTarget === this.container) {
-        // Deselect all when clicking on empty space (without shift)
-        if (!e.shiftKey) {
-          this.clearSelection();
-          this.updateStatus();
-        }
       }
     });
 
@@ -63,9 +68,6 @@ export class CopyPasteHandler {
         const serializedElements = Array.from(this.selectedElements).map(this.serializeElement);
         e.clipboardData?.setData(this.mimeType, JSON.stringify(serializedElements));
         e.preventDefault();
-        this.updateStatus(
-          `Copied ${this.selectedElements.size} element${this.selectedElements.size > 1 ? 's' : ''} to clipboard`,
-        );
       }
     });
 
@@ -96,48 +98,82 @@ export class CopyPasteHandler {
 
           // Add all elements to the container
           this.container.appendChild(fragment);
-
-          // Update status
-          this.updateStatus(
-            `Pasted ${serializedElements.length} element${serializedElements.length > 1 ? 's' : ''} from clipboard`,
-          );
           e.preventDefault();
         } catch (error) {
           console.error('Failed to paste elements:', error);
-          this.updateStatus('Failed to paste elements');
         }
       }
     });
 
     // Set up keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', async (e) => {
       // Ctrl+C or Cmd+C
       if ((e.ctrlKey || e.metaKey) && e.key === 'c' && this.selectedElements.size > 0) {
-        document.execCommand('copy');
+        // Use Clipboard API instead of execCommand
+        try {
+          const serializedElements = Array.from(this.selectedElements).map(this.serializeElement);
+          await navigator.clipboard.writeText(JSON.stringify(serializedElements));
+          // Also set custom format if permissions allow
+          // Note: This might not work in all browsers due to permission restrictions
+          if (navigator.clipboard.write) {
+            const clipboardItem = new ClipboardItem({
+              [this.mimeType]: new Blob([JSON.stringify(serializedElements)], { type: this.mimeType }),
+            });
+            await navigator.clipboard.write([clipboardItem]);
+          }
+        } catch (error) {
+          console.error('Failed to copy to clipboard:', error);
+        }
+        e.preventDefault();
       }
 
       // Ctrl+V or Cmd+V
       if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-        document.execCommand('paste');
+        try {
+          // Try to read from clipboard using the Clipboard API
+          const clipboardText = await navigator.clipboard.readText();
+          try {
+            // Try to parse as JSON
+            const serializedElements = JSON.parse(clipboardText);
+            if (Array.isArray(serializedElements)) {
+              // Create a document fragment to hold all new elements
+              const fragment = document.createDocumentFragment();
+
+              // Process each serialized element
+              for (const serialized of serializedElements) {
+                const newElement = await this.deserializeElement(serialized);
+
+                // Generate a new ID to avoid duplicates
+                if (newElement.hasAttribute('id')) {
+                  const originalId = newElement.getAttribute('id');
+                  const newId = `${originalId}_copy_${Date.now().toString().slice(-5)}`;
+                  newElement.setAttribute('id', newId);
+                }
+
+                fragment.appendChild(newElement);
+              }
+
+              // Add all elements to the container
+              this.container.appendChild(fragment);
+              e.preventDefault();
+            }
+          } catch (parseError) {
+            // Not our format, let the browser handle it
+            console.log('Clipboard data is not in our format, letting browser handle paste');
+          }
+        } catch (error) {
+          console.error('Failed to read from clipboard:', error);
+          // Fall back to the paste event handler
+          // The browser's paste event will still fire
+        }
       }
 
       // Escape to clear selection
       if (e.key === 'Escape' && this.selectedElements.size > 0) {
         this.clearSelection();
-        this.updateStatus();
+        this.notifySelectionChange();
       }
     });
-
-    // Helper function to toggle selection for an element
-    this.toggleSelection = (element: Element) => {
-      if (this.selectedElements.has(element)) {
-        this.selectedElements.delete(element);
-        element.classList.remove(selectionClass);
-      } else {
-        this.selectedElements.add(element);
-        element.classList.add(selectionClass);
-      }
-    };
   }
 
   /**
@@ -152,21 +188,11 @@ export class CopyPasteHandler {
   }
 
   /**
-   * Updates the status message if a status element is provided
+   * Notifies about selection changes
    */
-  private updateStatus(message?: string): void {
-    if (!this.statusElement) return;
-
-    const count = this.selectedElements.size;
-    if (!message) {
-      if (count === 0) {
-        this.statusElement.textContent =
-          'Use SHIFT+click to select multiple elements. Copy with Ctrl+C/Cmd+C, paste with Ctrl+V/Cmd+V.';
-      } else {
-        this.statusElement.textContent = `${count} element${count > 1 ? 's' : ''} selected. Copy with Ctrl+C/Cmd+C, paste with Ctrl+V/Cmd+V.`;
-      }
-    } else {
-      this.statusElement.textContent = message;
+  private notifySelectionChange(): void {
+    if (this.onSelectionChange) {
+      this.onSelectionChange(this.selectedElements.size);
     }
   }
 
@@ -273,7 +299,15 @@ export class CopyPasteHandler {
   /**
    * Toggles selection for an element
    */
-  toggleSelection: (element: Element) => void;
+  toggleSelection(element: Element, selectionClass: string = 'selected'): void {
+    if (this.selectedElements.has(element)) {
+      this.selectedElements.delete(element);
+      element.classList.remove(selectionClass);
+    } else {
+      this.selectedElements.add(element);
+      element.classList.add(selectionClass);
+    }
+  }
 
   /**
    * Gets the currently selected elements
