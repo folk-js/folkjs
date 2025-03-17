@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fitts' Law</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior-x: none;
+        touch-action: none;
+        font-family: 'Recursive', sans-serif;
+        background-color: #f5f5f5;
+      }
+
+      .container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        padding: 20px;
+      }
+
+      .experiment-area {
+        position: relative;
+        width: 100%;
+        height: 200px;
+        margin: 20px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .box {
+        width: 100px;
+        height: 100px;
+        background-color: #3498db;
+        position: relative;
+        cursor: pointer;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        transition: background-color 0.2s;
+      }
+
+      .box.active {
+        background-color: #2ecc71;
+      }
+
+      .box .center-line {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        width: 2px;
+        height: 100%;
+        background-color: red;
+      }
+
+      .box .horizontal-line {
+        position: absolute;
+        top: 50%;
+        left: 0;
+        width: 100%;
+        height: 2px;
+        background-color: red;
+      }
+
+      .controls {
+        margin: 20px 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        border-radius: 4px;
+      }
+
+      button:hover {
+        background-color: #2980b9;
+      }
+
+      .results {
+        width: 100%;
+        max-width: 800px;
+      }
+
+      .chart-container {
+        width: 100%;
+        height: 300px;
+        margin: 20px 0;
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+
+      .instructions {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+
+      .experiment-title {
+        font-size: 24px;
+        font-weight: bold;
+        margin: 20px 0;
+      }
+
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Fitts' Law Test</h1>
+
+      <div id="intro" class="controls">
+        <p>1. Click alternately on two boxes with a mouse/pointer</p>
+        <p>2. Press SHIFT key while hovering over boxes</p>
+        <p
+          >Each experiment will measure your speed and accuracy. This is not a real study, just wanted to
+          validate/invalidate a thought.</p
+        >
+        <button id="start-btn">Start Experiment 1</button>
+      </div>
+
+      <div id="experiment1" class="hidden">
+        <div class="experiment-title">Experiment 1: Mouse Clicks</div>
+        <div class="instructions">Click alternately on the blue boxes. The green box is your current target.</div>
+        <div class="experiment-area">
+          <div id="box1-exp1" class="box active">
+            <div class="center-line"></div>
+            <div class="horizontal-line"></div>
+          </div>
+          <div id="box2-exp1" class="box">
+            <div class="center-line"></div>
+            <div class="horizontal-line"></div>
+          </div>
+        </div>
+        <div class="controls">
+          <p id="clicks-remaining-exp1">Clicks remaining: 10 (Round 1/2)</p>
+        </div>
+      </div>
+
+      <div id="experiment2" class="hidden">
+        <div class="experiment-title">Experiment 2: Keyboard (SHIFT) Input</div>
+        <div class="instructions">Hover over a box and press SHIFT key. The green box is your current target.</div>
+        <div class="experiment-area">
+          <div id="box1-exp2" class="box active">
+            <div class="center-line"></div>
+            <div class="horizontal-line"></div>
+          </div>
+          <div id="box2-exp2" class="box">
+            <div class="center-line"></div>
+            <div class="horizontal-line"></div>
+          </div>
+        </div>
+        <div class="controls">
+          <p id="clicks-remaining-exp2">Clicks remaining: 10 (Round 1/2)</p>
+        </div>
+      </div>
+
+      <div id="results" class="results hidden">
+        <h2>Results</h2>
+        <div class="chart-container">
+          <canvas id="chart"></canvas>
+        </div>
+        <div class="controls">
+          <button id="restart-btn">Restart Tests</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="module">
+      // Configuration
+      const TOTAL_CLICKS = 15;
+      const BOX_DISTANCES = [200, 700, 500]; // Reduced to 2 distances for 2 rounds
+      const BOX_SIZES = [100]; // Fixed box size for simplicity
+
+      // State variables
+      let currentExperiment = 1;
+      let currentBox = 1;
+      let clicksRemaining = TOTAL_CLICKS;
+      let lastClickTime = 0;
+      let currentDistance = BOX_DISTANCES[0];
+      let currentBoxSize = BOX_SIZES[0];
+      let currentDistanceIndex = 0;
+      let currentSizeIndex = 0;
+      let currentRound = 1;
+
+      // Results storage
+      const results = {
+        experiment1: [],
+        experiment2: [],
+      };
+
+      // DOM Elements
+      const intro = document.getElementById('intro');
+      const experiment1 = document.getElementById('experiment1');
+      const experiment2 = document.getElementById('experiment2');
+      const resultsSection = document.getElementById('results');
+
+      const box1Exp1 = document.getElementById('box1-exp1');
+      const box2Exp1 = document.getElementById('box2-exp1');
+      const box1Exp2 = document.getElementById('box1-exp2');
+      const box2Exp2 = document.getElementById('box2-exp2');
+
+      const clicksRemainingExp1 = document.getElementById('clicks-remaining-exp1');
+      const clicksRemainingExp2 = document.getElementById('clicks-remaining-exp2');
+
+      const startBtn = document.getElementById('start-btn');
+      const restartBtn = document.getElementById('restart-btn');
+
+      // Initialize the experiment
+      function initExperiment() {
+        currentBox = 1;
+        clicksRemaining = TOTAL_CLICKS;
+        lastClickTime = 0;
+
+        // Update UI for current experiment
+        if (currentExperiment === 1) {
+          updateClicksRemaining(clicksRemainingExp1);
+          setBoxPositions(experiment1, box1Exp1, box2Exp1);
+          box1Exp1.classList.add('active');
+          box2Exp1.classList.remove('active');
+        } else {
+          updateClicksRemaining(clicksRemainingExp2);
+          setBoxPositions(experiment2, box1Exp2, box2Exp2);
+          box1Exp2.classList.add('active');
+          box2Exp2.classList.remove('active');
+        }
+      }
+
+      // Set box positions and sizes based on current configuration
+      function setBoxPositions(container, box1, box2) {
+        const experimentArea = container.querySelector('.experiment-area');
+
+        // Set box sizes
+        box1.style.width = `${currentBoxSize}px`;
+        box1.style.height = `${currentBoxSize}px`;
+        box2.style.width = `${currentBoxSize}px`;
+        box2.style.height = `${currentBoxSize}px`;
+
+        // Set distance between boxes
+        const totalWidth = currentDistance + currentBoxSize * 2;
+        experimentArea.style.width = `${totalWidth}px`;
+
+        // Position boxes at the ends
+        box1.style.position = 'absolute';
+        box2.style.position = 'absolute';
+        box1.style.left = '0';
+        box2.style.right = '0';
+      }
+
+      // Update the clicks remaining display
+      function updateClicksRemaining(element) {
+        element.textContent = `Clicks remaining: ${clicksRemaining} (Round ${currentRound}/${BOX_DISTANCES.length})`;
+      }
+
+      // Handle a successful interaction (click or shift key)
+      function handleInteraction(x, y) {
+        const now = performance.now();
+        const targetBox =
+          currentBox === 1
+            ? currentExperiment === 1
+              ? box1Exp1
+              : box1Exp2
+            : currentExperiment === 1
+              ? box2Exp1
+              : box2Exp2;
+
+        // Calculate center of the target box
+        const rect = targetBox.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+
+        // Calculate distance from click to center (accuracy)
+        const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+        const accuracy = Math.max(0, 1 - distance / (rect.width / 2));
+
+        // Calculate speed (if not first click)
+        let speed = 0;
+        if (lastClickTime > 0) {
+          speed = 1000 / (now - lastClickTime); // clicks per second
+
+          // Store result only if we have a valid speed measurement
+          results[`experiment${currentExperiment}`].push({
+            round: currentRound,
+            distance: currentDistance,
+            boxSize: currentBoxSize,
+            speed,
+            accuracy,
+          });
+        }
+        lastClickTime = now;
+
+        // Switch target box
+        currentBox = currentBox === 1 ? 2 : 1;
+
+        // Update UI
+        if (currentExperiment === 1) {
+          box1Exp1.classList.toggle('active');
+          box2Exp1.classList.toggle('active');
+        } else {
+          box1Exp2.classList.toggle('active');
+          box2Exp2.classList.toggle('active');
+        }
+
+        // Decrement clicks remaining
+        clicksRemaining--;
+
+        // Update clicks remaining display
+        if (currentExperiment === 1) {
+          updateClicksRemaining(clicksRemainingExp1);
+        } else {
+          updateClicksRemaining(clicksRemainingExp2);
+        }
+
+        // Check if we need to change configuration or end experiment
+        if (clicksRemaining === 0) {
+          // Move to next round
+          currentDistanceIndex++;
+          currentRound++;
+
+          if (currentDistanceIndex >= BOX_DISTANCES.length) {
+            // End of rounds for this experiment
+            if (currentExperiment === 1) {
+              // Move to experiment 2
+              currentExperiment = 2;
+              currentDistanceIndex = 0;
+              currentRound = 1;
+              experiment1.classList.add('hidden');
+              experiment2.classList.remove('hidden');
+            } else {
+              // End of all experiments, show results
+              experiment2.classList.add('hidden');
+              resultsSection.classList.remove('hidden');
+              displayResults();
+              return;
+            }
+          }
+
+          // Update current configuration
+          currentDistance = BOX_DISTANCES[currentDistanceIndex];
+
+          // Reset for next round
+          initExperiment();
+        }
+      }
+
+      // Display results in a chart
+      function displayResults() {
+        const ctx = document.getElementById('chart').getContext('2d');
+
+        // Process data for the chart
+        const exp1Data = processResultsData(results.experiment1);
+        const exp2Data = processResultsData(results.experiment2);
+
+        new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: exp1Data.map((_, index) => index + 1), // Click sequence
+            datasets: [
+              {
+                label: 'Experiment 1 - Speed (Mouse Clicks)',
+                data: exp1Data.map((point) => point.speed),
+                borderColor: 'rgba(52, 152, 219, 1)',
+                backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                yAxisID: 'y',
+                tension: 0.4,
+              },
+              {
+                label: 'Experiment 1 - Accuracy (Mouse Clicks)',
+                data: exp1Data.map((point) => point.accuracy),
+                borderColor: 'rgba(52, 152, 219, 0.5)',
+                backgroundColor: 'rgba(52, 152, 219, 0.05)',
+                borderDash: [5, 5],
+                yAxisID: 'y1',
+                tension: 0.4,
+              },
+              {
+                label: 'Experiment 2 - Speed (Shift Key)',
+                data: exp2Data.map((point) => point.speed),
+                borderColor: 'rgba(46, 204, 113, 1)',
+                backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                yAxisID: 'y',
+                tension: 0.4,
+              },
+              {
+                label: 'Experiment 2 - Accuracy (Shift Key)',
+                data: exp2Data.map((point) => point.accuracy),
+                borderColor: 'rgba(46, 204, 113, 0.5)',
+                backgroundColor: 'rgba(46, 204, 113, 0.05)',
+                borderDash: [5, 5],
+                yAxisID: 'y1',
+                tension: 0.4,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: 'index',
+              intersect: false,
+            },
+            stacked: false,
+            scales: {
+              y: {
+                type: 'linear',
+                display: true,
+                position: 'left',
+                title: {
+                  display: true,
+                  text: 'Speed (clicks/second)',
+                },
+                min: 0,
+              },
+              y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                title: {
+                  display: true,
+                  text: 'Accuracy (0-1)',
+                },
+                min: 0,
+                max: 1,
+                grid: {
+                  drawOnChartArea: false,
+                },
+              },
+              x: {
+                title: {
+                  display: true,
+                  text: 'Click Sequence',
+                },
+              },
+            },
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label: function (context) {
+                    const datasetLabel = context.dataset.label || '';
+                    const value = context.parsed.y;
+                    const dataIndex = context.dataIndex;
+                    const dataPoint = context.dataset.label.includes('Speed')
+                      ? {
+                          speed: value,
+                          accuracy: exp1Data[dataIndex].accuracy,
+                          distance: exp1Data[dataIndex].distance,
+                          round: exp1Data[dataIndex].round,
+                        }
+                      : {
+                          accuracy: value,
+                          speed: exp1Data[dataIndex].speed,
+                          distance: exp1Data[dataIndex].distance,
+                          round: exp1Data[dataIndex].round,
+                        };
+
+                    return `${datasetLabel}: ${value.toFixed(2)}, Round: ${dataPoint.round}, Distance: ${dataPoint.distance}px`;
+                  },
+                },
+              },
+              legend: {
+                position: 'top',
+              },
+              title: {
+                display: true,
+                text: "Speed vs Accuracy in Fitts' Law Test",
+              },
+            },
+          },
+        });
+      }
+
+      // Process results data for the chart
+      function processResultsData(data) {
+        return data.map((item) => ({
+          speed: item.speed,
+          accuracy: item.accuracy,
+          distance: item.distance,
+          round: item.round,
+        }));
+      }
+
+      // Event Listeners
+      startBtn.addEventListener('click', () => {
+        intro.classList.add('hidden');
+        experiment1.classList.remove('hidden');
+        initExperiment();
+      });
+
+      restartBtn.addEventListener('click', () => {
+        // Reset everything
+        currentExperiment = 1;
+        currentDistanceIndex = 0;
+        currentSizeIndex = 0;
+        currentRound = 1;
+        currentDistance = BOX_DISTANCES[currentDistanceIndex];
+        currentBoxSize = BOX_SIZES[currentSizeIndex];
+        results.experiment1 = [];
+        results.experiment2 = [];
+
+        // Show intro again
+        resultsSection.classList.add('hidden');
+        intro.classList.remove('hidden');
+      });
+
+      // Experiment 1: Mouse click handlers
+      box1Exp1.addEventListener('click', (e) => {
+        if (currentBox === 1 && currentExperiment === 1) {
+          handleInteraction(e.clientX, e.clientY);
+        }
+      });
+
+      box2Exp1.addEventListener('click', (e) => {
+        if (currentBox === 2 && currentExperiment === 1) {
+          handleInteraction(e.clientX, e.clientY);
+        }
+      });
+
+      // Experiment 2: Shift key handlers
+      let hoveredBox = null;
+
+      box1Exp2.addEventListener('mouseenter', () => {
+        hoveredBox = box1Exp2;
+      });
+
+      box1Exp2.addEventListener('mouseleave', () => {
+        if (hoveredBox === box1Exp2) hoveredBox = null;
+      });
+
+      box2Exp2.addEventListener('mouseenter', () => {
+        hoveredBox = box2Exp2;
+      });
+
+      box2Exp2.addEventListener('mouseleave', () => {
+        if (hoveredBox === box2Exp2) hoveredBox = null;
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Shift' && currentExperiment === 2 && hoveredBox) {
+          const isCorrectBox =
+            (currentBox === 1 && hoveredBox === box1Exp2) || (currentBox === 2 && hoveredBox === box2Exp2);
+
+          if (isCorrectBox) {
+            const rect = hoveredBox.getBoundingClientRect();
+            // Use the center of the hovered box for position
+            handleInteraction(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          }
+        }
+      });
+
+      // Initialize with default configuration
+      currentDistance = BOX_DISTANCES[currentDistanceIndex];
+      currentBoxSize = BOX_SIZES[currentSizeIndex];
+    </script>
+  </body>
+</html>
