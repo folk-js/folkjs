@@ -32,6 +32,10 @@ export class FolkZoomable extends CustomAttribute {
         scale: var(--folk-scale);
         translate: var(--folk-x) var(--folk-y);
         transform-origin: 0 0;
+
+        :first-child {
+          margin-top: 0;
+        }
       }
 
       [folk-zoomable*='grid: true'] {
@@ -79,30 +83,26 @@ export class FolkZoomable extends CustomAttribute {
     document.adoptedStyleSheets.push(this.styles);
   }
 
-  #x = 0;
+  #matrix = new Matrix();
+
   get x() {
-    return this.#x;
+    return this.#matrix.e;
   }
   set x(value) {
-    this.#x = value;
     this.#requestUpdate();
   }
 
-  #y = 0;
   get y() {
-    return this.#y;
+    return this.#matrix.f;
   }
   set y(value) {
-    this.#y = value;
     this.#requestUpdate();
   }
 
-  #scale = 1;
   get scale() {
-    return this.#scale;
+    return this.#matrix.a;
   }
   set scale(value) {
-    this.#scale = value;
     this.#requestUpdate();
   }
 
@@ -187,15 +187,15 @@ export class FolkZoomable extends CustomAttribute {
 
   #update() {
     const el = this.ownerElement as HTMLElement;
-    el.style.setProperty('--folk-x', `${toDOMPrecision(this.#x)}px`);
-    el.style.setProperty('--folk-y', `${toDOMPrecision(this.#y)}px`);
+    el.style.setProperty('--folk-x', `${toDOMPrecision(this.x)}px`);
+    el.style.setProperty('--folk-y', `${toDOMPrecision(this.y)}px`);
     el.style.setProperty(
       '--folk-scale',
-      `clamp(${toDOMPrecision(this.#minScale)}, ${toDOMPrecision(this.#scale)}, ${toDOMPrecision(this.#maxScale)})`,
+      `clamp(${toDOMPrecision(this.#minScale)}, ${toDOMPrecision(this.scale)}, ${toDOMPrecision(this.#maxScale)})`,
     );
 
     this.value =
-      `x: ${toDOMPrecision(this.#x)}; y: ${toDOMPrecision(this.#y)}; scale: ${toDOMPrecision(this.scale)};` +
+      `x: ${toDOMPrecision(this.x)}; y: ${toDOMPrecision(this.y)}; scale: ${toDOMPrecision(this.scale)};` +
       (this.#minScale === MIN_SCALE ? '' : ` minScale: ${toDOMPrecision(this.#minScale)};`) +
       (this.#maxScale === MAX_SCALE ? '' : `maxScale: ${toDOMPrecision(this.#maxScale)};`) +
       (this.#grid ? ' grid: true;' : '');
@@ -203,16 +203,20 @@ export class FolkZoomable extends CustomAttribute {
 
   // We are using event delegation to capture wheel events that don't happen in the transformed rect of the zoomable element.
   #onWheel = (event: WheelEvent) => {
-    const { clientX, clientY } = event;
+    const {} = event;
     // Check that this wheel event is happening inside of the zoomable element, accounting for the transformed rect.
     // TODO: add another check for children that are scrollable.
-    if (!isZoomableElementBeingScrolled(event, this.ownerElement as HTMLElement)) return;
+    if (!isZoomableElementBeingScrolled(event, this.ownerElement as HTMLElement)) {
+      console.log('out of bounds ');
+      return;
+    }
 
     event.preventDefault();
+    console.log('wheel prevented');
 
     const { left, top } = this.ownerElement.getBoundingClientRect();
 
-    let { deltaX, deltaY } = event;
+    let { clientX, clientY, deltaX, deltaY } = event;
 
     if (event.deltaMode === 1) {
       // 1 is "lines", 0 is "pixels"
@@ -239,20 +243,18 @@ export class FolkZoomable extends CustomAttribute {
   };
 
   applyChange(panX = 0, panY = 0, scaleDiff = 1, originX = 0, originY = 0) {
-    const matrix = new Matrix()
+    const { x, y, scale } = this;
+
+    this.#matrix
+      .identity()
       .translate(panX, panY) // Translate according to panning.
       .translate(originX, originY) // Scale about the origin.
-      .translate(this.x, this.y) // Apply current translate
+      .translate(x, y)
       .scale(scaleDiff, scaleDiff)
       .translate(-originX, -originY)
-      .scale(this.scale, this.scale); // Apply current scale.
+      .scale(scale, scale);
 
-    // TODO: logic to clamp the scale needs to get polished, it's a little jittery
-    if (matrix.a < this.minScale || matrix.a > this.maxScale) return;
-
-    this.scale = matrix.a;
-    this.x = matrix.e;
-    this.y = matrix.f;
+    this.#requestUpdate();
   }
 }
 

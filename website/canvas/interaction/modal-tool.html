@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Modal Tool</title>
+    <style>
+      html,
+      body {
+        overscroll-behavior-x: none;
+        touch-action: none;
+        margin: 0;
+        height: 100%;
+      }
+
+      folk-modal-tool {
+        position: fixed;
+      }
+    </style>
+  </head>
+  <body>
+    <body folk-zoomable="grid:true">
+      <h1 folk-shape>Heading</h1>
+      <input folk-shape value="Input 1" />
+      <input folk-shape value="Input 2" />
+      <input folk-shape value="Input 3" />
+      <br />
+      <audio src="/Feather.mov" controls folk-shape></audio>
+
+      <folk-modal-tool folk-shape="x:500; y: 15">Create</folk-modal-tool>
+      <folk-modal-tool folk-shape="x:555; y: 15">Delete</folk-modal-tool>
+
+      <script type="module">
+        import '@labs/standalone/folk-zoomable.ts';
+        import '@labs/standalone/folk-shape-attribute.ts';
+        import { FolkModalTool } from '@labs/folk-modal-tool.ts';
+        FolkModalTool.define();
+      </script>
+    </body>
+  </body>
+</html>
