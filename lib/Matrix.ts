@@ -299,9 +299,9 @@ export class Matrix implements IMatrix {
   }
 
   static From(m: MatrixInit | DOMMatrix) {
-    if (m instanceof DOMMatrix) {
-      return Matrix.FromDOMMatrix(m);
-    }
+    // if (m instanceof DOMMatrix) {
+    //   return Matrix.FromDOMMatrix(m);
+    // }
     return new Matrix(m.a, m.b, m.c, m.d, m.e, m.f);
   }
 
