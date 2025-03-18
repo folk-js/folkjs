@@ -1,7 +1,7 @@
-import { clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.js';
+import { approximatelyEqual, clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.js';
 import type { Vector2, Vector2Readonly } from './Vector2.js';
 
-/** A homogeneous 2D transformation matrix. */
+/** A homogeneous matrix for 2D transformations. */
 export interface Matrix2D {
   /** Scale X */
   a: number;
@@ -54,7 +54,7 @@ export function fromTranslate(x: number, y: number): Matrix2D {
 }
 
 /** Creates a new 2D matrix from a given scaling. */
-export function fromScale(x: number, y: number): Matrix2D {
+export function fromScale(x: number, y: number = x): Matrix2D {
   return {
     a: x,
     b: 0,
@@ -65,7 +65,7 @@ export function fromScale(x: number, y: number): Matrix2D {
   };
 }
 
-/** Creates a new 2D matrix from a given angle. */
+/** Creates a new 2D matrix from a given angle in radians. */
 export function fromRotate(angle: number): Matrix2D {
   const s = sin(angle);
   const c = cos(angle);
@@ -76,6 +76,18 @@ export function fromRotate(angle: number): Matrix2D {
     d: c,
     e: 0,
     f: 0,
+  };
+}
+
+/** Create a new 2D matrix from a bunch of values. */
+export function fromValues(a: number, b: number, c: number, d: number, e: number, f: number): Matrix2D {
+  return {
+    a,
+    b,
+    c,
+    d,
+    e,
+    f,
   };
 }
 
@@ -100,12 +112,13 @@ export function fromMatrix2D(m: Matrix2DReadonly): Matrix2D {
  * @returns The 2D matrix `m1` after the operation.
  */
 export function multiplySelf(m1: Matrix2D, m2: Matrix2D): Matrix2D {
-  m1.a = m1.a * m2.a + m1.c * m2.b;
-  m1.b = m1.b * m2.a + m1.d * m2.b;
-  m1.c = m1.a * m2.c + m1.c * m2.d;
-  m1.d = m1.b * m2.c + m1.d * m2.d;
-  m1.e = m1.a * m2.e + m1.c * m2.f + m1.e;
-  m1.f = m1.b * m2.e + m1.d * m2.f + m1.f;
+  const { a, b, c, d, e, f } = m1;
+  m1.a = a * m2.a + c * m2.b;
+  m1.b = b * m2.a + d * m2.b;
+  m1.c = a * m2.c + c * m2.d;
+  m1.d = b * m2.c + d * m2.d;
+  m1.e = a * m2.e + c * m2.f + e;
+  m1.f = b * m2.e + d * m2.f + f;
   return m1;
 }
 
@@ -145,7 +158,7 @@ export function translateSelf(m: Matrix2D, x: number, y: number): Matrix2D {
  * @param origin Optional origin to scale the matrix around.
  * @returns The matrix `m` after the operation.
  */
-export function scaleSelf(m: Matrix2D, x: number, y: number, origin?: Vector2Readonly): Matrix2D {
+export function scaleSelf(m: Matrix2D, x: number, y = x, origin?: Vector2Readonly): Matrix2D {
   if (origin !== undefined) {
     translateSelf(m, origin.x, origin.y);
   }
@@ -164,7 +177,7 @@ export function scaleSelf(m: Matrix2D, x: number, y: number, origin?: Vector2Rea
 /**
  * Rotate a 2D matrix in-place.
  * @param m
- * @param angle Angle of rotation.
+ * @param angle Angle of rotation in radians.
  * @param origin Optional origin to rotate the matrix around.
  * @returns The matrix `m` after the operation.
  */
@@ -176,12 +189,13 @@ export function rotateSelf(m: Matrix2D, angle: number, origin?: Vector2Readonly)
   }
 
   const s = sin(angle);
-  const c = cos(angle);
+  const cs = cos(angle);
+  const { a, b, c, d } = m;
 
-  m.a = m.a * c + m.c * s;
-  m.b = m.b * c + m.d * s;
-  m.c = m.a * -s + m.c * c;
-  m.d = m.b * -s + m.d * c;
+  m.a = a * cs + c * s;
+  m.b = b * cs + d * s;
+  m.c = a * -s + c * cs;
+  m.d = b * -s + d * cs;
 
   if (origin !== undefined) {
     translateSelf(m, -origin.x, -origin.y);
@@ -197,12 +211,13 @@ export function rotateSelf(m: Matrix2D, angle: number, origin?: Vector2Readonly)
  */
 export function invertSelf(m: Matrix2D): Matrix2D {
   const det = determinant(m);
-  m.a = m.d / det;
-  m.b = m.b / -det;
-  m.c = m.c / -det;
-  m.d = m.a / det;
-  m.e = (m.d * m.e - m.c * m.f) / -det;
-  m.f = (m.b * m.e - m.a * m.f) / det;
+  const { a, b, c, d, e, f } = m;
+  m.a = d / det;
+  m.b = b / -det;
+  m.c = c / -det;
+  m.d = a / det;
+  m.e = (d * e - c * f) / -det;
+  m.f = (b * e - a * f) / det;
   return m;
 }
 
@@ -221,7 +236,7 @@ export function multiply(m1: Matrix2DReadonly, m2: Matrix2DReadonly): Matrix2D {
 /**
  * Rotate a 2D matrix immutably.
  * @param m
- * @param angle Angle of rotation.
+ * @param angle Angle of rotation in radians.
  * @param origin Optional origin to rotate the matrix around.
  * @returns A new 2D matrix with the rotation applied.
  */
@@ -237,7 +252,7 @@ export function rotate(m: Matrix2DReadonly, angle: number, origin?: Vector2Reado
  * @param origin Optional origin to scale the matrix around.
  * @returns A new 2D matrix with the scaling applied.
  */
-export function scale(m: Matrix2DReadonly, x: number, y: number, origin?: Vector2Readonly): Matrix2D {
+export function scale(m: Matrix2DReadonly, x: number, y = x, origin?: Vector2Readonly): Matrix2D {
   return scaleSelf(fromMatrix2D(m), x, y, origin);
 }
 
@@ -348,7 +363,7 @@ export function decompose(m: Matrix2DReadonly): DecomposedMatrix2D {
  * @returns The recomposed 2D matrix.
  */
 export function recompose(d: DecomposedMatrix2D): Matrix2D {
-  return scaleSelf(rotateSelf(translateSelf(fromIdentity(), d.x, d.y), d.rotation), d.scaleX, d.scaleY);
+  return scaleSelf(rotateSelf(fromTranslate(d.x, d.y), d.rotation), d.scaleX, d.scaleY);
 }
 
 /**
@@ -392,6 +407,21 @@ export function applyToPoint(m: Matrix2DReadonly, point: Vector2Readonly): Vecto
 
 export function applyToPoints(m: Matrix2DReadonly, points: Vector2Readonly[]): Vector2[] {
   return points.map((point) => applyToPoint(m, point));
+}
+
+export function exactlyEqual(m1: Matrix2DReadonly, m2: Matrix2DReadonly): boolean {
+  return m1.a === m2.a && m1.b === m2.b && m1.c === m2.c && m1.d === m2.d && m1.e === m2.e && m1.f === m2.f;
+}
+
+export function equals(m1: Matrix2DReadonly, m2: Matrix2DReadonly): boolean {
+  return (
+    approximatelyEqual(m1.a, m2.a) &&
+    approximatelyEqual(m1.b, m2.b) &&
+    approximatelyEqual(m1.c, m2.c) &&
+    approximatelyEqual(m1.d, m2.d) &&
+    approximatelyEqual(m1.e, m2.e) &&
+    approximatelyEqual(m1.f, m2.f)
+  );
 }
 
 export function toCSSString(m: Matrix2DReadonly) {

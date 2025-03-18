@@ -21,7 +21,8 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc --build --pretty"
+    "build": "tsc --build --pretty",
+    "test": "bun test"
   },
   "devDependencies": {
     "typescript": "^5.8.2"
