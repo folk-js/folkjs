@@ -4,7 +4,7 @@ import * as V from '../src/Vector2.ts';
 describe('V', () => {
   describe('basic operations', () => {
     test('zero() returns zero vector', () => {
-      expect(V.fromZero()).toEqual({ x: 0, y: 0 });
+      expect(V.zero()).toEqual({ x: 0, y: 0 });
     });
 
     test('add() combines two vectors', () => {

@@ -22,9 +22,11 @@
   ],
   "scripts": {
     "build": "tsc --build --pretty",
+    "benchmark": "bun run __benchmarks__/script.ts",
     "test": "bun test"
   },
   "devDependencies": {
+    "mitata": "^1.0.34",
     "typescript": "^5.8.2"
   }
 }

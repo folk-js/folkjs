@@ -11,7 +11,7 @@ export type Vector2Readonly = Readonly<Vector2>;
  * Creates a zero vector (0,0)
  * @returns A Vector2 representing a zero vector
  */
-export function fromZero(): Vector2 {
+export function zero(): Vector2 {
   return { x: 0, y: 0 };
 }
 
@@ -19,7 +19,7 @@ export function fromZero(): Vector2 {
  * Unit vector Vector2ing right (1,0)
  * @returns A Vector2 representing a right vector
  */
-export function fromRight(): Vector2 {
+export function right(): Vector2 {
   return { x: 1, y: 0 };
 }
 
@@ -27,7 +27,7 @@ export function fromRight(): Vector2 {
  * Unit vector Vector2ing left (-1,0)
  * @returns A Vector2 representing a left vector
  */
-export function fromLeft(): Vector2 {
+export function left(): Vector2 {
   return { x: -1, y: 0 };
 }
 
@@ -35,7 +35,7 @@ export function fromLeft(): Vector2 {
  * Unit vector Vector2ing up (0,-1)
  * @returns A Vector2 representing an up vector
  */
-export function fromUp(): Vector2 {
+export function up(): Vector2 {
   return { x: 0, y: -1 };
 }
 
@@ -43,7 +43,7 @@ export function fromUp(): Vector2 {
  * Unit vector Vector2ing down (0,1)
  * @returns A Vector2 representing a down vector
  */
-export function fromDown(): Vector2 {
+export function down(): Vector2 {
   return { x: 0, y: 1 };
 }
 
