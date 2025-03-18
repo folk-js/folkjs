@@ -103,6 +103,17 @@ export function fromMatrix2D(m: Matrix2DReadonly): Matrix2D {
   };
 }
 
+/** Copy a matrix in-place. */
+export function copy(m1: Matrix2D, m2: Matrix2DReadonly): Matrix2D {
+  m1.a = m2.a;
+  m1.b = m2.b;
+  m1.c = m2.c;
+  m1.d = m2.d;
+  m1.e = m2.e;
+  m1.f = m2.f;
+  return m1;
+}
+
 // Mutable operations
 
 /**

@@ -147,6 +147,16 @@ export class Matrix implements IMatrix {
     return Matrix.ToCssString(this);
   }
 
+  copy(m: Matrix) {
+    this.a = m.a;
+    this.b = m.b;
+    this.c = m.c;
+    this.d = m.d;
+    this.e = m.e;
+    this.f = m.f;
+    return this;
+  }
+
   static Rotate(r: number, cx?: number, cy?: number) {
     if (r === 0) return Matrix.Identity();
 

@@ -68,4 +68,17 @@ bench('Matrix.translate', () => {
   m1.translate(10, 10);
 });
 
+bench('Matrix2D multiple transformations', () => {
+  const transformOrigin = { x: 5, y: 6 };
+  const mt = new Matrix(1, 2, 3, 4, 5, 6);
+  const mi = new Matrix(1, 2, 3, 4, 5, 6);
+
+  mt.translate(10, 15)
+    .translate(transformOrigin.x, transformOrigin.y)
+    .rotate(Math.PI / 3)
+    .translate(-transformOrigin.x, -transformOrigin.y);
+
+  mi.copy(mt).invert();
+});
+
 await run();
