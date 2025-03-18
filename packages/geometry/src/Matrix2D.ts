@@ -1,4 +1,4 @@
-import { approximatelyEqual, clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.js';
+import { acos, approximatelyEqual, clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.js';
 import type { Vector2, Vector2Readonly } from './Vector2.js';
 
 /** A homogeneous matrix for 2D transformations. */
@@ -336,12 +336,12 @@ export function decompose(m: Matrix2DReadonly): DecomposedMatrix2D {
     const hypotAc = (m.a * m.a + m.c * m.c) ** 0.5;
     scaleX = hypotAc;
     scaleY = det / hypotAc;
-    rotation = Math.acos(m.a / hypotAc) * (m.c > 0 ? -1 : 1);
+    rotation = acos(m.a / hypotAc) * (m.c > 0 ? -1 : 1);
   } else if (m.b !== 0 || m.d !== 0) {
     const hypotBd = (m.b * m.b + m.d * m.d) ** 0.5;
     scaleX = det / hypotBd;
     scaleY = hypotBd;
-    rotation = TAU + Math.acos(m.b / hypotBd) * (m.d > 0 ? -1 : 1);
+    rotation = TAU + acos(m.b / hypotBd) * (m.d > 0 ? -1 : 1);
   } else {
     scaleX = 0;
     scaleY = 0;

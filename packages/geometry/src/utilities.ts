@@ -1,4 +1,4 @@
-export const { PI, hypot, cos, sin, atan2, abs } = Math;
+export const { PI, hypot, cos, sin, atan2, abs, acos } = Math;
 
 export const EPSILON = 0.000001;
 
