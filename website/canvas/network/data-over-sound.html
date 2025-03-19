@@ -73,19 +73,8 @@
         background: transparent;
       }
 
-      textarea:hover {
-        border-color: #000;
-      }
-
       textarea:focus {
         outline: none;
-        border-color: #000;
-      }
-
-      textarea:disabled {
-        background: #fafafa;
-        color: #222;
-        border-color: #222;
       }
 
       button {
@@ -105,50 +94,27 @@
         background: #000;
       }
 
-      button.toggle {
-        background: transparent;
-        color: #222;
-        border: 1px solid #222;
-      }
-
-      button.toggle:hover {
-        background: #fafafa;
-        border-color: #000;
-        color: #000;
-      }
-
-      button.toggle.active {
-        background: #222;
-        color: #fff;
-        border-color: #222;
-      }
-
-      button.toggle.active:hover {
-        background: #000;
-        border-color: #000;
-      }
-
+      button.toggle,
       button.listen {
         background: transparent;
         color: #222;
         border: 1px solid #222;
       }
 
+      button.toggle:hover,
       button.listen:hover {
         background: #fafafa;
-        border-color: #000;
-        color: #000;
       }
 
+      button.toggle.active,
       button.listen.active {
         background: #222;
         color: #fff;
-        border-color: #222;
       }
 
+      button.toggle.active:hover,
       button.listen.active:hover {
         background: #000;
-        border-color: #000;
       }
 
       button:disabled {
@@ -184,11 +150,6 @@
         text-decoration: none;
         border-bottom: 1px solid #222;
       }
-
-      a:hover {
-        color: #000;
-        border-bottom: 1px solid #000;
-      }
     </style>
   </head>
   <body>
@@ -202,7 +163,7 @@
     </div>
 
     <!-- Sender Shape -->
-    <folk-shape x="50" y="50" width="300" height="200">
+    <folk-shape x="50" y="50" width="300">
       <h3>Send Message</h3>
       <textarea id="messageToSend" style="height: 100px" placeholder="Type your message here...">
 Hello from Folk Canvas!</textarea
@@ -214,7 +175,7 @@ Hello from Folk Canvas!</textarea
     </folk-shape>
 
     <!-- Receiver Shape -->
-    <folk-shape x="400" y="50" width="300" height="200">
+    <folk-shape x="400" y="50" width="300">
       <h3>Received Messages</h3>
       <textarea id="receivedMessages" style="height: 100px" disabled></textarea>
       <div class="controls">
@@ -242,6 +203,16 @@ Hello from Folk Canvas!</textarea
       const listenButton = document.getElementById('listenButton');
 
       let isUltrasonic = false;
+
+      // Set up audio visualization
+      wave.setVisualizer((node, context) => {
+        if (node) {
+          spectrogram.connect(node, context);
+          spectrogram.start();
+        } else {
+          spectrogram.stop();
+        }
+      });
 
       // Toggle between audible and ultrasonic modes
       modeToggle.addEventListener('click', () => {

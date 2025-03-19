@@ -85,9 +85,19 @@ export class FolkAudioWave {
   #recorder: ScriptProcessorNode | null = null;
   #onDataReceived: ((data: string) => void) | null = null;
   #currentProtocol: any = null;
+  // TODO: pull this out and use Audio APIs properly :)
+  #visualizer: ((node: AudioNode | null, context: AudioContext) => void) | null = null;
 
   constructor() {
     this.#initGGWave();
+  }
+
+  /**
+   * Set a callback to handle audio visualization
+   * @param callback Function that receives the audio node and context for visualization
+   */
+  setVisualizer(callback: (node: AudioNode | null, context: AudioContext) => void): void {
+    this.#visualizer = callback;
   }
 
   async #initGGWave() {
@@ -143,10 +153,25 @@ export class FolkAudioWave {
 
     const source = this.#context.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.#context.destination);
+
+    // Create a gain node to connect both to destination and visualizer
+    const gainNode = this.#context.createGain();
+    source.connect(gainNode);
+    gainNode.connect(this.#context.destination);
+
+    // Connect to visualizer if set
+    if (this.#visualizer) {
+      this.#visualizer(gainNode, this.#context);
+    }
 
     return new Promise((resolve) => {
-      source.onended = () => resolve();
+      source.onended = () => {
+        resolve();
+        // Disconnect from visualizer when done
+        if (this.#visualizer) {
+          this.#visualizer(null, this.#context!);
+        }
+      };
       source.start(0);
     });
   }
@@ -173,8 +198,13 @@ export class FolkAudioWave {
     this.#mediaStream = this.#context.createMediaStreamSource(stream);
     this.#recorder = this.#context.createScriptProcessor(1024, 1, 1);
 
+    // Connect to visualizer if set
+    if (this.#visualizer) {
+      this.#visualizer(this.#mediaStream, this.#context);
+    }
+
     this.#recorder.onaudioprocess = (e) => {
-      if (!this.#ggwave) return; // Skip processing if ggwave is not initialized
+      if (!this.#ggwave) return;
       const source = e.inputBuffer;
       const res = this.#ggwave.decode(
         this.#instance,
@@ -202,6 +232,12 @@ export class FolkAudioWave {
       }
       this.#recorder = null;
     }
+
+    // Disconnect from visualizer
+    if (this.#visualizer && this.#context) {
+      this.#visualizer(null, this.#context);
+    }
+
     this.#onDataReceived = null;
   }
 
@@ -215,5 +251,6 @@ export class FolkAudioWave {
       this.#context = null;
     }
     this.#instance = null;
+    this.#visualizer = null;
   }
 }
