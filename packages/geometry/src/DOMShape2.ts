@@ -137,19 +137,7 @@ export class DOMShape implements DOMRect {
     return this.#topLeft;
   }
   set topLeft(value) {
-    const newCenter = {
-      x: (value.x + this.bottomRight.x) / 2,
-      y: (value.y + this.bottomRight.y) / 2,
-    };
-
-    const newTopLeft = V.rotateAround(value, newCenter, -this.#rotation);
-    const newBottomRight = V.rotateAround(this.bottomRight, newCenter, -this.#rotation);
-
-    this.#x = newTopLeft.x;
-    this.#y = newTopLeft.y;
-    this.#width = newBottomRight.x - newTopLeft.x;
-    this.#height = newBottomRight.y - newTopLeft.y;
-    this.#invalidate();
+    this.#updateTopLeftAndBottomCorners(value, this.bottomRight);
   }
 
   get topRight(): Vector2Readonly {
@@ -159,19 +147,7 @@ export class DOMShape implements DOMRect {
     return this.#topRight!;
   }
   set topRight(value) {
-    const newCenter = {
-      x: (this.bottomLeft.x + value.x) / 2,
-      y: (this.bottomLeft.y + value.y) / 2,
-    };
-
-    const newTopRight = V.rotateAround(value, newCenter, -this.#rotation);
-    const newBottomLeft = V.rotateAround(this.bottomLeft, newCenter, -this.#rotation);
-
-    this.#x = newBottomLeft.x;
-    this.#y = newTopRight.y;
-    this.#width = newTopRight.x - newBottomLeft.x;
-    this.#height = newBottomLeft.y - newTopRight.y;
-    this.#invalidate();
+    this.#updateTopRightAndBottomLeftCorners(value, this.bottomLeft);
   }
 
   get bottomRight(): Vector2Readonly {
@@ -185,13 +161,25 @@ export class DOMShape implements DOMRect {
     return this.#bottomRight!;
   }
   set bottomRight(value) {
+    this.#updateTopLeftAndBottomCorners(this.topLeft, value);
+  }
+
+  get bottomLeft(): Vector2Readonly {
+    this.#bottomLeft = V.rotateAround({ x: this.#x, y: this.#y + this.#height }, this.center, this.#rotation);
+    return this.#bottomLeft!;
+  }
+  set bottomLeft(value) {
+    this.#updateTopRightAndBottomLeftCorners(this.topRight, value);
+  }
+
+  #updateTopLeftAndBottomCorners(topLeft: Vector2Readonly, bottomRight: Vector2Readonly) {
     const newCenter = {
-      x: (this.topLeft.x + value.x) / 2,
-      y: (this.topLeft.y + value.y) / 2,
+      x: (topLeft.x + bottomRight.x) / 2,
+      y: (topLeft.y + bottomRight.y) / 2,
     };
 
-    const newTopLeft = V.rotateAround(this.topLeft, newCenter, -this.#rotation);
-    const newBottomRight = V.rotateAround(value, newCenter, -this.#rotation);
+    const newTopLeft = V.rotateAround(topLeft, newCenter, -this.#rotation);
+    const newBottomRight = V.rotateAround(bottomRight, newCenter, -this.#rotation);
 
     this.#x = newTopLeft.x;
     this.#y = newTopLeft.y;
@@ -200,18 +188,14 @@ export class DOMShape implements DOMRect {
     this.#invalidate();
   }
 
-  get bottomLeft(): Vector2Readonly {
-    this.#bottomLeft = V.rotateAround({ x: this.#x, y: this.#y + this.#height }, this.center, this.#rotation);
-    return this.#bottomLeft!;
-  }
-  set bottomLeft(value) {
+  #updateTopRightAndBottomLeftCorners(topRight: Vector2Readonly, bottomLeft: Vector2Readonly) {
     const newCenter = {
-      x: (value.x + this.topRight.x) / 2,
-      y: (value.y + this.topRight.y) / 2,
+      x: (bottomLeft.x + topRight.x) / 2,
+      y: (bottomLeft.y + topRight.y) / 2,
     };
 
-    const newTopRight = V.rotateAround(this.topRight, newCenter, -this.#rotation);
-    const newBottomLeft = V.rotateAround(value, newCenter, -this.#rotation);
+    const newTopRight = V.rotateAround(topRight, newCenter, -this.#rotation);
+    const newBottomLeft = V.rotateAround(bottomLeft, newCenter, -this.#rotation);
 
     this.#x = newBottomLeft.x;
     this.#y = newTopRight.y;
