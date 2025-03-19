@@ -1,6 +1,6 @@
-import type { Matrix2D } from './Matrix2D';
-import * as M from './Matrix2D';
-import type { Vector2 } from './Vector2';
+import type { Matrix2D } from './Matrix2D.js';
+import * as M from './Matrix2D.js';
+import type { Vector2 } from './Vector2.js';
 
 interface DOMShapeInit {
   height?: number;
@@ -9,7 +9,6 @@ interface DOMShapeInit {
   y?: number;
   rotation?: number;
   transformOrigin?: Vector2;
-  rotateOrigin?: Vector2;
 }
 
 /**
@@ -23,23 +22,19 @@ interface DOMShapeInit {
  * - Rotation is **clockwise**, in **radians**, around the rectangle's **center**.
  */
 export class DOMShape implements DOMRect {
-  // Private properties for position, size, rotation, and origins
   #x: number; // X-coordinate of the top-left corner
   #y: number; // Y-coordinate of the top-left corner
   #width: number; // Width of the rectangle
   #height: number; // Height of the rectangle
   #rotation: number; // Rotation angle in radians, clockwise
 
-  // New properties for transform origin and rotation origin
   #transformOrigin: Vector2; // Origin for transformations
-  #rotateOrigin: Vector2; // Origin for rotation
 
-  // Internal transformation matrices
-  #transformMatrix: Matrix2D; // Transforms from local to parent space
-  #inverseMatrix: Matrix2D; // Transforms from parent to local space
+  #transformMatrix = M.fromIdentity(); // Transforms from local to parent space
+  #inverseMatrix = M.fromIdentity(); // Transforms from parent to local space
 
   /**
-   * Constructs a new `TransformDOMRect`.
+   * Constructs a new `DOMShape`.
    * @param init - Optional initial values.
    */
   constructor(init: DOMShapeInit = {}) {
@@ -51,11 +46,6 @@ export class DOMShape implements DOMRect {
 
     // Initialize origins with relative values (0.5, 0.5 is center)
     this.#transformOrigin = init.transformOrigin ?? { x: 0.5, y: 0.5 };
-    this.#rotateOrigin = init.rotateOrigin ?? { x: 0.5, y: 0.5 };
-
-    // Initialize transformation matrices
-    this.#transformMatrix = M.fromIdentity();
-    this.#inverseMatrix = M.fromIdentity();
 
     this.#updateMatrices();
   }
@@ -116,15 +106,6 @@ export class DOMShape implements DOMRect {
     this.#updateMatrices();
   }
 
-  /** Gets or sets the **rotation origin** as relative values (0 to 1). */
-  get rotateOrigin(): Vector2 {
-    return this.#rotateOrigin;
-  }
-  set rotateOrigin(value: Vector2) {
-    this.#rotateOrigin = value;
-    this.#updateMatrices();
-  }
-
   // DOMRect read-only properties
 
   /** The **left** coordinate of the rectangle (same as `x`). */
@@ -157,48 +138,35 @@ export class DOMShape implements DOMRect {
    * 3. **Rotate** around the rotation origin.
    * 4. **Translate** back from the transform origin.
    */
-  #updateMatrices() {
+  #updateMatrices(rotationOrigin?: Vector2) {
     // Reset the transformMatrix to identity
     M.identitySelf(this.#transformMatrix);
 
     // Get absolute positions for origins
-    const transformOrigin = this.#getAbsoluteTransformOrigin();
-    const rotateOrigin = this.#getAbsoluteRotateOrigin();
+    const transformOriginX = this.#width * this.#transformOrigin.x;
+    const transformOriginY = this.#height * this.#transformOrigin.y;
+    const rotationOriginX = this.#width * (rotationOrigin?.x || 0.5);
+    const rotationOriginY = this.#height * (rotationOrigin?.y || 0.5);
 
     // Apply transformations
     // Step 1: Translate to global position
     M.translateSelf(this.#transformMatrix, this.#x, this.#y);
+
     // Step 2: Translate to the transform origin
-    M.translateSelf(this.#transformMatrix, transformOrigin.x, transformOrigin.y);
+    M.translateSelf(this.#transformMatrix, transformOriginX, transformOriginY);
+
     // Step 3: Rotate around the rotation origin
-    M.translateSelf(this.#transformMatrix, rotateOrigin.x - transformOrigin.x, rotateOrigin.y - transformOrigin.y);
-    M.rotateSelf(this.#transformMatrix, this.#rotation);
-    M.translateSelf(
-      this.#transformMatrix,
-      -(rotateOrigin.x - transformOrigin.x),
-      -(rotateOrigin.y - transformOrigin.y),
-    );
+    M.rotateSelf(this.#transformMatrix, this.#rotation, {
+      x: rotationOriginX - transformOriginX,
+      y: rotationOriginY - transformOriginY,
+    });
+
     // Step 4: Translate back from the transform origin
-    M.translateSelf(this.#transformMatrix, -transformOrigin.x, -transformOrigin.y);
+    M.translateSelf(this.#transformMatrix, -transformOriginX, -transformOriginY);
 
     // Update inverseMatrix as the inverse of transformMatrix
     M.copy(this.#inverseMatrix, this.#transformMatrix);
     M.invertSelf(this.#inverseMatrix);
-  }
-
-  // Convert relative origins to absolute points
-  #getAbsoluteTransformOrigin(): Vector2 {
-    return {
-      x: this.#width * this.#transformOrigin.x,
-      y: this.#height * this.#transformOrigin.y,
-    };
-  }
-
-  #getAbsoluteRotateOrigin(): Vector2 {
-    return {
-      x: this.#width * this.#rotateOrigin.x,
-      y: this.#height * this.#rotateOrigin.y,
-    };
   }
 
   // Accessors for the transformation matrices
@@ -272,7 +240,7 @@ export class DOMShape implements DOMRect {
    * Gets the four corner vertices of the rectangle in **local space**.
    * @returns An array of points in the order: top-left, top-right, bottom-right, bottom-left.
    */
-  vertices(): Vector2[] {
+  get vertices(): Vector2[] {
     return [this.topLeft, this.topRight, this.bottomRight, this.bottomLeft];
   }
 
@@ -441,9 +409,9 @@ export class DOMShape implements DOMRect {
    * Computes the **axis-aligned bounding box** of the transformed rectangle in **parent space**.
    * @returns An object representing the bounding rectangle with properties: `x`, `y`, `width`, `height`.
    */
-  getBounds(): Required<DOMRectInit> {
+  get bounds(): Required<DOMRectInit> {
     // Transform all vertices to parent space
-    const transformedVertices = this.vertices().map((v) => this.toParentSpace(v));
+    const transformedVertices = this.vertices.map((v) => this.toParentSpace(v));
 
     // Find min and max coordinates
     const xs = transformedVertices.map((v) => v.x);
@@ -461,10 +429,24 @@ export class DOMShape implements DOMRect {
       height: maxY - minY,
     };
   }
+
+  /**
+   *
+   * @param angle The rotation angle in radians, **clockwise**.
+   * @param origin The origin to rotate the shape around in parent space.
+   */
+  rotate(angle: number, origin: Vector2) {
+    origin = this.toLocalSpace(origin);
+    this.#rotation = angle;
+    this.#updateMatrices({
+      x: origin.x / this.#width,
+      y: origin.y / this.height,
+    });
+  }
 }
 
 /**
- * A **read-only** version of `TransformDOMRect` that prevents modification of position,
+ * A **read-only** version of `DOMShape` that prevents modification of position,
  * size, and rotation properties.
  */
 export class DOMShapeReadonly extends DOMShape {

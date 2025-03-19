@@ -52,7 +52,7 @@ describe('DOMShape', () => {
       height: 50,
     });
 
-    const vertices = rect.vertices();
+    const vertices = rect.vertices;
     expectPointClose(vertices[0], { x: 0, y: 0 });
     expectPointClose(vertices[1], { x: 100, y: 0 });
     expectPointClose(vertices[2], { x: 100, y: 50 });
@@ -84,7 +84,7 @@ describe('DOMShape', () => {
       rotation: Math.PI / 2, // 90 degrees
     });
 
-    const bounds = rect.getBounds();
+    const bounds = rect.bounds;
     expect(bounds.width).toBeCloseTo(50);
     expect(bounds.height).toBeCloseTo(100);
   });
@@ -262,7 +262,6 @@ describe('DOMShape', () => {
       });
 
       const originalTopLeft = rect.toParentSpace(rect.topLeft);
-      const originalBottomRight = rect.toParentSpace(rect.bottomRight);
 
       // Resize from bottom-right corner in local space
       rect.bottomRight = { x: 300, y: 150 };
@@ -293,6 +292,7 @@ describe('DOMShape', () => {
         rotation: Math.PI / 4, // 45 degrees
       });
 
+      expectPointClose(rect.center, { x: 150, y: 150 }); // Center in parent space
       // Center point should remain at the same position after transformation
       const center = { x: 50, y: 50 }; // Center in local space
       const centerInParent = rect.toParentSpace(center);
@@ -423,16 +423,13 @@ describe('DOMShape', () => {
     test('constructor initializes with default origins at center', () => {
       const rect = new DOMShape();
       expectPointClose(rect.transformOrigin, { x: 0.5, y: 0.5 });
-      expectPointClose(rect.rotateOrigin, { x: 0.5, y: 0.5 });
     });
 
     test('constructor accepts custom origins', () => {
       const rect = new DOMShape({
         transformOrigin: { x: 0, y: 0 },
-        rotateOrigin: { x: 1, y: 1 },
       });
       expectPointClose(rect.transformOrigin, { x: 0, y: 0 });
-      expectPointClose(rect.rotateOrigin, { x: 1, y: 1 });
     });
 
     test('maintains point relationships with custom origins', () => {
@@ -443,7 +440,6 @@ describe('DOMShape', () => {
         height: 100,
         rotation: Math.PI / 3, // 60 degrees
         transformOrigin: { x: 0.25, y: 0.75 },
-        rotateOrigin: { x: 0.75, y: 0.25 },
       });
 
       // Test multiple points
@@ -461,6 +457,30 @@ describe('DOMShape', () => {
         expectPointClose(backToLocal, point);
       });
     });
+  });
+
+  test('rotate with origin', () => {
+    const rect = new DOMShape({
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+    });
+
+    rect.rotate(Math.PI, { x: 0, y: 0 });
+
+    expectPointClose(rect.toParentSpace(rect.topLeft), { x: 0, y: 0 });
+    expectPointClose(rect.toParentSpace(rect.topRight), { x: -1, y: 0 });
+    expectPointClose(rect.toParentSpace(rect.bottomRight), { x: -1, y: -1 });
+    expectPointClose(rect.toParentSpace(rect.bottomLeft), { x: 0, y: -1 });
+
+    // console.log(rect.vertices.map((v) => rect.toParentSpace(v)));
+    rect.rotation = Math.PI / 2;
+    // console.log(rect.vertices.map((v) => rect.toParentSpace(v)));
+    expectPointClose(rect.toParentSpace(rect.topLeft), { x: -1, y: 0 });
+    expectPointClose(rect.toParentSpace(rect.topRight), { x: -1, y: -1 });
+    expectPointClose(rect.toParentSpace(rect.bottomRight), { x: 0, y: -1 });
+    expectPointClose(rect.toParentSpace(rect.bottomLeft), { x: 0, y: 0 });
   });
 });
 
