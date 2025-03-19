@@ -55,4 +55,8 @@ bench('DOMShape: flip handles', () => {
   shape.bottomRight = handlePoint;
 });
 
+bench('DOMShape: rotate around origin', () => {
+  shape.rotate(Math.PI, { x: 0, y: 0 });
+});
+
 await run();
