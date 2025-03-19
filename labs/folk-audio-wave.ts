@@ -78,6 +78,9 @@ export class FolkAudioWave {
   static readonly GGWAVE_PROTOCOL_DT_FAST = 7;
   static readonly GGWAVE_PROTOCOL_DT_FASTEST = 8;
 
+  // Fixed sample rate for consistency
+  static readonly SAMPLE_RATE = 48000;
+
   #context: AudioContext | null = null;
   #ggwave: GGWave | null = null;
   #instance: any = null;
@@ -85,11 +88,20 @@ export class FolkAudioWave {
   #recorder: ScriptProcessorNode | null = null;
   #onDataReceived: ((data: string) => void) | null = null;
   #currentProtocol: any = null;
-  // TODO: pull this out and use Audio APIs properly :)
   #visualizer: ((node: AudioNode | null, context: AudioContext) => void) | null = null;
+  #ready: Promise<void>;
+  #gainNode: GainNode | null = null;
+  #stream: MediaStream | null = null;
 
   constructor() {
-    this.#initGGWave();
+    this.#ready = this.#initGGWave();
+  }
+
+  /**
+   * Returns a promise that resolves when the audio wave is ready to use
+   */
+  async ready(): Promise<void> {
+    return this.#ready;
   }
 
   /**
@@ -102,19 +114,19 @@ export class FolkAudioWave {
 
   async #initGGWave() {
     this.#ggwave = await ggwave_factory();
-    console.log({ ggwave: this.#ggwave });
-    this.setProtocol(FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
-  }
 
-  #ensureContext() {
-    if (!this.#context) {
-      this.#context = new AudioContext({ sampleRate: 48000 });
-      if (!this.#ggwave) throw new Error('GGWave not initialized');
-      const parameters = this.#ggwave.getDefaultParameters();
-      parameters.sampleRateInp = this.#context.sampleRate;
-      parameters.sampleRateOut = this.#context.sampleRate;
-      this.#instance = this.#ggwave.init(parameters);
+    if (!this.#ggwave) {
+      throw new Error('Failed to initialize GGWave');
     }
+
+    this.setProtocol(FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
+
+    // Create a single AudioContext at initialization
+    this.#context = new AudioContext();
+    const parameters = this.#ggwave.getDefaultParameters();
+    parameters.sampleRateInp = this.#context.sampleRate;
+    parameters.sampleRateOut = this.#context.sampleRate;
+    this.#instance = this.#ggwave.init(parameters);
   }
 
   #convertTypedArray(src: any, type: any) {
@@ -141,10 +153,14 @@ export class FolkAudioWave {
    * @param volume Volume level from 1-100
    * @returns Promise that resolves when the audio finishes playing
    */
-  async send(text: string, volume = 10): Promise<void> {
-    this.#ensureContext();
+  async send(text: string, volume = 20): Promise<void> {
     if (!this.#context) throw new Error('Audio context not initialized');
     if (!this.#ggwave) throw new Error('GGWave not initialized');
+
+    // Resume context if needed
+    if (this.#context.state === 'suspended') {
+      await this.#context.resume();
+    }
 
     const waveform = this.#ggwave.encode(this.#instance, text, this.#currentProtocol, volume);
     const buf = this.#convertTypedArray(waveform, Float32Array);
@@ -154,22 +170,29 @@ export class FolkAudioWave {
     const source = this.#context.createBufferSource();
     source.buffer = buffer;
 
-    // Create a gain node to connect both to destination and visualizer
-    const gainNode = this.#context.createGain();
-    source.connect(gainNode);
-    gainNode.connect(this.#context.destination);
+    // Create a gain node for volume control
+    this.#gainNode = this.#context.createGain();
+    this.#gainNode.gain.value = volume / 100;
+    source.connect(this.#gainNode);
+    this.#gainNode.connect(this.#context.destination);
+
+    console.log(`Playing audio message with volume ${volume}%`);
 
     // Connect to visualizer if set
     if (this.#visualizer) {
-      this.#visualizer(gainNode, this.#context);
+      this.#visualizer(this.#gainNode, this.#context);
     }
 
     return new Promise((resolve) => {
       source.onended = () => {
         resolve();
-        // Disconnect from visualizer when done
         if (this.#visualizer) {
           this.#visualizer(null, this.#context!);
+        }
+        source.disconnect();
+        if (this.#gainNode) {
+          this.#gainNode.disconnect();
+          this.#gainNode = null;
         }
       };
       source.start(0);
@@ -181,35 +204,50 @@ export class FolkAudioWave {
    * @param callback Function to call when data is received
    */
   async startListening(callback: (data: string) => void): Promise<void> {
-    this.#ensureContext();
     if (!this.#context) throw new Error('Audio context not initialized');
     if (!this.#ggwave) throw new Error('GGWave not initialized');
 
     this.#onDataReceived = callback;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
+    // Resume context if needed
+    if (this.#context.state === 'suspended') {
+      await this.#context.resume();
+    }
+
+    // Get mic permissions
+    this.#stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: false,
         autoGainControl: false,
         noiseSuppression: false,
+        channelCount: 1,
       },
     });
 
-    this.#mediaStream = this.#context.createMediaStreamSource(stream);
-    this.#recorder = this.#context.createScriptProcessor(1024, 1, 1);
+    this.#mediaStream = this.#context.createMediaStreamSource(this.#stream);
+    this.#recorder = this.#context.createScriptProcessor(4096, 1, 1);
 
     // Connect to visualizer if set
     if (this.#visualizer) {
       this.#visualizer(this.#mediaStream, this.#context);
     }
 
+    let lastLogTime = 0;
+    const LOG_INTERVAL = 5000;
+
     this.#recorder.onaudioprocess = (e) => {
       if (!this.#ggwave) return;
       const source = e.inputBuffer;
-      const res = this.#ggwave.decode(
-        this.#instance,
-        this.#convertTypedArray(new Float32Array(source.getChannelData(0)), Int8Array),
-      );
+      const audioData = source.getChannelData(0);
+
+      // Log audio levels periodically
+      const now = Date.now();
+      if (now - lastLogTime > LOG_INTERVAL) {
+        const maxLevel = Math.max(...audioData.map(Math.abs));
+        lastLogTime = now;
+      }
+
+      const res = this.#ggwave.decode(this.#instance, this.#convertTypedArray(new Float32Array(audioData), Int8Array));
 
       if (res && res.length > 0) {
         const text = new TextDecoder('utf-8').decode(res);
@@ -217,6 +255,7 @@ export class FolkAudioWave {
       }
     };
 
+    // Connect the audio nodes properly
     this.#mediaStream.connect(this.#recorder);
     this.#recorder.connect(this.#context.destination);
   }
@@ -226,11 +265,16 @@ export class FolkAudioWave {
    */
   stopListening(): void {
     if (this.#recorder && this.#context) {
-      this.#recorder.disconnect(this.#context.destination);
+      this.#recorder.disconnect();
       if (this.#mediaStream) {
-        this.#mediaStream.disconnect(this.#recorder);
+        this.#mediaStream.disconnect();
       }
       this.#recorder = null;
+    }
+
+    if (this.#stream) {
+      this.#stream.getTracks().forEach((track) => track.stop());
+      this.#stream = null;
     }
 
     // Disconnect from visualizer
@@ -249,6 +293,14 @@ export class FolkAudioWave {
     if (this.#context) {
       this.#context.close();
       this.#context = null;
+    }
+    if (this.#gainNode) {
+      this.#gainNode.disconnect();
+      this.#gainNode = null;
+    }
+    if (this.#stream) {
+      this.#stream.getTracks().forEach((track) => track.stop());
+      this.#stream = null;
     }
     this.#instance = null;
     this.#visualizer = null;

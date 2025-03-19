@@ -12,6 +12,8 @@ export interface QRTPBState {
   maxSeenIndex: number; // Highest character index seen
   isTransmissionComplete: boolean;
   receivedText: string; // The partially or fully assembled text
+  excludedRanges: Array<[number, number]>; // Array of [start, end] ranges that have been acknowledged
+  totalLength: number; // Total length of the data being sent
 }
 
 export interface QRTPBChunk {
@@ -22,8 +24,9 @@ export interface QRTPBChunk {
 
 export class QRTPB {
   // Static configuration
-  static readonly DEFAULT_CHUNK_SIZE: number = 200;
-  static readonly QR_CYCLE_INTERVAL: number = 500; // ms between QR code updates
+  static readonly DEFAULT_CHUNK_SIZE: number = 1000;
+  static readonly QR_CYCLE_INTERVAL: number = 250; // ms between QR code updates
+  static readonly DONE_SIGNAL: string = 'DONE'; // Signal for completion
 
   // Current mode
   private mode: QRTPBMode = 'send';
@@ -48,6 +51,15 @@ export class QRTPB {
   // Callbacks
   private messageLogCallback: MessageLogCallback | null = null;
   private onChangeCallback: OnChangeCallback | null = null;
+
+  // Backchannel state
+  private excludedRanges: Array<[number, number]> = [];
+  private lastBackchannelUpdate: number = 0;
+  private static readonly BACKCHANNEL_INTERVAL: number = 4000; // 4 seconds
+
+  // Completion state
+  private receiverDone: boolean = false;
+  private senderDone: boolean = false;
 
   constructor(messageLogCallback?: MessageLogCallback, onChangeCallback?: OnChangeCallback) {
     this.messageLogCallback = messageLogCallback || null;
@@ -78,6 +90,8 @@ export class QRTPB {
         maxSeenIndex: this.maxSeenIndex,
         isTransmissionComplete: this.isTransmissionComplete(),
         receivedText: this.receivedText,
+        excludedRanges: this.senderDone ? [[0, (this.dataToSend?.length || 1) - 1]] : this.excludedRanges,
+        totalLength: this.dataToSend?.length || 0,
       };
       this.onChangeCallback(state);
     }
@@ -142,14 +156,41 @@ export class QRTPB {
       return `${this.protocolPrefix}:idle`;
     }
 
-    const chunk = this.chunks[this.currentChunkIndex];
+    // Show DONE if we're done
+    if (this.senderDone || (this.isAllChunksExcluded() && this.dataToSend)) {
+      return `${this.protocolPrefix}:${QRTPB.DONE_SIGNAL}`;
+    }
+
+    // Filter out chunks that are fully contained in excluded ranges
+    const availableChunks = this.chunks.filter((chunk) => {
+      return !this.excludedRanges.some((range) => chunk.startIndex >= range[0] && chunk.endIndex <= range[1]);
+    });
+
+    if (availableChunks.length === 0) {
+      // All chunks are excluded, cycle through them anyway in case of lost messages
+      this.currentChunkIndex = (this.currentChunkIndex + 1) % this.chunks.length;
+      const chunk = this.chunks[this.currentChunkIndex];
+      return `${this.protocolPrefix}:${chunk.startIndex}-${chunk.endIndex}/${this.dataToSend.length}:${chunk.data}`;
+    }
+
+    // Use modulo on available chunks length
+    const index = this.currentChunkIndex % availableChunks.length;
+    const chunk = availableChunks[index];
+
     const qrData = `${this.protocolPrefix}:${chunk.startIndex}-${chunk.endIndex}/${this.dataToSend.length}:${chunk.data}`;
 
     // Move to next chunk for next cycle
-    this.currentChunkIndex = (this.currentChunkIndex + 1) % this.chunks.length;
+    this.currentChunkIndex = (this.currentChunkIndex + 1) % availableChunks.length;
 
-    this.logMessage('outgoing', 'qr', `Displaying chunk ${this.currentChunkIndex}`, qrData);
     return qrData;
+  }
+
+  // Check if all chunks are excluded (received by receiver)
+  private isAllChunksExcluded(): boolean {
+    if (!this.dataToSend || this.chunks.length === 0) return false;
+    return this.chunks.every((chunk) =>
+      this.excludedRanges.some((range) => chunk.startIndex >= range[0] && chunk.endIndex <= range[1]),
+    );
   }
 
   // Process received QR code data
@@ -160,8 +201,16 @@ export class QRTPB {
     }
 
     const parts = data.split(':');
-    if (parts.length !== 3) {
+    if (parts.length !== 2 && parts.length !== 3) {
       this.logMessage('incoming', 'error', 'Invalid QR code format');
+      return;
+    }
+
+    // Check for DONE signal
+    if (parts[1] === QRTPB.DONE_SIGNAL) {
+      this.logMessage('incoming', 'success', 'Received DONE signal from sender');
+      this.receiverDone = true;
+      this.notifyChange();
       return;
     }
 
@@ -271,6 +320,10 @@ export class QRTPB {
     this.receivedRanges = [];
     this.maxSeenIndex = 0;
     this.receivedText = '';
+    this.excludedRanges = [];
+    this.lastBackchannelUpdate = 0;
+    this.receiverDone = false;
+    this.senderDone = false;
 
     if (this.qrCycleInterval) {
       clearInterval(this.qrCycleInterval);
@@ -284,5 +337,84 @@ export class QRTPB {
   // Clean up resources
   dispose(): void {
     this.reset();
+  }
+
+  // Process backchannel message from receiver
+  processBackchannelMessage(message: string): void {
+    try {
+      // Check for DONE signal
+      if (message === QRTPB.DONE_SIGNAL) {
+        this.logMessage('incoming', 'success', 'Received DONE signal from receiver');
+        this.senderDone = true;
+        this.notifyChange();
+        return;
+      }
+
+      // Format: "R:start1-end1,start2-end2,..."
+      if (!message.startsWith('R:')) {
+        this.logMessage('incoming', 'backchannel', `Ignored non-range message: ${message}`);
+        return;
+      }
+
+      const ranges = message
+        .substring(2)
+        .split(',')
+        .map((range) => {
+          const [start, end] = range.split('-').map(Number);
+          return [start, end] as [number, number];
+        })
+        .filter((range) => !isNaN(range[0]) && !isNaN(range[1]));
+
+      if (ranges.length === 0) {
+        this.logMessage('incoming', 'backchannel', 'Received empty or invalid ranges');
+        return;
+      }
+
+      this.excludedRanges = ranges;
+      this.logMessage(
+        'incoming',
+        'backchannel',
+        `Received ${ranges.length} ranges from receiver`,
+        ranges.map((r) => `${r[0]}-${r[1]}`).join(', '),
+      );
+
+      // Log how many chunks are now excluded
+      const excludedCount = this.chunks.filter((chunk) =>
+        this.excludedRanges.some((range) => chunk.startIndex >= range[0] && chunk.endIndex <= range[1]),
+      ).length;
+      this.logMessage('system', 'info', `${excludedCount} of ${this.chunks.length} chunks are now excluded`);
+
+      this.notifyChange();
+    } catch (e) {
+      this.logMessage('incoming', 'error', `Failed to process backchannel message: ${e}`);
+    }
+  }
+
+  // Get backchannel message for sender
+  getBackchannelMessage(): string | null {
+    const now = Date.now();
+    if (now - this.lastBackchannelUpdate < QRTPB.BACKCHANNEL_INTERVAL) {
+      return null;
+    }
+
+    this.lastBackchannelUpdate = now;
+
+    // If receiver has all chunks, send DONE signal
+    if (this.isTransmissionComplete()) {
+      this.logMessage('outgoing', 'success', 'Sending DONE signal to sender');
+      return QRTPB.DONE_SIGNAL;
+    }
+
+    if (this.receivedRanges.length === 0) return null;
+
+    // Format ranges as compact string
+    const message = 'R:' + this.receivedRanges.map((range) => `${range[0]}-${range[1]}`).join(',');
+    this.logMessage(
+      'outgoing',
+      'backchannel',
+      `Sending ranges update`,
+      this.receivedRanges.map((r) => `${r[0]}-${r[1]}`).join(', '),
+    );
+    return message;
   }
 }

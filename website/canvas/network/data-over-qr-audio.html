@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
-    <title>Data over QR</title>
+    <title>Data over QR with Audio Backchannel</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <style>
       * {
@@ -294,7 +294,7 @@
   </head>
   <body>
     <div class="app">
-      <h1 class="title">Data over QR</h1>
+      <h1 class="title">Data over QR with Audio Backchannel</h1>
 
       <div class="tabs">
         <button class="tab active" id="sendTab">Send Data</button>
@@ -310,6 +310,13 @@
           <label class="text-label">Message to Send</label>
           <textarea class="text-area" id="txData">Hello from Folk Canvas!</textarea>
           <div id="chunkInfo" style="font-size: 12px; margin-top: 4px; color: #666"></div>
+        </div>
+
+        <div class="progress-container">
+          <label class="text-label">Acknowledged Chunks</label>
+          <div class="progress-bar" id="senderProgressBar">
+            <div class="progress-text" id="senderProgressText">0%</div>
+          </div>
         </div>
 
         <div class="log" id="sendLog"></div>
@@ -343,9 +350,10 @@
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
-    <!-- Import QRTPB module -->
+    <!-- Import QRTPB and FolkAudioWave modules -->
     <script type="module">
       import { QRTPB } from '@labs/QRTPB.ts';
+      import { FolkAudioWave } from '@labs/folk-audio-wave.ts';
 
       // DOM elements
       const sendTab = document.getElementById('sendTab');
@@ -368,7 +376,7 @@
       let scanInterval = null;
       const canvasContext = canvas.getContext('2d');
 
-      // Create single QRTPB instance
+      // Create QRTPB instance
       const qrtpb = new QRTPB(
         (direction, type, message, data) => {
           // Create log entry
@@ -394,10 +402,63 @@
           const log = qrtpb.getMode() === 'send' ? sendLog : receiveLog;
           log.appendChild(entry);
           log.scrollTop = log.scrollHeight;
+
+          // If this is a success message about completion, update UI
+          if (type === 'success' && message.includes('DONE')) {
+            if (qrtpb.getMode() === 'receive') {
+              // Stop audio backchannel when we see DONE from sender
+              audioWave.stopListening();
+            }
+          }
         },
         (state) => {
           if (state.mode === 'send') {
             generateQRCode();
+
+            // Update sender progress visualization
+            const senderProgressBar = document.getElementById('senderProgressBar');
+            const senderProgressText = document.getElementById('senderProgressText');
+
+            // Clear existing segments
+            senderProgressBar.querySelectorAll('.progress-segment').forEach((segment) => segment.remove());
+
+            if (state.excludedRanges && state.excludedRanges.length > 0 && state.totalLength > 0) {
+              // Calculate total percentage for progress text
+              let totalAcknowledged = 0;
+              state.excludedRanges.forEach(([start, end]) => {
+                totalAcknowledged += end - start + 1;
+              });
+              const percentage = Math.round((totalAcknowledged / state.totalLength) * 100) || 0;
+              senderProgressText.textContent = `${percentage}%`;
+
+              // Create segments for each acknowledged range
+              state.excludedRanges.forEach(([start, end]) => {
+                const segment = document.createElement('div');
+                segment.className = 'progress-segment';
+
+                // Calculate position and width as percentages
+                const left = (start / state.totalLength) * 100;
+                const width = ((end - start + 1) / state.totalLength) * 100;
+
+                segment.style.left = `${left}%`;
+                segment.style.width = `${width}%`;
+
+                // Add a tooltip showing the range
+                segment.title = `Characters ${start}-${end}`;
+
+                senderProgressBar.appendChild(segment);
+              });
+
+              // Add/remove complete class
+              if (percentage === 100) {
+                senderProgressBar.classList.add('complete');
+              } else {
+                senderProgressBar.classList.remove('complete');
+              }
+            } else {
+              senderProgressText.textContent = '0%';
+              senderProgressBar.classList.remove('complete');
+            }
           } else {
             // Update received text
             receivedText.value = state.receivedText || '';
@@ -445,6 +506,46 @@
           }
         },
       );
+
+      // Create FolkAudioWave instance
+      const audioWave = new FolkAudioWave();
+      let audioWaveReady = false;
+
+      // Audio backchannel state
+      let isAudioInitialized = false;
+
+      // Initialize audio backchannel
+      const initAudioBackchannel = async () => {
+        if (isAudioInitialized) return;
+
+        // Wait for FolkAudioWave to be ready
+        if (!audioWaveReady) {
+          await audioWave.ready();
+          audioWaveReady = true;
+        }
+
+        // Start listening in both modes
+        await audioWave.startListening((data) => {
+          // Process received backchannel message
+          qrtpb.processBackchannelMessage(data);
+        });
+
+        // Start backchannel update interval
+        setInterval(async () => {
+          if (qrtpb.getMode() === 'receive') {
+            const message = qrtpb.getBackchannelMessage();
+            if (message) {
+              try {
+                await audioWave.send(message, 20);
+              } catch (e) {
+                console.error('Failed to send backchannel message:', e);
+              }
+            }
+          }
+        }, QRTPB.BACKCHANNEL_INTERVAL);
+
+        isAudioInitialized = true;
+      };
 
       // Generate QR code
       const generateQRCode = () => {
@@ -524,7 +625,7 @@
       };
 
       // Mode switching function
-      const switchMode = (mode) => {
+      const switchMode = async (mode) => {
         qrtpb.setMode(mode);
 
         if (mode === 'send') {
@@ -533,6 +634,13 @@
           sendPanel.classList.add('active');
           receivePanel.classList.remove('active');
           stopCamera();
+
+          // Initialize audio backchannel
+          try {
+            await initAudioBackchannel();
+          } catch (e) {
+            console.error('Failed to initialize audio backchannel:', e);
+          }
 
           // Initialize with any existing text
           const text = txData.value.trim();
@@ -543,6 +651,13 @@
           sendPanel.classList.remove('active');
           receivePanel.classList.add('active');
           startCamera();
+
+          // Initialize audio backchannel
+          try {
+            await initAudioBackchannel();
+          } catch (e) {
+            console.error('Failed to initialize audio backchannel:', e);
+          }
         }
       };
 
@@ -566,6 +681,12 @@
 
       // Start in send mode
       switchMode('send');
+
+      // Clean up function
+      window.addEventListener('beforeunload', () => {
+        audioWave.dispose();
+        qrtpb.dispose();
+      });
     </script>
   </body>
 </html>
