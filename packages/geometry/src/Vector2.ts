@@ -199,9 +199,9 @@ export function rotate(v: Vector2, angle: number): Vector2 {
  * @param {number} angle - The angle in radians
  * @returns The rotated Vector2
  */
-export function rotateAround(Vector2: Vector2, pivot: Vector2, angle: number): Vector2 {
-  const dx = Vector2.x - pivot.x;
-  const dy = Vector2.y - pivot.y;
+export function rotateAround(v: Vector2, pivot: Vector2, angle: number): Vector2 {
+  const dx = v.x - pivot.x;
+  const dy = v.y - pivot.y;
   const c = cos(angle);
   const s = sin(angle);
   return {
@@ -259,16 +259,18 @@ export function magSquared(v: Vector2): number {
 /**
  * Calculates the bounding box of a set of Vector2s
  * @param {Vector2[]} Vector2s - Array of Vector2s to find bounds for
- * @returns {{ min: Vector2, max: Vector2 }} Object containing min and max Vector2s of the bounds
+ * @returns Object containing min and max Vector2s of the bounds
  */
-export function bounds(Vector2s: Vector2[]): { min: Vector2; max: Vector2 } {
-  return Vector2s.reduce(
-    (acc, p) => ({
-      min: { x: Math.min(acc.min.x, p.x), y: Math.min(acc.min.y, p.y) },
-      max: { x: Math.max(acc.max.x, p.x), y: Math.max(acc.max.y, p.y) },
-    }),
-    { min: { x: Infinity, y: Infinity }, max: { x: -Infinity, y: -Infinity } },
-  );
+export function bounds(vs: Vector2[]) {
+  const x = vs.map((v) => v.x);
+  const y = vs.map((v) => v.y);
+
+  return {
+    minX: Math.min.apply(null, x),
+    maxX: Math.max.apply(null, x),
+    minY: Math.min.apply(null, y),
+    maxY: Math.max.apply(null, y),
+  };
 }
 
 /**
@@ -276,11 +278,11 @@ export function bounds(Vector2s: Vector2[]): { min: Vector2; max: Vector2 } {
  * @param {Vector2[]} Vector2s - Array of Vector2s to find center for
  * @returns The center Vector2
  */
-export function center(Vector2s: Vector2[]): Vector2 {
-  const { min, max } = bounds(Vector2s);
+export function center(...vs: Vector2[]): Vector2 {
+  const { minX, maxX, minY, maxY } = bounds(vs);
   return {
-    x: (min.x + max.x) / 2,
-    y: (min.y + max.y) / 2,
+    x: (minX + maxX) / 2,
+    y: (minY + maxY) / 2,
   };
 }
 
@@ -290,8 +292,17 @@ export function center(Vector2s: Vector2[]): Vector2 {
  * @param {Vector2} axis - The axis to project onto
  * @returns The projected Vector2
  */
-export function project(Vector2: Vector2, axis: Vector2): Vector2 {
+export function project(v: Vector2, axis: Vector2): Vector2 {
   const n = normalized(axis);
-  const dot = Vector2.x * n.x + Vector2.y * n.y;
+  const dot = v.x * n.x + v.y * n.y;
   return scale(n, dot);
+}
+
+/**
+ * Clone a vector
+ * @param v
+ * @returns a cloned vector
+ */
+export function clone(v: Vector2): Vector2 {
+  return { x: v.x, y: v.y };
 }

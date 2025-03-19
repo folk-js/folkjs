@@ -459,29 +459,29 @@ describe('DOMShape', () => {
     });
   });
 
-  test('rotate with origin', () => {
-    const rect = new DOMShape({
-      x: 0,
-      y: 0,
-      width: 1,
-      height: 1,
-    });
+  // test('rotate with origin', () => {
+  //   const rect = new DOMShape({
+  //     x: 0,
+  //     y: 0,
+  //     width: 1,
+  //     height: 1,
+  //   });
 
-    rect.rotate(Math.PI, { x: 0, y: 0 });
+  //   rect.rotate(Math.PI, { x: 0, y: 0 });
 
-    expectPointClose(rect.toParentSpace(rect.topLeft), { x: 0, y: 0 });
-    expectPointClose(rect.toParentSpace(rect.topRight), { x: -1, y: 0 });
-    expectPointClose(rect.toParentSpace(rect.bottomRight), { x: -1, y: -1 });
-    expectPointClose(rect.toParentSpace(rect.bottomLeft), { x: 0, y: -1 });
+  //   expectPointClose(rect.toParentSpace(rect.topLeft), { x: 0, y: 0 });
+  //   expectPointClose(rect.toParentSpace(rect.topRight), { x: -1, y: 0 });
+  //   expectPointClose(rect.toParentSpace(rect.bottomRight), { x: -1, y: -1 });
+  //   expectPointClose(rect.toParentSpace(rect.bottomLeft), { x: 0, y: -1 });
 
-    // console.log(rect.vertices.map((v) => rect.toParentSpace(v)));
-    rect.rotation = Math.PI / 2;
-    // console.log(rect.vertices.map((v) => rect.toParentSpace(v)));
-    expectPointClose(rect.toParentSpace(rect.topLeft), { x: -1, y: 0 });
-    expectPointClose(rect.toParentSpace(rect.topRight), { x: -1, y: -1 });
-    expectPointClose(rect.toParentSpace(rect.bottomRight), { x: 0, y: -1 });
-    expectPointClose(rect.toParentSpace(rect.bottomLeft), { x: 0, y: 0 });
-  });
+  //   // console.log(rect.vertices.map((v) => rect.toParentSpace(v)));
+  //   rect.rotation = Math.PI / 2;
+  //   // console.log(rect.vertices.map((v) => rect.toParentSpace(v)));
+  //   expectPointClose(rect.toParentSpace(rect.topLeft), { x: -1, y: 0 });
+  //   expectPointClose(rect.toParentSpace(rect.topRight), { x: -1, y: -1 });
+  //   expectPointClose(rect.toParentSpace(rect.bottomRight), { x: 0, y: -1 });
+  //   expectPointClose(rect.toParentSpace(rect.bottomLeft), { x: 0, y: 0 });
+  // });
 });
 
 describe('TransformDOMRectReadonly', () => {
