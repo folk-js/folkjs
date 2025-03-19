@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
+    <meta charset="utf-8" />
     <title>Data over Sound</title>
     <style>
       * {
@@ -18,14 +19,14 @@
         min-height: 100%;
         position: relative;
         margin: 0;
-        font-family: Arial, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       }
 
       folk-shape {
-        background: rgb(248, 248, 248);
-        border-radius: 8px;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        background: #fff;
+        border: 1px solid #ccc;
         padding: 12px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
       }
 
       .info-panel {
@@ -33,108 +34,160 @@
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        background: transparent;
-        padding: 20px 25px;
+        background: #fafafa;
+        padding: 24px 32px;
         text-align: center;
         font-size: 14px;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
+        border: 1px solid #eee;
         max-width: 80%;
       }
 
       .info-title {
-        font-size: 20px;
-        font-weight: bold;
-        margin-bottom: 12px;
-        color: #333;
+        font-size: 24px;
+        font-weight: 500;
+        margin-bottom: 16px;
+        color: #222;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       .warning {
-        color: #ff5722;
-        font-weight: bold;
+        color: #222;
+        font-weight: 500;
         display: block;
-        margin-top: 12px;
-        font-size: 16px;
+        margin-top: 16px;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       textarea {
         width: 100%;
-        border-radius: 4px;
-        border: 1px solid #ddd;
-        padding: 8px;
-        margin-bottom: 8px;
+        border: 1px solid #222;
+        padding: 12px;
+        margin-bottom: 12px;
+        font-family: inherit;
         font-size: 14px;
+        line-height: 1.5;
         resize: none;
+        background: transparent;
+      }
+
+      textarea:hover {
+        border-color: #000;
+      }
+
+      textarea:focus {
+        outline: none;
+        border-color: #000;
       }
 
       textarea:disabled {
-        background-color: white;
-        color: black;
+        background: #fafafa;
+        color: #222;
+        border-color: #222;
       }
 
       button {
-        padding: 6px 12px;
-        background-color: #4caf50;
-        color: white;
+        padding: 8px 16px;
+        background: #222;
+        color: #fff;
         border: none;
-        border-radius: 4px;
         cursor: pointer;
         font-size: 14px;
         min-width: 80px;
+        font-family: inherit;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       button:hover {
-        background-color: #45a049;
+        background: #000;
       }
 
       button.toggle {
-        background-color: #2196f3;
+        background: transparent;
+        color: #222;
+        border: 1px solid #222;
       }
 
       button.toggle:hover {
-        background-color: #1976d2;
+        background: #fafafa;
+        border-color: #000;
+        color: #000;
       }
 
       button.toggle.active {
-        background-color: #1565c0;
+        background: #222;
+        color: #fff;
+        border-color: #222;
+      }
+
+      button.toggle.active:hover {
+        background: #000;
+        border-color: #000;
       }
 
       button.listen {
-        background-color: #9c27b0;
+        background: transparent;
+        color: #222;
+        border: 1px solid #222;
       }
 
       button.listen:hover {
-        background-color: #7b1fa2;
+        background: #fafafa;
+        border-color: #000;
+        color: #000;
+      }
+
+      button.listen.active {
+        background: #222;
+        color: #fff;
+        border-color: #222;
+      }
+
+      button.listen.active:hover {
+        background: #000;
+        border-color: #000;
       }
 
       button:disabled {
-        background-color: #cccccc;
+        background: #ddd;
+        border-color: #ddd;
+        color: #888;
         cursor: not-allowed;
       }
 
       .controls {
         display: flex;
-        gap: 8px;
+        gap: 12px;
         align-items: center;
       }
 
-      .mode-indicator {
-        margin-left: auto;
-        font-size: 12px;
-        color: #666;
-      }
-
       h3 {
-        margin-top: 0;
-        margin-bottom: 8px;
-        color: #333;
-        font-size: 16px;
+        margin: 0 0 8px 0;
+        color: #222;
+        font-size: 14px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       folk-spectrogram {
         width: 100%;
-        height: 300px;
+        height: 280px;
         display: block;
+      }
+
+      a {
+        color: #222;
+        text-decoration: none;
+        border-bottom: 1px solid #222;
+      }
+
+      a:hover {
+        color: #000;
+        border-bottom: 1px solid #000;
       }
     </style>
   </head>
@@ -145,7 +198,7 @@
         >Use your speaker and microphone to send and receive data between 2 or more devices with
         <a href="https://github.com/ggerganov/ggwave">ggwave</a>.</p
       >
-      <span class="warning">Volume can be loud!</span>
+      <span class="warning">⚠️ Volume can be loud</span>
     </div>
 
     <!-- Sender Shape -->
@@ -170,7 +223,7 @@ Hello from Folk Canvas!</textarea
     </folk-shape>
 
     <!-- Spectrogram Shape -->
-    <folk-shape x="50" y="280" width="650" height="350">
+    <folk-shape x="50" y="280" width="650">
       <h3>Spectrogram</h3>
       <folk-spectrogram id="spectrogram" scaling="log"></folk-spectrogram>
     </folk-shape>
@@ -204,9 +257,15 @@ Hello from Folk Canvas!</textarea
 
       // Send message
       sendButton.addEventListener('click', async () => {
+        if (!messageToSend.value.trim()) return;
+
         // Disable button while sending
         sendButton.disabled = true;
-        await wave.send(messageToSend.value, 10);
+        try {
+          await wave.send(messageToSend.value, 10);
+        } catch (error) {
+          console.error('Failed to send message:', error);
+        }
         sendButton.disabled = false;
       });
 
@@ -217,9 +276,11 @@ Hello from Folk Canvas!</textarea
         if (isListening) {
           wave.stopListening();
           listenButton.textContent = 'Start Listening';
+          listenButton.classList.remove('active');
           receivedMessages.value = '';
         } else {
           listenButton.textContent = 'Stop Listening';
+          listenButton.classList.add('active');
           await wave.startListening((text) => {
             const timestamp = new Date().toLocaleTimeString();
             receivedMessages.value = `[${timestamp}] ${text}\n${receivedMessages.value}`;
