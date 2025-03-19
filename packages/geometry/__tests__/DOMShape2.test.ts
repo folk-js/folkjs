@@ -296,6 +296,31 @@ describe('DOMShape2', () => {
 
       expectPointClose(rect.topLeft, oldTopLeft);
     });
+
+    test.only('rotate with origin', () => {
+      const rect = new DOMShape({
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      });
+
+      // rotate around origin
+      rect.rotate(Math.PI, { x: 0, y: 0 });
+
+      expectPointClose(rect.topLeft, { x: 0, y: 0 });
+      expectPointClose(rect.topRight, { x: -1, y: 0 });
+      expectPointClose(rect.bottomRight, { x: -1, y: -1 });
+      expectPointClose(rect.bottomLeft, { x: 0, y: -1 });
+
+      // rotate around center
+      rect.rotation = Math.PI / 2;
+
+      expectPointClose(rect.topLeft, { x: -1, y: 0 });
+      expectPointClose(rect.topRight, { x: -1, y: -1 });
+      expectPointClose(rect.bottomRight, { x: 0, y: -1 });
+      expectPointClose(rect.bottomLeft, { x: 0, y: 0 });
+    });
   });
 
   //   describe('point conversion with rotation', () => {

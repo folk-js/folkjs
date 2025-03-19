@@ -1,4 +1,3 @@
-import { cos, sin } from './utilities.js';
 import type { Vector2, Vector2Readonly } from './Vector2.js';
 import * as V from './Vector2.js';
 
@@ -128,6 +127,7 @@ export class DOMShape implements DOMRect {
   }
   set rotation(value: number) {
     this.#rotation = value;
+    this.#invalidate();
   }
 
   get topLeft(): Vector2Readonly {
@@ -137,7 +137,7 @@ export class DOMShape implements DOMRect {
     return this.#topLeft;
   }
   set topLeft(value) {
-    this.#updateTopLeftAndBottomCorners(value, this.bottomRight);
+    this.#updateTopLeftAndBottomRightCorners(value, this.bottomRight);
   }
 
   get topRight(): Vector2Readonly {
@@ -161,7 +161,7 @@ export class DOMShape implements DOMRect {
     return this.#bottomRight!;
   }
   set bottomRight(value) {
-    this.#updateTopLeftAndBottomCorners(this.topLeft, value);
+    this.#updateTopLeftAndBottomRightCorners(this.topLeft, value);
   }
 
   get bottomLeft(): Vector2Readonly {
@@ -172,12 +172,20 @@ export class DOMShape implements DOMRect {
     this.#updateTopRightAndBottomLeftCorners(this.topRight, value);
   }
 
-  #updateTopLeftAndBottomCorners(topLeft: Vector2Readonly, bottomRight: Vector2Readonly) {
+  rotate(angle: number, origin: Vector2) {
+    const topLeft = V.rotateAround(this.topLeft, origin, angle);
+    const bottomRight = V.rotateAround(this.bottomRight, origin, angle);
+    this.#rotation = angle;
+    this.#updateTopLeftAndBottomRightCorners(topLeft, bottomRight);
+  }
+
+  #updateTopLeftAndBottomRightCorners(topLeft: Vector2Readonly, bottomRight: Vector2Readonly) {
     const newCenter = {
       x: (topLeft.x + bottomRight.x) / 2,
       y: (topLeft.y + bottomRight.y) / 2,
     };
 
+    // Undo corner rotations
     const newTopLeft = V.rotateAround(topLeft, newCenter, -this.#rotation);
     const newBottomRight = V.rotateAround(bottomRight, newCenter, -this.#rotation);
 
@@ -194,6 +202,7 @@ export class DOMShape implements DOMRect {
       y: (bottomLeft.y + topRight.y) / 2,
     };
 
+    // Undo corner rotations
     const newTopRight = V.rotateAround(topRight, newCenter, -this.#rotation);
     const newBottomLeft = V.rotateAround(bottomLeft, newCenter, -this.#rotation);
 

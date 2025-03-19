@@ -53,7 +53,7 @@ export function down(): Vector2 {
  * @param {Vector2} b - The vector to subtract
  * @returns The resulting vector
  */
-export function subtract(a: Vector2, b: Vector2): Vector2 {
+export function subtract(a: Vector2Readonly, b: Vector2Readonly): Vector2 {
   return { x: a.x - b.x, y: a.y - b.y };
 }
 
@@ -63,7 +63,7 @@ export function subtract(a: Vector2, b: Vector2): Vector2 {
  * @param {Vector2} b - The second vector
  * @returns The sum of the two vectors
  */
-export function add(a: Vector2, b: Vector2): Vector2 {
+export function add(a: Vector2Readonly, b: Vector2Readonly): Vector2 {
   return { x: a.x + b.x, y: a.y + b.y };
 }
 
@@ -73,7 +73,7 @@ export function add(a: Vector2, b: Vector2): Vector2 {
  * @param {Vector2} b - The second vector
  * @returns The component-wise product of the two vectors
  */
-export function multiply(a: Vector2, b: Vector2): Vector2 {
+export function multiply(a: Vector2Readonly, b: Vector2Readonly): Vector2 {
   return { x: a.x * b.x, y: a.y * b.y };
 }
 
@@ -83,7 +83,7 @@ export function multiply(a: Vector2, b: Vector2): Vector2 {
  * @param {number} scaleFactor - The scaling factor
  * @returns The scaled vector
  */
-export function scale(v: Vector2, scaleFactor: number): Vector2 {
+export function scale(v: Vector2Readonly, scaleFactor: number): Vector2 {
   return { x: v.x * scaleFactor, y: v.y * scaleFactor };
 }
 
@@ -92,7 +92,7 @@ export function scale(v: Vector2, scaleFactor: number): Vector2 {
  * @param {Vector2} v - The vector
  * @returns The magnitude of the vector
  */
-export function magnitude(v: Vector2): number {
+export function magnitude(v: Vector2Readonly): number {
   return Math.sqrt(v.x * v.x + v.y * v.y);
 }
 
@@ -102,7 +102,7 @@ export function magnitude(v: Vector2): number {
  * @param {Vector2} b - The second vector
  * @returns The cross product of the two vectors
  */
-export function cross(a: Vector2, b: Vector2): number {
+export function cross(a: Vector2Readonly, b: Vector2Readonly): number {
   return a.x * b.y - a.y * b.x;
 }
 
@@ -111,7 +111,7 @@ export function cross(a: Vector2, b: Vector2): number {
  * @param {Vector2} v - The vector to normalize
  * @returns The normalized vector
  */
-export function normalized(v: Vector2): Vector2 {
+export function normalized(v: Vector2Readonly): Vector2 {
   const { x, y } = v;
   const magnitude = hypot(x, y);
   if (magnitude === 0) return { x: 0, y: 0 };
@@ -124,7 +124,7 @@ export function normalized(v: Vector2): Vector2 {
  * @param {Vector2} v - The vector to get the perpendicular of
  * @returns The perpendicular vector
  */
-export function normal(v: Vector2): Vector2 {
+export function normal(v: Vector2Readonly): Vector2 {
   return { x: -v.y, y: v.x };
 }
 
@@ -134,7 +134,7 @@ export function normal(v: Vector2): Vector2 {
  * @param {Vector2} b - The second vector
  * @returns {number} The dot product of the two vectors
  */
-export function dotProduct(a: Vector2, b: Vector2): number {
+export function dotProduct(a: Vector2Readonly, b: Vector2Readonly): number {
   return a.x * b.x + a.y * b.y;
 }
 
@@ -144,7 +144,7 @@ export function dotProduct(a: Vector2, b: Vector2): number {
  * @param {Vector2} b - The second Vector2
  * @returns {number} The distance between the Vector2s
  */
-export function distance(a: Vector2, b: Vector2): number {
+export function distance(a: Vector2Readonly, b: Vector2Readonly): number {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
   return Math.sqrt(dx * dx + dy * dy);
@@ -157,7 +157,7 @@ export function distance(a: Vector2, b: Vector2): number {
  * @param {Vector2} b - The second Vector2
  * @returns {number} The squared distance between the Vector2s
  */
-export function distanceSquared(a: Vector2, b: Vector2): number {
+export function distanceSquared(a: Vector2Readonly, b: Vector2Readonly): number {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
   return dx * dx + dy * dy;
@@ -170,7 +170,7 @@ export function distanceSquared(a: Vector2, b: Vector2): number {
  * @param {number} t - The interpolation parameter (0-1)
  * @returns The interpolated Vector2
  */
-export function lerp(a: Vector2, b: Vector2, t: number): Vector2 {
+export function lerp(a: Vector2Readonly, b: Vector2Readonly, t: number): Vector2 {
   return {
     x: a.x + (b.x - a.x) * t,
     y: a.y + (b.y - a.y) * t,
@@ -183,7 +183,7 @@ export function lerp(a: Vector2, b: Vector2, t: number): Vector2 {
  * @param {number} angle - The angle in radians
  * @returns The rotated vector
  */
-export function rotate(v: Vector2, angle: number): Vector2 {
+export function rotate(v: Vector2Readonly, angle: number): Vector2 {
   const _cos = cos(angle);
   const _sin = sin(angle);
   return {
@@ -193,17 +193,17 @@ export function rotate(v: Vector2, angle: number): Vector2 {
 }
 
 /**
- * Rotates a Vector2 around a pivot Vector2 by a given angle (in radians)
+ * Rotates a Vector2 around a pivot Vector2 by a given angle (in radians), **clockwise**
  * @param {Vector2} Vector2 - The Vector2 to rotate
  * @param {Vector2} pivot - The Vector2 to rotate around
  * @param {number} angle - The angle in radians
  * @returns The rotated Vector2
  */
-export function rotateAround(v: Vector2, pivot: Vector2, angle: number): Vector2 {
+export function rotateAround(v: Vector2Readonly, pivot: Vector2Readonly, angle: number): Vector2 {
   const dx = v.x - pivot.x;
   const dy = v.y - pivot.y;
-  const c = cos(angle);
-  const s = sin(angle);
+  const c = cos(-angle);
+  const s = sin(-angle);
   return {
     x: pivot.x + dx * c - dy * s,
     y: pivot.y + dx * s + dy * c,
@@ -215,7 +215,7 @@ export function rotateAround(v: Vector2, pivot: Vector2, angle: number): Vector2
  * @param {Vector2} v - The vector
  * @returns {number} The angle in radians
  */
-export function angle(v: Vector2): number {
+export function angle(v: Vector2Readonly): number {
   return atan2(v.y, v.x);
 }
 
@@ -225,7 +225,7 @@ export function angle(v: Vector2): number {
  * @param {Vector2} b - The second vector (optional, defaults to positive x-axis unit vector)
  * @returns {number} The angle in radians
  */
-export function angleTo(a: Vector2, b: Vector2 = { x: 1, y: 0 }): number {
+export function angleTo(a: Vector2Readonly, b: Vector2Readonly = { x: 1, y: 0 }): number {
   // Get the angle of each vector relative to x-axis
   const angleA = angle(a);
   const angleB = angle(b);
@@ -240,7 +240,7 @@ export function angleTo(a: Vector2, b: Vector2 = { x: 1, y: 0 }): number {
  * @param {Vector2} origin - The origin Vector2 to measure around
  * @returns {number} The angle in radians
  */
-export function angleFromOrigin(Vector2: Vector2, origin: Vector2): number {
+export function angleFromOrigin(Vector2: Vector2Readonly, origin: Vector2Readonly): number {
   return angleTo({
     x: Vector2.x - origin.x,
     y: Vector2.y - origin.y,
@@ -252,7 +252,7 @@ export function angleFromOrigin(Vector2: Vector2, origin: Vector2): number {
  * @param {Vector2} v - The vector
  * @returns {number} The squared magnitude of the vector
  */
-export function magSquared(v: Vector2): number {
+export function magSquared(v: Vector2Readonly): number {
   return v.x * v.x + v.y * v.y;
 }
 
@@ -261,7 +261,7 @@ export function magSquared(v: Vector2): number {
  * @param {Vector2[]} Vector2s - Array of Vector2s to find bounds for
  * @returns Object containing min and max Vector2s of the bounds
  */
-export function bounds(vs: Vector2[]) {
+export function bounds(vs: ReadonlyArray<Vector2Readonly>) {
   const x = vs.map((v) => v.x);
   const y = vs.map((v) => v.y);
 
@@ -278,7 +278,7 @@ export function bounds(vs: Vector2[]) {
  * @param {Vector2[]} Vector2s - Array of Vector2s to find center for
  * @returns The center Vector2
  */
-export function center(...vs: Vector2[]): Vector2 {
+export function center(...vs: Vector2Readonly[]): Vector2 {
   const { minX, maxX, minY, maxY } = bounds(vs);
   return {
     x: (minX + maxX) / 2,
@@ -292,7 +292,7 @@ export function center(...vs: Vector2[]): Vector2 {
  * @param {Vector2} axis - The axis to project onto
  * @returns The projected Vector2
  */
-export function project(v: Vector2, axis: Vector2): Vector2 {
+export function project(v: Vector2Readonly, axis: Vector2Readonly): Vector2 {
   const n = normalized(axis);
   const dot = v.x * n.x + v.y * n.y;
   return scale(n, dot);
@@ -303,6 +303,6 @@ export function project(v: Vector2, axis: Vector2): Vector2 {
  * @param v
  * @returns a cloned vector
  */
-export function clone(v: Vector2): Vector2 {
+export function clone(v: Vector2Readonly): Vector2 {
   return { x: v.x, y: v.y };
 }
