@@ -112,8 +112,8 @@
       <h3>Send Data</h3>
       <textarea id="txData" style="height: 100px">Hello from Folk Canvas!</textarea>
       <div style="display: flex; gap: 8px">
-        <button onclick="onSend(ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);">Send</button>
-        <button onclick="onSend(ggwave.ProtocolId.GGWAVE_PROTOCOL_ULTRASOUND_FASTEST);">Send Ultrasonic</button>
+        <button onclick="onSend(false)">Send</button>
+        <button onclick="onSend(true)">Send Ultrasonic</button>
       </div>
     </folk-shape>
 
@@ -136,137 +136,43 @@
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-spectrogram.ts';
-    </script>
+      import { FolkAudioWave } from '@labs/folk-audio-wave';
 
-    <script type="text/javascript" src="/ggwave.js"></script>
+      const wave = new FolkAudioWave();
+      const spectrogram = document.getElementById('spectrogram');
+      const txData = document.getElementById('txData');
+      const rxData = document.getElementById('rxData');
+      const captureStart = document.getElementById('captureStart');
+      const captureStop = document.getElementById('captureStop');
 
-    <script type="text/javascript">
-      window.AudioContext = window.AudioContext || window.webkitAudioContext;
-      window.OfflineAudioContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      // Make functions available to the window for onclick handlers
+      window.onSend = async (useUltrasound) => {
+        wave.setProtocol(
+          useUltrasound
+            ? FolkAudioWave.GGWAVE_PROTOCOL_ULTRASOUND_FASTEST
+            : FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST,
+        );
+        await wave.send(txData.value, 10);
+      };
 
-      var context = null;
-      var recorder = null;
-      var mediaStream = null;
-      var analyser = null;
-
-      var ggwave = null;
-      var parameters = null;
-      var instance = null;
-
-      ggwave_factory().then(function (obj) {
-        ggwave = obj;
-      });
-
-      var txData = document.getElementById('txData');
-      var rxData = document.getElementById('rxData');
-      var captureStart = document.getElementById('captureStart');
-      var captureStop = document.getElementById('captureStop');
-      var spectrogram = document.getElementById('spectrogram');
-
-      function convertTypedArray(src, type) {
-        var buffer = new ArrayBuffer(src.byteLength);
-        var baseView = new src.constructor(buffer).set(src);
-        return new type(buffer);
-      }
-
-      function init() {
-        if (!context) {
-          context = new AudioContext({ sampleRate: 48000 });
-          parameters = ggwave.getDefaultParameters();
-          parameters.sampleRateInp = context.sampleRate;
-          parameters.sampleRateOut = context.sampleRate;
-          instance = ggwave.init(parameters);
-        }
-      }
-
-      function onSend(protocol) {
-        init();
-
-        var protocolId = protocol || ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST;
-        var waveform = ggwave.encode(instance, txData.value, protocolId, 10);
-        var buf = convertTypedArray(waveform, Float32Array);
-        var buffer = context.createBuffer(1, buf.length, context.sampleRate);
-        buffer.getChannelData(0).set(buf);
-        var source = context.createBufferSource();
-        source.buffer = buffer;
-
-        // Connect to spectrogram and start visualization
-        spectrogram.connect(source, context);
-        spectrogram.start();
-
-        // Connect to audio output
-        source.connect(context.destination);
-        source.start(0);
-
-        // Stop visualization after the audio is done
-        source.onended = function () {
-          spectrogram.stop();
-        };
-      }
-
-      captureStart.addEventListener('click', function () {
-        init();
-
-        navigator.mediaDevices
-          .getUserMedia({
-            audio: {
-              echoCancellation: false,
-              autoGainControl: false,
-              noiseSuppression: false,
-            },
-          })
-          .then(function (stream) {
-            mediaStream = context.createMediaStreamSource(stream);
-
-            // Connect to spectrogram and start visualization
-            spectrogram.connect(mediaStream, context);
-            spectrogram.start();
-
-            var bufferSize = 1024;
-            recorder = context.createScriptProcessor(bufferSize, 1, 1);
-
-            recorder.onaudioprocess = function (e) {
-              var source = e.inputBuffer;
-              var res = ggwave.decode(
-                instance,
-                convertTypedArray(new Float32Array(source.getChannelData(0)), Int8Array),
-              );
-
-              if (res && res.length > 0) {
-                rxData.value = new TextDecoder('utf-8').decode(res);
-              }
-            };
-
-            mediaStream.connect(recorder);
-            recorder.connect(context.destination);
-          })
-          .catch(function (e) {
-            console.error(e);
-          });
-
+      captureStart.addEventListener('click', async () => {
         rxData.value = 'Listening...';
         captureStart.hidden = true;
         captureStop.hidden = false;
+
+        await wave.startListening((text) => {
+          rxData.value = text;
+        });
       });
 
-      captureStop.addEventListener('click', function () {
-        if (recorder) {
-          recorder.disconnect(context.destination);
-          if (mediaStream) {
-            mediaStream.disconnect(recorder);
-          }
-          recorder = null;
-        }
-
-        // Stop the spectrogram visualization
-        spectrogram.disconnect();
-        spectrogram.stop();
-
+      captureStop.addEventListener('click', () => {
+        wave.stopListening();
         rxData.value = '';
         captureStart.hidden = false;
         captureStop.hidden = true;
       });
 
+      // Stop listening by default
       captureStop.click();
     </script>
   </body>
