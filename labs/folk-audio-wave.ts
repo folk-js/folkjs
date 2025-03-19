@@ -5,6 +5,67 @@
 
 import { ggwave_factory } from '@labs/utils/ggwave.js';
 
+// Operating modes for GGWave
+interface GGWaveOperatingModes {
+  GGWAVE_OPERATING_MODE_RX: 2;
+  GGWAVE_OPERATING_MODE_TX: 4;
+  GGWAVE_OPERATING_MODE_RX_AND_TX: 6;
+  GGWAVE_OPERATING_MODE_TX_ONLY_TONES: 8;
+  GGWAVE_OPERATING_MODE_USE_DSS: 16;
+}
+
+// Protocol ID structure
+interface GGWaveProtocolId {
+  values: Record<number, number>;
+}
+
+// Parameters returned by getDefaultParameters
+interface GGWaveParameters {
+  sampleRateInp: number;
+  sampleRateOut: number;
+  // Add more parameters as we discover them
+}
+
+interface GGWave {
+  // Constants and modes
+  readonly ProtocolId: GGWaveProtocolId;
+  readonly GGWAVE_OPERATING_MODE_RX: 2;
+  readonly GGWAVE_OPERATING_MODE_TX: 4;
+  readonly GGWAVE_OPERATING_MODE_RX_AND_TX: 6;
+  readonly GGWAVE_OPERATING_MODE_TX_ONLY_TONES: 8;
+  readonly GGWAVE_OPERATING_MODE_USE_DSS: 16;
+
+  // Core functionality
+  init(parameters: GGWaveParameters): any;
+  encode(instance: any, text: string, protocol: number, volume: number): any;
+  decode(instance: any, data: Int8Array): Uint8Array | null;
+  getDefaultParameters(): GGWaveParameters;
+
+  // Protocol control
+  rxToggleProtocol(instance: any, protocol: number): void;
+  txToggleProtocol(instance: any, protocol: number): void;
+  rxProtocolSetFreqStart(instance: any, freq: number): void;
+  txProtocolSetFreqStart(instance: any, freq: number): void;
+
+  // Memory management
+  free(instance: any): void;
+
+  // Logging
+  enableLog(): void;
+  disableLog(): void;
+
+  // WebAssembly related
+  ready: Promise<any>;
+  HEAP8: Int8Array;
+  HEAP16: Int16Array;
+  HEAP32: Int32Array;
+  HEAPU8: Uint8Array;
+  HEAPU16: Uint16Array;
+  HEAPU32: Uint32Array;
+  HEAPF32: Float32Array;
+  HEAPF64: Float64Array;
+}
+
 export class FolkAudioWave {
   // Protocol constants
   static readonly GGWAVE_PROTOCOL_AUDIBLE_NORMAL = 0;
@@ -18,12 +79,12 @@ export class FolkAudioWave {
   static readonly GGWAVE_PROTOCOL_DT_FASTEST = 8;
 
   #context: AudioContext | null = null;
-  #ggwave: any = null;
+  #ggwave: GGWave | null = null;
   #instance: any = null;
   #mediaStream: MediaStreamAudioSourceNode | null = null;
   #recorder: ScriptProcessorNode | null = null;
   #onDataReceived: ((data: string) => void) | null = null;
-  #currentProtocol = FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST;
+  #currentProtocol: any = null;
 
   constructor() {
     this.#initGGWave();
@@ -31,11 +92,14 @@ export class FolkAudioWave {
 
   async #initGGWave() {
     this.#ggwave = await ggwave_factory();
+    console.log({ ggwave: this.#ggwave });
+    this.setProtocol(FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
   }
 
   #ensureContext() {
     if (!this.#context) {
       this.#context = new AudioContext({ sampleRate: 48000 });
+      if (!this.#ggwave) throw new Error('GGWave not initialized');
       const parameters = this.#ggwave.getDefaultParameters();
       parameters.sampleRateInp = this.#context.sampleRate;
       parameters.sampleRateOut = this.#context.sampleRate;
@@ -57,17 +121,8 @@ export class FolkAudioWave {
    */
   setProtocol(protocol: number): void {
     if (!this.#ggwave) throw new Error('GGWave not initialized');
-    this.#currentProtocol = protocol;
-  }
-
-  /**
-   * Get available protocols
-   * @returns Object containing all available protocol IDs
-   * @deprecated Use static protocol constants instead (e.g. FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST)
-   */
-  getProtocols(): any {
-    if (!this.#ggwave) throw new Error('GGWave not initialized');
-    return this.#ggwave.ProtocolId;
+    if (!this.#ggwave.ProtocolId.values[protocol]) throw new Error('Invalid protocol');
+    this.#currentProtocol = this.#ggwave.ProtocolId.values[protocol];
   }
 
   /**
@@ -79,7 +134,7 @@ export class FolkAudioWave {
   async send(text: string, volume = 10): Promise<void> {
     this.#ensureContext();
     if (!this.#context) throw new Error('Audio context not initialized');
-    console.log({ protocol: this.#currentProtocol });
+    if (!this.#ggwave) throw new Error('GGWave not initialized');
 
     const waveform = this.#ggwave.encode(this.#instance, text, this.#currentProtocol, volume);
     const buf = this.#convertTypedArray(waveform, Float32Array);
@@ -103,6 +158,7 @@ export class FolkAudioWave {
   async startListening(callback: (data: string) => void): Promise<void> {
     this.#ensureContext();
     if (!this.#context) throw new Error('Audio context not initialized');
+    if (!this.#ggwave) throw new Error('GGWave not initialized');
 
     this.#onDataReceived = callback;
 
@@ -118,6 +174,7 @@ export class FolkAudioWave {
     this.#recorder = this.#context.createScriptProcessor(1024, 1, 1);
 
     this.#recorder.onaudioprocess = (e) => {
+      if (!this.#ggwave) return; // Skip processing if ggwave is not initialized
       const source = e.inputBuffer;
       const res = this.#ggwave.decode(
         this.#instance,
