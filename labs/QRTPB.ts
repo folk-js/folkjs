@@ -1,3 +1,5 @@
+import { base36ToNum, numToBase36 } from './utils/base36';
+
 // QRTPB - QR Transfer Protocol with Backchannel (simplified version)
 // A protocol that uses QR codes for data transfer with character-range based chunking
 
@@ -24,9 +26,9 @@ export interface QRTPBChunk {
 
 export class QRTPB {
   // Static configuration
-  static readonly DEFAULT_CHUNK_SIZE: number = 1000;
-  static readonly QR_CYCLE_INTERVAL: number = 250; // ms between QR code updates
-  static readonly DONE_SIGNAL: string = 'DONE'; // Signal for completion
+  static readonly DEFAULT_CHUNK_SIZE: number = 1500;
+  static readonly QR_CYCLE_INTERVAL: number = 200; // ms between QR code updates
+  static readonly DONE_SIGNAL: string = 'D'; // Signal for completion
 
   // Current mode
   private mode: QRTPBMode = 'send';
@@ -54,8 +56,6 @@ export class QRTPB {
 
   // Backchannel state
   private excludedRanges: Array<[number, number]> = [];
-  private lastBackchannelUpdate: number = 0;
-  private static readonly BACKCHANNEL_INTERVAL: number = 4000; // 4 seconds
 
   // Completion state
   private receiverDone: boolean = false;
@@ -219,8 +219,8 @@ export class QRTPB {
 
     if (rangeStr === 'idle') return;
 
-    const [rangeInfo, totalChars] = rangeStr.split('/');
-    const [startStr, endStr] = rangeInfo.split('-');
+    const [range, totalChars] = rangeStr.split('/');
+    const [startStr, endStr] = range.split('-');
     const startIndex = parseInt(startStr);
     const endIndex = parseInt(endStr);
     const totalLength = parseInt(totalChars);
@@ -294,6 +294,7 @@ export class QRTPB {
     if (this.receivedRanges[0][0] !== 0) return false;
 
     // Check for gaps between ranges
+    // todo: check if occupiedRanges = message.length
     for (let i = 1; i < this.receivedRanges.length; i++) {
       if (this.receivedRanges[i][0] > this.receivedRanges[i - 1][1] + 1) {
         return false;
@@ -321,7 +322,6 @@ export class QRTPB {
     this.maxSeenIndex = 0;
     this.receivedText = '';
     this.excludedRanges = [];
-    this.lastBackchannelUpdate = 0;
     this.receiverDone = false;
     this.senderDone = false;
 
@@ -339,43 +339,91 @@ export class QRTPB {
     this.reset();
   }
 
+  // Get backchannel message for sender
+  getBackchannelMessage(): string | null {
+    // Don't send any messages if we've seen DONE from sender
+    if (this.receiverDone) {
+      return null;
+    }
+
+    // If receiver has all chunks, send DONE signal
+    if (this.isTransmissionComplete()) {
+      this.logMessage('outgoing', 'success', 'Sending DONE signal to sender');
+      return 'D';
+    }
+
+    if (this.receivedRanges.length === 0) return null;
+
+    // Format ranges as concatenated base36 numbers
+    const message = 'R' + this.receivedRanges.map(([start, end]) => numToBase36(start) + numToBase36(end)).join('');
+
+    this.logMessage(
+      'outgoing',
+      'backchannel',
+      `Sending ranges update`,
+      this.receivedRanges.map((r) => `${r[0]}-${r[1]}`).join(', '),
+    );
+
+    return message;
+  }
+
   // Process backchannel message from receiver
   processBackchannelMessage(message: string): void {
+    console.log('processBackchannelMessage', message);
     try {
       // Check for DONE signal
-      if (message === QRTPB.DONE_SIGNAL) {
+      if (message === 'D') {
         this.logMessage('incoming', 'success', 'Received DONE signal from receiver');
         this.senderDone = true;
         this.notifyChange();
         return;
       }
 
-      // Format: "R:start1-end1,start2-end2,..."
-      if (!message.startsWith('R:')) {
-        this.logMessage('incoming', 'backchannel', `Ignored non-range message: ${message}`);
+      // Format: "R" followed by concatenated 3-char base36 numbers
+      if (!message.startsWith('R')) {
+        this.logMessage('incoming', 'backchannel', `Invalid message format: ${message}`);
         return;
       }
 
-      const ranges = message
-        .substring(2)
-        .split(',')
-        .map((range) => {
-          const [start, end] = range.split('-').map(Number);
-          return [start, end] as [number, number];
-        })
-        .filter((range) => !isNaN(range[0]) && !isNaN(range[1]));
+      const data = message.substring(1);
 
-      if (ranges.length === 0) {
-        this.logMessage('incoming', 'backchannel', 'Received empty or invalid ranges');
+      // Each range is 6 chars (3 for start + 3 for end)
+      if (data.length % 6 !== 0) {
+        this.logMessage('incoming', 'backchannel', `Invalid data length: ${data.length}`);
         return;
       }
 
-      this.excludedRanges = ranges;
+      // Parse all ranges from the message
+      const newRanges: Array<[number, number]> = [];
+      for (let i = 0; i < data.length; i += 6) {
+        try {
+          const start = base36ToNum(data.substring(i, i + 3));
+          const end = base36ToNum(data.substring(i + 3, i + 6));
+          if (start <= end) {
+            newRanges.push([start, end]);
+          }
+        } catch (e) {
+          this.logMessage('incoming', 'error', `Invalid range encoding at position ${i}`);
+          return;
+        }
+      }
+
+      if (newRanges.length === 0) {
+        this.logMessage('incoming', 'backchannel', 'No valid ranges found');
+        return;
+      }
+
+      // Replace the excluded ranges with the new ranges
+      this.excludedRanges = newRanges;
+
+      // Now merge any overlapping or adjacent ranges
+      this.mergeOverlappingRanges();
+
       this.logMessage(
         'incoming',
         'backchannel',
-        `Received ${ranges.length} ranges from receiver`,
-        ranges.map((r) => `${r[0]}-${r[1]}`).join(', '),
+        `Received and processed ${newRanges.length} ranges from receiver`,
+        this.excludedRanges.map((r) => `${r[0]}-${r[1]}`).join(', '),
       );
 
       // Log how many chunks are now excluded
@@ -390,31 +438,30 @@ export class QRTPB {
     }
   }
 
-  // Get backchannel message for sender
-  getBackchannelMessage(): string | null {
-    const now = Date.now();
-    if (now - this.lastBackchannelUpdate < QRTPB.BACKCHANNEL_INTERVAL) {
-      return null;
+  // Merge overlapping ranges in the excludedRanges array
+  private mergeOverlappingRanges(): void {
+    if (this.excludedRanges.length <= 1) return;
+
+    // Sort ranges by start index
+    this.excludedRanges.sort((a, b) => a[0] - b[0]);
+
+    // Merge overlapping or adjacent ranges
+    let i = 0;
+    while (i < this.excludedRanges.length - 1) {
+      const current = this.excludedRanges[i];
+      const next = this.excludedRanges[i + 1];
+
+      // Check if ranges overlap or are adjacent
+      if (this.rangesOverlap(current, next) || this.rangesAdjacent(current, next)) {
+        // Merge ranges
+        current[1] = Math.max(current[1], next[1]);
+        // Remove the next range
+        this.excludedRanges.splice(i + 1, 1);
+        // Stay at the same index to check for more merges
+      } else {
+        // Move to next range
+        i++;
+      }
     }
-
-    this.lastBackchannelUpdate = now;
-
-    // If receiver has all chunks, send DONE signal
-    if (this.isTransmissionComplete()) {
-      this.logMessage('outgoing', 'success', 'Sending DONE signal to sender');
-      return QRTPB.DONE_SIGNAL;
-    }
-
-    if (this.receivedRanges.length === 0) return null;
-
-    // Format ranges as compact string
-    const message = 'R:' + this.receivedRanges.map((range) => `${range[0]}-${range[1]}`).join(',');
-    this.logMessage(
-      'outgoing',
-      'backchannel',
-      `Sending ranges update`,
-      this.receivedRanges.map((r) => `${r[0]}-${r[1]}`).join(', '),
-    );
-    return message;
   }
 }

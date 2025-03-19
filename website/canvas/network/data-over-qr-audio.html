@@ -317,6 +317,7 @@
           <div class="progress-bar" id="senderProgressBar">
             <div class="progress-text" id="senderProgressText">0%</div>
           </div>
+          <div id="senderThroughput" style="font-size: 12px; margin-top: 4px; color: #666"></div>
         </div>
 
         <div class="log" id="sendLog"></div>
@@ -333,6 +334,7 @@
           <div class="progress-bar" id="progressBar">
             <div class="progress-text" id="progressText">0%</div>
           </div>
+          <div id="receiverThroughput" style="font-size: 12px; margin-top: 4px; color: #666"></div>
         </div>
 
         <div class="text-container">
@@ -405,9 +407,12 @@
 
           // If this is a success message about completion, update UI
           if (type === 'success' && message.includes('DONE')) {
-            if (qrtpb.getMode() === 'receive') {
-              // Stop audio backchannel when we see DONE from sender
+            // Only stop audio if we're receiving the DONE signal, not sending it
+            if (message.includes('Received DONE signal from sender')) {
+              // Stop audio backchannel permanently
               audioWave.stopListening();
+              audioWave.dispose();
+              isAudioInitialized = false;
             }
           }
         },
@@ -418,6 +423,7 @@
             // Update sender progress visualization
             const senderProgressBar = document.getElementById('senderProgressBar');
             const senderProgressText = document.getElementById('senderProgressText');
+            const senderThroughput = document.getElementById('senderThroughput');
 
             // Clear existing segments
             senderProgressBar.querySelectorAll('.progress-segment').forEach((segment) => segment.remove());
@@ -430,6 +436,16 @@
               });
               const percentage = Math.round((totalAcknowledged / state.totalLength) * 100) || 0;
               senderProgressText.textContent = `${percentage}%`;
+
+              // Calculate throughput
+              const now = Date.now();
+              if (!window.senderStartTime) {
+                window.senderStartTime = now;
+                window.lastAcknowledged = 0;
+              }
+              const elapsedSeconds = (now - window.senderStartTime) / 1000;
+              const bytesPerSecond = Math.round(totalAcknowledged / elapsedSeconds);
+              senderThroughput.textContent = `${bytesPerSecond} bytes/sec`;
 
               // Create segments for each acknowledged range
               state.excludedRanges.forEach(([start, end]) => {
@@ -458,6 +474,7 @@
             } else {
               senderProgressText.textContent = '0%';
               senderProgressBar.classList.remove('complete');
+              senderThroughput.textContent = '';
             }
           } else {
             // Update received text
@@ -465,6 +482,7 @@
 
             // Update progress visualization
             const progressBar = document.getElementById('progressBar');
+            const receiverThroughput = document.getElementById('receiverThroughput');
 
             // Clear existing segments
             progressBar.querySelectorAll('.progress-segment').forEach((segment) => segment.remove());
@@ -477,6 +495,16 @@
               });
               const percentage = Math.round((totalReceived / (state.maxSeenIndex + 1)) * 100);
               progressText.textContent = `${percentage}%`;
+
+              // Calculate throughput
+              const now = Date.now();
+              if (!window.receiverStartTime) {
+                window.receiverStartTime = now;
+                window.lastReceived = 0;
+              }
+              const elapsedSeconds = (now - window.receiverStartTime) / 1000;
+              const bytesPerSecond = Math.round(totalReceived / elapsedSeconds);
+              receiverThroughput.textContent = `${bytesPerSecond} bytes/sec`;
 
               // Create segments for each range
               state.receivedRanges.forEach(([start, end]) => {
@@ -502,6 +530,7 @@
             } else {
               progressText.textContent = '0%';
               progressBar.classList.remove('complete');
+              receiverThroughput.textContent = '';
             }
           }
         },
@@ -530,20 +559,27 @@
           qrtpb.processBackchannelMessage(data);
         });
 
-        // Start backchannel update interval
-        setInterval(async () => {
+        // Start backchannel update loop
+        const sendBackchannelUpdates = async () => {
           if (qrtpb.getMode() === 'receive') {
             const message = qrtpb.getBackchannelMessage();
             if (message) {
               try {
-                await audioWave.send(message, 20);
+                // Increased volume from 20 to 50
+                await audioWave.send(message, 50);
               } catch (e) {
                 console.error('Failed to send backchannel message:', e);
               }
             }
           }
-        }, QRTPB.BACKCHANNEL_INTERVAL);
+          // Schedule next update if audio is still initialized
+          if (isAudioInitialized) {
+            setTimeout(sendBackchannelUpdates, 100); // Small delay between attempts
+          }
+        };
 
+        // Start the update loop
+        sendBackchannelUpdates();
         isAudioInitialized = true;
       };
 
@@ -626,6 +662,12 @@
 
       // Mode switching function
       const switchMode = async (mode) => {
+        // Reset throughput tracking
+        window.senderStartTime = null;
+        window.receiverStartTime = null;
+        window.lastAcknowledged = 0;
+        window.lastReceived = 0;
+
         qrtpb.setMode(mode);
 
         if (mode === 'send') {
