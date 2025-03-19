@@ -63,6 +63,8 @@
         border: 1px solid #ddd;
         padding: 8px;
         margin-bottom: 8px;
+        font-size: 14px;
+        resize: none;
       }
 
       textarea:disabled {
@@ -77,10 +79,49 @@
         border: none;
         border-radius: 4px;
         cursor: pointer;
+        font-size: 14px;
+        min-width: 80px;
       }
 
       button:hover {
         background-color: #45a049;
+      }
+
+      button.toggle {
+        background-color: #2196f3;
+      }
+
+      button.toggle:hover {
+        background-color: #1976d2;
+      }
+
+      button.toggle.active {
+        background-color: #1565c0;
+      }
+
+      button.listen {
+        background-color: #9c27b0;
+      }
+
+      button.listen:hover {
+        background-color: #7b1fa2;
+      }
+
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+
+      .controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .mode-indicator {
+        margin-left: auto;
+        font-size: 12px;
+        color: #666;
       }
 
       h3 {
@@ -109,21 +150,22 @@
 
     <!-- Sender Shape -->
     <folk-shape x="50" y="50" width="300" height="200">
-      <h3>Send Data</h3>
-      <textarea id="txData" style="height: 100px">Hello from Folk Canvas!</textarea>
-      <div style="display: flex; gap: 8px">
-        <button onclick="onSend(false)">Send</button>
-        <button onclick="onSend(true)">Send Ultrasonic</button>
+      <h3>Send Message</h3>
+      <textarea id="messageToSend" style="height: 100px" placeholder="Type your message here...">
+Hello from Folk Canvas!</textarea
+      >
+      <div class="controls">
+        <button id="sendButton">Send</button>
+        <button id="modeToggle" class="toggle">Ultrasonic: Off</button>
       </div>
     </folk-shape>
 
     <!-- Receiver Shape -->
     <folk-shape x="400" y="50" width="300" height="200">
-      <h3>Receive Data</h3>
-      <textarea id="rxData" style="height: 100px" disabled></textarea>
-      <div style="display: flex; gap: 8px">
-        <button id="captureStart">Start Listening</button>
-        <button id="captureStop" hidden>Stop</button>
+      <h3>Received Messages</h3>
+      <textarea id="receivedMessages" style="height: 100px" disabled></textarea>
+      <div class="controls">
+        <button id="listenButton" class="listen">Start Listening</button>
       </div>
     </folk-shape>
 
@@ -140,40 +182,53 @@
 
       const wave = new FolkAudioWave();
       const spectrogram = document.getElementById('spectrogram');
-      const txData = document.getElementById('txData');
-      const rxData = document.getElementById('rxData');
-      const captureStart = document.getElementById('captureStart');
-      const captureStop = document.getElementById('captureStop');
+      const messageToSend = document.getElementById('messageToSend');
+      const receivedMessages = document.getElementById('receivedMessages');
+      const sendButton = document.getElementById('sendButton');
+      const modeToggle = document.getElementById('modeToggle');
+      const listenButton = document.getElementById('listenButton');
 
-      // Make functions available to the window for onclick handlers
-      window.onSend = async (useUltrasound) => {
+      let isUltrasonic = false;
+
+      // Toggle between audible and ultrasonic modes
+      modeToggle.addEventListener('click', () => {
+        isUltrasonic = !isUltrasonic;
+        modeToggle.textContent = `Ultrasonic: ${isUltrasonic ? 'On' : 'Off'}`;
+        modeToggle.classList.toggle('active', isUltrasonic);
         wave.setProtocol(
-          useUltrasound
+          isUltrasonic
             ? FolkAudioWave.GGWAVE_PROTOCOL_ULTRASOUND_FASTEST
             : FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST,
         );
-        await wave.send(txData.value, 10);
-      };
-
-      captureStart.addEventListener('click', async () => {
-        rxData.value = 'Listening...';
-        captureStart.hidden = true;
-        captureStop.hidden = false;
-
-        await wave.startListening((text) => {
-          rxData.value = text;
-        });
       });
 
-      captureStop.addEventListener('click', () => {
-        wave.stopListening();
-        rxData.value = '';
-        captureStart.hidden = false;
-        captureStop.hidden = true;
+      // Send message
+      sendButton.addEventListener('click', async () => {
+        // Disable button while sending
+        sendButton.disabled = true;
+        await wave.send(messageToSend.value, 10);
+        sendButton.disabled = false;
+      });
+
+      // Listen for messages
+      listenButton.addEventListener('click', async () => {
+        const isListening = listenButton.textContent === 'Stop Listening';
+
+        if (isListening) {
+          wave.stopListening();
+          listenButton.textContent = 'Start Listening';
+          receivedMessages.value = '';
+        } else {
+          listenButton.textContent = 'Stop Listening';
+          await wave.startListening((text) => {
+            const timestamp = new Date().toLocaleTimeString();
+            receivedMessages.value = `[${timestamp}] ${text}\n${receivedMessages.value}`;
+          });
+        }
       });
 
       // Stop listening by default
-      captureStop.click();
+      wave.stopListening();
     </script>
   </body>
 </html>
