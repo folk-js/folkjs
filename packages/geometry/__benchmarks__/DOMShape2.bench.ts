@@ -1,5 +1,5 @@
 import { bench, run } from 'mitata';
-import { DOMShape } from '../src/DOMShape';
+import { DOMShape } from '../src/DOMShape2.ts';
 
 const shape = new DOMShape({
   x: 0,
@@ -24,18 +24,18 @@ bench('DOMShape: instantiate DOMShape with arguments', () => {
 });
 
 bench('DOMShape: update width', () => {
-  shape.width = 50;
+  shape.rotatedWidth = 50;
 });
 
 // Each property takes about 50ns, so N properties takes about 200ns
 bench('DOMShape: update multiple properties', () => {
-  shape.width = 50;
-  shape.height = 20;
+  shape.rotatedWidth = 50;
+  shape.rotatedHeight = 20;
   shape.x = 10;
   shape.y = 10;
 });
 
-bench('DOMShape: update top left corner', () => {
+bench('DOMShape: update and read top left corner', () => {
   shape.topLeft = { x: 1, y: 2 };
   const topLeft = shape.topLeft;
 });
@@ -44,16 +44,9 @@ bench('DOMShape: update bottom right corner', () => {
   shape.bottomRight = { x: 100, y: 50 };
 });
 
-bench('DOMShape: toLocalSpace', () => {
-  shape.toLocalSpace({ x: 100, y: 50 });
-});
-
-bench('DOMShape: toParentSpace', () => {
-  shape.toParentSpace({ x: 100, y: 50 });
-});
-
 bench('DOMShape: bounds', () => {
-  shape.bounds;
+  shape.height;
+  shape.width;
 });
 
 bench('DOMShape: flip handles', () => {
