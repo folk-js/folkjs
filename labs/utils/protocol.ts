@@ -45,6 +45,195 @@ const DELIMITERS = {
   PAIRS_ITEM: ';', // Default delimiter for pairs
 };
 
+// --- Format functions (for encoding) ---
+
+/**
+ * Format a text value for encoding
+ */
+function formatText(value: any, size?: number): string {
+  const str = String(value);
+  if (size !== undefined) {
+    if (str.length > size) {
+      throw new Error(`Value "${str}" exceeds fixed width of ${size}`);
+    }
+    return str.padEnd(size, ' ');
+  }
+  return str;
+}
+
+/**
+ * Format a numeric value for encoding
+ */
+function formatNum(value: number, size?: number): string {
+  const str = String(value);
+  if (size !== undefined) {
+    if (str.length > size) {
+      throw new Error(`Value "${str}" exceeds fixed width of ${size}`);
+    }
+    return str.padStart(size, '0');
+  }
+  return str;
+}
+
+/**
+ * Format a boolean value for encoding
+ */
+function formatBool(value: boolean): string {
+  return String(value);
+}
+
+/**
+ * Format a list of values for encoding
+ */
+function formatList(values: any[], size?: number): string {
+  if (size !== undefined) {
+    // Fixed width formatting
+    return values
+      .map((str) => {
+        const s = String(str);
+        if (s.length > size) {
+          throw new Error(`Value "${s}" exceeds fixed width of ${size}`);
+        }
+        return s.padEnd(size, ' ');
+      })
+      .join('');
+  }
+  // Standard delimiter formatting
+  return values.join(DELIMITERS.LIST);
+}
+
+/**
+ * Format a list of numeric values for encoding
+ */
+function formatNums(values: number[], size?: number): string {
+  if (size !== undefined) {
+    // Fixed width formatting
+    return values
+      .map((num) => {
+        const str = String(Math.floor(Number(num)));
+        if (str.length > size) {
+          throw new Error(`Value "${num}" exceeds fixed width of ${size}`);
+        }
+        return str.padStart(size, '0');
+      })
+      .join('');
+  }
+  // Standard delimiter formatting
+  return values.map(String).join(DELIMITERS.LIST);
+}
+
+/**
+ * Format pairs as a flat list
+ */
+function formatPairs(pairs: string[][]): string {
+  return pairs.flatMap((pair) => pair).join(DELIMITERS.PAIRS_ITEM);
+}
+
+/**
+ * Format numeric pairs as a flat list
+ */
+function formatNumPairs(pairs: number[][]): string {
+  return pairs.flatMap((pair) => pair.map(String)).join(DELIMITERS.PAIRS_ITEM);
+}
+
+// --- Parse functions (for decoding) ---
+
+/**
+ * Parse a text value
+ */
+function parseText(text: string, size?: number): string {
+  if (size !== undefined && text.length > size) {
+    return text.substring(0, size);
+  }
+  return text;
+}
+
+/**
+ * Parse a numeric value
+ */
+function parseNum(text: string): number {
+  return Number(text);
+}
+
+/**
+ * Parse a boolean value
+ */
+function parseBool(text: string): boolean {
+  return text.toLowerCase() === 'true';
+}
+
+/**
+ * Parse a list value
+ */
+function parseList(text: string, size?: number): string[] {
+  if (size !== undefined) {
+    // Fixed width parsing
+    const chunks = [];
+    for (let j = 0; j < text.length; j += size) {
+      if (j + size <= text.length) {
+        chunks.push(text.substring(j, j + size));
+      }
+    }
+    return chunks;
+  }
+  // Standard parsing
+  return text ? text.split(DELIMITERS.LIST) : [];
+}
+
+/**
+ * Parse a list of numeric values
+ */
+function parseNums(text: string, size?: number): number[] {
+  if (size !== undefined) {
+    // Fixed width parsing
+    const nums = [];
+    for (let j = 0; j < text.length; j += size) {
+      if (j + size <= text.length) {
+        nums.push(parseInt(text.substring(j, j + size)));
+      }
+    }
+    return nums;
+  }
+  // Standard parsing
+  return text ? text.split(DELIMITERS.LIST).map(Number) : [];
+}
+
+/**
+ * Parse a list of pairs
+ */
+function parsePairs(text: string): string[][] {
+  if (!text) return [];
+
+  const items = text.split(DELIMITERS.PAIRS_ITEM);
+  const pairs = [];
+
+  for (let j = 0; j < items.length; j += 2) {
+    if (j + 1 < items.length) {
+      pairs.push([items[j], items[j + 1]]);
+    }
+  }
+
+  return pairs;
+}
+
+/**
+ * Parse a list of numeric pairs
+ */
+function parseNumPairs(text: string): number[][] {
+  if (!text) return [];
+
+  const items = text.split(DELIMITERS.PAIRS_ITEM);
+  const pairs = [];
+
+  for (let j = 0; j < items.length; j += 2) {
+    if (j + 1 < items.length) {
+      pairs.push([Number(items[j]), Number(items[j + 1])]);
+    }
+  }
+
+  return pairs;
+}
+
 /**
  * Creates a protocol parser/encoder from a template string
  */
@@ -105,18 +294,17 @@ export function protocol(
       let payload = '';
       let remaining = input;
 
+      // Handle special case: fixed-size headers
       if (hasFixedSizeHeader) {
-        // For fixed-size headers, use a simpler approach
-        // First, skip the static prefix
+        // Skip the static prefix
         if (!input.startsWith(staticParts[0])) {
           throw new Error(`Input doesn't match pattern at "${staticParts[0]}"`);
         }
 
         let pos = staticParts[0].length;
-
-        // Handle all patterns before the !
         let headerLength = 0;
 
+        // Process each pattern in the fixed header
         for (let i = 0; i < patterns.length; i++) {
           const pattern = patterns[i];
 
@@ -124,14 +312,16 @@ export function protocol(
             throw new Error('Fixed-size header requires a size parameter for all fields');
           }
 
-          // For a fixed-width field, extract exactly pattern.size characters
+          // Extract fixed-width value
           const value = input.substring(pos, pos + pattern.size);
 
-          // Convert to appropriate type
-          if (pattern.type === 'num') {
-            result[pattern.name] = Number(value);
-          } else {
-            result[pattern.name] = value;
+          // Parse according to type
+          switch (pattern.type) {
+            case 'num':
+              result[pattern.name] = parseNum(value);
+              break;
+            default:
+              result[pattern.name] = value;
           }
 
           // Move position forward
@@ -139,28 +329,24 @@ export function protocol(
           headerLength += pattern.size;
         }
 
-        // Everything after the fixed-size header is the payload
+        // Everything after the fixed header is payload
         payload = input.substring(staticParts[0].length + headerLength);
 
-        // Add payload separately
         if (payload) {
           result.payload = payload;
         }
 
         return result;
-      } else if (hasDollarDelimiter) {
-        // Template ends with $, which marks the start of payload
-        // We need to find where the actual $ is in the input
-        const dollarPos = input.indexOf(DELIMITERS.PAYLOAD);
+      }
 
+      // Handle special case: payload delimiter ($)
+      if (hasDollarDelimiter) {
+        const dollarPos = input.indexOf(DELIMITERS.PAYLOAD);
         if (dollarPos >= 0) {
-          // Extract everything before the $ as the remaining input to parse
           remaining = input.substring(0, dollarPos);
-          // Extract everything after the $ as the payload
           payload = input.substring(dollarPos + 1);
         }
       } else {
-        // Standard variable-length header with $ delimiter
         const dollarPos = input.indexOf(DELIMITERS.PAYLOAD);
         if (dollarPos >= 0) {
           payload = input.substring(dollarPos + 1);
@@ -180,10 +366,9 @@ export function protocol(
           }
           remaining = remaining.substring(staticPart.length);
 
-          // Special case for $ delimiter - if this static part is $, we've reached the end
+          // Handle special case for delimiters
           const nextStatic = staticParts[i + 1];
           if (nextStatic === DELIMITERS.PAYLOAD || nextStatic === DELIMITERS.FIXED_HEADER) {
-            // We've reached the end of the header
             result[pattern.name] = remaining;
             remaining = '';
             break;
@@ -191,7 +376,6 @@ export function protocol(
 
           // Find where the next static part begins
           const endPos = nextStatic ? remaining.indexOf(nextStatic) : remaining.length;
-
           if (endPos === -1) {
             throw new Error(`Couldn't find delimiter "${nextStatic}" in remaining input`);
           }
@@ -199,93 +383,28 @@ export function protocol(
           // Extract the value
           const valueText = remaining.substring(0, endPos);
 
-          // Parse according to type - combined approach
+          // Parse according to type using the appropriate parse function
           switch (pattern.type) {
             case 'num':
-              result[pattern.name] = Number(valueText);
+              result[pattern.name] = parseNum(valueText);
               break;
-
             case 'bool':
-              result[pattern.name] = valueText.toLowerCase() === 'true';
+              result[pattern.name] = parseBool(valueText);
               break;
-
             case 'list':
-              if (pattern.size !== undefined) {
-                // Fixed width: Split by size
-                const chunks = [];
-                for (let j = 0; j < valueText.length; j += pattern.size) {
-                  if (j + pattern.size <= valueText.length) {
-                    chunks.push(valueText.substring(j, j + pattern.size));
-                  }
-                }
-                result[pattern.name] = chunks;
-              } else {
-                // Standard: Split by delimiter
-                result[pattern.name] = valueText ? valueText.split(DELIMITERS.LIST) : [];
-              }
+              result[pattern.name] = parseList(valueText, pattern.size);
               break;
-
             case 'nums':
-              if (pattern.size !== undefined) {
-                // Fixed width: Split by size
-                const nums = [];
-                for (let j = 0; j < valueText.length; j += pattern.size) {
-                  if (j + pattern.size <= valueText.length) {
-                    nums.push(parseInt(valueText.substring(j, j + pattern.size)));
-                  }
-                }
-                result[pattern.name] = nums;
-              } else {
-                // Standard: Split by delimiter
-                result[pattern.name] = valueText ? valueText.split(DELIMITERS.LIST).map(Number) : [];
-              }
+              result[pattern.name] = parseNums(valueText, pattern.size);
               break;
-
             case 'pairs':
-              if (!valueText) {
-                result[pattern.name] = [];
-              } else {
-                // Parse as flat list of alternating keys and values
-                const items = valueText.split(DELIMITERS.PAIRS_ITEM);
-                const pairs = [];
-
-                // Group items into pairs
-                for (let j = 0; j < items.length; j += 2) {
-                  if (j + 1 < items.length) {
-                    pairs.push([items[j], items[j + 1]]);
-                  }
-                }
-
-                result[pattern.name] = pairs;
-              }
+              result[pattern.name] = parsePairs(valueText);
               break;
-
             case 'numPairs':
-              if (!valueText) {
-                result[pattern.name] = [];
-              } else {
-                // Parse as flat list of alternating numbers
-                const items = valueText.split(DELIMITERS.PAIRS_ITEM);
-                const pairs = [];
-
-                // Group items into pairs and convert to numbers
-                for (let j = 0; j < items.length; j += 2) {
-                  if (j + 1 < items.length) {
-                    pairs.push([Number(items[j]), Number(items[j + 1])]);
-                  }
-                }
-
-                result[pattern.name] = pairs;
-              }
+              result[pattern.name] = parseNumPairs(valueText);
               break;
-
             default: // text
-              if (pattern.size !== undefined && valueText.length > pattern.size) {
-                // If fixed width and value exceeds, trim it
-                result[pattern.name] = valueText.substring(0, pattern.size);
-              } else {
-                result[pattern.name] = valueText;
-              }
+              result[pattern.name] = parseText(valueText, pattern.size);
               break;
           }
 
@@ -294,7 +413,7 @@ export function protocol(
         }
       }
 
-      // Check for final static part (if not special delimiter)
+      // Check for final static part
       const finalPart = staticParts[staticParts.length - 1];
       if (!hasFixedSizeHeader && !hasDollarDelimiter && finalPart && !remaining.startsWith(finalPart)) {
         throw new Error(`Input doesn't match pattern at "${finalPart}"`);
@@ -314,6 +433,7 @@ export function protocol(
     encode(data: Record<string, any>): string {
       let result = staticParts[0];
 
+      // Process each pattern in the template
       for (let i = 0; i < patterns.length; i++) {
         const pattern = patterns[i];
 
@@ -322,106 +442,46 @@ export function protocol(
           throw new Error(`Missing required field "${pattern.name}"`);
         }
 
-        // Format according to type - combined approach
+        // Format according to type using the appropriate format function
         let formattedValue = '';
 
         switch (pattern.type) {
           case 'num':
-            formattedValue = String(data[pattern.name]);
-            // If fixed width, pad with zeros
-            if (pattern.size !== undefined) {
-              if (formattedValue.length > pattern.size) {
-                throw new Error(
-                  `Value "${formattedValue}" exceeds fixed width of ${pattern.size} for field "${pattern.name}"`,
-                );
-              }
-              formattedValue = formattedValue.padStart(pattern.size, '0');
-            }
+            formattedValue = formatNum(data[pattern.name], pattern.size);
             break;
-
           case 'bool':
-            formattedValue = String(data[pattern.name]);
+            formattedValue = formatBool(data[pattern.name]);
             break;
-
           case 'list':
             if (Array.isArray(data[pattern.name])) {
-              if (pattern.size !== undefined) {
-                // Fixed width formatting
-                formattedValue = data[pattern.name]
-                  .map((str: string) => {
-                    const s = String(str);
-                    if (s.length > pattern.size!) {
-                      throw new Error(
-                        `Value "${s}" exceeds fixed width of ${pattern.size} for item in "${pattern.name}"`,
-                      );
-                    }
-                    return s.padEnd(pattern.size!, ' ');
-                  })
-                  .join('');
-              } else {
-                // Standard delimiter formatting
-                formattedValue = data[pattern.name].join(DELIMITERS.LIST);
-              }
+              formattedValue = formatList(data[pattern.name], pattern.size);
             } else {
               formattedValue = String(data[pattern.name]);
             }
             break;
-
           case 'nums':
             if (Array.isArray(data[pattern.name])) {
-              if (pattern.size !== undefined) {
-                // Fixed width formatting
-                formattedValue = data[pattern.name]
-                  .map((num: number) => {
-                    const str = String(Math.floor(Number(num)));
-                    if (str.length > pattern.size!) {
-                      throw new Error(
-                        `Value "${num}" exceeds fixed width of ${pattern.size} for item in "${pattern.name}"`,
-                      );
-                    }
-                    return str.padStart(pattern.size!, '0');
-                  })
-                  .join('');
-              } else {
-                // Standard delimiter formatting
-                formattedValue = data[pattern.name].map(String).join(DELIMITERS.LIST);
-              }
+              formattedValue = formatNums(data[pattern.name], pattern.size);
             } else {
               formattedValue = String(data[pattern.name]);
             }
             break;
-
           case 'pairs':
             if (Array.isArray(data[pattern.name])) {
-              // For pairs type, we use the same format regardless of fixed width
-              formattedValue = data[pattern.name].flatMap((pair: string[]) => pair).join(DELIMITERS.PAIRS_ITEM);
+              formattedValue = formatPairs(data[pattern.name]);
             } else {
               formattedValue = String(data[pattern.name]);
             }
             break;
-
           case 'numPairs':
             if (Array.isArray(data[pattern.name])) {
-              // For numPairs type, we use the same format regardless of fixed width
-              formattedValue = data[pattern.name]
-                .flatMap((pair: number[]) => pair.map(String))
-                .join(DELIMITERS.PAIRS_ITEM);
+              formattedValue = formatNumPairs(data[pattern.name]);
             } else {
               formattedValue = String(data[pattern.name]);
             }
             break;
-
           default: // text
-            formattedValue = String(data[pattern.name]);
-            // If fixed width, pad with spaces
-            if (pattern.size !== undefined) {
-              if (formattedValue.length > pattern.size) {
-                throw new Error(
-                  `Value "${formattedValue}" exceeds fixed width of ${pattern.size} for field "${pattern.name}"`,
-                );
-              }
-              formattedValue = formattedValue.padEnd(pattern.size, ' ');
-            }
+            formattedValue = formatText(data[pattern.name], pattern.size);
             break;
         }
 

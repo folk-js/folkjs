@@ -297,7 +297,7 @@ describe('protocol', () => {
       // Test error for longer values
       expect(() => {
         proto.encode({ code: 'ABCDEFGHI' });
-      }).toThrow('Value "ABCDEFGHI" exceeds fixed width of 5 for field "code"');
+      }).toThrow('Value "ABCDEFGHI" exceeds fixed width of 5');
     });
   });
 
@@ -368,7 +368,7 @@ describe('protocol', () => {
       // Test error for longer values
       expect(() => {
         proto.encode({ codes: ['AAA', 'BB', 'CC'] });
-      }).toThrow('Value "AAA" exceeds fixed width of 2 for item in "codes"');
+      }).toThrow('Value "AAA" exceeds fixed width of 2');
     });
   });
 
@@ -395,7 +395,7 @@ describe('protocol', () => {
       // Test error for longer values
       expect(() => {
         proto.encode({ values: [1234, 5678, 9012] });
-      }).toThrow('Value "1234" exceeds fixed width of 3 for item in "values"');
+      }).toThrow('Value "1234" exceeds fixed width of 3');
     });
   });
 
