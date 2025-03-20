@@ -2,16 +2,16 @@
  * Header - A utility for encoding/decoding compact text headers
  *
  * This utility provides a DSL for defining structured text headers using
- * tagged template literals. It handles basic parsing of structured text
+ * string patterns. It handles basic parsing of structured text
  * formats into JavaScript objects and encoding objects back to strings.
  *
  * Basic usage:
- * const myHeader = header`prefix <field:type> suffix`;
+ * const myHeader = header("prefix <field:type> suffix");
  * const result = myHeader.decode("prefix value suffix");
  * const encoded = myHeader.encode({ field: "value" });
  *
  * Example:
- * const myHeader = header`QRTPB<index:num>:<hash:text-16><payload>`;
+ * const myHeader = header("QRTPB<index:num>:<hash:text-16><payload>");
  *
  * Supported types:
  * - text: Default type, represents a text string
@@ -32,7 +32,7 @@
  * - !: Marks a fixed-size header where the header length is determined by the field sizes
  */
 
-// Type definitions for template string parsing
+// Type definitions for string parsing
 type PatternType = 'text' | 'num' | 'bool' | 'list' | 'nums' | 'pairs' | 'numPairs';
 
 // Parse basic types
@@ -54,21 +54,25 @@ type ParseType<T extends string> = T extends `${infer Base}-${string}`
                 ? Array<[number, number]>
                 : string;
 
-// Extract field definitions from template
+// Extract field definitions from string pattern
 type ExtractFields<T extends string> = T extends `${string}<${infer Field}:${infer Type}>${infer Rest}`
   ? { [K in Field]: ParseType<Type> } & ExtractFields<Rest>
   : T extends `${string}<${infer Field}>${infer Rest}`
     ? { [K in Field]: string } & ExtractFields<Rest>
     : {};
 
-// Main type that produces the decode return type and encode input type from a template string
-type HeaderData<T extends string> = ExtractFields<T> & {
-  payload?: string;
-  [key: string]: any; // Add index signature to allow string indexing
-};
+// Expand type helper to force full type expansion in IDE
+type Expand<T> = T extends infer O ? { [K in keyof O]: O[K] } : never;
 
-// Type helper to expose the underlying type in IDE tooltips
-type HeaderDataType<T> = T extends Header<infer U> ? HeaderData<U> : never;
+// Main type that produces the decode return type and encode input type from a pattern string
+type HeaderData<T extends string> = Expand<
+  ExtractFields<T> & {
+    payload?: string;
+  }
+>;
+
+// Add a separate type for internal use that includes the index signature
+type InternalHeaderData<T extends string> = HeaderData<T> & Record<string, any>;
 
 interface Pattern {
   name: string;
@@ -76,8 +80,6 @@ interface Pattern {
   size?: number;
   isFixedHeader?: boolean;
 }
-
-type ParseResult = Record<string, any>;
 
 const DELIMITERS = {
   PAYLOAD: '$',
@@ -91,9 +93,8 @@ interface Header<T extends string> {
   encode: (data: HeaderData<T>) => string;
 }
 
-export function header<T extends string>(strings: TemplateStringsArray, ...values: any[]): Header<T> {
-  const templateString = strings.join('');
-  const { staticParts, patterns, hasFixedHeader, hasDollarDelimiter } = parseTemplate(strings);
+export function header<T extends string>(pattern: T): Expand<Header<T>> {
+  const { staticParts, patterns, hasFixedHeader, hasDollarDelimiter } = parseTemplate(pattern);
 
   // Calculate fixed header length if needed
   const fixedHeaderLength = hasFixedHeader ? patterns.reduce((sum, p) => sum + (p.size || 0), 0) : 0;
@@ -102,38 +103,40 @@ export function header<T extends string>(strings: TemplateStringsArray, ...value
     encode(data: HeaderData<T>): string {
       // SETUP
       let result = staticParts[0];
+      // Cast to internal type to allow dynamic property access
+      const internalData = data as InternalHeaderData<T>;
 
       // MAIN LOOP: Format each pattern
       for (let i = 0; i < patterns.length; i++) {
         const pattern = patterns[i];
 
         // Verify required field exists
-        if (data[pattern.name] === undefined) {
+        if (internalData[pattern.name] === undefined) {
           throw new Error(`Missing required field "${pattern.name}"`);
         }
 
         // Format value and add to result according to pattern type
         switch (pattern.type) {
           case 'num':
-            result += formatNum(data[pattern.name] as number, pattern.size);
+            result += formatNum(internalData[pattern.name] as number, pattern.size);
             break;
           case 'bool':
-            result += formatBool(data[pattern.name] as boolean);
+            result += formatBool(internalData[pattern.name] as boolean);
             break;
           case 'list':
-            result += formatList(data[pattern.name] as string[], pattern.size);
+            result += formatList(internalData[pattern.name] as string[], pattern.size);
             break;
           case 'nums':
-            result += formatNums(data[pattern.name] as number[], pattern.size);
+            result += formatNums(internalData[pattern.name] as number[], pattern.size);
             break;
           case 'pairs':
-            result += formatPairs(data[pattern.name] as string[][]);
+            result += formatPairs(internalData[pattern.name] as string[][]);
             break;
           case 'numPairs':
-            result += formatNumPairs(data[pattern.name] as number[][]);
+            result += formatNumPairs(internalData[pattern.name] as number[][]);
             break;
           default: // text
-            result += formatText(data[pattern.name], pattern.size);
+            result += formatText(internalData[pattern.name], pattern.size);
             break;
         }
 
@@ -144,12 +147,13 @@ export function header<T extends string>(strings: TemplateStringsArray, ...value
       }
 
       // Add payload if present
-      return addPayload(result, data.payload, hasFixedHeader, hasDollarDelimiter);
+      return addPayload(result, internalData.payload, hasFixedHeader, hasDollarDelimiter);
     },
 
     decode(input: string): HeaderData<T> {
       // SETUP
-      const result = {} as HeaderData<T>;
+      // Use internal type for dynamic property access
+      const result = {} as InternalHeaderData<T>;
 
       // Check input for fixed header patterns
       if (hasFixedHeader && !input.startsWith(staticParts[0])) {
@@ -221,9 +225,10 @@ export function header<T extends string>(strings: TemplateStringsArray, ...value
         if (isLastField) break;
       }
 
-      return result;
+      // Cast back to clean public interface
+      return result as HeaderData<T>;
     },
-  };
+  } as Expand<Header<T>>;
 }
 
 function extractPatternValue(
@@ -396,10 +401,7 @@ interface TemplateInfo {
   hasDollarDelimiter: boolean;
 }
 
-function parseTemplate(strings: TemplateStringsArray): TemplateInfo {
-  // Create a full template string
-  let fullTemplate = strings[0];
-
+function parseTemplate(templateString: string): TemplateInfo {
   // Extract patterns
   const staticParts: string[] = [];
   const patterns: Pattern[] = [];
@@ -407,8 +409,8 @@ function parseTemplate(strings: TemplateStringsArray): TemplateInfo {
   let lastIndex = 0;
   let match;
 
-  while ((match = placeholderRegex.exec(fullTemplate)) !== null) {
-    staticParts.push(fullTemplate.substring(lastIndex, match.index));
+  while ((match = placeholderRegex.exec(templateString)) !== null) {
+    staticParts.push(templateString.substring(lastIndex, match.index));
 
     const [, name, type = 'text', sizeStr] = match;
     const size = sizeStr ? parseInt(sizeStr) : undefined;
@@ -417,7 +419,7 @@ function parseTemplate(strings: TemplateStringsArray): TemplateInfo {
     lastIndex = match.index + match[0].length;
   }
 
-  staticParts.push(fullTemplate.substring(lastIndex));
+  staticParts.push(templateString.substring(lastIndex));
 
   // Detect special delimiters
   const hasFixedHeader = staticParts[staticParts.length - 1] === DELIMITERS.FIXED_HEADER;
