@@ -295,6 +295,54 @@ function formatNumPairs(pairs: number[][]): string {
 }
 
 /**
+ * Splits an input string into header and payload parts
+ */
+function splitHeaderAndPayload(
+  input: string,
+  hasFixedHeader: boolean,
+  fixedHeaderLength: number,
+  staticPrefixLength: number,
+): { header: string; payload: string | undefined } {
+  const payloadStart = hasFixedHeader ? staticPrefixLength + fixedHeaderLength : input.indexOf(DELIMITERS.PAYLOAD);
+
+  if (payloadStart < 0) {
+    // No payload found
+    return { header: input, payload: undefined };
+  }
+
+  // For variable header, skip the $ delimiter
+  const payloadOffset = hasFixedHeader ? 0 : 1;
+
+  const header = input.substring(0, payloadStart);
+  const payload =
+    payloadStart + payloadOffset < input.length ? input.substring(payloadStart + payloadOffset) : undefined;
+
+  return { header, payload };
+}
+
+/**
+ * Adds payload to an encoded string
+ */
+function addPayload(
+  encoded: string,
+  payload: string | undefined,
+  hasFixedHeader: boolean,
+  hasDollarDelimiter: boolean,
+): string {
+  if (payload === undefined) {
+    return encoded;
+  }
+
+  // Add delimiter if needed
+  if (!hasFixedHeader && !hasDollarDelimiter) {
+    return encoded + DELIMITERS.PAYLOAD + payload;
+  }
+
+  // Otherwise just append payload
+  return encoded + payload;
+}
+
+/**
  * Creates a protocol parser/encoder from a template string
  */
 export function protocol(
@@ -322,31 +370,23 @@ export function protocol(
         throw new Error(`Input doesn't match pattern at "${staticParts[0]}"`);
       }
 
-      // Extract payload and get working string
-      let remaining = input;
+      // Split input into header and payload
+      const { header, payload } = splitHeaderAndPayload(
+        input,
+        hasFixedHeader,
+        fixedHeaderLength,
+        staticParts[0].length,
+      );
 
-      // Determine where payload starts (if any)
-      const payloadStart = hasFixedHeader
-        ? staticParts[0].length + fixedHeaderLength
-        : remaining.indexOf(DELIMITERS.PAYLOAD);
-
-      // Extract payload if found
-      if (payloadStart >= 0) {
-        // For fixed header: no delimiter to skip
-        // For variable header: skip the $ delimiter
-        const payloadOffset = hasFixedHeader ? 0 : 1;
-
-        if (payloadStart + payloadOffset < input.length) {
-          result.payload = input.substring(payloadStart + payloadOffset);
-        }
-
-        // Only process up to the payload start
-        remaining = input.substring(0, payloadStart);
+      // Store payload if found
+      if (payload) {
+        result.payload = payload;
       }
 
       // MAIN LOOP: Process each pattern
       let pos = hasFixedHeader ? staticParts[0].length : 0;
       let i = 0;
+      let remaining = header;
 
       for (const pattern of patterns) {
         let valueText: string;
@@ -463,15 +503,7 @@ export function protocol(
       }
 
       // Add payload if present
-      if (data.payload !== undefined) {
-        if (!hasFixedHeader && !hasDollarDelimiter) {
-          // Add delimiter for regular headers if not already in template
-          result += DELIMITERS.PAYLOAD;
-        }
-        result += data.payload;
-      }
-
-      return result;
+      return addPayload(result, data.payload, hasFixedHeader, hasDollarDelimiter);
     },
   };
 }
