@@ -2,7 +2,15 @@ import EventEmitter from 'eventemitter3';
 import { hash } from './utils/hash';
 import { header } from './utils/header';
 
-/** QRTP - Tiny QR Transfer Protocol with simple hash chaining */
+/** QRTP - Tiny QR Transfer Protocol
+ * Each device shows a QR code with:
+ * 1. payload (the furthest unconfirmed chunk of the full message)
+ * 2. ACK hash (the hash of last received chunk)
+ *
+ * Each device scans the QR code and:
+ * 1. If the ACK matches the currently shown message, show the next chunk (advance our own message)
+ * 2. If there is a payload with higher index, append it to the incoming chunks
+ */
 export class QRTP extends EventEmitter {
   #sendingData: string[] = []; // Data chunks to send
   #sendingIndex: number = 0; // Current send position
@@ -75,13 +83,13 @@ export class QRTP extends EventEmitter {
   #emitCodeUpdate(): void {
     const payload = this.isSending ? this.#sendingData[this.#sendingIndex] : '';
 
-    const code = this.#header.encode({
+    const data = this.#header.encode({
       index: this.#sendingIndex,
       total: this.#sendingData.length,
       ack: this.#receivedAck,
       payload,
     });
 
-    this.emit('qrUpdate', { data: code });
+    this.emit('qrUpdate', { data });
   }
 }
