@@ -32,7 +32,43 @@
  * - !: Marks a fixed-size header where the header length is determined by the field sizes
  */
 
+// Type definitions for template string parsing
 type PatternType = 'text' | 'num' | 'bool' | 'list' | 'nums' | 'pairs' | 'numPairs';
+
+// Parse basic types
+type ParseType<T extends string> = T extends `${infer Base}-${string}`
+  ? ParseType<Base>
+  : T extends 'text'
+    ? string
+    : T extends 'num'
+      ? number
+      : T extends 'bool'
+        ? boolean
+        : T extends 'list'
+          ? string[]
+          : T extends 'nums'
+            ? number[]
+            : T extends 'pairs'
+              ? Array<[string, string]>
+              : T extends 'numPairs'
+                ? Array<[number, number]>
+                : string;
+
+// Extract field definitions from template
+type ExtractFields<T extends string> = T extends `${string}<${infer Field}:${infer Type}>${infer Rest}`
+  ? { [K in Field]: ParseType<Type> } & ExtractFields<Rest>
+  : T extends `${string}<${infer Field}>${infer Rest}`
+    ? { [K in Field]: string } & ExtractFields<Rest>
+    : {};
+
+// Main type that produces the decode return type and encode input type from a template string
+type HeaderData<T extends string> = ExtractFields<T> & {
+  payload?: string;
+  [key: string]: any; // Add index signature to allow string indexing
+};
+
+// Type helper to expose the underlying type in IDE tooltips
+type HeaderDataType<T> = T extends Header<infer U> ? HeaderData<U> : never;
 
 interface Pattern {
   name: string;
@@ -50,19 +86,20 @@ const DELIMITERS = {
   PAIRS_ITEM: ';',
 };
 
-interface Header {
-  decode: (input: string) => ParseResult;
-  encode: (data: Record<string, any>) => string;
+interface Header<T extends string> {
+  decode: (input: string) => HeaderData<T>;
+  encode: (data: HeaderData<T>) => string;
 }
 
-export function header(strings: TemplateStringsArray): Header {
+export function header<T extends string>(strings: TemplateStringsArray, ...values: any[]): Header<T> {
+  const templateString = strings.join('');
   const { staticParts, patterns, hasFixedHeader, hasDollarDelimiter } = parseTemplate(strings);
 
   // Calculate fixed header length if needed
   const fixedHeaderLength = hasFixedHeader ? patterns.reduce((sum, p) => sum + (p.size || 0), 0) : 0;
 
   return {
-    encode(data: Record<string, any>): string {
+    encode(data: HeaderData<T>): string {
       // SETUP
       let result = staticParts[0];
 
@@ -78,22 +115,22 @@ export function header(strings: TemplateStringsArray): Header {
         // Format value and add to result according to pattern type
         switch (pattern.type) {
           case 'num':
-            result += formatNum(data[pattern.name], pattern.size);
+            result += formatNum(data[pattern.name] as number, pattern.size);
             break;
           case 'bool':
-            result += formatBool(data[pattern.name]);
+            result += formatBool(data[pattern.name] as boolean);
             break;
           case 'list':
-            result += formatList(data[pattern.name], pattern.size);
+            result += formatList(data[pattern.name] as string[], pattern.size);
             break;
           case 'nums':
-            result += formatNums(data[pattern.name], pattern.size);
+            result += formatNums(data[pattern.name] as number[], pattern.size);
             break;
           case 'pairs':
-            result += formatPairs(data[pattern.name]);
+            result += formatPairs(data[pattern.name] as string[][]);
             break;
           case 'numPairs':
-            result += formatNumPairs(data[pattern.name]);
+            result += formatNumPairs(data[pattern.name] as number[][]);
             break;
           default: // text
             result += formatText(data[pattern.name], pattern.size);
@@ -110,9 +147,9 @@ export function header(strings: TemplateStringsArray): Header {
       return addPayload(result, data.payload, hasFixedHeader, hasDollarDelimiter);
     },
 
-    decode(input: string): ParseResult {
+    decode(input: string): HeaderData<T> {
       // SETUP
-      const result: ParseResult = {};
+      const result = {} as HeaderData<T>;
 
       // Check input for fixed header patterns
       if (hasFixedHeader && !input.startsWith(staticParts[0])) {
@@ -491,3 +528,51 @@ interface ExtractResult {
   newPosition: number;
   isLastField: boolean;
 }
+
+// Example usage to demonstrate type safety
+/*
+// This shows how TypeScript will infer the correct types from the template
+const userHeader = header`USER<id:num>:<name:text>:<active:bool>:<tags:list>:<scores:nums>:<metadata:pairs>:<points:numPairs>`;
+
+// TypeScript automatically infers the full type from the template - no need to specify it!
+// To get proper IDE tooltips, use the HeaderDataType helper:
+type UserData = HeaderDataType<typeof userHeader>;
+// This will expand to:
+// {
+//   id: number;
+//   name: string;
+//   active: boolean;
+//   tags: string[];
+//   scores: number[];
+//   metadata: Array<[string, string]>;
+//   points: Array<[number, number]>;
+//   payload?: string;
+// }
+
+// Type safety in action:
+const userData = userHeader.decode("USER123:John:true:tag1,tag2:10,20:key;value:1;2");
+// userData.id is typed as number
+// userData.name is typed as string
+// userData.active is typed as boolean
+// userData.tags is typed as string[]
+// userData.scores is typed as number[]
+// userData.metadata is typed as Array<[string, string]>
+// userData.points is typed as Array<[number, number]>
+
+// With type checking on encode
+userHeader.encode({
+  id: 123,
+  name: "John",
+  active: true,
+  tags: ["tag1", "tag2"],
+  scores: [10, 20],
+  metadata: [["key", "value"]],
+  points: [[1, 2]]
+});
+
+// Another example with a simpler header:
+const qrtpHeader = header`QRTPB<index:num>:<hash:text-16><payload>`;
+// Use the type helper to see the actual type in IDE tooltips:
+type QRTPData = HeaderDataType<typeof qrtpHeader>;
+// Shows as: { index: number; hash: string; payload?: string; }
+*/
