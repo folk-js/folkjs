@@ -614,7 +614,7 @@
 
         // Event handler for setting data
         txData.addEventListener('input', function () {
-          qrProtocol.reset();
+          qrProtocol.setMessage(txData.value.trim());
           messageLog.innerHTML = '';
           receivedTextDisplay.innerHTML = '';
 
@@ -623,11 +623,6 @@
           updateReceivingProgress(0, 0);
 
           addMessageToLog('system', 'info', 'Protocol state reset');
-
-          const text = txData.value.trim();
-          if (text) {
-            qrProtocol.setMessage(text);
-          }
         });
 
         // Function to update the QR code with provided data

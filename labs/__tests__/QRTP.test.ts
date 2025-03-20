@@ -4,10 +4,16 @@ import { QRTP } from '../QRTP';
 describe('QRTP Protocol', () => {
   let senderQRTP: QRTP;
   let receiverQRTP: QRTP;
+  let senderCode: string = '';
+  let receiverCode: string = '';
 
   beforeEach(() => {
     senderQRTP = new QRTP();
     receiverQRTP = new QRTP();
+
+    // Track current QR codes via events
+    senderQRTP.on('qrUpdate', ({ data }) => (senderCode = data));
+    receiverQRTP.on('qrUpdate', ({ data }) => (receiverCode = data));
   });
 
   test('should properly segment message', () => {
@@ -45,30 +51,30 @@ describe('QRTP Protocol', () => {
     senderQRTP.setMessage(testMessage, 5);
 
     // Step 1: Receiver scans the first QR code from sender
-    receiverQRTP.parseCode(senderQRTP.currentCode());
+    receiverQRTP.parseCode(senderCode);
     expect(receivedChunks[0]).toBe('Hello');
     expect(completeReceived).toBe(false);
 
     // Step 2: Sender scans QR code from receiver (which contains ack)
-    senderQRTP.parseCode(receiverQRTP.currentCode());
+    senderQRTP.parseCode(receiverCode);
     expect(ackCount).toBe(1);
 
     // Step 3: Receiver scans the second QR code
-    receiverQRTP.parseCode(senderQRTP.currentCode());
+    receiverQRTP.parseCode(senderCode);
     expect(receivedChunks[1]).toBe(', wor');
     expect(completeReceived).toBe(false);
 
     // Step 4: Sender scans second ack
-    senderQRTP.parseCode(receiverQRTP.currentCode());
+    senderQRTP.parseCode(receiverCode);
     expect(ackCount).toBe(2);
 
     // Step 5: Receiver scans the final chunk
-    receiverQRTP.parseCode(senderQRTP.currentCode());
+    receiverQRTP.parseCode(senderCode);
     expect(receivedChunks[2]).toBe('ld!');
     expect(completeReceived).toBe(true);
 
     // Step 6: Sender scans final ack
-    senderQRTP.parseCode(receiverQRTP.currentCode());
+    senderQRTP.parseCode(receiverCode);
     expect(ackCount).toBe(3);
   });
 
@@ -108,11 +114,11 @@ describe('QRTP Protocol', () => {
     senderQRTP.setMessage('One-way message', 6);
 
     // Complete the transfer
-    receiverQRTP.parseCode(senderQRTP.currentCode());
-    senderQRTP.parseCode(receiverQRTP.currentCode());
-    receiverQRTP.parseCode(senderQRTP.currentCode());
-    senderQRTP.parseCode(receiverQRTP.currentCode());
-    receiverQRTP.parseCode(senderQRTP.currentCode());
+    receiverQRTP.parseCode(senderCode);
+    senderQRTP.parseCode(receiverCode);
+    receiverQRTP.parseCode(senderCode);
+    senderQRTP.parseCode(receiverCode);
+    receiverQRTP.parseCode(senderCode);
 
     // Verify complete message was received
     expect(completeReceived).toBe(true);
@@ -129,18 +135,18 @@ describe('QRTP Protocol', () => {
 
     // Setup with some data
     senderQRTP.setMessage('Test data');
-    receiverQRTP.parseCode(senderQRTP.currentCode());
+    receiverQRTP.parseCode(senderCode);
     expect(chunkCount).toBe(1);
 
     // Reset both instances
-    senderQRTP.reset();
-    receiverQRTP.reset();
+    senderQRTP.setMessage(null);
+    receiverQRTP.setMessage(null);
 
     // Send new message after reset
     senderQRTP.setMessage('New data');
     expect(initCount).toBe(2); // Should get another init event
 
-    receiverQRTP.parseCode(senderQRTP.currentCode());
+    receiverQRTP.parseCode(senderCode);
     expect(chunkCount).toBe(2); // Should get new chunks
   });
 
@@ -152,6 +158,11 @@ describe('QRTP Protocol', () => {
     // Setup devices
     const alice = new QRTP();
     const bob = new QRTP();
+    let aliceCode = '';
+    let bobCode = '';
+
+    alice.on('qrUpdate', ({ data }) => (aliceCode = data));
+    bob.on('qrUpdate', ({ data }) => (bobCode = data));
 
     // Track received messages
     let aliceReceivedComplete = false;
@@ -181,8 +192,8 @@ describe('QRTP Protocol', () => {
     for (let round = 0; round < 10; round++) {
       if (aliceReceivedComplete && bobReceivedComplete) break;
 
-      alice.parseCode(bob.currentCode());
-      bob.parseCode(alice.currentCode());
+      alice.parseCode(bobCode);
+      bob.parseCode(aliceCode);
     }
 
     // Verify results
