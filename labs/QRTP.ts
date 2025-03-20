@@ -11,7 +11,7 @@ export class QRTP extends EventEmitter {
   #receivedData: string[] = []; // Received data chunks
   #receivedAck: string = ''; // Last computed hash for ack
   #receivedExpectedChunks: number = 0; // Total expected chunks
-  #header = header('QRTP<index:num>/<total:num>:<ack:text>$');
+  #header = header('QRTP<index:num>/<total:num>:<ack:text>');
 
   get chunks(): string[] {
     return [...this.#receivedData];

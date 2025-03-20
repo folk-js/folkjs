@@ -362,6 +362,19 @@ describe('Payloads with $ delimiter', () => {
       payload: '{"key":"value","arr":[1,2,3]}',
     });
   });
+  test('should handle absent delimiter', () => {
+    const hdr = header('MSG:<type>');
+    const encoded = hdr.encode({
+      type: 'DATA',
+      payload: '{"key":"value","arr":[1,2,3]}',
+    });
+    expect(encoded).toBe('MSG:DATA${"key":"value","arr":[1,2,3]}');
+    const decoded = hdr.decode('MSG:DATA${"key":"value","arr":[1,2,3]}');
+    expect(decoded).toEqual({
+      type: 'DATA',
+      payload: '{"key":"value","arr":[1,2,3]}',
+    });
+  });
 });
 
 describe('Fixed-size headers', () => {
