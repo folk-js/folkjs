@@ -28,9 +28,8 @@ export interface QRTPPacket {
   payload: string | null;
 }
 
-// Define typesafe header templates using the header utility
-const dataHeader = header('QRTP<index:num>/<total:num>:<hash:text>$');
-const ackHeader = header('QRTPA:<hash:text>');
+// Define typesafe header template using the header utility
+const qrtpHeader = header('QRTP<index:num>/<total:num>:<hash:text>$');
 
 export class QRTP {
   // Static configuration
@@ -149,17 +148,10 @@ export class QRTP {
 
   // Convert a packet object to a string for QR code using header utility
   private packetToString(packet: QRTPPacket): string {
-    // If this is an acknowledgment (no index/total)
-    if (packet.index === null || packet.total === null) {
-      return ackHeader.encode({
-        hash: packet.hash || '',
-      });
-    }
-
-    // This is a data packet
-    return dataHeader.encode({
-      index: packet.index,
-      total: packet.total,
+    // For both data packets and acknowledgments, use the same header format
+    return qrtpHeader.encode({
+      index: packet.index ?? 0,
+      total: packet.total ?? 0,
       hash: packet.hash || '',
       payload: packet.payload || '',
     });
@@ -325,31 +317,22 @@ export class QRTP {
   // Helper method to parse QRTP data using header utility
   private parseQRTPData(data: string): QRTPPacket | null {
     try {
-      // Check if this is a data packet or an ack packet
+      // Check if this is a valid QRTP packet
       if (data.startsWith('QRTP')) {
         try {
-          const decoded = dataHeader.decode(data);
+          const decoded = qrtpHeader.decode(data);
+
+          // If index and total are both 0, this is an acknowledgment
+          const isAck = decoded.index === 0 && decoded.total === 0;
+
           return {
-            index: decoded.index,
-            total: decoded.total,
+            index: isAck ? null : decoded.index,
+            total: isAck ? null : decoded.total,
             hash: decoded.hash,
             payload: decoded.payload || null,
           };
         } catch (error) {
-          this.logMessage('incoming', 'error', `Error decoding data header: ${error}`, data);
-          return null;
-        }
-      } else if (data.startsWith('QRTPA')) {
-        try {
-          const decoded = ackHeader.decode(data);
-          return {
-            index: null,
-            total: null,
-            hash: decoded.hash,
-            payload: null,
-          };
-        } catch (error) {
-          this.logMessage('incoming', 'error', `Error decoding ack header: ${error}`, data);
+          this.logMessage('incoming', 'error', `Error decoding QRTP header: ${error}`, data);
           return null;
         }
       } else {
