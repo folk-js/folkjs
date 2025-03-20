@@ -1,6 +1,7 @@
 // QRTP - QR Transfer Protocol
 // A silly simple data transfer protocol using QR codes
 
+import { hash } from './utils/hash';
 import { header } from './utils/header';
 
 // Event types for external handlers
@@ -116,23 +117,8 @@ export class QRTP {
   }
 
   // Generate hash for a chunk
-  generateChunkHash(chunk: string, index: number, total: number): string {
-    // Include index and total in the hash calculation to prevent issues with repeat chunks
-    const dataToHash = `${index}/${total}:${chunk}`;
-
-    // Simple hash function that considers chunk data and metadata
-    let hash = 0;
-
-    for (let i = 0; i < dataToHash.length; i++) {
-      const char = dataToHash.charCodeAt(i);
-      hash = ((hash << 5) - hash + char) | 0; // Force 32-bit integer with | 0
-    }
-
-    // Convert to 8-character hex string with consistent sign handling
-    const hashUint = hash < 0 ? hash + 4294967296 : hash; // Convert negative to positive
-    const hashStr = hashUint.toString(16).padStart(8, '0');
-
-    return hashStr;
+  private generateChunkHash(chunk: string, index: number, total: number): string {
+    return hash(`${index}/${total}`, chunk);
   }
 
   // Get the current QR code data to display
