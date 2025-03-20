@@ -11,7 +11,7 @@
  * const encoded = myHeader.encode({ field: "value" });
  *
  * Example:
- * const myHeader = header`QRTPB<index:num>:<hash:text(16)><payload>`;
+ * const myHeader = header`QRTPB<index:num>:<hash:text-16><payload>`;
  *
  * Supported types:
  * - text: Default type, represents a text string
@@ -23,8 +23,9 @@
  * - numPairs: A list of number tuple arrays where each tuple is [number, number] (format is 'num;num;num;num')
  *
  * Fixed-width fields:
- * You can specify a fixed width for a field by adding a size parameter:
- * <field:type(size)> - for example, <code:text(3)> for a 3-character code
+ * You can specify a fixed width for a field using dash notation:
+ * <field:type-size> - for example, <code:text-3> for a 3-character code
+ * or <id:num-5> for a 5-digit number (padded with leading zeros)
  *
  * End markers:
  * - $: Indicates that everything after this point is payload data
@@ -365,7 +366,7 @@ function parseTemplate(strings: TemplateStringsArray): TemplateInfo {
   // Extract patterns
   const staticParts: string[] = [];
   const patterns: Pattern[] = [];
-  const placeholderRegex = /<([^:>]+)(?::([^>(]+)(?:\(([^)]*)\))?)?>/g;
+  const placeholderRegex = /<([^:>]+)(?::([^>-]+)(?:-([0-9]+))?)?>/g;
   let lastIndex = 0;
   let match;
 
