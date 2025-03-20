@@ -575,17 +575,11 @@
             );
 
             // Update sending progress
-            const currentChunk = Math.min(qrProtocol.getCurrentChunkIndex(), qrProtocol.getTotalChunks());
+            const currentIndex = qrProtocol.getCurrentIndex();
             const totalChunks = qrProtocol.getTotalChunks();
-
-            if (totalChunks === 0) {
-              sendingProgressText.textContent = '0/0';
-              sendingProgressBar.style.width = '0%';
-            } else {
-              sendingProgressText.textContent = `${currentChunk}/${totalChunks}`;
-              const progress = (currentChunk / totalChunks) * 100;
-              sendingProgressBar.style.width = `${progress}%`;
-            }
+            sendingProgressText.textContent = `${currentIndex}/${totalChunks}`;
+            const progress = qrProtocol.getSendingProgress();
+            sendingProgressBar.style.width = `${progress}%`;
 
             // Generate new QR code with next chunk (if available)
             generateQRCodeFromProtocol();
