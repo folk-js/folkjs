@@ -4,8 +4,8 @@
  * @param data - The data to hash
  * @returns An 8-character Base64 hash string
  */
-export function hash(...data: string[]): string {
-  const dataToHash = data.join();
+export function hash(...data: (string | number)[]): string {
+  const dataToHash = data.join('');
 
   // Simple non-cryptographic hash function (FNV-1a)
   let hash = 2166136261; // FNV offset basis

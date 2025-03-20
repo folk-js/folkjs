@@ -59,18 +59,16 @@ describe('Header encoding', () => {
 });
 
 describe('Header decoding', () => {
-  test('should throw error if input does not match pattern', () => {
-    const hdr = header('Hello <name>');
-    expect(() => {
-      hdr.decode('Invalid input');
-    }).toThrow('Input doesn\'t match pattern at "Hello "');
+  test('should return null if input does not match pattern', () => {
+    const hdr = header('Hello <n>');
+    const result = hdr.decode('Invalid input');
+    expect(result).toBeNull();
   });
 
-  test("should throw error if delimiter can't be found", () => {
+  test("should return null if delimiter can't be found", () => {
     const hdr = header('<firstName> <lastName>');
-    expect(() => {
-      hdr.decode('JohnDoe'); // Missing space delimiter
-    }).toThrow('Couldn\'t find delimiter " " in remaining input');
+    const result = hdr.decode('JohnDoe'); // Missing space delimiter
+    expect(result).toBeNull();
   });
 
   test('should handle mixed field types with fixed width', () => {
@@ -381,6 +379,12 @@ describe('Fixed-size headers', () => {
     });
   });
 
+  test('should return null if fixed-size header does not match pattern', () => {
+    const hdr = header('HDR:<type:text-3>!');
+    const result = hdr.decode('XYZ:MSGThis is a message');
+    expect(result).toBeNull();
+  });
+
   test('should handle fixed-size header with padding for consistent size', () => {
     const hdr = header('CMD:<type:text-3>!');
     // With 3 characters, fits exactly
@@ -428,5 +432,19 @@ describe('Fixed-size headers', () => {
     expect(() => {
       header('<type:text>!');
     }).toThrow('Fixed-size header requires a size parameter for all fields');
+  });
+});
+
+describe('Header decode error handling', () => {
+  test('should return null for completely invalid input', () => {
+    const hdr = header('<firstName> <lastName>');
+    const result = hdr.decode('');
+    expect(result).toBeNull();
+  });
+
+  test('should return null for input with incorrect delimiters', () => {
+    const hdr = header('<name>:<age>');
+    const result = hdr.decode('John-42');
+    expect(result).toBeNull();
   });
 });

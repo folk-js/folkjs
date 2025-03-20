@@ -89,7 +89,7 @@ const DELIMITERS = {
 };
 
 interface Header<T extends string> {
-  decode: (input: string) => HeaderData<T>;
+  decode: (input: string) => HeaderData<T> | null;
   encode: (data: HeaderData<T>) => string;
 }
 
@@ -150,14 +150,14 @@ export function header<T extends string>(pattern: T): Expand<Header<T>> {
       return addPayload(result, internalData.payload, hasFixedHeader, hasDollarDelimiter);
     },
 
-    decode(input: string): HeaderData<T> {
+    decode(input: string): HeaderData<T> | null {
       // SETUP
       // Use internal type for dynamic property access
       const result = {} as InternalHeaderData<T>;
 
       // Check input for fixed header patterns
       if (hasFixedHeader && !input.startsWith(staticParts[0])) {
-        throw new Error(`Input doesn't match pattern at "${staticParts[0]}"`);
+        return null; // Return null instead of throwing error
       }
 
       // Split input into header and payload
@@ -182,7 +182,7 @@ export function header<T extends string>(pattern: T): Expand<Header<T>> {
         const pattern = patterns[i];
 
         // Extract value for this pattern
-        const { value, newRemaining, newPosition, isLastField } = extractPatternValue(
+        const extractResult = extractPatternValue(
           pattern,
           input,
           pos,
@@ -190,6 +190,13 @@ export function header<T extends string>(pattern: T): Expand<Header<T>> {
           staticParts[staticIndex],
           staticParts[staticIndex + 1] || '',
         );
+
+        // Return null if extraction failed
+        if (extractResult === null) {
+          return null;
+        }
+
+        const { value, newRemaining, newPosition, isLastField } = extractResult;
 
         // Parse according to pattern type
         switch (pattern.type) {
@@ -238,7 +245,7 @@ function extractPatternValue(
   remaining: string,
   staticPart: string,
   nextStatic: string,
-): ExtractResult {
+): ExtractResult | null {
   // Fixed width field handling
   if (pattern.isFixedHeader) {
     return {
@@ -251,7 +258,7 @@ function extractPatternValue(
 
   // Variable width field handling
   if (!remaining.startsWith(staticPart)) {
-    throw new Error(`Input doesn't match pattern at "${staticPart}"`);
+    return null; // Return null instead of throwing error
   }
 
   // Skip the static prefix
@@ -270,7 +277,7 @@ function extractPatternValue(
   // Find the end of this value (next delimiter)
   const endPos = nextStatic ? afterPrefix.indexOf(nextStatic) : afterPrefix.length;
   if (endPos === -1) {
-    throw new Error(`Couldn't find delimiter "${nextStatic}" in remaining input`);
+    return null; // Return null instead of throwing error
   }
 
   // Extract value and update remaining text
