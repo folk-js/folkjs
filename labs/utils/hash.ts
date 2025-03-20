@@ -1,24 +1,26 @@
 /**
- * Generate a hash string from any number of input strings
- *
- * @param inputs - Any number of strings to be hashed together
- * @returns An 8-character hex string hash
+ * Base64-encoded 8-character hash using FNV-1a
+ * Roughly 2^48 possible values
+ * @param data - The data to hash
+ * @returns An 8-character Base64 hash string
  */
-export function hash(...inputs: string[]): string {
-  // Combine all inputs with a delimiter
-  const dataToHash = inputs.join();
+export function hash(...data: string[]): string {
+  const dataToHash = data.join();
 
-  // Simple hash function using a variant of djb2
-  let hashValue = 0;
-
+  // Simple non-cryptographic hash function (FNV-1a)
+  let hash = 2166136261; // FNV offset basis
   for (let i = 0; i < dataToHash.length; i++) {
-    const char = dataToHash.charCodeAt(i);
-    hashValue = ((hashValue << 5) - hashValue + char) | 0; // Force 32-bit integer with | 0
+    hash ^= dataToHash.charCodeAt(i);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
   }
 
-  // Convert to 8-character hex string with consistent sign handling
-  const hashUint = hashValue < 0 ? hashValue + 4294967296 : hashValue; // Convert negative to positive
-  const hashStr = hashUint.toString(16).padStart(8, '0');
+  // Convert to Base64 and truncate
+  const hashHex = (hash >>> 0).toString(16).padStart(8, '0');
+  const hashBytes = new Uint8Array(4);
+  for (let i = 0; i < 4; i++) {
+    hashBytes[i] = parseInt(hashHex.substring(i * 2, i * 2 + 2), 16);
+  }
 
-  return hashStr;
+  const hashBase64 = btoa(String.fromCharCode(...hashBytes));
+  return hashBase64.substring(0, 8);
 }
