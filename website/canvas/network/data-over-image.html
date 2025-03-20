@@ -575,11 +575,8 @@
             );
 
             // Update sending progress
-            const currentIndex = qrProtocol.getCurrentIndex();
-            const totalChunks = qrProtocol.getTotalChunks();
-            sendingProgressText.textContent = `${currentIndex}/${totalChunks}`;
-            const progress = qrProtocol.getSendingProgress();
-            sendingProgressBar.style.width = `${progress}%`;
+            sendingProgressText.textContent = `${qrProtocol.currentIndex}/${qrProtocol.totalChunks}`;
+            sendingProgressBar.style.width = `${qrProtocol.sendingProgress}%`;
 
             // Generate new QR code with next chunk (if available)
             generateQRCodeFromProtocol();
@@ -617,7 +614,7 @@
         function generateQRCodeFromProtocol() {
           qrcodeContainer.innerHTML = '';
 
-          const qrData = qrProtocol.getCurrentQRCodeData();
+          const qrData = qrProtocol.getQRCode();
 
           // Create a new canvas element inside the container
           const canvas = document.createElement('canvas');
@@ -644,7 +641,7 @@
         function processQRData(data) {
           try {
             // Process the data with QRTP
-            qrProtocol.processReceivedData(data);
+            qrProtocol.processQR(data);
           } catch (error) {
             // Log error for invalid QR codes
             addMessageToLog('system', 'error', `Error processing QR code: ${error.message}`);
@@ -832,14 +829,13 @@
             qrProtocol.setData(text);
 
             // Update sending progress initially
-            const totalChunks = qrProtocol.getTotalChunks();
-            sendingProgressText.textContent = `0/${totalChunks}`;
+            sendingProgressText.textContent = `0/${qrProtocol.totalChunks}`;
 
             // Generate QR code with new data
             generateQRCodeFromProtocol();
 
             // Log data change
-            addMessageToLog('outgoing', 'info', `Data set: ${text.length} bytes, ${totalChunks} chunks`);
+            addMessageToLog('outgoing', 'info', `Data set: ${text.length} bytes, ${qrProtocol.totalChunks} chunks`);
           }
         });
 
@@ -857,11 +853,14 @@
         if (initialText) {
           qrProtocol.setData(initialText);
           // Update sending progress initially
-          const totalChunks = qrProtocol.getTotalChunks();
-          sendingProgressText.textContent = `0/${totalChunks}`;
+          sendingProgressText.textContent = `0/${qrProtocol.totalChunks}`;
           // Generate QR code with initial data
           generateQRCodeFromProtocol();
-          addMessageToLog('outgoing', 'info', `Initial data set: ${initialText.length} bytes, ${totalChunks} chunks`);
+          addMessageToLog(
+            'outgoing',
+            'info',
+            `Initial data set: ${initialText.length} bytes, ${qrProtocol.totalChunks} chunks`,
+          );
         }
       }
     </script>
