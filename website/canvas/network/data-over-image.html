@@ -505,71 +505,7 @@
         let cameraActive = false;
         const canvasContext = canvas.getContext('2d');
 
-        // Create protocol instance
-        const qrProtocol = new QRTP(
-          // Message log callback
-          (direction, type, message, data = null) => {
-            const logEntry = document.createElement('div');
-            logEntry.className = `log-entry log-entry-${direction}`;
-            if (type === 'error') logEntry.className += ' log-entry-error';
-            if (type === 'warning') logEntry.className += ' log-entry-warning';
-            if (type === 'debug') logEntry.className += ' log-entry-debug';
-            if (type === 'hash') logEntry.className += ' log-entry-hash';
-
-            const timestamp = new Date().toLocaleTimeString();
-
-            let html = `<span class="log-timestamp">${timestamp}</span>`;
-            html += `<span class="log-direction">${direction.toUpperCase()}</span>`;
-            html += `<span class="log-type">[${type}]</span>`;
-            html += `<span class="log-message">${message}</span>`;
-
-            if (data && typeof data === 'string') {
-              html += `<div class="log-data">${data}</div>`;
-            }
-
-            logEntry.innerHTML = html;
-            messageLog.appendChild(logEntry);
-
-            // Auto-scroll to bottom
-            messageLog.scrollTop = messageLog.scrollHeight;
-          },
-          // onChange callback
-          (state) => {
-            // Update sending progress
-            if (state.totalChunks === 0) {
-              sendingProgressText.textContent = '0/0';
-              sendingProgressBar.style.width = '0%';
-            } else {
-              const currentChunk = Math.min(state.currentChunkIndex, state.totalChunks);
-              sendingProgressText.textContent = `${currentChunk}/${state.totalChunks}`;
-              const progress = (currentChunk / state.totalChunks) * 100;
-              sendingProgressBar.style.width = `${progress}%`;
-            }
-
-            // Only update receiving progress if we don't have any chunks yet
-            // (otherwise let the processQRData function handle it)
-            if (receivedChunksData.length === 0) {
-              receivingProgressText.textContent = '0/0';
-              receivingProgressBar.style.width = '0%';
-            }
-
-            // Always generate new QR code when state changes
-            generateQRCodeFromProtocol();
-          },
-        );
-
-        // Function to clear the message log and reset UI
-        function clearMessageLog() {
-          messageLog.innerHTML = '';
-          // No need to log message log clearing
-
-          // Reset received text display
-          receivedTextDisplay.innerHTML = '';
-          receivedChunksData = [];
-          lastReceivedChunkIndex = -1;
-        }
-
-        // Add message to log function (for direct use in the UI)
+        // Function to add message to log
         function addMessageToLog(direction, type, message, data = null) {
           const logEntry = document.createElement('div');
           logEntry.className = `log-entry log-entry-${direction}`;
@@ -594,6 +530,93 @@
 
           // Auto-scroll to bottom
           messageLog.scrollTop = messageLog.scrollHeight;
+        }
+
+        // Create protocol instance with event handlers
+        const qrProtocol = new QRTP({
+          onChunkReceived: (event) => {
+            // Log chunk received event
+            addMessageToLog(
+              'incoming',
+              'chunk',
+              `Received chunk ${event.index + 1}/${event.total}`,
+              `Payload length: ${event.payload.length} bytes`,
+            );
+
+            // Store the chunk data
+            while (receivedChunksData.length < event.total) {
+              receivedChunksData.push(null);
+            }
+
+            receivedChunksData[event.index] = event.payload;
+            lastReceivedChunkIndex = event.index;
+
+            // Update the display
+            updateReceivedTextDisplay();
+
+            // Update receiving progress display
+            const receivedCount = receivedChunksData.filter((chunk) => chunk !== null).length;
+            receivingProgressText.textContent = `${receivedCount}/${event.total}`;
+            const progress = (receivedCount / event.total) * 100;
+            receivingProgressBar.style.width = `${progress}%`;
+
+            // Generate new QR code with acknowledgment
+            generateQRCodeFromProtocol();
+          },
+
+          onAckReceived: (event) => {
+            // Log acknowledgment event
+            const status = event.matched ? 'confirmed' : 'failed';
+            addMessageToLog(
+              'incoming',
+              'ack',
+              `Acknowledgment ${status} for chunk ${event.index + 1}`,
+              `Hash: ${event.hash}`,
+            );
+
+            // Update sending progress
+            const currentChunk = Math.min(qrProtocol.getCurrentChunkIndex(), qrProtocol.getTotalChunks());
+            const totalChunks = qrProtocol.getTotalChunks();
+
+            if (totalChunks === 0) {
+              sendingProgressText.textContent = '0/0';
+              sendingProgressBar.style.width = '0%';
+            } else {
+              sendingProgressText.textContent = `${currentChunk}/${totalChunks}`;
+              const progress = (currentChunk / totalChunks) * 100;
+              sendingProgressBar.style.width = `${progress}%`;
+            }
+
+            // Generate new QR code with next chunk (if available)
+            generateQRCodeFromProtocol();
+          },
+
+          onTransmissionComplete: (event) => {
+            // Log transmission complete event
+            addMessageToLog(
+              'system',
+              'info',
+              `Transmission complete! Received ${event.totalChunks} chunks`,
+              `Total data length: ${event.data.length} bytes`,
+            );
+
+            // Display the complete message
+            receivedTextDisplay.textContent = event.data;
+
+            // Update progress to show 100% completion
+            receivingProgressText.textContent = `${event.totalChunks}/${event.totalChunks}`;
+            receivingProgressBar.style.width = '100%';
+          },
+        });
+
+        // Function to clear the message log and reset UI
+        function clearMessageLog() {
+          messageLog.innerHTML = '';
+
+          // Reset received text display
+          receivedTextDisplay.innerHTML = '';
+          receivedChunksData = [];
+          lastReceivedChunkIndex = -1;
         }
 
         // Function to generate QR code from protocol
@@ -625,67 +648,12 @@
 
         // Process received QR code data
         function processQRData(data) {
-          // Process the data with QRTP
-          const result = qrProtocol.processReceivedData(data);
-
-          // Handle the result based on type
-          switch (result.type) {
-            case 'chunk':
-              // Store and display the chunk
-              if (result.chunkIndex !== undefined && result.totalChunks !== undefined) {
-                // Update the total chunks count for receiving progress
-                const totalChunks = result.totalChunks;
-
-                // Store the chunk data
-                while (receivedChunksData.length < totalChunks) {
-                  receivedChunksData.push(null);
-                }
-
-                // Get the payload from the protocol
-                const chunkData = qrProtocol.hasReceivedChunk(result.chunkIndex)
-                  ? qrProtocol.getChunkData(result.chunkIndex)
-                  : null;
-
-                if (chunkData) {
-                  receivedChunksData[result.chunkIndex] = chunkData;
-                  lastReceivedChunkIndex = result.chunkIndex;
-
-                  // Update the display
-                  updateReceivedTextDisplay();
-
-                  // Update receiving progress display
-                  const receivedCount = receivedChunksData.filter((chunk) => chunk !== null).length;
-                  receivingProgressText.textContent = `${receivedCount}/${totalChunks}`;
-                  const progress = (receivedCount / totalChunks) * 100;
-                  receivingProgressBar.style.width = `${progress}%`;
-                }
-              }
-              break;
-
-            case 'complete':
-              // Display the complete message
-              const completeData = result.data;
-              receivedTextDisplay.textContent = completeData;
-
-              // Update progress to show 100% completion
-              if (result.totalChunks) {
-                receivingProgressText.textContent = `${result.totalChunks}/${result.totalChunks}`;
-                receivingProgressBar.style.width = '100%';
-              }
-              break;
-
-            case 'ack':
-              // Just process the acknowledgment, no need to log
-              break;
-
-            case 'invalid':
-              // Log error for invalid QR codes since this is UI-specific
-              addMessageToLog('system', 'error', 'Invalid QR code: ' + result.message);
-              break;
-
-            default:
-              // No need to log other messages
-              break;
+          try {
+            // Process the data with QRTP
+            qrProtocol.processReceivedData(data);
+          } catch (error) {
+            // Log error for invalid QR codes
+            addMessageToLog('system', 'error', `Error processing QR code: ${error.message}`);
           }
         }
 
@@ -868,6 +836,16 @@
           const text = txData.value.trim();
           if (text) {
             qrProtocol.setData(text);
+
+            // Update sending progress initially
+            const totalChunks = qrProtocol.getTotalChunks();
+            sendingProgressText.textContent = `0/${totalChunks}`;
+
+            // Generate QR code with new data
+            generateQRCodeFromProtocol();
+
+            // Log data change
+            addMessageToLog('outgoing', 'info', `Data set: ${text.length} bytes, ${totalChunks} chunks`);
           }
         });
 
@@ -884,6 +862,12 @@
         const initialText = txData.value.trim();
         if (initialText) {
           qrProtocol.setData(initialText);
+          // Update sending progress initially
+          const totalChunks = qrProtocol.getTotalChunks();
+          sendingProgressText.textContent = `0/${totalChunks}`;
+          // Generate QR code with initial data
+          generateQRCodeFromProtocol();
+          addMessageToLog('outgoing', 'info', `Initial data set: ${initialText.length} bytes, ${totalChunks} chunks`);
         }
       }
     </script>
