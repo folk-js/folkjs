@@ -199,23 +199,19 @@ export function protocol(
           // Extract the value
           const valueText = remaining.substring(0, endPos);
 
-          // Parse according to type
-          if (pattern.size !== undefined) {
-            // Fixed width parsing
-            switch (pattern.type) {
-              case 'nums':
-                // Parse fixed-width numbers
-                const nums = [];
-                for (let j = 0; j < valueText.length; j += pattern.size) {
-                  if (j + pattern.size <= valueText.length) {
-                    nums.push(parseInt(valueText.substring(j, j + pattern.size)));
-                  }
-                }
-                result[pattern.name] = nums;
-                break;
+          // Parse according to type - combined approach
+          switch (pattern.type) {
+            case 'num':
+              result[pattern.name] = Number(valueText);
+              break;
 
-              case 'list':
-                // Parse fixed-width text chunks
+            case 'bool':
+              result[pattern.name] = valueText.toLowerCase() === 'true';
+              break;
+
+            case 'list':
+              if (pattern.size !== undefined) {
+                // Fixed width: Split by size
                 const chunks = [];
                 for (let j = 0; j < valueText.length; j += pattern.size) {
                   if (j + pattern.size <= valueText.length) {
@@ -223,82 +219,74 @@ export function protocol(
                   }
                 }
                 result[pattern.name] = chunks;
-                break;
-
-              default:
-                // Default to treating as text with fixed width
-                // Trim the value to the exact size
-                if (valueText.length > pattern.size) {
-                  result[pattern.name] = valueText.substring(0, pattern.size);
-                } else {
-                  result[pattern.name] = valueText;
-                }
-
-                // If it's a number type, convert to numeric
-                if (pattern.type === 'num') {
-                  result[pattern.name] = Number(result[pattern.name]);
-                }
-            }
-          } else {
-            // Standard type parsing
-            switch (pattern.type) {
-              case 'num':
-                result[pattern.name] = Number(valueText);
-                break;
-
-              case 'bool':
-                result[pattern.name] = valueText.toLowerCase() === 'true';
-                break;
-
-              case 'list':
+              } else {
+                // Standard: Split by delimiter
                 result[pattern.name] = valueText ? valueText.split(DELIMITERS.LIST) : [];
-                break;
+              }
+              break;
 
-              case 'nums':
+            case 'nums':
+              if (pattern.size !== undefined) {
+                // Fixed width: Split by size
+                const nums = [];
+                for (let j = 0; j < valueText.length; j += pattern.size) {
+                  if (j + pattern.size <= valueText.length) {
+                    nums.push(parseInt(valueText.substring(j, j + pattern.size)));
+                  }
+                }
+                result[pattern.name] = nums;
+              } else {
+                // Standard: Split by delimiter
                 result[pattern.name] = valueText ? valueText.split(DELIMITERS.LIST).map(Number) : [];
-                break;
+              }
+              break;
 
-              case 'pairs':
-                if (!valueText) {
-                  result[pattern.name] = [];
-                } else {
-                  // Parse as flat list of alternating keys and values
-                  const items = valueText.split(DELIMITERS.PAIRS_ITEM);
-                  const pairs = [];
+            case 'pairs':
+              if (!valueText) {
+                result[pattern.name] = [];
+              } else {
+                // Parse as flat list of alternating keys and values
+                const items = valueText.split(DELIMITERS.PAIRS_ITEM);
+                const pairs = [];
 
-                  // Group items into pairs
-                  for (let j = 0; j < items.length; j += 2) {
-                    if (j + 1 < items.length) {
-                      pairs.push([items[j], items[j + 1]]);
-                    }
+                // Group items into pairs
+                for (let j = 0; j < items.length; j += 2) {
+                  if (j + 1 < items.length) {
+                    pairs.push([items[j], items[j + 1]]);
                   }
-
-                  result[pattern.name] = pairs;
                 }
-                break;
 
-              case 'numPairs':
-                if (!valueText) {
-                  result[pattern.name] = [];
-                } else {
-                  // Parse as flat list of alternating numbers
-                  const items = valueText.split(DELIMITERS.PAIRS_ITEM);
-                  const pairs = [];
+                result[pattern.name] = pairs;
+              }
+              break;
 
-                  // Group items into pairs and convert to numbers
-                  for (let j = 0; j < items.length; j += 2) {
-                    if (j + 1 < items.length) {
-                      pairs.push([Number(items[j]), Number(items[j + 1])]);
-                    }
+            case 'numPairs':
+              if (!valueText) {
+                result[pattern.name] = [];
+              } else {
+                // Parse as flat list of alternating numbers
+                const items = valueText.split(DELIMITERS.PAIRS_ITEM);
+                const pairs = [];
+
+                // Group items into pairs and convert to numbers
+                for (let j = 0; j < items.length; j += 2) {
+                  if (j + 1 < items.length) {
+                    pairs.push([Number(items[j]), Number(items[j + 1])]);
                   }
-
-                  result[pattern.name] = pairs;
                 }
-                break;
 
-              default: // text
+                result[pattern.name] = pairs;
+              }
+              break;
+
+            default: // text
+              if (pattern.size !== undefined && valueText.length > pattern.size) {
+                // If fixed width and value exceeds, trim it
+                result[pattern.name] = valueText.substring(0, pattern.size);
+              } else {
                 result[pattern.name] = valueText;
-            }
+              }
+              break;
           }
 
           // Continue with remainder
@@ -334,32 +322,31 @@ export function protocol(
           throw new Error(`Missing required field "${pattern.name}"`);
         }
 
-        // Format according to type
+        // Format according to type - combined approach
         let formattedValue = '';
 
-        if (pattern.size !== undefined) {
-          // Fixed width formatting
-          switch (pattern.type) {
-            case 'nums':
-              // Format fixed-width numbers
-              if (Array.isArray(data[pattern.name])) {
-                formattedValue = data[pattern.name]
-                  .map((num: number) => {
-                    const str = String(Math.floor(Number(num)));
-                    if (str.length > pattern.size!) {
-                      throw new Error(
-                        `Value "${num}" exceeds fixed width of ${pattern.size} for item in "${pattern.name}"`,
-                      );
-                    }
-                    return str.padStart(pattern.size!, '0');
-                  })
-                  .join('');
+        switch (pattern.type) {
+          case 'num':
+            formattedValue = String(data[pattern.name]);
+            // If fixed width, pad with zeros
+            if (pattern.size !== undefined) {
+              if (formattedValue.length > pattern.size) {
+                throw new Error(
+                  `Value "${formattedValue}" exceeds fixed width of ${pattern.size} for field "${pattern.name}"`,
+                );
               }
-              break;
+              formattedValue = formattedValue.padStart(pattern.size, '0');
+            }
+            break;
 
-            case 'list':
-              // Format fixed-width text chunks
-              if (Array.isArray(data[pattern.name])) {
+          case 'bool':
+            formattedValue = String(data[pattern.name]);
+            break;
+
+          case 'list':
+            if (Array.isArray(data[pattern.name])) {
+              if (pattern.size !== undefined) {
+                // Fixed width formatting
                 formattedValue = data[pattern.name]
                   .map((str: string) => {
                     const s = String(str);
@@ -371,82 +358,71 @@ export function protocol(
                     return s.padEnd(pattern.size!, ' ');
                   })
                   .join('');
-              }
-              break;
-
-            case 'pairs':
-              // For pairs type, ignore the fixed width and just format normally
-              if (Array.isArray(data[pattern.name])) {
-                formattedValue = data[pattern.name].flatMap((pair: string[]) => pair).join(DELIMITERS.PAIRS_ITEM);
               } else {
-                formattedValue = String(data[pattern.name]);
+                // Standard delimiter formatting
+                formattedValue = data[pattern.name].join(DELIMITERS.LIST);
               }
-              break;
-
-            case 'numPairs':
-              // For numPairs type, ignore the fixed width and just format normally
-              if (Array.isArray(data[pattern.name])) {
-                formattedValue = data[pattern.name]
-                  .flatMap((pair: number[]) => pair.map(String))
-                  .join(DELIMITERS.PAIRS_ITEM);
-              } else {
-                formattedValue = String(data[pattern.name]);
-              }
-              break;
-
-            default:
-              // Default to text with fixed width
+            } else {
               formattedValue = String(data[pattern.name]);
-              // Check if value exceeds fixed width
+            }
+            break;
+
+          case 'nums':
+            if (Array.isArray(data[pattern.name])) {
+              if (pattern.size !== undefined) {
+                // Fixed width formatting
+                formattedValue = data[pattern.name]
+                  .map((num: number) => {
+                    const str = String(Math.floor(Number(num)));
+                    if (str.length > pattern.size!) {
+                      throw new Error(
+                        `Value "${num}" exceeds fixed width of ${pattern.size} for item in "${pattern.name}"`,
+                      );
+                    }
+                    return str.padStart(pattern.size!, '0');
+                  })
+                  .join('');
+              } else {
+                // Standard delimiter formatting
+                formattedValue = data[pattern.name].map(String).join(DELIMITERS.LIST);
+              }
+            } else {
+              formattedValue = String(data[pattern.name]);
+            }
+            break;
+
+          case 'pairs':
+            if (Array.isArray(data[pattern.name])) {
+              // For pairs type, we use the same format regardless of fixed width
+              formattedValue = data[pattern.name].flatMap((pair: string[]) => pair).join(DELIMITERS.PAIRS_ITEM);
+            } else {
+              formattedValue = String(data[pattern.name]);
+            }
+            break;
+
+          case 'numPairs':
+            if (Array.isArray(data[pattern.name])) {
+              // For numPairs type, we use the same format regardless of fixed width
+              formattedValue = data[pattern.name]
+                .flatMap((pair: number[]) => pair.map(String))
+                .join(DELIMITERS.PAIRS_ITEM);
+            } else {
+              formattedValue = String(data[pattern.name]);
+            }
+            break;
+
+          default: // text
+            formattedValue = String(data[pattern.name]);
+            // If fixed width, pad with spaces
+            if (pattern.size !== undefined) {
               if (formattedValue.length > pattern.size) {
                 throw new Error(
                   `Value "${formattedValue}" exceeds fixed width of ${pattern.size} for field "${pattern.name}"`,
                 );
               }
-              // Pad to exact size
-              if (pattern.type === 'num') {
-                formattedValue = formattedValue.padStart(pattern.size, '0');
-              } else {
-                formattedValue = formattedValue.padEnd(pattern.size, ' ');
-              }
-          }
-        } else {
-          // Standard type formatting
-          switch (pattern.type) {
-            case 'num':
-            case 'bool':
-              formattedValue = String(data[pattern.name]);
-              break;
-
-            case 'list':
-              if (Array.isArray(data[pattern.name])) {
-                formattedValue = data[pattern.name].join(DELIMITERS.LIST);
-              } else {
-                formattedValue = String(data[pattern.name]);
-              }
-              break;
-
-            case 'pairs':
-              if (Array.isArray(data[pattern.name])) {
-                formattedValue = data[pattern.name].flatMap((pair: string[]) => pair).join(DELIMITERS.PAIRS_ITEM);
-              } else {
-                formattedValue = String(data[pattern.name]);
-              }
-              break;
-
-            case 'numPairs':
-              if (Array.isArray(data[pattern.name])) {
-                formattedValue = data[pattern.name]
-                  .flatMap((pair: number[]) => pair.map(String))
-                  .join(DELIMITERS.PAIRS_ITEM);
-              } else {
-                formattedValue = String(data[pattern.name]);
-              }
-              break;
-
-            default: // text
-              formattedValue = String(data[pattern.name]);
-          }
+              formattedValue = formattedValue.padEnd(pattern.size, ' ');
+            }
+            break;
         }
 
         result += formattedValue;
