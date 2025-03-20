@@ -732,7 +732,7 @@
         function processQRData(data) {
           try {
             // Process the data with QRTP
-            qrProtocol.processQR(data);
+            qrProtocol.parseCode(data);
           } catch (error) {
             // Log error for invalid QR codes
             addMessageToLog('system', 'error', `Error processing QR code: ${error.message}`);
