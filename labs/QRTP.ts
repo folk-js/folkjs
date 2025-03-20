@@ -10,26 +10,10 @@ export class QRTP extends EventEmitter {
   #sendingIndex: number = 0; // Current send position
   #receivedData: string[] = []; // Received data chunks
   #receivedAck: string = ''; // Last computed hash for ack
-  #receivedExpectedChunks: number = 0; // Total expected chunks
   #header = header('QRTP<index:num>/<total:num>:<ack:text>');
-
-  get chunks(): string[] {
-    return [...this.#receivedData];
-  }
-
-  get sendState(): { index: number; total: number } {
-    return {
-      index: this.#sendingIndex,
-      total: this.#sendingData.length,
-    };
-  }
 
   get isSending(): boolean {
     return this.#sendingData.length > 0 && this.#sendingIndex < this.#sendingData.length;
-  }
-
-  get isReceiving(): boolean {
-    return this.#receivedData.length < this.#receivedExpectedChunks;
   }
 
   /**
@@ -62,62 +46,44 @@ export class QRTP extends EventEmitter {
     if (!data?.startsWith('QRTP')) return;
 
     const packet = this.#header.decode(data);
+    if (!packet) return;
 
-    if (!packet) {
-      console.error('Invalid QRTP packet');
-      return;
-    }
-
-    // TODO: only do this at the start of the transfer
-    this.#receivedExpectedChunks = packet.total;
-
+    // Handle their outgoing message (our receiving)
     if (packet.payload) {
-      const chunkIndex = packet.index;
-
-      if (chunkIndex >= this.#receivedData.length) {
+      // Store the chunk if it's new
+      if (packet.index >= this.#receivedData.length) {
         this.#receivedData.push(packet.payload);
-      }
 
-      // Update our received hash - this is the hash of the message we just received
-      // We will send this hash in our next QR code to acknowledge receipt
-      this.#receivedAck = hash(chunkIndex, packet.total, packet.payload);
+        // Calculate acknowledgment hash for the chunk we just received
+        this.#receivedAck = hash(packet.index, packet.total, packet.payload);
 
-      // Emit chunk received
-      this.emit('chunk', {
-        index: chunkIndex,
-        total: packet.total,
-        payload: packet.payload,
-      });
-
-      // Check if transmission is complete
-      if (!this.isReceiving) {
-        this.emit('complete', {
-          data: this.#receivedData.join(''),
+        this.emit('chunk', {
+          index: packet.index,
           total: packet.total,
+          payload: packet.payload,
         });
-      }
 
-      // Emit QR code update after receiving a chunk
-      this.#emitCodeUpdate();
+        if (this.#receivedData.length === packet.total) {
+          this.emit('complete');
+        }
+      }
     }
 
+    // Handle their acknowledgment of our message
     if (packet.ack && this.isSending) {
-      // Calculate what the hash of our current outgoing message would be
-      const outgoingPayload = this.#sendingData[this.#sendingIndex];
-      const expectedAck = hash(this.#sendingIndex, this.#sendingData.length, outgoingPayload);
+      const expectedAck = hash(this.#sendingIndex, this.#sendingData.length, this.#sendingData[this.#sendingIndex]);
 
-      // If the received ack matches the hash of our current message,
-      // the other device has successfully received it
       if (packet.ack === expectedAck) {
-        // The other device has acknowledged our current message, move to next
         this.#sendingIndex++;
-        this.#emitCodeUpdate();
         this.emit('ack', {
           index: this.#sendingIndex,
           total: this.#sendingData.length,
         });
       }
     }
+
+    // Always update QR code after processing
+    this.#emitCodeUpdate();
   }
 
   /** Get outgoing QR code to display */

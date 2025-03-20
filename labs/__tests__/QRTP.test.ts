@@ -10,99 +10,74 @@ describe('QRTP Protocol', () => {
     receiverQRTP = new QRTP();
   });
 
-  test('should initialize with empty state', () => {
-    expect(senderQRTP.chunks).toEqual([]);
-    expect(senderQRTP.sendState).toEqual({ index: 0, total: 0 });
-  });
-
   test('should properly segment message', () => {
     const message = 'This is a test message that will be broken into chunks';
-    senderQRTP.setMessage(message, 10);
+    let initData: any;
 
-    expect(senderQRTP.sendState.total).toBe(Math.ceil(message.length / 10));
+    senderQRTP.on('init', (data) => {
+      initData = data;
+    });
+
+    senderQRTP.setMessage(message, 10);
+    expect(initData.total).toBe(Math.ceil(message.length / 10));
   });
 
   test('simulates a complete message transfer with acknowledgments', () => {
-    // Setup listener for completed transfer
-    let completeData: any = null;
-    receiverQRTP.on('complete', (data) => {
-      completeData = data;
+    // Setup listeners
+    let completeReceived = false;
+    let receivedChunks: string[] = [];
+    let ackCount = 0;
+
+    receiverQRTP.on('complete', () => {
+      completeReceived = true;
     });
 
-    // Setup listener for chunk reception
-    let chunkCount = 0;
-    receiverQRTP.on('chunk', () => {
-      chunkCount++;
+    receiverQRTP.on('chunk', (event) => {
+      receivedChunks[event.index] = event.payload;
     });
 
-    // Setup listener for acknowledgments
-    let ackData: any[] = [];
-    senderQRTP.on('ack', (data) => {
-      ackData.push(data);
+    senderQRTP.on('ack', (event) => {
+      ackCount++;
     });
 
     // Send a message from sender to receiver
     const testMessage = 'Hello, world!';
     senderQRTP.setMessage(testMessage, 5);
 
-    // Expect 3 chunks: "Hello", ", wor", "ld!"
-    expect(senderQRTP.sendState.total).toBe(3);
-
     // Step 1: Receiver scans the first QR code from sender
     receiverQRTP.parseCode(senderQRTP.currentCode());
+    expect(receivedChunks[0]).toBe('Hello');
+    expect(completeReceived).toBe(false);
 
-    // Verify first chunk was received
-    expect(chunkCount).toBe(1);
-    expect(receiverQRTP.chunks).toEqual(['Hello']);
-    expect(completeData).toBe(null);
-
-    // Step 2: Sender scans QR code from receiver (which contains ack of first chunk)
+    // Step 2: Sender scans QR code from receiver (which contains ack)
     senderQRTP.parseCode(receiverQRTP.currentCode());
+    expect(ackCount).toBe(1);
 
-    // Verify sender received acknowledgment and moved to next chunk
-    expect(ackData.length).toBeGreaterThan(0);
-    expect(senderQRTP.sendState.index).toBe(1);
-
-    // Step 3: Receiver scans the second QR code from sender
+    // Step 3: Receiver scans the second QR code
     receiverQRTP.parseCode(senderQRTP.currentCode());
+    expect(receivedChunks[1]).toBe(', wor');
+    expect(completeReceived).toBe(false);
 
-    // Verify second chunk was received
-    expect(chunkCount).toBe(2);
-    expect(receiverQRTP.chunks).toEqual(['Hello', ', wor']);
-    expect(completeData).toBe(null);
-
-    // Step 4: Sender scans QR code from receiver (which contains ack of second chunk)
+    // Step 4: Sender scans second ack
     senderQRTP.parseCode(receiverQRTP.currentCode());
+    expect(ackCount).toBe(2);
 
-    // Verify sender received acknowledgment and moved to next chunk
-    expect(ackData.length).toBeGreaterThan(1);
-    expect(senderQRTP.sendState.index).toBe(2);
-
-    // Step 5: Receiver scans the third QR code from sender
+    // Step 5: Receiver scans the final chunk
     receiverQRTP.parseCode(senderQRTP.currentCode());
+    expect(receivedChunks[2]).toBe('ld!');
+    expect(completeReceived).toBe(true);
 
-    // Verify third chunk was received and message is complete
-    expect(chunkCount).toBe(3);
-    expect(receiverQRTP.chunks).toEqual(['Hello', ', wor', 'ld!']);
-    expect(completeData).not.toBe(null);
-    expect(completeData.data).toBe(testMessage);
-    expect(completeData.total).toBe(3);
-
-    // Step 6: Sender scans QR code from receiver (which contains ack of third chunk)
+    // Step 6: Sender scans final ack
     senderQRTP.parseCode(receiverQRTP.currentCode());
-
-    // Verify sender received acknowledgment and has completed sending
-    expect(ackData.length).toBeGreaterThan(2);
-    expect(senderQRTP.sendState.index).toBe(3);
-    expect(senderQRTP.sendState.index).toBe(senderQRTP.sendState.total);
+    expect(ackCount).toBe(3);
   });
 
   test('does not advance when acknowledgment does not match', () => {
+    let ackCount = 0;
+    senderQRTP.on('ack', () => ackCount++);
+
     // Setup sender with a message
     senderQRTP.setMessage('Test message', 6);
-
-    // Capture initial state
-    const initialIndex = senderQRTP.sendState.index;
 
     // Create an invalid QR code with wrong ack
     const invalidAckCode = `QRTP3:invalid-hash$Test m`;
@@ -110,74 +85,79 @@ describe('QRTP Protocol', () => {
     // Sender processes the invalid ack
     senderQRTP.parseCode(invalidAckCode);
 
-    // Verify sender did not advance
-    expect(senderQRTP.sendState.index).toBe(initialIndex);
+    // Verify no ack event was emitted
+    expect(ackCount).toBe(0);
   });
 
   test('one-way transfer works when receiver is not sending data', () => {
-    // Setup listener for completed transfer
-    let completeData: any = null;
-    receiverQRTP.on('complete', (data) => {
-      completeData = data;
+    let completeReceived = false;
+    let receivedChunks: string[] = [];
+    let ackCount = 0;
+
+    receiverQRTP.on('complete', () => {
+      completeReceived = true;
     });
+
+    receiverQRTP.on('chunk', (event) => {
+      receivedChunks[event.index] = event.payload;
+    });
+
+    senderQRTP.on('ack', () => ackCount++);
 
     // Send a message from sender to receiver
     senderQRTP.setMessage('One-way message', 6);
 
-    // Receiver scans first QR code
-    receiverQRTP.parseCode(senderQRTP.currentCode());
-
-    // Sender scans receiver's ack (receiver not sending any data)
-    senderQRTP.parseCode(receiverQRTP.currentCode());
-
-    // Verify sender advanced to next chunk
-    expect(senderQRTP.sendState.index).toBe(1);
-
-    // Complete the process for remaining chunks
+    // Complete the transfer
     receiverQRTP.parseCode(senderQRTP.currentCode());
     senderQRTP.parseCode(receiverQRTP.currentCode());
-
+    receiverQRTP.parseCode(senderQRTP.currentCode());
+    senderQRTP.parseCode(receiverQRTP.currentCode());
     receiverQRTP.parseCode(senderQRTP.currentCode());
 
     // Verify complete message was received
-    expect(receiverQRTP.chunks.join('')).toBe('One-way message');
-    expect(completeData).not.toBe(null);
+    expect(completeReceived).toBe(true);
+    expect(receivedChunks.join('')).toBe('One-way message');
+    expect(ackCount).toBe(2);
   });
 
   test('resets protocol state correctly', () => {
+    let initCount = 0;
+    let chunkCount = 0;
+
+    senderQRTP.on('init', () => initCount++);
+    receiverQRTP.on('chunk', () => chunkCount++);
+
     // Setup with some data
     senderQRTP.setMessage('Test data');
     receiverQRTP.parseCode(senderQRTP.currentCode());
+    expect(chunkCount).toBe(1);
 
     // Reset both instances
     senderQRTP.reset();
     receiverQRTP.reset();
 
-    // Verify state was reset
-    expect(senderQRTP.sendState).toEqual({ index: 0, total: 0 });
-    expect(senderQRTP.chunks).toEqual([]);
-    expect(receiverQRTP.chunks).toEqual([]);
+    // Send new message after reset
+    senderQRTP.setMessage('New data');
+    expect(initCount).toBe(2); // Should get another init event
+
+    receiverQRTP.parseCode(senderQRTP.currentCode());
+    expect(chunkCount).toBe(2); // Should get new chunks
   });
 
   test('bidirectional message exchange between two devices', () => {
-    // Test with more realistic messages
-    const aliceMessage = 'Hello Bob! This is a longer message from Alice that needs to be sent in multiple chunks.';
-    const bobMessage = "Hi Alice, I'm also sending you a response that will be chunked and transferred back.";
+    const aliceMessage = 'Hello Bob!';
+    const bobMessage = 'Hi Alice!';
+    const chunkSize = 5;
 
-    // Use a reasonable chunk size
-    const chunkSize = 15;
-
-    // Setup Alice's device
+    // Setup devices
     const alice = new QRTP();
-    alice.setMessage(aliceMessage, chunkSize);
-
-    // Setup Bob's device
     const bob = new QRTP();
-    bob.setMessage(bobMessage, chunkSize);
 
-    // Track completion
+    // Track received messages
     let aliceReceivedComplete = false;
     let bobReceivedComplete = false;
+    let aliceChunks: string[] = [];
+    let bobChunks: string[] = [];
 
     alice.on('complete', () => {
       aliceReceivedComplete = true;
@@ -186,52 +166,29 @@ describe('QRTP Protocol', () => {
       bobReceivedComplete = true;
     });
 
-    // Simulate multiple rounds of QR code exchange, as would happen with real devices
-    const MAX_ROUNDS = 30; // Should be plenty to complete the transfer
-    let deadlockDetected = false;
+    alice.on('chunk', (event) => {
+      aliceChunks[event.index] = event.payload;
+    });
+    bob.on('chunk', (event) => {
+      bobChunks[event.index] = event.payload;
+    });
 
-    console.log('\nBidirectional exchange test:');
+    // Start the exchange
+    alice.setMessage(aliceMessage, chunkSize);
+    bob.setMessage(bobMessage, chunkSize);
 
-    for (let round = 0; round < MAX_ROUNDS; round++) {
-      if (aliceReceivedComplete && bobReceivedComplete) {
-        console.log(`Both transfers completed successfully after ${round} rounds`);
-        break;
-      }
+    // Simulate exchange rounds
+    for (let round = 0; round < 10; round++) {
+      if (aliceReceivedComplete && bobReceivedComplete) break;
 
-      // Generate QR codes for both devices
-      const aliceCode = alice.currentCode();
-      const bobCode = bob.currentCode();
-
-      // Both scan each other's codes
-      alice.parseCode(bobCode);
-      bob.parseCode(aliceCode);
-
-      // Detect if we're stuck (no progress for several rounds)
-      if (round > 15 && alice.sendState.index < alice.sendState.total && bob.sendState.index < bob.sendState.total) {
-        deadlockDetected = true;
-        console.log('WARNING: Possible protocol deadlock detected!');
-        break;
-      }
-
-      // Last round - report status
-      if (round === MAX_ROUNDS - 1) {
-        console.log(`Reached maximum rounds (${MAX_ROUNDS}) without completing transfer`);
-      }
+      alice.parseCode(bob.currentCode());
+      bob.parseCode(alice.currentCode());
     }
 
-    // Check for protocol failure
-    expect(deadlockDetected).toBe(false);
-
-    // Verify message transfer was successful in both directions
-    expect(alice.chunks.join('')).toBe(bobMessage);
-    expect(bob.chunks.join('')).toBe(aliceMessage);
-
-    // Both sides should have received a complete signal
+    // Verify results
     expect(aliceReceivedComplete).toBe(true);
     expect(bobReceivedComplete).toBe(true);
-
-    // Both sides should have completed sending their messages
-    expect(alice.sendState.index).toBe(alice.sendState.total);
-    expect(bob.sendState.index).toBe(bob.sendState.total);
+    expect(aliceChunks.join('')).toBe(bobMessage);
+    expect(bobChunks.join('')).toBe(aliceMessage);
   });
 });

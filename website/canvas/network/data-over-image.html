@@ -504,28 +504,6 @@
         // Create protocol instance
         const qrProtocol = new QRTP();
 
-        // UI helper functions
-        function getSendingProgress() {
-          const { index, total } = qrProtocol.sendState;
-          return { current: index, total: total };
-        }
-
-        function getReceivingProgress() {
-          const chunks = qrProtocol.chunks;
-          return {
-            current: chunks.filter((chunk) => chunk !== '').length,
-            total: chunks.length,
-          };
-        }
-
-        function getLastChunkIndex() {
-          const chunks = qrProtocol.chunks;
-          for (let i = chunks.length - 1; i >= 0; i--) {
-            if (chunks[i]) return i;
-          }
-          return -1;
-        }
-
         // Function to add message to log
         function addMessageToLog(direction, type, message, data = null) {
           const logEntry = document.createElement('div');
@@ -554,9 +532,7 @@
         }
 
         // Function to update sending progress display
-        function updateSendingProgress() {
-          const { current, total } = getSendingProgress();
-
+        function updateSendingProgress(current, total) {
           if (total > 0) {
             const progress = Math.min(100, (current / total) * 100);
             sendingProgressText.textContent = `${current}/${total}`;
@@ -568,9 +544,7 @@
         }
 
         // Function to update receiving progress display
-        function updateReceivingProgress() {
-          const { current, total } = getReceivingProgress();
-
+        function updateReceivingProgress(current, total) {
           if (total > 0) {
             const progress = Math.min(100, (current / total) * 100);
             receivingProgressText.textContent = `${current}/${total}`;
@@ -581,16 +555,28 @@
           }
         }
 
-        // Add event listeners
+        // Simplify updateReceivedTextDisplay to just append new chunks
+        function updateReceivedTextDisplay(chunkData, isComplete) {
+          if (isComplete) {
+            // On complete, just show the full message
+            receivedTextDisplay.textContent = chunkData;
+          } else {
+            // For new chunks, append with highlight
+            const highlightSpan = document.createElement('span');
+            highlightSpan.className = 'highlight-chunk';
+            highlightSpan.textContent = chunkData;
+            receivedTextDisplay.appendChild(highlightSpan);
+          }
+
+          // Scroll to the bottom of the display
+          receivedTextDisplay.scrollTop = receivedTextDisplay.scrollHeight;
+        }
+
+        // Update event handlers to pass the right data
         qrProtocol.on('chunk', (event) => {
-          // Log chunk received event
           addMessageToLog('incoming', 'chunk', `Received chunk ${event.index + 1}/${event.total}`);
-
-          // Update the received text display
-          updateReceivedTextDisplay();
-
-          // Update receiving progress
-          updateReceivingProgress();
+          updateReceivedTextDisplay(event.payload, false);
+          updateReceivingProgress(event.index + 1, event.total);
         });
 
         qrProtocol.on('init', (event) => {
@@ -601,8 +587,8 @@
             `Data set: ${event.dataLength} bytes, ${event.total} chunks (${event.size} bytes/chunk)`,
           );
 
-          // Update sending progress
-          updateSendingProgress();
+          // Initialize sending progress
+          updateSendingProgress(0, event.total);
         });
 
         qrProtocol.on('ack', (event) => {
@@ -611,8 +597,8 @@
             addMessageToLog('incoming', 'ack', `Acknowledged chunk ${event.index + 1}`);
           }
 
-          // Update sending progress
-          updateSendingProgress();
+          // Update sending progress with values from the event
+          updateSendingProgress(event.index, event.total);
         });
 
         // Listen for QR update events
@@ -621,35 +607,23 @@
           updateQRCode(event.data);
         });
 
-        qrProtocol.on('complete', (event) => {
+        qrProtocol.on('complete', () => {
           // Log transmission complete event
-          addMessageToLog('system', 'info', `Transmission complete! ${event.total} chunks received`);
-
-          // Display the complete message
-          receivedTextDisplay.textContent = event.data;
-
-          // Update progress to show 100% completion
-          updateReceivingProgress();
+          addMessageToLog('system', 'info', 'Transmission complete!');
         });
 
         // Event handler for setting data
         txData.addEventListener('input', function () {
-          // Reset protocol when text changes
           qrProtocol.reset();
-
-          // Clear the message log
           messageLog.innerHTML = '';
-
-          // Reset received text display
           receivedTextDisplay.innerHTML = '';
 
-          // Update progress displays
-          updateSendingProgress();
-          updateReceivingProgress();
+          // Reset progress displays with explicit zeros
+          updateSendingProgress(0, 0);
+          updateReceivingProgress(0, 0);
 
           addMessageToLog('system', 'info', 'Protocol state reset');
 
-          // Set data in protocol if there's text
           const text = txData.value.trim();
           if (text) {
             qrProtocol.setMessage(text);
@@ -683,60 +657,6 @@
               }
             },
           );
-        }
-
-        // Function to update the received text display with highlighting
-        function updateReceivedTextDisplay() {
-          // Get all chunks and the last received index
-          const chunks = qrProtocol.chunks;
-          const lastIndex = getLastChunkIndex();
-
-          // Clear the display
-          receivedTextDisplay.innerHTML = '';
-
-          // If we have data and a last chunk
-          if (chunks.some((chunk) => chunk !== '') && lastIndex >= 0) {
-            // Create a document fragment to build our content
-            const fragment = document.createDocumentFragment();
-
-            for (let i = 0; i < chunks.length; i++) {
-              const chunkData = chunks[i];
-              if (chunkData) {
-                // Create a text node or highlighted span for this chunk
-                if (i === lastIndex) {
-                  // This is the last received chunk, highlight it
-                  const highlightSpan = document.createElement('span');
-                  highlightSpan.className = 'highlight-chunk';
-                  highlightSpan.textContent = chunkData;
-                  fragment.appendChild(highlightSpan);
-                } else {
-                  // Regular chunk, just add as text
-                  const textNode = document.createTextNode(chunkData);
-                  fragment.appendChild(textNode);
-                }
-              }
-            }
-
-            // Add the fragment to the display
-            receivedTextDisplay.appendChild(fragment);
-          } else if (qrProtocol.message) {
-            // Just set the text content
-            receivedTextDisplay.textContent = qrProtocol.message;
-          }
-
-          // Scroll to the bottom of the display
-          receivedTextDisplay.scrollTop = receivedTextDisplay.scrollHeight;
-        }
-
-        // Process received QR code data
-        function processQRData(data) {
-          try {
-            // Process the data with QRTP
-            qrProtocol.parseCode(data);
-          } catch (error) {
-            // Log error for invalid QR codes
-            addMessageToLog('system', 'error', `Error processing QR code: ${error.message}`);
-          }
         }
 
         // Toggle camera on/off when clicking the video container
@@ -831,7 +751,10 @@
             // If QR code found and it contains data
             if (code && code.data) {
               // Process the QR code data
-              processQRData(code.data);
+              const result = qrProtocol.parseCode(code.data);
+              if (result === null) {
+                addMessageToLog('system', 'error', `Error processing QR code: ${result}`);
+              }
             }
           }
         }
