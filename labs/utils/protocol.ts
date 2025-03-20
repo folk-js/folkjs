@@ -45,6 +45,281 @@ const DELIMITERS = {
   PAIRS_ITEM: ';', // Default delimiter for pairs
 };
 
+/**
+ * Parse a template string into static parts and patterns
+ */
+function parseTemplate(
+  strings: TemplateStringsArray,
+  placeholders: string[],
+): { staticParts: string[]; patterns: Pattern[] } {
+  const staticParts: string[] = [];
+  const patterns: Pattern[] = [];
+
+  // Combine all strings and placeholders into a single template string
+  let fullTemplate = strings[0];
+  for (let i = 0; i < placeholders.length; i++) {
+    fullTemplate += placeholders[i] + strings[i + 1];
+  }
+
+  // Extract patterns using regex
+  const placeholderRegex = /<([^:>]+)(?::([^>(]+)(?:\(([^)]*)\))?)?>/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = placeholderRegex.exec(fullTemplate)) !== null) {
+    staticParts.push(fullTemplate.substring(lastIndex, match.index));
+
+    const [, name, type = 'text', sizeStr] = match;
+    const size = sizeStr ? parseInt(sizeStr) : undefined;
+
+    patterns.push({ name, type, size });
+    lastIndex = match.index + match[0].length;
+  }
+
+  staticParts.push(fullTemplate.substring(lastIndex));
+
+  return { staticParts, patterns };
+}
+
+/**
+ * Creates a protocol parser/encoder from a template string
+ */
+export function protocol(
+  strings: TemplateStringsArray,
+  ...placeholders: string[]
+): {
+  decode: (input: string) => Record<string, any>;
+  encode: (data: Record<string, any>) => string;
+} {
+  // Parse the template into static parts and patterns
+  const { staticParts, patterns } = parseTemplate(strings, placeholders);
+
+  // Check for special delimiter markers in the template
+  const hasFixedSizeHeader = staticParts[staticParts.length - 1] === DELIMITERS.FIXED_HEADER;
+  const hasDollarDelimiter = staticParts[staticParts.length - 1] === DELIMITERS.PAYLOAD;
+
+  /**
+   * Special case handler for fixed-size headers
+   */
+  function decodeFixedHeader(input: string): Record<string, any> {
+    if (!input.startsWith(staticParts[0])) {
+      throw new Error(`Input doesn't match pattern at "${staticParts[0]}"`);
+    }
+
+    const result: Record<string, any> = {};
+    let pos = staticParts[0].length;
+
+    // Calculate total fixed header length
+    const headerLength = patterns.reduce((sum, p) => sum + (p.size || 0), 0);
+
+    // Extract header and payload
+    const headerPart = input.substring(pos, pos + headerLength);
+    const payload = input.substring(pos + headerLength);
+
+    // Parse each pattern in sequence
+    let headerPos = 0;
+    for (const pattern of patterns) {
+      if (pattern.size === undefined) {
+        throw new Error('Fixed-size header requires a size parameter for all fields');
+      }
+
+      const value = headerPart.substring(headerPos, headerPos + pattern.size);
+      result[pattern.name] = pattern.type === 'num' ? parseNum(value) : value;
+
+      headerPos += pattern.size;
+    }
+
+    if (payload) {
+      result.payload = payload;
+    }
+
+    return result;
+  }
+
+  /**
+   * Extract payload from input string if present
+   */
+  function extractPayload(input: string): { remaining: string; payload: string } {
+    const dollarPos = input.indexOf(DELIMITERS.PAYLOAD);
+    if (dollarPos >= 0) {
+      return {
+        remaining: input.substring(0, dollarPos),
+        payload: input.substring(dollarPos + 1),
+      };
+    }
+    return { remaining: input, payload: '' };
+  }
+
+  return {
+    /**
+     * Decode a string according to the protocol template
+     */
+    decode(input: string): Record<string, any> {
+      // Handle special case: fixed-size headers
+      if (hasFixedSizeHeader) {
+        return decodeFixedHeader(input);
+      }
+
+      const result: Record<string, any> = {};
+
+      // Extract payload if present
+      const { remaining: initialRemaining, payload } = extractPayload(input);
+      if (payload) {
+        result.payload = payload;
+      }
+
+      let remaining = initialRemaining;
+
+      // Process each segment of the template
+      for (let i = 0; i < patterns.length; i++) {
+        const staticPart = staticParts[i];
+        const pattern = patterns[i];
+        const nextStatic = staticParts[i + 1] || '';
+
+        // Skip the static prefix
+        if (!remaining.startsWith(staticPart)) {
+          throw new Error(`Input doesn't match pattern at "${staticPart}"`);
+        }
+        remaining = remaining.substring(staticPart.length);
+
+        // Special case for end delimiters
+        if (nextStatic === DELIMITERS.PAYLOAD || nextStatic === DELIMITERS.FIXED_HEADER) {
+          result[pattern.name] = remaining;
+          break;
+        }
+
+        // Find where the next static part begins
+        const endPos = nextStatic ? remaining.indexOf(nextStatic) : remaining.length;
+        if (endPos === -1) {
+          throw new Error(`Couldn't find delimiter "${nextStatic}" in remaining input`);
+        }
+
+        // Extract and parse the value
+        const valueText = remaining.substring(0, endPos);
+
+        // Parse according to type using the appropriate parse function
+        switch (pattern.type) {
+          case 'num':
+            result[pattern.name] = parseNum(valueText);
+            break;
+          case 'bool':
+            result[pattern.name] = parseBool(valueText);
+            break;
+          case 'list':
+            result[pattern.name] = parseList(valueText, pattern.size);
+            break;
+          case 'nums':
+            result[pattern.name] = parseNums(valueText, pattern.size);
+            break;
+          case 'pairs':
+            result[pattern.name] = parsePairs(valueText);
+            break;
+          case 'numPairs':
+            result[pattern.name] = parseNumPairs(valueText);
+            break;
+          default: // text
+            result[pattern.name] = parseText(valueText, pattern.size);
+            break;
+        }
+
+        // Continue with remainder
+        remaining = remaining.substring(endPos);
+      }
+
+      // Check for final static part
+      const finalPart = staticParts[staticParts.length - 1];
+      if (!hasFixedSizeHeader && !hasDollarDelimiter && finalPart && !remaining.startsWith(finalPart)) {
+        throw new Error(`Input doesn't match pattern at "${finalPart}"`);
+      }
+
+      return result;
+    },
+
+    /**
+     * Encode an object into a string according to the protocol template
+     */
+    encode(data: Record<string, any>): string {
+      let result = staticParts[0];
+
+      // Process each pattern in the template
+      for (let i = 0; i < patterns.length; i++) {
+        const pattern = patterns[i];
+
+        // Verify required field exists
+        if (data[pattern.name] === undefined) {
+          throw new Error(`Missing required field "${pattern.name}"`);
+        }
+
+        // Format according to type using the appropriate format function
+        let formattedValue = '';
+
+        switch (pattern.type) {
+          case 'num':
+            formattedValue = formatNum(data[pattern.name], pattern.size);
+            break;
+          case 'bool':
+            formattedValue = formatBool(data[pattern.name]);
+            break;
+          case 'list':
+            if (Array.isArray(data[pattern.name])) {
+              formattedValue = formatList(data[pattern.name], pattern.size);
+            } else {
+              formattedValue = String(data[pattern.name]);
+            }
+            break;
+          case 'nums':
+            if (Array.isArray(data[pattern.name])) {
+              formattedValue = formatNums(data[pattern.name], pattern.size);
+            } else {
+              formattedValue = String(data[pattern.name]);
+            }
+            break;
+          case 'pairs':
+            if (Array.isArray(data[pattern.name])) {
+              formattedValue = formatPairs(data[pattern.name]);
+            } else {
+              formattedValue = String(data[pattern.name]);
+            }
+            break;
+          case 'numPairs':
+            if (Array.isArray(data[pattern.name])) {
+              formattedValue = formatNumPairs(data[pattern.name]);
+            } else {
+              formattedValue = String(data[pattern.name]);
+            }
+            break;
+          default: // text
+            formattedValue = formatText(data[pattern.name], pattern.size);
+            break;
+        }
+
+        result += formattedValue;
+
+        // Add the next static part
+        if (i + 1 < staticParts.length) {
+          result += staticParts[i + 1];
+        }
+      }
+
+      // Add payload
+      if (data.payload !== undefined) {
+        if (hasFixedSizeHeader) {
+          // For fixed size headers, remove the ! and append payload directly
+          result = result.substring(0, result.length - 1) + data.payload;
+        } else if (hasDollarDelimiter) {
+          // The template already ends with $, just append payload
+          result += data.payload;
+        } else {
+          // For variable size header without $ in template
+          result += DELIMITERS.PAYLOAD + data.payload;
+        }
+      }
+
+      return result;
+    },
+  };
+}
+
 // --- Format functions (for encoding) ---
 
 /**
@@ -232,282 +507,4 @@ function parseNumPairs(text: string): number[][] {
   }
 
   return pairs;
-}
-
-/**
- * Creates a protocol parser/encoder from a template string
- */
-export function protocol(
-  strings: TemplateStringsArray,
-  ...placeholders: string[]
-): {
-  decode: (input: string) => Record<string, any>;
-  encode: (data: Record<string, any>) => string;
-} {
-  // Parse the template into static parts and patterns
-  const staticParts: string[] = [...strings];
-  const patterns: Pattern[] = [];
-
-  // Extract patterns from template
-  if (placeholders.length === 0 && strings.length === 1) {
-    // Template has no interpolations, parse it directly
-    const templateStr = strings[0];
-    const placeholderRegex = /<([^:>]+)(?::([^>(]+)(?:\(([^)]*)\))?)?>/g;
-    let lastIndex = 0;
-    let match;
-    let newStatics: string[] = [];
-
-    while ((match = placeholderRegex.exec(templateStr)) !== null) {
-      newStatics.push(templateStr.substring(lastIndex, match.index));
-
-      const [, name, type = 'text', sizeStr] = match;
-      const size = sizeStr ? parseInt(sizeStr) : undefined;
-
-      patterns.push({ name, type, size });
-      lastIndex = match.index + match[0].length;
-    }
-
-    newStatics.push(templateStr.substring(lastIndex));
-    staticParts.splice(0, staticParts.length, ...newStatics);
-  } else {
-    // Process interpolated placeholders
-    for (const ph of placeholders) {
-      const match = ph.match(/^<([^:>]+)(?::([^>(]+)(?:\(([^)]*)\))?)?>/);
-      if (match) {
-        const [, name, type = 'text', sizeStr] = match;
-        const size = sizeStr ? parseInt(sizeStr) : undefined;
-        patterns.push({ name, type, size });
-      }
-    }
-  }
-
-  // Check for special delimiter markers in the template
-  const hasFixedSizeHeader = staticParts[staticParts.length - 1] === DELIMITERS.FIXED_HEADER;
-  const hasDollarDelimiter = staticParts[staticParts.length - 1] === DELIMITERS.PAYLOAD;
-
-  return {
-    /**
-     * Decode a string according to the protocol template
-     */
-    decode(input: string): Record<string, any> {
-      let result: Record<string, any> = {};
-      let payload = '';
-      let remaining = input;
-
-      // Handle special case: fixed-size headers
-      if (hasFixedSizeHeader) {
-        // Skip the static prefix
-        if (!input.startsWith(staticParts[0])) {
-          throw new Error(`Input doesn't match pattern at "${staticParts[0]}"`);
-        }
-
-        let pos = staticParts[0].length;
-        let headerLength = 0;
-
-        // Process each pattern in the fixed header
-        for (let i = 0; i < patterns.length; i++) {
-          const pattern = patterns[i];
-
-          if (pattern.size === undefined) {
-            throw new Error('Fixed-size header requires a size parameter for all fields');
-          }
-
-          // Extract fixed-width value
-          const value = input.substring(pos, pos + pattern.size);
-
-          // Parse according to type
-          switch (pattern.type) {
-            case 'num':
-              result[pattern.name] = parseNum(value);
-              break;
-            default:
-              result[pattern.name] = value;
-          }
-
-          // Move position forward
-          pos += pattern.size;
-          headerLength += pattern.size;
-        }
-
-        // Everything after the fixed header is payload
-        payload = input.substring(staticParts[0].length + headerLength);
-
-        if (payload) {
-          result.payload = payload;
-        }
-
-        return result;
-      }
-
-      // Handle special case: payload delimiter ($)
-      if (hasDollarDelimiter) {
-        const dollarPos = input.indexOf(DELIMITERS.PAYLOAD);
-        if (dollarPos >= 0) {
-          remaining = input.substring(0, dollarPos);
-          payload = input.substring(dollarPos + 1);
-        }
-      } else {
-        const dollarPos = input.indexOf(DELIMITERS.PAYLOAD);
-        if (dollarPos >= 0) {
-          payload = input.substring(dollarPos + 1);
-          remaining = input.substring(0, dollarPos);
-        }
-      }
-
-      // Process each segment of the template
-      for (let i = 0; i < staticParts.length - 1; i++) {
-        const staticPart = staticParts[i];
-        if (i < patterns.length) {
-          const pattern = patterns[i];
-
-          // Skip the static prefix
-          if (!remaining.startsWith(staticPart)) {
-            throw new Error(`Input doesn't match pattern at "${staticPart}"`);
-          }
-          remaining = remaining.substring(staticPart.length);
-
-          // Handle special case for delimiters
-          const nextStatic = staticParts[i + 1];
-          if (nextStatic === DELIMITERS.PAYLOAD || nextStatic === DELIMITERS.FIXED_HEADER) {
-            result[pattern.name] = remaining;
-            remaining = '';
-            break;
-          }
-
-          // Find where the next static part begins
-          const endPos = nextStatic ? remaining.indexOf(nextStatic) : remaining.length;
-          if (endPos === -1) {
-            throw new Error(`Couldn't find delimiter "${nextStatic}" in remaining input`);
-          }
-
-          // Extract the value
-          const valueText = remaining.substring(0, endPos);
-
-          // Parse according to type using the appropriate parse function
-          switch (pattern.type) {
-            case 'num':
-              result[pattern.name] = parseNum(valueText);
-              break;
-            case 'bool':
-              result[pattern.name] = parseBool(valueText);
-              break;
-            case 'list':
-              result[pattern.name] = parseList(valueText, pattern.size);
-              break;
-            case 'nums':
-              result[pattern.name] = parseNums(valueText, pattern.size);
-              break;
-            case 'pairs':
-              result[pattern.name] = parsePairs(valueText);
-              break;
-            case 'numPairs':
-              result[pattern.name] = parseNumPairs(valueText);
-              break;
-            default: // text
-              result[pattern.name] = parseText(valueText, pattern.size);
-              break;
-          }
-
-          // Continue with remainder
-          remaining = remaining.substring(endPos);
-        }
-      }
-
-      // Check for final static part
-      const finalPart = staticParts[staticParts.length - 1];
-      if (!hasFixedSizeHeader && !hasDollarDelimiter && finalPart && !remaining.startsWith(finalPart)) {
-        throw new Error(`Input doesn't match pattern at "${finalPart}"`);
-      }
-
-      // Add payload to result if it exists
-      if (payload) {
-        result.payload = payload;
-      }
-
-      return result;
-    },
-
-    /**
-     * Encode an object into a string according to the protocol template
-     */
-    encode(data: Record<string, any>): string {
-      let result = staticParts[0];
-
-      // Process each pattern in the template
-      for (let i = 0; i < patterns.length; i++) {
-        const pattern = patterns[i];
-
-        // Verify required field exists
-        if (data[pattern.name] === undefined) {
-          throw new Error(`Missing required field "${pattern.name}"`);
-        }
-
-        // Format according to type using the appropriate format function
-        let formattedValue = '';
-
-        switch (pattern.type) {
-          case 'num':
-            formattedValue = formatNum(data[pattern.name], pattern.size);
-            break;
-          case 'bool':
-            formattedValue = formatBool(data[pattern.name]);
-            break;
-          case 'list':
-            if (Array.isArray(data[pattern.name])) {
-              formattedValue = formatList(data[pattern.name], pattern.size);
-            } else {
-              formattedValue = String(data[pattern.name]);
-            }
-            break;
-          case 'nums':
-            if (Array.isArray(data[pattern.name])) {
-              formattedValue = formatNums(data[pattern.name], pattern.size);
-            } else {
-              formattedValue = String(data[pattern.name]);
-            }
-            break;
-          case 'pairs':
-            if (Array.isArray(data[pattern.name])) {
-              formattedValue = formatPairs(data[pattern.name]);
-            } else {
-              formattedValue = String(data[pattern.name]);
-            }
-            break;
-          case 'numPairs':
-            if (Array.isArray(data[pattern.name])) {
-              formattedValue = formatNumPairs(data[pattern.name]);
-            } else {
-              formattedValue = String(data[pattern.name]);
-            }
-            break;
-          default: // text
-            formattedValue = formatText(data[pattern.name], pattern.size);
-            break;
-        }
-
-        result += formattedValue;
-
-        // Add the next static part
-        if (i + 1 < staticParts.length) {
-          result += staticParts[i + 1];
-        }
-      }
-
-      // Add payload
-      if (data.payload !== undefined) {
-        if (hasFixedSizeHeader) {
-          // For fixed size headers, remove the ! and append payload directly
-          result = result.substring(0, result.length - 1) + data.payload;
-        } else if (hasDollarDelimiter) {
-          // The template already ends with $, just append payload
-          result += data.payload;
-        } else {
-          // For variable size header without $ in template
-          result += DELIMITERS.PAYLOAD + data.payload;
-        }
-      }
-
-      return result;
-    },
-  };
 }
