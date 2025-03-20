@@ -1,6 +1,8 @@
 // QRTP - QR Transfer Protocol
 // A silly simple data transfer protocol using QR codes
 
+import { header } from './utils/header';
+
 export type MessageLogCallback = (direction: string, type: string, message: string, data?: any) => void;
 export type OnChangeCallback = (state: QRTPState) => void;
 
@@ -26,6 +28,10 @@ export interface QRTPPacket {
   payload: string | null;
 }
 
+// Define typesafe header templates using the header utility
+const dataHeader = header('QRTP<index:num>/<total:num>:<hash:text>$');
+const ackHeader = header('QRTPA:<hash:text>');
+
 export class QRTP {
   // Static configuration
   static readonly DEFAULT_CHUNK_SIZE: number = 100;
@@ -42,7 +48,6 @@ export class QRTP {
 
   // Configuration
   private chunkSize: number = QRTP.DEFAULT_CHUNK_SIZE;
-  private protocolPrefix: string = 'QRTP';
 
   // State
   private isTransmissionComplete: boolean = false;
@@ -142,14 +147,22 @@ export class QRTP {
     return hashStr;
   }
 
-  // Convert a packet object to a string for QR code
+  // Convert a packet object to a string for QR code using header utility
   private packetToString(packet: QRTPPacket): string {
-    let header = '';
-    if (packet.index !== null && packet.total !== null) {
-      header = `${packet.index}/${packet.total}`;
+    // If this is an acknowledgment (no index/total)
+    if (packet.index === null || packet.total === null) {
+      return ackHeader.encode({
+        hash: packet.hash || '',
+      });
     }
 
-    return `${this.protocolPrefix}[${header}]:${packet.hash || ''}:${packet.payload || ''}`;
+    // This is a data packet
+    return dataHeader.encode({
+      index: packet.index,
+      total: packet.total,
+      hash: packet.hash || '',
+      payload: packet.payload || '',
+    });
   }
 
   // Get the current packet to send
@@ -309,60 +322,40 @@ export class QRTP {
     return { type: 'unknown', message: 'Unknown QR code format' };
   }
 
-  // Helper method to parse QRTP data
+  // Helper method to parse QRTP data using header utility
   private parseQRTPData(data: string): QRTPPacket | null {
     try {
-      // Quick validation - must start with QRTP[
-      if (!data.startsWith(`${this.protocolPrefix}[`)) {
+      // Check if this is a data packet or an ack packet
+      if (data.startsWith('QRTP')) {
+        try {
+          const decoded = dataHeader.decode(data);
+          return {
+            index: decoded.index,
+            total: decoded.total,
+            hash: decoded.hash,
+            payload: decoded.payload || null,
+          };
+        } catch (error) {
+          this.logMessage('incoming', 'error', `Error decoding data header: ${error}`, data);
+          return null;
+        }
+      } else if (data.startsWith('QRTPA')) {
+        try {
+          const decoded = ackHeader.decode(data);
+          return {
+            index: null,
+            total: null,
+            hash: decoded.hash,
+            payload: null,
+          };
+        } catch (error) {
+          this.logMessage('incoming', 'error', `Error decoding ack header: ${error}`, data);
+          return null;
+        }
+      } else {
+        this.logMessage('incoming', 'error', `Unknown packet format`, data);
         return null;
       }
-
-      // Find the second colon which separates header from payload
-      const firstColonIndex = data.indexOf(':');
-      if (firstColonIndex === -1) return null;
-
-      const secondColonIndex = data.indexOf(':', firstColonIndex + 1);
-      if (secondColonIndex === -1) return null;
-
-      // Split into header and payload
-      const headerPart = data.substring(0, secondColonIndex);
-      const payload = data.substring(secondColonIndex + 1) || null;
-
-      // Extract hash - everything between first and second colon
-      const hash = headerPart.substring(firstColonIndex + 1) || null;
-
-      // Extract index/total from the header
-      let index: number | null = null;
-      let total: number | null = null;
-
-      // Find the bracket positions to extract the index/total part
-      const openBracketIndex = headerPart.indexOf('[');
-      const closeBracketIndex = headerPart.indexOf(']');
-
-      if (openBracketIndex !== -1 && closeBracketIndex !== -1) {
-        const indexTotalPart = headerPart.substring(openBracketIndex + 1, closeBracketIndex);
-
-        if (indexTotalPart.includes('/')) {
-          const [indexStr, totalStr] = indexTotalPart.split('/');
-          index = parseInt(indexStr, 10);
-          total = parseInt(totalStr, 10);
-
-          if (isNaN(index) || isNaN(total)) {
-            index = null;
-            total = null;
-          }
-        }
-      }
-
-      console.log({ index, total, hash, payload });
-
-      // Create and return the packet
-      return {
-        index,
-        total,
-        hash,
-        payload,
-      };
     } catch (error) {
       this.logMessage('incoming', 'error', `Error parsing QRTP data: ${error}`, data);
       return null;
