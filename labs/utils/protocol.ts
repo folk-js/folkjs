@@ -139,7 +139,63 @@ function parseNumPairs(text: string): number[][] {
 }
 
 /**
- * Parse a fixed-width header fields
+ * Parse a template string into static parts and patterns
+ */
+function parseTemplate(
+  strings: TemplateStringsArray,
+  placeholders: string[],
+): {
+  staticParts: string[];
+  patterns: Pattern[];
+  hasFixedHeader: boolean;
+  hasDollarDelimiter: boolean;
+} {
+  // Create a full template string
+  let fullTemplate = strings[0];
+  for (let i = 0; i < placeholders.length; i++) {
+    fullTemplate += placeholders[i] + strings[i + 1];
+  }
+
+  // Extract patterns
+  const staticParts: string[] = [];
+  const patterns: Pattern[] = [];
+  const placeholderRegex = /<([^:>]+)(?::([^>(]+)(?:\(([^)]*)\))?)?>/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = placeholderRegex.exec(fullTemplate)) !== null) {
+    staticParts.push(fullTemplate.substring(lastIndex, match.index));
+
+    const [, name, type = 'text', sizeStr] = match;
+    const size = sizeStr ? parseInt(sizeStr) : undefined;
+
+    patterns.push({ name, type, size });
+    lastIndex = match.index + match[0].length;
+  }
+
+  staticParts.push(fullTemplate.substring(lastIndex));
+
+  // Detect special delimiters
+  const hasFixedHeader = staticParts[staticParts.length - 1] === DELIMITERS.FIXED_HEADER;
+  const hasDollarDelimiter = staticParts[staticParts.length - 1] === DELIMITERS.PAYLOAD;
+
+  // Mark all patterns in a fixed header
+  if (hasFixedHeader) {
+    for (const pattern of patterns) {
+      pattern.isFixedHeader = true;
+      if (pattern.size === undefined) {
+        throw new Error('Fixed-size header requires a size parameter for all fields');
+      }
+    }
+  }
+
+  return {
+    staticParts,
+    patterns,
+    hasFixedHeader,
+    hasDollarDelimiter,
+  };
+}
 
 // --- Format functions (for encoding) ---
 
@@ -239,65 +295,6 @@ function formatNumPairs(pairs: number[][]): string {
 }
 
 /**
- * Parse a template string into static parts and patterns
- */
-function parseTemplate(
-  strings: TemplateStringsArray,
-  placeholders: string[],
-): {
-  staticParts: string[];
-  patterns: Pattern[];
-  hasFixedHeader: boolean;
-  hasDollarDelimiter: boolean;
-} {
-  // Create a full template string
-  let fullTemplate = strings[0];
-  for (let i = 0; i < placeholders.length; i++) {
-    fullTemplate += placeholders[i] + strings[i + 1];
-  }
-
-  // Extract patterns
-  const staticParts: string[] = [];
-  const patterns: Pattern[] = [];
-  const placeholderRegex = /<([^:>]+)(?::([^>(]+)(?:\(([^)]*)\))?)?>/g;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = placeholderRegex.exec(fullTemplate)) !== null) {
-    staticParts.push(fullTemplate.substring(lastIndex, match.index));
-
-    const [, name, type = 'text', sizeStr] = match;
-    const size = sizeStr ? parseInt(sizeStr) : undefined;
-
-    patterns.push({ name, type, size });
-    lastIndex = match.index + match[0].length;
-  }
-
-  staticParts.push(fullTemplate.substring(lastIndex));
-
-  // Detect special delimiters
-  const hasFixedHeader = staticParts[staticParts.length - 1] === DELIMITERS.FIXED_HEADER;
-  const hasDollarDelimiter = staticParts[staticParts.length - 1] === DELIMITERS.PAYLOAD;
-
-  // Mark all patterns in a fixed header
-  if (hasFixedHeader) {
-    for (const pattern of patterns) {
-      pattern.isFixedHeader = true;
-      if (pattern.size === undefined) {
-        throw new Error('Fixed-size header requires a size parameter for all fields');
-      }
-    }
-  }
-
-  return {
-    staticParts,
-    patterns,
-    hasFixedHeader,
-    hasDollarDelimiter,
-  };
-}
-
-/**
  * Creates a protocol parser/encoder from a template string
  */
 export function protocol(
@@ -317,79 +314,74 @@ export function protocol(
      * Decode a string according to the protocol template
      */
     decode(input: string): Record<string, any> {
+      // SETUP
       const result: Record<string, any> = {};
 
-      // For fixed headers, extract the entire header portion first
-      let remaining = input;
-      let payload = '';
-
-      if (hasFixedHeader) {
-        if (!input.startsWith(staticParts[0])) {
-          throw new Error(`Input doesn't match pattern at "${staticParts[0]}"`);
-        }
-
-        const headerStart = staticParts[0].length;
-
-        // Extract payload beyond the header
-        payload = input.substring(headerStart + fixedHeaderLength);
-        remaining = input.substring(0, headerStart + fixedHeaderLength);
-
-        if (payload) result.payload = payload;
-      } else {
-        // For regular patterns, extract payload if present
-        const dollarPos = input.indexOf(DELIMITERS.PAYLOAD);
-        if (dollarPos >= 0) {
-          remaining = input.substring(0, dollarPos);
-          payload = input.substring(dollarPos + 1);
-          result.payload = payload;
-        }
+      // Check input for fixed header patterns
+      if (hasFixedHeader && !input.startsWith(staticParts[0])) {
+        throw new Error(`Input doesn't match pattern at "${staticParts[0]}"`);
       }
 
-      // Process each field pattern
+      // Extract payload and get working string
+      let remaining = input;
+
+      // Determine where payload starts (if any)
+      const payloadStart = hasFixedHeader
+        ? staticParts[0].length + fixedHeaderLength
+        : remaining.indexOf(DELIMITERS.PAYLOAD);
+
+      // Extract payload if found
+      if (payloadStart >= 0) {
+        // For fixed header: no delimiter to skip
+        // For variable header: skip the $ delimiter
+        const payloadOffset = hasFixedHeader ? 0 : 1;
+
+        if (payloadStart + payloadOffset < input.length) {
+          result.payload = input.substring(payloadStart + payloadOffset);
+        }
+
+        // Only process up to the payload start
+        remaining = input.substring(0, payloadStart);
+      }
+
+      // MAIN LOOP: Process each pattern
+      let pos = hasFixedHeader ? staticParts[0].length : 0;
       let i = 0;
-      let pos = 0;
 
       for (const pattern of patterns) {
-        // For fixed header patterns, parse directly from position
-        if (pattern.isFixedHeader) {
-          const value = remaining.substring(staticParts[0].length + pos, staticParts[0].length + pos + pattern.size!);
+        let valueText: string;
 
-          switch (pattern.type) {
-            case 'num':
-              result[pattern.name] = parseNum(value);
-              break;
-            default: // text
-              result[pattern.name] = parseText(value, pattern.size);
-              break;
+        if (pattern.isFixedHeader) {
+          // Fixed width fields: extract directly from position
+          valueText = input.substring(pos, pos + pattern.size!);
+          pos += pattern.size!;
+        } else {
+          // Variable width fields: use delimiters
+          const staticPart = staticParts[i];
+          if (!remaining.startsWith(staticPart)) {
+            throw new Error(`Input doesn't match pattern at "${staticPart}"`);
+          }
+          remaining = remaining.substring(staticPart.length);
+
+          // Check for end of input
+          const nextStatic = staticParts[i + 1] || '';
+          if (nextStatic === DELIMITERS.PAYLOAD || nextStatic === DELIMITERS.FIXED_HEADER) {
+            result[pattern.name] = remaining;
+            break;
           }
 
-          pos += pattern.size!;
-          continue;
+          // Find next delimiter
+          const endPos = nextStatic ? remaining.indexOf(nextStatic) : remaining.length;
+          if (endPos === -1) {
+            throw new Error(`Couldn't find delimiter "${nextStatic}" in remaining input`);
+          }
+
+          valueText = remaining.substring(0, endPos);
+          remaining = remaining.substring(endPos);
+          i++;
         }
 
-        // For regular patterns, use delimiters
-        const staticPart = staticParts[i];
-        if (!remaining.startsWith(staticPart)) {
-          throw new Error(`Input doesn't match pattern at "${staticPart}"`);
-        }
-        remaining = remaining.substring(staticPart.length);
-
-        const nextStatic = staticParts[i + 1] || '';
-
-        // Special case for delimiters
-        if (nextStatic === DELIMITERS.PAYLOAD || nextStatic === DELIMITERS.FIXED_HEADER) {
-          result[pattern.name] = remaining;
-          break;
-        }
-
-        // Extract field text
-        const endPos = nextStatic ? remaining.indexOf(nextStatic) : remaining.length;
-        if (endPos === -1) {
-          throw new Error(`Couldn't find delimiter "${nextStatic}" in remaining input`);
-        }
-
-        const valueText = remaining.substring(0, endPos);
-
+        // CASE STATEMENT: Parse value based on type
         switch (pattern.type) {
           case 'num':
             result[pattern.name] = parseNum(valueText);
@@ -413,15 +405,6 @@ export function protocol(
             result[pattern.name] = parseText(valueText, pattern.size);
             break;
         }
-
-        remaining = remaining.substring(endPos);
-        i++;
-      }
-
-      // Verify remaining input matches final static part if required
-      const finalPart = staticParts[staticParts.length - 1];
-      if (!hasFixedHeader && !hasDollarDelimiter && finalPart && !remaining.startsWith(finalPart)) {
-        throw new Error(`Input doesn't match pattern at "${finalPart}"`);
       }
 
       return result;
@@ -431,18 +414,19 @@ export function protocol(
      * Encode an object into a string according to the protocol template
      */
     encode(data: Record<string, any>): string {
+      // SETUP
       let result = staticParts[0];
       let i = 0;
 
+      // MAIN LOOP: Format each pattern
       for (const pattern of patterns) {
         // Verify required field exists
         if (data[pattern.name] === undefined) {
           throw new Error(`Missing required field "${pattern.name}"`);
         }
 
-        // Format according to type
+        // CASE STATEMENT: Format value based on type
         let formattedValue: string;
-
         switch (pattern.type) {
           case 'num':
             formattedValue = formatNum(data[pattern.name], pattern.size);
@@ -467,10 +451,10 @@ export function protocol(
             break;
         }
 
-        // Add to result
+        // Add formatted value to result
         result += formattedValue;
 
-        // Only add static parts for non-fixed header fields
+        // Add next static part (except for fixed header patterns)
         if (!pattern.isFixedHeader && i + 1 < staticParts.length) {
           result += staticParts[i + 1];
         }
@@ -478,18 +462,13 @@ export function protocol(
         i++;
       }
 
-      // Add payload
+      // Add payload if present
       if (data.payload !== undefined) {
-        if (hasFixedHeader) {
-          // For fixed headers, just append the payload (the ! is already removed)
-          result += data.payload;
-        } else if (hasDollarDelimiter) {
-          // The template already ends with $, just append payload
-          result += data.payload;
-        } else {
-          // For variable size header without $ in template
-          result += DELIMITERS.PAYLOAD + data.payload;
+        if (!hasFixedHeader && !hasDollarDelimiter) {
+          // Add delimiter for regular headers if not already in template
+          result += DELIMITERS.PAYLOAD;
         }
+        result += data.payload;
       }
 
       return result;
