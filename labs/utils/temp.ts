@@ -1,6 +1,6 @@
-import { protocol } from './protocol';
+import { header } from './header';
 
-const qrtpHeader = protocol`QRTPB<indices:pair(/)>:<hash:fixed(16)><payload>`;
+const qrtpHeader = header`QRTPB<indices:pair(/)>:<hash:fixed(16)><payload>`;
 const encoded = qrtpHeader.encode({
   indices: [0, 555],
   hash: '1234567890',
