@@ -81,21 +81,40 @@ describe('protocol', () => {
 
   test('should parse delimited pairs', () => {
     const proto = protocol`<settings:pairs>`;
-    const decoded = proto.decode('debug=true;timeout=30');
+    const decoded = proto.decode('debug;true;timeout;30');
     expect(decoded).toEqual({
       settings: [
-        { key: 'debug', value: 'true' },
-        { key: 'timeout', value: '30' },
+        ['debug', 'true'],
+        ['timeout', '30'],
       ],
     });
 
     const encoded = proto.encode({
       settings: [
-        { key: 'mode', value: 'dark' },
-        { key: 'lang', value: 'en' },
+        ['mode', 'dark'],
+        ['lang', 'en'],
       ],
     });
-    expect(encoded).toBe('mode=dark;lang=en');
+    expect(encoded).toBe('mode;dark;lang;en');
+  });
+
+  test('should parse numerical pairs', () => {
+    const proto = protocol`<coordinates:numPairs>`;
+    const decoded = proto.decode('10;20;30;40');
+    expect(decoded).toEqual({
+      coordinates: [
+        [10, 20],
+        [30, 40],
+      ],
+    });
+
+    const encoded = proto.encode({
+      coordinates: [
+        [5, 15],
+        [25, 35],
+      ],
+    });
+    expect(encoded).toBe('5;15;25;35');
   });
 
   test('should parse complex patterns', () => {
@@ -249,6 +268,210 @@ describe('protocol', () => {
     expect(decoded).toEqual({
       type: 'OK ',
       payload: 'success',
+    });
+  });
+
+  // Organized tests by type
+  describe('text type', () => {
+    test('basic text field', () => {
+      const proto = protocol`<message:text>`;
+      const encoded = proto.encode({ message: 'Hello world' });
+      expect(encoded).toBe('Hello world');
+      const decoded = proto.decode('Hello world');
+      expect(decoded).toEqual({ message: 'Hello world' });
+    });
+
+    test('fixed width text', () => {
+      const proto = protocol`<code:text(5)>`;
+      const encoded = proto.encode({ code: 'ABCDE' });
+      expect(encoded).toBe('ABCDE');
+      const decoded = proto.decode('ABCDE');
+      expect(decoded).toEqual({ code: 'ABCDE' });
+
+      // Test padding for shorter values
+      const encoded2 = proto.encode({ code: 'ABC' });
+      expect(encoded2).toBe('ABC  ');
+      const decoded2 = proto.decode('ABC  ');
+      expect(decoded2).toEqual({ code: 'ABC  ' });
+
+      // Test error for longer values
+      expect(() => {
+        proto.encode({ code: 'ABCDEFGHI' });
+      }).toThrow('Value "ABCDEFGHI" exceeds fixed width of 5 for field "code"');
+    });
+  });
+
+  describe('number type', () => {
+    test('basic number field', () => {
+      const proto = protocol`<count:num>`;
+      const encoded = proto.encode({ count: 123 });
+      expect(encoded).toBe('123');
+      const decoded = proto.decode('123');
+      expect(decoded).toEqual({ count: 123 });
+    });
+
+    test('fixed width num', () => {
+      const proto = protocol`<code:num(4)>`;
+      const encoded = proto.encode({ code: 42 });
+      expect(encoded).toBe('0042');
+      const decoded = proto.decode('0042');
+      expect(decoded).toEqual({ code: 42 });
+
+      // Test padding for shorter values
+      const encoded2 = proto.encode({ code: 7 });
+      expect(encoded2).toBe('0007');
+
+      // Test error for longer values
+      expect(() => {
+        proto.encode({ code: 123456 });
+      }).toThrow();
+    });
+  });
+
+  describe('boolean type', () => {
+    test('basic boolean field', () => {
+      const proto = protocol`<active:bool>`;
+      const encoded = proto.encode({ active: true });
+      expect(encoded).toBe('true');
+      const decoded = proto.decode('true');
+      expect(decoded).toEqual({ active: true });
+
+      const encoded2 = proto.encode({ active: false });
+      expect(encoded2).toBe('false');
+      const decoded2 = proto.decode('false');
+      expect(decoded2).toEqual({ active: false });
+    });
+  });
+
+  describe('list type', () => {
+    test('basic list field', () => {
+      const proto = protocol`<items:list>`;
+      const encoded = proto.encode({ items: ['a', 'b', 'c'] });
+      expect(encoded).toBe('a,b,c');
+      const decoded = proto.decode('a,b,c');
+      expect(decoded).toEqual({ items: ['a', 'b', 'c'] });
+    });
+
+    test('fixed width list', () => {
+      const proto = protocol`<codes:list(2)>`;
+      const encoded = proto.encode({ codes: ['AA', 'BB', 'CC'] });
+      expect(encoded).toBe('AABBCC');
+      const decoded = proto.decode('AABBCC');
+      expect(decoded).toEqual({ codes: ['AA', 'BB', 'CC'] });
+
+      // Test padding for shorter values
+      const encoded2 = proto.encode({ codes: ['A', 'B', 'C'] });
+      expect(encoded2).toBe('A B C ');
+      const decoded2 = proto.decode('A B C ');
+      expect(decoded2).toEqual({ codes: ['A ', 'B ', 'C '] });
+
+      // Test error for longer values
+      expect(() => {
+        proto.encode({ codes: ['AAA', 'BB', 'CC'] });
+      }).toThrow('Value "AAA" exceeds fixed width of 2 for item in "codes"');
+    });
+  });
+
+  describe('nums type', () => {
+    test('basic nums field', () => {
+      const proto = protocol`<values:nums>`;
+      const encoded = proto.encode({ values: [10, 20, 30] });
+      expect(encoded).toBe('10,20,30');
+      const decoded = proto.decode('10,20,30');
+      expect(decoded).toEqual({ values: [10, 20, 30] });
+    });
+
+    test('fixed width nums', () => {
+      const proto = protocol`<values:nums(3)>`;
+      const encoded = proto.encode({ values: [7, 42, 123] });
+      expect(encoded).toBe('007042123');
+      const decoded = proto.decode('007042123');
+      expect(decoded).toEqual({ values: [7, 42, 123] });
+
+      // Test padding for shorter values
+      const encoded2 = proto.encode({ values: [1, 2, 3] });
+      expect(encoded2).toBe('001002003');
+
+      // Test error for longer values
+      expect(() => {
+        proto.encode({ values: [1234, 5678, 9012] });
+      }).toThrow('Value "1234" exceeds fixed width of 3 for item in "values"');
+    });
+  });
+
+  describe('pairs type', () => {
+    test('basic pairs field', () => {
+      const proto = protocol`<config:pairs>`;
+      const pairs = [
+        ['name', 'test'],
+        ['version', '1.0'],
+      ];
+      const encoded = proto.encode({ config: pairs });
+      expect(encoded).toBe('name;test;version;1.0');
+      const decoded = proto.decode('name;test;version;1.0');
+      expect(decoded).toEqual({ config: pairs });
+    });
+
+    test('fixed width pairs', () => {
+      const proto = protocol`<config:pairs(4)>`;
+      const pairs = [
+        ['name', 'test'],
+        ['ver', '1.0'],
+      ];
+
+      // Note: fixed width for pairs is implemented by ignoring the fixed width
+      // and formatting as regular pairs
+      const encoded = proto.encode({ config: pairs });
+      expect(encoded).toBe('name;test;ver;1.0');
+    });
+  });
+
+  describe('numPairs type', () => {
+    test('basic numPairs field', () => {
+      const proto = protocol`<points:numPairs>`;
+      const points = [
+        [10, 20],
+        [30, 40],
+        [50, 60],
+      ];
+      const encoded = proto.encode({ points });
+      expect(encoded).toBe('10;20;30;40;50;60');
+      const decoded = proto.decode('10;20;30;40;50;60');
+      expect(decoded).toEqual({ points });
+    });
+
+    test('should handle empty numPairs', () => {
+      const proto = protocol`<points:numPairs>`;
+      const encoded = proto.encode({ points: [] });
+      expect(encoded).toBe('');
+      const decoded = proto.decode('');
+      expect(decoded).toEqual({ points: [] });
+    });
+  });
+
+  describe('complex combinations', () => {
+    test('mixed field types with fixed width', () => {
+      const proto = protocol`<id:num(3)>|<name:text(5)>|<active:bool>`;
+      const encoded = proto.encode({ id: 42, name: 'Alice', active: true });
+      expect(encoded).toBe('042|Alice|true');
+      const decoded = proto.decode('042|Alice|true');
+      expect(decoded).toEqual({ id: 42, name: 'Alice', active: true });
+    });
+
+    test('fixed width header with multiple fields', () => {
+      const proto = protocol`<type:text(3)><code:num(3)>!`;
+      const encoded = proto.encode({
+        type: 'MSG',
+        code: 123,
+        payload: 'Hello world',
+      });
+      expect(encoded).toBe('MSG123Hello world');
+      const decoded = proto.decode('MSG123Hello world');
+      expect(decoded).toEqual({
+        type: 'MSG',
+        code: 123,
+        payload: 'Hello world',
+      });
     });
   });
 });
