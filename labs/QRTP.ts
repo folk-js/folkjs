@@ -21,12 +21,13 @@ export interface QRTPState {
   isTransmissionComplete: boolean;
 }
 
-export interface QRTPPacket {
-  index: number | null;
-  total: number | null;
-  hash: string | null;
-  payload: string | null;
-}
+// Define the packet structure that matches our header
+export type QRTPPacket = {
+  index: number;
+  total: number;
+  hash: string;
+  payload?: string;
+};
 
 // Define typesafe header template using the header utility
 const qrtpHeader = header('QRTP<index:num>/<total:num>:<hash:text>$');
@@ -56,7 +57,6 @@ export class QRTP {
   private onChangeCallback: OnChangeCallback | null = null;
 
   constructor(messageLogCallback?: MessageLogCallback, onChangeCallback?: OnChangeCallback) {
-    // Initialize callbacks if provided
     this.messageLogCallback = messageLogCallback || null;
     this.onChangeCallback = onChangeCallback || null;
   }
@@ -130,6 +130,7 @@ export class QRTP {
   generateChunkHash(chunk: string, index: number, total: number): string {
     // Include index and total in the hash calculation to prevent issues with repeat chunks
     const dataToHash = `${index}/${total}:${chunk}`;
+    console.log(`🔐 Generating hash for: index=${index}, total=${total}, chunk length=${chunk.length}`);
 
     // Simple hash function that considers chunk data and metadata
     let hash = 0;
@@ -143,205 +144,223 @@ export class QRTP {
     const hashUint = hash < 0 ? hash + 4294967296 : hash; // Convert negative to positive
     const hashStr = hashUint.toString(16).padStart(8, '0');
 
+    console.log(`🔑 Generated hash: ${hashStr}`);
     return hashStr;
-  }
-
-  // Convert a packet object to a string for QR code using header utility
-  private packetToString(packet: QRTPPacket): string {
-    // For both data packets and acknowledgments, use the same header format
-    return qrtpHeader.encode({
-      index: packet.index ?? 0,
-      total: packet.total ?? 0,
-      hash: packet.hash || '',
-      payload: packet.payload || '',
-    });
-  }
-
-  // Get the current packet to send
-  private getCurrentPacket(): QRTPPacket {
-    // If we have no data to send or all chunks sent, just send an acknowledgment
-    if (this.dataChunks.length === 0 || this.currentChunkIndex >= this.dataChunks.length) {
-      this.isTransmissionComplete = this.dataChunks.length > 0 && this.currentChunkIndex >= this.dataChunks.length;
-
-      return {
-        index: null,
-        total: null,
-        hash: this.lastReceivedHash,
-        payload: null,
-      };
-    }
-
-    // We have data to send
-    return {
-      index: this.currentChunkIndex,
-      total: this.totalChunks,
-      hash: this.lastReceivedHash,
-      payload: this.dataChunks[this.currentChunkIndex],
-    };
   }
 
   // Get the current QR code data to display
   getCurrentQRCodeData(): string {
-    const packet = this.getCurrentPacket();
-    const qrData = this.packetToString(packet);
+    // Determine if this is a pure acknowledgment (no data payload) or includes a data chunk
+    const hasDataToSend = this.dataChunks.length > 0 && this.currentChunkIndex < this.dataChunks.length;
+    this.isTransmissionComplete = this.dataChunks.length > 0 && this.currentChunkIndex >= this.dataChunks.length;
 
-    // Log appropriate message based on packet type
-    if (packet.index === null) {
-      if (this.isTransmissionComplete) {
-        this.logMessage('outgoing', 'ack', `All chunks sent, sending acknowledgment`, qrData);
-      } else {
-        this.logMessage('outgoing', 'ack', `Sending acknowledgment only`, qrData);
-      }
+    console.log('📤 Generating QR code data:');
+    console.log('  Has data to send?', hasDataToSend);
+    console.log('  Transmission complete?', this.isTransmissionComplete);
+    console.log('  Current chunk index:', this.currentChunkIndex);
+    console.log('  Total chunks:', this.totalChunks);
+    console.log('  ACK hash for previous chunk:', this.lastReceivedHash);
+
+    // Create the packet with or without a payload
+    let packet: QRTPPacket;
+
+    if (hasDataToSend) {
+      // Send a data chunk with acknowledgment hash
+      const payload = this.dataChunks[this.currentChunkIndex];
+      packet = {
+        index: this.currentChunkIndex,
+        total: this.totalChunks,
+        hash: this.lastReceivedHash || '', // Always include ack hash, even if empty
+        payload: payload,
+      };
+
+      console.log(
+        `📤 Sending DATA chunk ${this.currentChunkIndex + 1}/${this.totalChunks} with ACK hash: ${this.lastReceivedHash}`,
+      );
+      console.log(`  Payload length: ${payload.length}`);
+
+      this.logMessage(
+        'outgoing',
+        'data',
+        `Sending chunk ${this.currentChunkIndex + 1}/${this.totalChunks}`,
+        `ACK: ${this.lastReceivedHash}`,
+      );
     } else {
-      this.logMessage('outgoing', 'data', `Sending chunk ${packet.index + 1}/${packet.total}`, qrData);
+      // Send a pure acknowledgment with no data
+      packet = {
+        index: 0,
+        total: this.totalChunks || 0, // Make sure total is always a valid number
+        hash: this.lastReceivedHash || '',
+      };
+
+      console.log('📤 Sending PURE ACK with hash:', this.lastReceivedHash);
+
+      if (this.isTransmissionComplete) {
+        this.logMessage('outgoing', 'ack', `All chunks sent, sending pure acknowledgment`, this.lastReceivedHash);
+      } else {
+        this.logMessage('outgoing', 'ack', `Sending pure acknowledgment`, this.lastReceivedHash);
+      }
     }
 
-    return qrData;
+    // Encode the packet to QR code data
+    return qrtpHeader.encode(packet);
   }
 
   // Process received QR code data
   processReceivedData(data: string): QRTPResponse {
-    // Parse the QR code data into a packet
-    const packet = this.parseQRTPData(data);
+    try {
+      // Only attempt to parse if it's a QRTP packet
+      if (!data.startsWith('QRTP')) {
+        this.logMessage('incoming', 'error', `Invalid QR code format - not a QRTP packet`, data);
+        return { type: 'invalid', message: 'Invalid QR code format' };
+      }
 
-    // If parsing failed, return invalid response
-    if (!packet) {
-      this.logMessage('incoming', 'error', `Invalid QR code format`, data);
-      return { type: 'invalid', message: 'Invalid QR code format' };
-    }
+      console.log('⬇️ Received data:', data.substring(0, 50) + (data.length > 50 ? '...' : ''));
 
-    return this.processPacket(packet);
-  }
+      // Parse using our typesafe header
+      const packet = qrtpHeader.decode(data);
+      console.log('📦 Decoded packet:', JSON.stringify(packet, null, 2));
 
-  // Process a parsed packet
-  private processPacket(packet: QRTPPacket): QRTPResponse {
-    // First, check if this is an acknowledgment for our current chunk
-    if (packet.hash && this.dataChunks.length > 0 && this.currentChunkIndex < this.dataChunks.length) {
-      const currentChunk = this.dataChunks[this.currentChunkIndex];
-      const expectedHash = this.generateChunkHash(currentChunk, this.currentChunkIndex, this.totalChunks);
+      // Determine if this is a pure ACK (no payload) or contains a data chunk
+      const isPureAck = packet.index === 0 && !packet.payload;
+      console.log(
+        '🔍 Packet type:',
+        isPureAck ? 'PURE ACK' : 'DATA+ACK',
+        'index:',
+        packet.index,
+        'total:',
+        packet.total,
+      );
+      console.log('  Includes ACK hash:', packet.hash);
 
-      if (packet.hash === expectedHash) {
+      // Process acknowledgment hash if present, regardless of packet type
+      let ackProcessed = false;
+      if (packet.hash && this.dataChunks.length > 0 && this.currentChunkIndex < this.dataChunks.length) {
+        const currentChunk = this.dataChunks[this.currentChunkIndex];
+        const expectedHash = this.generateChunkHash(currentChunk, this.currentChunkIndex, this.totalChunks);
+
+        console.log('🔐 ACK hash comparison:');
+        console.log('  Received:', packet.hash);
+        console.log('  Expected:', expectedHash);
+        console.log('  Match?:', packet.hash === expectedHash);
+
+        if (packet.hash === expectedHash) {
+          this.logMessage(
+            'incoming',
+            'ack',
+            `✓ ACKNOWLEDGMENT MATCHED for chunk ${this.currentChunkIndex + 1}/${this.totalChunks}`,
+            packet.hash,
+          );
+
+          // Increment the chunk index
+          const oldIndex = this.currentChunkIndex;
+          this.currentChunkIndex++;
+          console.log(`⏩ Advanced chunk index: ${oldIndex} -> ${this.currentChunkIndex}`);
+          ackProcessed = true;
+
+          // Check if we've sent all chunks
+          if (this.currentChunkIndex >= this.dataChunks.length) {
+            this.isTransmissionComplete = true;
+            console.log('🏁 All chunks acknowledged, transmission complete!');
+            this.logMessage('outgoing', 'complete', `All chunks have been acknowledged`);
+          }
+
+          // Notify about the change
+          this.notifyChange();
+        } else {
+          console.log('❌ Hash mismatch, acknowledgment NOT matched');
+          this.logMessage(
+            'incoming',
+            'ack',
+            `✗ Acknowledgment did NOT match for chunk ${this.currentChunkIndex + 1}/${this.totalChunks}. Expected: ${expectedHash}, Received: ${packet.hash}`,
+          );
+        }
+      } else if (packet.hash) {
+        console.log('ℹ️ Acknowledgment received but no chunks to acknowledge or all chunks sent');
+        console.log('  Hash present:', !!packet.hash);
+        console.log('  Data chunks length:', this.dataChunks.length);
+        console.log('  Current index < total chunks:', this.currentChunkIndex < this.dataChunks.length);
+      }
+
+      // If this is a pure ACK with no data payload, we're done
+      if (isPureAck) {
+        this.logMessage('incoming', 'ack-only', `Received pure acknowledgment: ${packet.hash}`);
+        this.notifyChange();
+        return {
+          type: 'ack',
+          message: ackProcessed ? 'Acknowledgment received and matched' : 'Acknowledgment received',
+        };
+      }
+
+      // Process data chunk if present
+      if (packet.payload) {
+        console.log(`📄 Processing data chunk at index ${packet.index}, content length: ${packet.payload.length}`);
+
+        // Store the received chunk
+        this.receivedChunks.set(packet.index, packet.payload);
+
+        // Generate hash for acknowledging this chunk in our next message
+        this.lastReceivedHash = this.generateChunkHash(packet.payload, packet.index, packet.total);
+        console.log(`🔑 Generated hash for next ACK: ${this.lastReceivedHash}`);
+
         this.logMessage(
           'incoming',
-          'ack',
-          `✓ ACKNOWLEDGMENT MATCHED for chunk ${this.currentChunkIndex + 1}/${this.totalChunks}`,
-          packet.hash,
+          'chunk',
+          `Received chunk ${packet.index + 1}/${packet.total}`,
+          packet.payload.substring(0, 20) + (packet.payload.length > 20 ? '...' : ''),
         );
-
-        // Increment the chunk index
-        this.currentChunkIndex++;
-
-        // Check if we've sent all chunks
-        if (this.currentChunkIndex >= this.dataChunks.length) {
-          this.isTransmissionComplete = true;
-          this.logMessage('outgoing', 'complete', `All chunks have been acknowledged`);
-        }
 
         // Notify about the change
         this.notifyChange();
 
-        return { type: 'ack', message: 'Acknowledgment received and matched' };
-      } else {
-        this.logMessage(
-          'incoming',
-          'ack',
-          `✗ Acknowledgment did NOT match for chunk ${this.currentChunkIndex + 1}/${this.totalChunks}. Expected: ${expectedHash}, Received: ${packet.hash}`,
-        );
-      }
-    }
+        // Check if we've received all chunks
+        console.log(`📊 Received ${this.receivedChunks.size}/${packet.total} chunks`);
 
-    // Process incoming data chunk if present
-    if (packet.index !== null && packet.total !== null && packet.payload) {
-      // Store the received chunk
-      this.receivedChunks.set(packet.index, packet.payload);
+        if (this.receivedChunks.size === packet.total) {
+          console.log('🎉 All chunks received, assembling complete message');
 
-      // Generate hash for acknowledgment - include index and total in the hash
-      this.lastReceivedHash = this.generateChunkHash(packet.payload, packet.index, packet.total);
-
-      this.logMessage(
-        'incoming',
-        'chunk',
-        `Received chunk ${packet.index + 1}/${packet.total}`,
-        packet.payload.substring(0, 20) + (packet.payload.length > 20 ? '...' : ''),
-      );
-
-      // Notify about the change
-      this.notifyChange();
-
-      // Check if we've received all chunks
-      if (this.receivedChunks.size === packet.total) {
-        // Combine all chunks
-        let combinedData = '';
-        for (let i = 0; i < packet.total; i++) {
-          if (this.receivedChunks.has(i)) {
-            combinedData += this.receivedChunks.get(i);
+          // Combine all chunks
+          let combinedData = '';
+          for (let i = 0; i < packet.total; i++) {
+            if (this.receivedChunks.has(i)) {
+              combinedData += this.receivedChunks.get(i);
+            } else {
+              console.log(`⚠️ Missing chunk at index ${i}`);
+            }
           }
+
+          this.logMessage(
+            'incoming',
+            'complete',
+            `All ${packet.total} chunks received, message complete: ${combinedData.length} bytes`,
+          );
+
+          // Notify about completion
+          this.notifyChange();
+
+          return {
+            type: 'complete',
+            message: 'All chunks received',
+            data: combinedData,
+            totalChunks: packet.total,
+          };
         }
 
-        this.logMessage(
-          'incoming',
-          'complete',
-          `All ${packet.total} chunks received, message complete: ${combinedData.length} bytes`,
-        );
-
-        // Notify about completion
-        this.notifyChange();
-
         return {
-          type: 'complete',
-          message: 'All chunks received',
-          data: combinedData,
+          type: 'chunk',
+          message: `Received chunk ${packet.index + 1} of ${packet.total}`,
+          chunkIndex: packet.index,
           totalChunks: packet.total,
         };
       }
 
-      return {
-        type: 'chunk',
-        message: `Received chunk ${packet.index + 1} of ${packet.total}`,
-        chunkIndex: packet.index,
-        totalChunks: packet.total,
-      };
-    }
-
-    // Just an acknowledgment with no data
-    if (packet.index === null && packet.hash) {
-      this.logMessage('incoming', 'ack-only', `Received acknowledgment only: ${packet.hash}`);
-      this.notifyChange();
-      return { type: 'ack', message: 'Acknowledgment received' };
-    }
-
-    this.logMessage('incoming', 'unknown', `Unknown QR code format`, packet);
-    return { type: 'unknown', message: 'Unknown QR code format' };
-  }
-
-  // Helper method to parse QRTP data using header utility
-  private parseQRTPData(data: string): QRTPPacket | null {
-    try {
-      // Check if this is a valid QRTP packet
-      if (data.startsWith('QRTP')) {
-        try {
-          const decoded = qrtpHeader.decode(data);
-
-          // If index and total are both 0, this is an acknowledgment
-          const isAck = decoded.index === 0 && decoded.total === 0;
-
-          return {
-            index: isAck ? null : decoded.index,
-            total: isAck ? null : decoded.total,
-            hash: decoded.hash,
-            payload: decoded.payload || null,
-          };
-        } catch (error) {
-          this.logMessage('incoming', 'error', `Error decoding QRTP header: ${error}`, data);
-          return null;
-        }
-      } else {
-        this.logMessage('incoming', 'error', `Unknown packet format`, data);
-        return null;
-      }
+      console.log('⚠️ Data packet without payload');
+      this.logMessage('incoming', 'unknown', `Data packet without payload`, packet);
+      return { type: 'unknown', message: 'Data packet without payload' };
     } catch (error) {
-      this.logMessage('incoming', 'error', `Error parsing QRTP data: ${error}`, data);
-      return null;
+      console.error('❌ Error processing QR code data:', error);
+      this.logMessage('incoming', 'error', `Error processing QR code data: ${error}`, data);
+      return { type: 'invalid', message: 'Invalid QR code format' };
     }
   }
 

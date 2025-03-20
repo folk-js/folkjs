@@ -20,8 +20,6 @@ export const ggwave_factory = ( () => {
     };
     var ENVIRONMENT_IS_WEB = typeof window === 'object';
     var ENVIRONMENT_IS_WORKER = typeof importScripts === 'function';
-    var ENVIRONMENT_IS_NODE =
-      typeof process === 'object' && typeof process.versions === 'object' && typeof process.versions.node === 'string';
     var scriptDirectory = '';
     function locateFile(path) {
       if (Module['locateFile']) {
@@ -38,70 +36,7 @@ export const ggwave_factory = ( () => {
     var fs;
     var nodePath;
     var requireNodeFS;
-    if (ENVIRONMENT_IS_NODE) {
-      if (ENVIRONMENT_IS_WORKER) {
-        scriptDirectory = require('path').dirname(scriptDirectory) + '/';
-      } else {
-        scriptDirectory = __dirname + '/';
-      }
-      requireNodeFS = () => {
-        if (!nodePath) {
-          fs = require('fs');
-          nodePath = require('path');
-        }
-      };
-      read_ = function shell_read(filename, binary) {
-        var ret = tryParseAsDataURI(filename);
-        if (ret) {
-          return binary ? ret : ret.toString();
-        }
-        requireNodeFS();
-        filename = nodePath['normalize'](filename);
-        return fs.readFileSync(filename, binary ? null : 'utf8');
-      };
-      readBinary = (filename) => {
-        var ret = read_(filename, true);
-        if (!ret.buffer) {
-          ret = new Uint8Array(ret);
-        }
-        return ret;
-      };
-      readAsync = (filename, onload, onerror) => {
-        var ret = tryParseAsDataURI(filename);
-        if (ret) {
-          onload(ret);
-        }
-        requireNodeFS();
-        filename = nodePath['normalize'](filename);
-        fs.readFile(filename, function (err, data) {
-          if (err) onerror(err);
-          else onload(data.buffer);
-        });
-      };
-      if (process['argv'].length > 1) {
-        thisProgram = process['argv'][1].replace(/\\/g, '/');
-      }
-      arguments_ = process['argv'].slice(2);
-      process['on']('uncaughtException', function (ex) {
-        if (!(ex instanceof ExitStatus)) {
-          throw ex;
-        }
-      });
-      process['on']('unhandledRejection', function (reason) {
-        throw reason;
-      });
-      quit_ = (status, toThrow) => {
-        if (keepRuntimeAlive()) {
-          process['exitCode'] = status;
-          throw toThrow;
-        }
-        logExceptionOnExit(toThrow);
-        process['exit'](status);
-      };
-      Module['inspect'] = function () {
-        return '[Emscripten Module object]';
-      };
-    } else if (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER) {
+    if (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER) {
       if (ENVIRONMENT_IS_WORKER) {
         scriptDirectory = self.location.href;
       } else if (typeof document !== 'undefined' && document.currentScript) {
@@ -1747,10 +1682,6 @@ export const ggwave_factory = ( () => {
             return output;
           };
     function intArrayFromBase64(s) {
-      if (typeof ENVIRONMENT_IS_NODE === 'boolean' && ENVIRONMENT_IS_NODE) {
-        var buf = Buffer.from(s, 'base64');
-        return new Uint8Array(buf['buffer'], buf['byteOffset'], buf['byteLength']);
-      }
       try {
         var decoded = decodeBase64(s);
         var bytes = new Uint8Array(decoded.length);
