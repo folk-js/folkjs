@@ -464,6 +464,11 @@
       .chunks-grid {
         display: none;
       }
+
+      /* Remove speed indicator styling as we're not using it anymore */
+      .speed-indicator {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -508,7 +513,11 @@
           </div>
           <div id="sendingChunksGrid" class="chunks-grid"></div>
           <textarea id="txData" class="input-text">Hello from QRTPB!</textarea>
-          <div id="chunkSizeInfo" style="font-size: 11px; color: #666; margin-top: 5px"></div>
+          <div id="chunkSizeInfo" style="display: none"></div>
+          <div class="speed-indicator" style="display: none">
+            <span class="current">Current: 0 bps</span>
+            <span class="average">Average: 0 bps</span>
+          </div>
         </div>
         <div class="progress-column receiving-column">
           <div class="progress-title">Receiving</div>
@@ -518,6 +527,10 @@
           </div>
           <div id="receivingChunksGrid" class="chunks-grid"></div>
           <div id="receivedTextDisplay" class="received-text"></div>
+          <div class="speed-indicator" style="display: none">
+            <span class="current">Current: 0 bps</span>
+            <span class="average">Average: 0 bps</span>
+          </div>
         </div>
       </div>
 
@@ -546,6 +559,17 @@
       let audioContext = null;
       let analyser = null;
       let visualizationActive = false;
+
+      // Bitrate measurement
+      let transferStats = {
+        startTime: null,
+        lastUpdateTime: null,
+        totalBytesReceived: 0,
+        recentBytesReceived: 0,
+        rollingBitrates: [],
+        currentBitrate: 0,
+        updateInterval: 2000, // Update bitrate every 2 seconds
+      };
 
       // Initialize after DOM is loaded
       document.addEventListener('DOMContentLoaded', initApp);
@@ -578,6 +602,26 @@
           audioTestButton: document.getElementById('audioTestButton'),
         };
 
+        // Create speed labels
+        const senderSpeedLabel = document.createElement('div');
+        senderSpeedLabel.style.fontSize = '11px';
+        senderSpeedLabel.style.color = '#666';
+        senderSpeedLabel.style.marginTop = '5px';
+        senderSpeedLabel.id = 'senderSpeedLabel';
+        senderSpeedLabel.textContent = 'Average: 0 bps';
+        document.querySelector('.sending-column').appendChild(senderSpeedLabel);
+
+        const receiverSpeedLabel = document.createElement('div');
+        receiverSpeedLabel.style.fontSize = '11px';
+        receiverSpeedLabel.style.color = '#666';
+        receiverSpeedLabel.style.marginTop = '5px';
+        receiverSpeedLabel.id = 'receiverSpeedLabel';
+        receiverSpeedLabel.textContent = 'Average: 0 bps';
+        document.querySelector('.receiving-column').appendChild(receiverSpeedLabel);
+
+        elements.senderSpeedLabel = senderSpeedLabel;
+        elements.receiverSpeedLabel = receiverSpeedLabel;
+
         // Setup event handlers
         setupProtocolEvents(elements);
         setupUIEvents(elements);
@@ -585,11 +629,13 @@
         setupAudioTest(elements);
 
         // Initialize UI
-        elements.chunkSizeInfo.textContent = `Using default chunk size of 100 bytes`;
         updateQRCode('Initializing...', elements.qrcodeContainer);
 
         // Configure as sender by default
         configureAsSender(elements);
+
+        // Update speed labels every second
+        setInterval(() => updateSpeedLabels(elements), 1000);
       }
 
       // Setup audio visualizer
@@ -658,17 +704,30 @@
             elements.messageLog,
           );
 
+          // Store chunk size info in a hidden element for speed calculations
+          elements.chunkSizeInfo.textContent = `${event.size} bytes per chunk, ${event.total} chunks total`;
+
           // Initialize progress segments for sender
           initProgressSegments(elements.sendingProgressBarContainer, event.total);
+
+          // Reset transfer stats
+          resetTransferStats();
         });
 
         qrProtocol.on('chunk', (event) => {
+          // Track received bytes for bitrate calculation
+          const chunkSize = event.payload ? event.payload.length : 0;
+          updateTransferStats(chunkSize);
+
           logMessage('incoming', 'qr', `Received chunk ${event.index + 1}/${event.total}`, elements.messageLog);
           updateReceivedText(event.payload, false, elements.receivedTextDisplay);
 
           // Update progress text
           const receivedCount = event.receivedCount || event.index + 1;
           elements.receivingProgressText.textContent = `${receivedCount}/${event.total}`;
+
+          // Update speed label
+          updateReceiverSpeedLabel(elements);
 
           // Update receiving progress segments
           updateProgressSegment(elements.receivingProgressBarContainer, event.index, 'received');
@@ -701,8 +760,10 @@
             elements.messageLog,
           );
 
-          // Update progress text
-          elements.sendingProgressText.textContent = `${event.acknowledged.length}/${event.acknowledged.length + event.remaining}`;
+          // Update progress text (without rate to avoid flickering)
+          const acknowledged = event.acknowledged.length;
+          const total = acknowledged + event.remaining;
+          elements.sendingProgressText.textContent = `${acknowledged}/${total}`;
 
           // Update all acknowledged segments
           event.acknowledged.forEach((index) => {
@@ -741,12 +802,25 @@
 
         qrProtocol.on('complete', (event) => {
           if (event && event.message) {
-            logMessage('incoming', 'complete', `Message received successfully!`, elements.messageLog);
+            // Calculate overall average bitrate
+            const totalTime = (Date.now() - transferStats.startTime) / 1000; // seconds
+            const avgBitrate = (transferStats.totalBytesReceived * 8) / totalTime;
+
+            logMessage(
+              'incoming',
+              'complete',
+              `Message received successfully! Average bitrate: ${formatBitrate(avgBitrate)}`,
+              elements.messageLog,
+            );
+
             updateReceivedText(event.message, true, elements.receivedTextDisplay);
 
             // If we have received indices and total chunks, update all segments
             if (event.receivedIndices && event.totalChunks) {
               initProgressSegments(elements.receivingProgressBarContainer, event.totalChunks);
+
+              // Update progress text
+              elements.receivingProgressText.textContent = `${event.receivedIndices.length}/${event.totalChunks}`;
 
               // Mark all received segments
               event.receivedIndices.forEach((idx) => {
@@ -780,6 +854,7 @@
           if (currentMode === 'sender') {
             const text = elements.txData.value.trim();
             if (text) {
+              // Use the default values from QRTPB (400 bytes, 400ms)
               qrProtocol.configureSender(text);
             }
           }
@@ -829,6 +904,9 @@
         clearProgressSegments(elements.receivingProgressBarContainer);
         elements.receivingProgressText.textContent = '0/0';
 
+        // Reset transfer stats
+        resetTransferStats();
+
         // Update UI for sender mode
         document.body.classList.remove('receiver-mode');
 
@@ -852,6 +930,9 @@
         elements.txData.disabled = true;
         clearProgressSegments(elements.sendingProgressBarContainer);
         elements.sendingProgressText.textContent = '0/0';
+
+        // Reset transfer stats
+        resetTransferStats();
 
         // Update UI for receiver mode
         document.body.classList.add('receiver-mode');
@@ -1176,6 +1257,109 @@
 
         // Add to container
         container.appendChild(successDiv);
+      }
+
+      // Add bitrate measurement functions
+      function resetTransferStats() {
+        const now = Date.now();
+        transferStats = {
+          startTime: now,
+          lastUpdateTime: now,
+          totalBytesReceived: 0,
+          recentBytesReceived: 0,
+          rollingBitrates: [],
+          currentBitrate: 0,
+          updateInterval: 2000, // Update bitrate every 2 seconds
+        };
+      }
+
+      function updateTransferStats(bytesReceived) {
+        const now = Date.now();
+
+        // Initialize if not started
+        if (!transferStats.startTime) {
+          resetTransferStats();
+        }
+
+        // Update totals
+        transferStats.totalBytesReceived += bytesReceived;
+        transferStats.recentBytesReceived += bytesReceived;
+
+        // Check if it's time to calculate a new bitrate sample
+        const timeSinceLastUpdate = now - transferStats.lastUpdateTime;
+        if (timeSinceLastUpdate >= transferStats.updateInterval) {
+          // Calculate bitrate in bits per second (bps)
+          const bitrate = (transferStats.recentBytesReceived * 8) / (timeSinceLastUpdate / 1000);
+
+          // Add to rolling average (keep last 5 measurements)
+          transferStats.rollingBitrates.push(bitrate);
+          if (transferStats.rollingBitrates.length > 5) {
+            transferStats.rollingBitrates.shift();
+          }
+
+          // Calculate average bitrate
+          const avgBitrate =
+            transferStats.rollingBitrates.reduce((sum, val) => sum + val, 0) / transferStats.rollingBitrates.length;
+
+          // Update current bitrate
+          transferStats.currentBitrate = avgBitrate;
+
+          // Reset for next interval
+          transferStats.lastUpdateTime = now;
+          transferStats.recentBytesReceived = 0;
+        }
+      }
+
+      function formatBitrate(bitsPerSecond) {
+        if (bitsPerSecond < 1000) {
+          return `${Math.round(bitsPerSecond)} b/s`;
+        } else if (bitsPerSecond < 1000000) {
+          return `${(bitsPerSecond / 1000).toFixed(1)} Kb/s`;
+        } else {
+          return `${(bitsPerSecond / 1000000).toFixed(1)} Mb/s`;
+        }
+      }
+
+      function updateReceiverSpeedLabel(elements) {
+        if (!elements.receiverSpeedLabel) return;
+
+        if (transferStats.startTime) {
+          const totalTime = (Date.now() - transferStats.startTime) / 1000; // seconds
+          if (totalTime > 0 && transferStats.totalBytesReceived > 0) {
+            const avgBitrate = (transferStats.totalBytesReceived * 8) / totalTime;
+            elements.receiverSpeedLabel.textContent = `Average: ${formatBitrate(avgBitrate)}`;
+          }
+        }
+      }
+
+      function updateSenderSpeedLabel(elements) {
+        if (!elements.senderSpeedLabel) return;
+
+        // Try to get chunk size
+        const chunkSizeMatch = elements.chunkSizeInfo.textContent.match(/(\d+) bytes per chunk/);
+        if (!chunkSizeMatch) return;
+
+        const chunkSize = parseInt(chunkSizeMatch[1]);
+        if (!chunkSize) return;
+
+        // Count acknowledged chunks from progress segments
+        const acknowledgedSegments =
+          elements.sendingProgressBarContainer.querySelectorAll('.progress-segment.received');
+        const acknowledgedCount = acknowledgedSegments.length;
+
+        if (acknowledgedCount > 0) {
+          const totalTime = (Date.now() - transferStats.startTime) / 1000; // seconds
+          if (totalTime > 0) {
+            const bytesTransferred = acknowledgedCount * chunkSize;
+            const avgBitrate = (bytesTransferred * 8) / totalTime;
+            elements.senderSpeedLabel.textContent = `Average: ${formatBitrate(avgBitrate)}`;
+          }
+        }
+      }
+
+      function updateSpeedLabels(elements) {
+        updateReceiverSpeedLabel(elements);
+        updateSenderSpeedLabel(elements);
       }
     </script>
   </body>

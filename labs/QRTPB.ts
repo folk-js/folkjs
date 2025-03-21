@@ -65,7 +65,7 @@ export class QRTPB extends EventEmitter {
    * @param chunkSize Size of each chunk in characters
    * @param cycleInterval Milliseconds between QR code changes
    */
-  async configureSender(data: string, chunkSize = 250, cycleInterval = 600): Promise<void> {
+  async configureSender(data: string, chunkSize = 800, cycleInterval = 400): Promise<void> {
     this.#role = 'sender';
     this.#chunksMap = new Map();
     this.#currentIndex = 0;
