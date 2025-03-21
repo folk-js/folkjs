@@ -24,6 +24,7 @@
     "@automerge/automerge-repo-storage-indexeddb": "^1.2.1",
     "@babel/parser": "^7.26.2",
     "@dimforge/rapier2d-compat": "^0.14.0",
+    "@folk-systems/propagators": "workspace:*",
     "@lit/reactive-element": "^2.0.4",
     "@mlc-ai/web-llm": "^0.2.78",
     "@types/uuid": "^10.0.0",
@@ -42,8 +43,7 @@
     "uuid": "^11.1.0",
     "vite-plugin-top-level-await": "^1.5.0",
     "vite-plugin-wasm": "^3.3.0",
-    "webcola": "^3.4.0",
-    "@folk-systems/propagators": "workspace:*"
+    "webcola": "^3.4.0"
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.14",

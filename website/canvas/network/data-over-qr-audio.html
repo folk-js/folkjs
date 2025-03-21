@@ -1,0 +1,1395 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>QR with Audio Backchannel</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        font-family: system-ui, sans-serif;
+        background-color: #f5f5f5;
+        overflow-x: hidden;
+        min-height: 100vh;
+        position: relative;
+      }
+
+      .app-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 24px 16px;
+      }
+
+      .title {
+        font-size: 24px;
+        font-weight: 600;
+        text-align: center;
+        margin-bottom: 24px;
+        color: #000;
+      }
+
+      .mode-selector {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 20px;
+        gap: 10px;
+      }
+
+      .mode-btn {
+        padding: 10px 20px;
+        background-color: #eee;
+        border: 1px solid #000;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background-color 0.2s ease;
+      }
+
+      .mode-btn.active {
+        background-color: #000;
+        color: #fff;
+      }
+
+      .media-container {
+        display: flex;
+        flex-direction: row;
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+
+      .qr-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        margin: 0;
+        aspect-ratio: 1;
+        max-width: none;
+      }
+
+      .qr-data-preview {
+        text-align: center;
+        margin-top: 8px;
+        font-size: 12px;
+        color: #666;
+        word-break: break-all;
+        max-width: 100%;
+        overflow: hidden;
+      }
+
+      #qrcode {
+        width: 100%;
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #00000024;
+      }
+
+      #qrcode canvas {
+        max-width: 100%;
+        max-height: 100%;
+      }
+
+      #videoContainer {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        background-color: #000;
+        cursor: pointer;
+        aspect-ratio: 1;
+        margin: 0;
+      }
+
+      #video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .camera-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: rgba(0, 0, 0, 0.5);
+        transition: opacity 0.3s ease;
+      }
+
+      .camera-label {
+        color: white;
+        font-size: 16px;
+        font-weight: 500;
+        text-align: center;
+        padding: 10px;
+      }
+
+      /* Show stop camera text on hover when camera is active */
+      .camera-active .camera-overlay {
+        opacity: 0;
+        visibility: hidden;
+      }
+
+      @media (hover: hover) {
+        .camera-active:hover .camera-overlay {
+          opacity: 1;
+          visibility: visible;
+          background-color: rgba(0, 0, 0, 0.7);
+        }
+      }
+
+      .progress-bar-container {
+        height: 40px;
+        background-color: #f0f0f0;
+        margin-top: 10px;
+        overflow: hidden;
+        position: relative;
+        border: 1px solid #000;
+        display: flex;
+      }
+
+      .progress-segment {
+        height: 100%;
+        flex: 1;
+        border-right: 1px solid #f0f0f0;
+        transition: background-color 0.3s ease;
+        position: relative;
+      }
+
+      .progress-segment:last-child {
+        border-right: none;
+      }
+
+      .progress-segment.received {
+        background-color: #4caf50;
+      }
+
+      .progress-segment.missing {
+        background-color: #f44336;
+      }
+
+      .progress-segment.current {
+        background-color: #ff9800;
+      }
+
+      .progress-segment.current.received {
+        background-color: #8bc34a;
+        background-image: linear-gradient(
+          45deg,
+          #4caf50 25%,
+          #ff9800 25%,
+          #ff9800 50%,
+          #4caf50 50%,
+          #4caf50 75%,
+          #ff9800 75%,
+          #ff9800 100%
+        );
+        background-size: 20px 20px;
+      }
+
+      .progress-bar {
+        display: none; /* Hide the old progress bar */
+      }
+
+      .progress-text {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        z-index: 2;
+        mix-blend-mode: difference;
+        pointer-events: none;
+      }
+
+      .progress-section {
+        margin-top: 20px;
+        display: flex;
+        gap: 20px;
+      }
+
+      .progress-column {
+        flex: 1;
+      }
+
+      .progress-title {
+        font-size: 14px;
+        margin-bottom: 8px;
+        color: #000;
+        font-weight: 500;
+      }
+
+      .received-text {
+        margin-top: 10px;
+        padding: 12px;
+        background-color: #f9f9f9;
+        border: 1px solid #000;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 14px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-all;
+        height: 100px;
+        overflow-y: auto;
+      }
+
+      .input-text {
+        margin-top: 10px;
+        width: 100%;
+        height: 100px;
+        border: 1px solid #000;
+        padding: 12px;
+        font-size: 14px;
+        resize: none;
+        margin-bottom: 0px;
+      }
+
+      .visualizer-container {
+        width: 100%;
+        height: 50px;
+        border: 1px solid #000;
+        margin-top: 10px;
+        background-color: #000;
+        position: relative;
+      }
+
+      #audioVisualizer {
+        width: 100%;
+        height: 100%;
+      }
+
+      .audio-test-button {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        padding: 5px 10px;
+        background-color: #9c27b0;
+        color: white;
+        border: none;
+        font-weight: bold;
+        cursor: pointer;
+        text-align: center;
+        font-size: 11px;
+        border-radius: 3px;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        z-index: 10;
+      }
+
+      .visualizer-container:hover .audio-test-button {
+        opacity: 1;
+      }
+
+      .audio-test-button:hover {
+        background-color: #7b1fa2;
+      }
+
+      .qr-success-message {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        width: 100%;
+        color: #4caf50;
+        text-align: center;
+        font-weight: bold;
+        padding: 20px;
+        background-color: #e8f5e9; /* Subtle green background */
+        border-radius: 8px;
+      }
+
+      .qr-success-message .icon {
+        font-size: 48px;
+        margin-bottom: 10px;
+      }
+
+      .qr-success-message .text {
+        font-size: 16px;
+      }
+
+      .highlight-chunk {
+        background-color: #ffff00;
+        animation: fadeHighlight 2s forwards;
+      }
+
+      @keyframes fadeHighlight {
+        from {
+          background-color: #ffff00;
+        }
+        to {
+          background-color: transparent;
+        }
+      }
+
+      .message-log {
+        max-height: 200px;
+        overflow-y: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.4;
+        padding: 8px;
+        background-color: #fafafa;
+        border: 1px solid #000;
+        margin-top: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .log-entry {
+        padding: 4px 8px;
+        border: 1px solid #00000013;
+      }
+
+      .log-entry-outgoing {
+        border-left: 3px solid #0070f3;
+        background-color: #f5f9ff;
+      }
+
+      .log-entry-incoming {
+        border-left: 3px solid #4caf50;
+        background-color: #e8f5e9;
+      }
+
+      .log-entry-system {
+        border-left: 3px solid #999;
+        background-color: #f9f9f9;
+      }
+
+      .log-entry-error {
+        border-left: 3px solid #f44336;
+        background-color: #ffebee;
+      }
+
+      .log-entry-audio {
+        border-left: 3px solid #9c27b0;
+        background-color: #f3e5f5;
+      }
+
+      .log-timestamp {
+        color: #666;
+        font-size: 10px;
+        margin-right: 5px;
+      }
+
+      .log-direction {
+        font-weight: bold;
+        margin-right: 5px;
+      }
+
+      .log-type {
+        color: #666;
+        margin-right: 5px;
+      }
+
+      .log-message {
+        color: #333;
+      }
+
+      /* Mobile responsiveness */
+      @media (max-width: 768px) {
+        .title {
+          font-size: 20px;
+        }
+
+        .media-container {
+          flex-direction: column;
+          margin-bottom: 0px;
+        }
+
+        .qr-container,
+        #videoContainer {
+          width: 100%;
+          max-width: 400px;
+          margin: 0 auto;
+        }
+
+        .progress-section {
+          flex-direction: column;
+        }
+
+        .progress-column {
+          margin-bottom: 20px;
+        }
+
+        .qr-data-preview {
+          font-size: 10px;
+          margin-top: 4px;
+        }
+      }
+
+      /* Show/hide elements based on mode */
+      .receiver-mode .qr-container,
+      .receiver-mode .progress-column.sending-column {
+        display: none;
+      }
+
+      /* Adjust layout when QR is hidden in receiver mode */
+      .receiver-mode .media-container #videoContainer {
+        margin: 0 auto;
+      }
+
+      /* Expand video container in receiver mode */
+      .receiver-mode .media-container #videoContainer {
+        flex: 1;
+        max-width: 100%;
+      }
+
+      /* Increase size of receiving area in receiver mode */
+      .receiver-mode .progress-column.receiving-column {
+        max-width: 100%;
+      }
+
+      /* Remove chunk visualization and debug info styling */
+      .debug-info {
+        display: none;
+      }
+
+      .chunks-grid {
+        display: none;
+      }
+
+      /* Remove speed indicator styling as we're not using it anymore */
+      .speed-indicator {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-container">
+      <div class="title">QR Transfer with Audio Backchannel</div>
+
+      <!-- Mode selector -->
+      <div class="mode-selector">
+        <div id="senderBtn" class="mode-btn active">Sender</div>
+        <div id="receiverBtn" class="mode-btn">Receiver</div>
+      </div>
+
+      <!-- Main media container -->
+      <div class="media-container">
+        <div class="qr-container">
+          <div id="qrcode"></div>
+        </div>
+
+        <!-- Camera view -->
+        <div id="videoContainer">
+          <video id="video" playsinline></video>
+          <div id="cameraOverlay" class="camera-overlay">
+            <div class="camera-label">Start Camera</div>
+          </div>
+          <canvas id="canvas" style="display: none"></canvas>
+        </div>
+      </div>
+
+      <!-- Audio visualizer with overlay button -->
+      <div class="visualizer-container">
+        <canvas id="audioVisualizer"></canvas>
+        <button id="audioTestButton" class="audio-test-button">Test Audio</button>
+      </div>
+
+      <!-- Progress bars for sending and receiving -->
+      <div class="progress-section">
+        <div class="progress-column sending-column">
+          <div class="progress-title">Sending</div>
+          <div class="progress-bar-container" id="sendingProgressBarContainer">
+            <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
+            <div id="sendingProgressText" class="progress-text">0/0</div>
+          </div>
+          <div id="sendingChunksGrid" class="chunks-grid"></div>
+          <textarea id="txData" class="input-text">Hello from QRTPB!</textarea>
+          <div id="chunkSizeInfo" style="display: none"></div>
+          <div class="speed-indicator" style="display: none">
+            <span class="current">Current: 0 b/s</span>
+            <span class="average">Average: 0 b/s</span>
+          </div>
+        </div>
+        <div class="progress-column receiving-column">
+          <div class="progress-title">Receiving</div>
+          <div class="progress-bar-container" id="receivingProgressBarContainer">
+            <div id="receivingProgressBar" class="progress-bar" style="width: 0%"></div>
+            <div id="receivingProgressText" class="progress-text">0/0</div>
+          </div>
+          <div id="receivingChunksGrid" class="chunks-grid"></div>
+          <div id="receivedTextDisplay" class="received-text"></div>
+          <div class="speed-indicator" style="display: none">
+            <span class="current">Current: 0 b/s</span>
+            <span class="average">Average: 0 b/s</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="messageLog" class="message-log"></div>
+    </div>
+
+    <!-- QR Code libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+
+    <script type="module">
+      import { QRTPB } from '@labs/QRTP-B.ts';
+
+      // Core elements and state
+      let videoStream = null;
+      let scanInterval = null;
+      let cameraActive = false;
+      let qrProtocol;
+      let currentMode = 'sender';
+      let audioContext = null;
+      let analyser = null;
+      let visualizationActive = false;
+
+      // Bitrate measurement
+      let transferStats = {
+        startTime: null,
+        lastUpdateTime: null,
+        totalBytesReceived: 0,
+        recentBytesReceived: 0,
+        rollingBitrates: [],
+        currentBitrate: 0,
+        updateInterval: 2000, // Update bitrate every 2 seconds
+      };
+
+      // Initialize after DOM is loaded
+      document.addEventListener('DOMContentLoaded', initApp);
+
+      function initApp() {
+        // Initialize protocol
+        qrProtocol = new QRTPB();
+
+        // Get DOM elements
+        const elements = {
+          txData: document.getElementById('txData'),
+          qrcodeContainer: document.getElementById('qrcode'),
+          video: document.getElementById('video'),
+          canvas: document.getElementById('canvas'),
+          videoContainer: document.getElementById('videoContainer'),
+          cameraOverlay: document.getElementById('cameraOverlay'),
+          cameraLabel: document.getElementById('cameraOverlay').querySelector('.camera-label'),
+          messageLog: document.getElementById('messageLog'),
+          sendingProgressBar: document.getElementById('sendingProgressBar'),
+          sendingProgressText: document.getElementById('sendingProgressText'),
+          sendingProgressBarContainer: document.getElementById('sendingProgressBarContainer'),
+          receivingProgressBar: document.getElementById('receivingProgressBar'),
+          receivingProgressText: document.getElementById('receivingProgressText'),
+          receivingProgressBarContainer: document.getElementById('receivingProgressBarContainer'),
+          receivedTextDisplay: document.getElementById('receivedTextDisplay'),
+          chunkSizeInfo: document.getElementById('chunkSizeInfo'),
+          senderBtn: document.getElementById('senderBtn'),
+          receiverBtn: document.getElementById('receiverBtn'),
+          audioVisualizer: document.getElementById('audioVisualizer'),
+          audioTestButton: document.getElementById('audioTestButton'),
+        };
+
+        // Create speed labels
+        const senderSpeedLabel = document.createElement('div');
+        senderSpeedLabel.style.fontSize = '11px';
+        senderSpeedLabel.style.color = '#666';
+        senderSpeedLabel.style.marginTop = '5px';
+        senderSpeedLabel.id = 'senderSpeedLabel';
+        senderSpeedLabel.textContent = 'Average: 0 b/s';
+        document.querySelector('.sending-column').appendChild(senderSpeedLabel);
+
+        const receiverSpeedLabel = document.createElement('div');
+        receiverSpeedLabel.style.fontSize = '11px';
+        receiverSpeedLabel.style.color = '#666';
+        receiverSpeedLabel.style.marginTop = '5px';
+        receiverSpeedLabel.id = 'receiverSpeedLabel';
+        receiverSpeedLabel.textContent = 'Average: 0 b/s';
+        document.querySelector('.receiving-column').appendChild(receiverSpeedLabel);
+
+        elements.senderSpeedLabel = senderSpeedLabel;
+        elements.receiverSpeedLabel = receiverSpeedLabel;
+
+        // Setup event handlers
+        setupProtocolEvents(elements);
+        setupUIEvents(elements);
+        setupVisualizer(elements);
+        setupAudioTest(elements);
+
+        // Initialize UI
+        updateQRCode('Initializing...', elements.qrcodeContainer);
+
+        // Configure as sender by default
+        configureAsSender(elements);
+
+        // Update speed labels every second
+        setInterval(() => updateSpeedLabels(elements), 1000);
+      }
+
+      // Setup audio visualizer
+      function setupVisualizer(elements) {
+        const canvas = elements.audioVisualizer;
+        const canvasCtx = canvas.getContext('2d');
+        const WIDTH = (canvas.width = canvas.parentElement.clientWidth);
+        const HEIGHT = (canvas.height = canvas.parentElement.clientHeight);
+
+        // Setup visualization function
+        window.visualizeAudio = (node, context) => {
+          if (!node || !context) {
+            // Clear canvas if no audio
+            canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+            visualizationActive = false;
+            return;
+          }
+
+          if (!visualizationActive) {
+            audioContext = context;
+            analyser = context.createAnalyser();
+            analyser.fftSize = 256;
+            node.connect(analyser);
+            visualizationActive = true;
+          }
+
+          // Draw visualization
+          const bufferLength = analyser.frequencyBinCount;
+          const dataArray = new Uint8Array(bufferLength);
+
+          function draw() {
+            if (!visualizationActive) return;
+
+            requestAnimationFrame(draw);
+            analyser.getByteFrequencyData(dataArray);
+
+            canvasCtx.fillStyle = 'rgb(0, 0, 0)';
+            canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+
+            const barWidth = (WIDTH / bufferLength) * 2.5;
+            let barHeight;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+              barHeight = (dataArray[i] / 255) * HEIGHT;
+              canvasCtx.fillStyle = `rgb(${dataArray[i]}, 100, 200)`;
+              canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+              x += barWidth + 1;
+            }
+          }
+
+          draw();
+        };
+
+        // Set visualizer on protocol
+        qrProtocol.setAudioVisualizer(window.visualizeAudio);
+      }
+
+      // Setup QRTPB protocol event handlers
+      function setupProtocolEvents(elements) {
+        qrProtocol.on('init', (event) => {
+          logMessage(
+            'system',
+            'info',
+            `Data set: ${event.dataLength} bytes, ${event.total} chunks (${event.size} bytes/chunk)`,
+            elements.messageLog,
+          );
+
+          // Store chunk size info in a hidden element for speed calculations
+          elements.chunkSizeInfo.textContent = `${event.size} bytes per chunk, ${event.total} chunks total`;
+
+          // Initialize progress segments for sender
+          initProgressSegments(elements.sendingProgressBarContainer, event.total);
+
+          // Make sure the sending progress text shows 0/total
+          elements.sendingProgressText.textContent = `0/${event.total}`;
+
+          // Reset transfer stats
+          resetTransferStats();
+        });
+
+        qrProtocol.on('chunk', (event) => {
+          // Track received bytes for bitrate calculation
+          const chunkSize = event.payload ? event.payload.length : 0;
+          updateTransferStats(chunkSize);
+
+          logMessage('incoming', 'qr', `Received chunk ${event.index + 1}/${event.total}`, elements.messageLog);
+          updateReceivedText(event.payload, false, elements.receivedTextDisplay);
+
+          // Update receiving progress segments
+          updateProgressSegment(elements.receivingProgressBarContainer, event.index, 'received');
+
+          // If we have the full list of received indices, update all segments
+          if (event.receivedIndices && event.receivedIndices.length > 0) {
+            // Only initialize if we don't have the right number of segments
+            const currentSegments = elements.receivingProgressBarContainer.querySelectorAll('.progress-segment').length;
+            if (currentSegments !== event.total) {
+              initProgressSegments(elements.receivingProgressBarContainer, event.total);
+            }
+
+            // Mark all received segments
+            event.receivedIndices.forEach((idx) => {
+              updateProgressSegment(elements.receivingProgressBarContainer, idx, 'received');
+            });
+
+            // Check for and highlight missing segments - only in sender mode
+            if (currentMode === 'sender') {
+              for (let i = 0; i < event.total; i++) {
+                if (!event.receivedIndices.includes(i)) {
+                  updateProgressSegment(elements.receivingProgressBarContainer, i, 'missing');
+                }
+              }
+            }
+          }
+
+          // Update speed label
+          updateReceiverSpeedLabel(elements);
+        });
+
+        qrProtocol.on('ack', (event) => {
+          logMessage(
+            'incoming',
+            'audio',
+            `Ack received: ${event.acknowledged.length} chunks, ${event.remaining} remaining`,
+            elements.messageLog,
+          );
+
+          // Update all acknowledged segments
+          event.acknowledged.forEach((index) => {
+            updateProgressSegment(elements.sendingProgressBarContainer, index, 'received');
+          });
+
+          // Check if this is a complete acknowledgment (all chunks received)
+          if (event.remaining === 0 && event.acknowledged.length > 0) {
+            logMessage('incoming', 'complete', 'All chunks acknowledged by receiver!', elements.messageLog);
+            showSuccessMessage(elements.qrcodeContainer);
+          }
+        });
+
+        qrProtocol.on('audioSending', (event) => {
+          logMessage(
+            'outgoing',
+            'audio',
+            `Sending audio ack for ${event.indices ? event.indices.length : 0} chunks` +
+              (event.ranges ? ` (${event.ranges.length} ranges)` : '') +
+              (event.indices ? `: [${event.indices.join(', ')}]` : ''),
+            elements.messageLog,
+          );
+        });
+
+        qrProtocol.on('audioSent', (event) => {
+          logMessage(
+            'outgoing',
+            'audio',
+            `Audio ack sent successfully` +
+              (event.totalIndices ? ` (${event.totalIndices} indices in ${event.ranges.length} ranges)` : ''),
+            elements.messageLog,
+          );
+        });
+
+        qrProtocol.on('qrUpdate', (event) => {
+          updateQRCode(event.data, elements.qrcodeContainer);
+          // Removed the QR data preview update, but keep the current segment update
+
+          // Update current segment indicator
+          updateCurrentSegment(elements.sendingProgressBarContainer, event.index, event.total);
+        });
+
+        qrProtocol.on('complete', (event) => {
+          if (event && event.message) {
+            // Calculate overall average bitrate
+            const totalTime = (Date.now() - transferStats.startTime) / 1000; // seconds
+            const avgBitrate = (transferStats.totalBytesReceived * 8) / totalTime;
+
+            logMessage(
+              'incoming',
+              'complete',
+              `Message received successfully! Average bitrate: ${formatBitrate(avgBitrate)}`,
+              elements.messageLog,
+            );
+
+            updateReceivedText(event.message, true, elements.receivedTextDisplay);
+
+            // If we have received indices and total chunks, update all segments
+            if (event.receivedIndices && event.totalChunks) {
+              // Only initialize if needed
+              const currentSegments =
+                elements.receivingProgressBarContainer.querySelectorAll('.progress-segment').length;
+              if (currentSegments !== event.totalChunks) {
+                initProgressSegments(elements.receivingProgressBarContainer, event.totalChunks);
+              }
+
+              // Mark all received segments
+              event.receivedIndices.forEach((idx) => {
+                updateProgressSegment(elements.receivingProgressBarContainer, idx, 'received');
+              });
+
+              // Force update of progress text to show completion
+              const textElement = elements.receivingProgressBarContainer.querySelector('.progress-text');
+              if (textElement) {
+                textElement.textContent = `${event.receivedIndices.length}/${event.totalChunks}`;
+              }
+
+              // In sender mode, also mark missing segments
+              if (currentMode === 'sender') {
+                for (let i = 0; i < event.totalChunks; i++) {
+                  if (!event.receivedIndices.includes(i)) {
+                    updateProgressSegment(elements.receivingProgressBarContainer, i, 'missing');
+                  }
+                }
+              }
+            }
+          }
+        });
+
+        qrProtocol.on('allAcknowledged', () => {
+          logMessage('outgoing', 'complete', `All chunks acknowledged!`, elements.messageLog);
+
+          // Count segments to ensure progress text is accurate
+          const totalSegments = elements.sendingProgressBarContainer.querySelectorAll('.progress-segment').length;
+
+          // Force update of the progress counter
+          const textElement = elements.sendingProgressBarContainer.querySelector('.progress-text');
+          if (textElement && totalSegments > 0) {
+            textElement.textContent = `${totalSegments}/${totalSegments}`;
+          }
+
+          // Show success message in place of QR code
+          showSuccessMessage(elements.qrcodeContainer);
+        });
+      }
+
+      // Setup UI event handlers
+      function setupUIEvents(elements) {
+        // Text input handler
+        elements.txData.addEventListener('input', function () {
+          if (currentMode === 'sender') {
+            const text = elements.txData.value.trim();
+            if (text) {
+              // Use the default values from QRTPB (400 bytes, 400ms)
+              qrProtocol.configureSender(text);
+            }
+          }
+        });
+
+        // Camera toggle handler
+        elements.videoContainer.addEventListener('click', function () {
+          if (cameraActive) {
+            stopCamera(elements);
+          } else {
+            startCamera(elements);
+          }
+        });
+
+        // Mode selection handlers
+        elements.senderBtn.addEventListener('click', function () {
+          if (currentMode !== 'sender') {
+            currentMode = 'sender';
+            elements.senderBtn.classList.add('active');
+            elements.receiverBtn.classList.remove('active');
+            configureAsSender(elements);
+          }
+        });
+
+        elements.receiverBtn.addEventListener('click', function () {
+          if (currentMode !== 'receiver') {
+            currentMode = 'receiver';
+            elements.receiverBtn.classList.add('active');
+            elements.senderBtn.classList.remove('active');
+            configureAsReceiver(elements);
+          }
+        });
+
+        // Setup audio test function
+        setupAudioTest(elements);
+      }
+
+      // Configure as sender
+      async function configureAsSender(elements) {
+        // First cleanup if needed
+        if (videoStream) {
+          stopCamera(elements);
+        }
+
+        // Clear UI
+        elements.receivedTextDisplay.innerHTML = '';
+        clearProgressSegments(elements.receivingProgressBarContainer);
+        elements.receivingProgressText.textContent = '0/0';
+
+        // Reset transfer stats
+        resetTransferStats();
+
+        // Update UI for sender mode
+        document.body.classList.remove('receiver-mode');
+
+        // Enable text input
+        elements.txData.disabled = false;
+
+        // Configure protocol as sender
+        const text = elements.txData.value.trim();
+        if (text) {
+          await qrProtocol.configureSender(text);
+          logMessage('system', 'mode', 'Configured as sender', elements.messageLog);
+        } else {
+          logMessage('system', 'mode', 'Configured as sender - enter text to start', elements.messageLog);
+        }
+      }
+
+      // Configure as receiver
+      async function configureAsReceiver(elements) {
+        // Clear UI
+        elements.txData.value = '';
+        elements.txData.disabled = true;
+        clearProgressSegments(elements.sendingProgressBarContainer);
+        elements.sendingProgressText.textContent = '0/0';
+
+        // Reset transfer stats
+        resetTransferStats();
+
+        // Update UI for receiver mode
+        document.body.classList.add('receiver-mode');
+
+        // Configure protocol as receiver
+        await qrProtocol.configureReceiver();
+        logMessage('system', 'mode', 'Configured as receiver', elements.messageLog);
+
+        // Start camera automatically
+        startCamera(elements);
+      }
+
+      // Setup audio test function
+      function setupAudioTest(elements) {
+        elements.audioTestButton.addEventListener('click', async function () {
+          // Create a temporary audio context and test tone
+          const testContext = new (window.AudioContext || window.webkitAudioContext)();
+          const oscillator = testContext.createOscillator();
+          const gainNode = testContext.createGain();
+
+          oscillator.type = 'sine';
+          oscillator.frequency.value = 440; // A4 note
+          gainNode.gain.value = 0.8; // Higher volume for test
+
+          oscillator.connect(gainNode);
+          gainNode.connect(testContext.destination);
+
+          // Start oscillator and visualize it
+          oscillator.start();
+
+          // Play test tone for 1 second
+          logMessage('system', 'audio', 'Playing test tone - you should hear a sound', elements.messageLog);
+
+          // Setup visualization for the test tone
+          if (window.visualizeAudio) {
+            window.visualizeAudio(gainNode, testContext);
+          }
+
+          // Disable button while playing
+          elements.audioTestButton.disabled = true;
+          elements.audioTestButton.textContent = 'Playing Test Tone...';
+
+          // Stop after 1 second
+          setTimeout(() => {
+            oscillator.stop();
+            testContext.close();
+            logMessage('system', 'audio', 'Test tone complete', elements.messageLog);
+
+            // Clear visualization
+            if (window.visualizeAudio) {
+              window.visualizeAudio(null, null);
+            }
+
+            // Re-enable button
+            elements.audioTestButton.disabled = false;
+            elements.audioTestButton.textContent = 'Test Audio Output';
+          }, 1000);
+        });
+      }
+
+      // Camera control functions
+      function startCamera(elements) {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          // Use the environment facing (back) camera on mobile devices
+          const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+          const facingMode = isMobile ? 'environment' : 'user';
+
+          navigator.mediaDevices
+            .getUserMedia({
+              video: {
+                facingMode: facingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
+            })
+            .then(function (stream) {
+              videoStream = stream;
+              elements.video.srcObject = stream;
+              elements.video.setAttribute('playsinline', true);
+              elements.video.play();
+
+              // Set canvas size on video load
+              elements.video.onloadedmetadata = function () {
+                elements.canvas.width = elements.video.videoWidth;
+                elements.canvas.height = elements.video.videoHeight;
+              };
+
+              // Start scanning for QR codes
+              scanInterval = setInterval(() => scanQrCode(elements), 100);
+
+              // Update UI
+              cameraActive = true;
+              elements.videoContainer.classList.add('camera-active');
+              elements.cameraLabel.textContent = 'Stop Camera';
+
+              logMessage('system', 'camera', `Camera started (${facingMode} facing)`, elements.messageLog);
+            })
+            .catch(function (error) {
+              console.error('Camera error:', error);
+              logMessage('system', 'error', `Camera access error: ${error.message}`, elements.messageLog);
+            });
+        } else {
+          logMessage('system', 'error', 'Camera not supported on this device/browser', elements.messageLog);
+        }
+      }
+
+      function stopCamera(elements) {
+        if (videoStream) {
+          videoStream.getTracks().forEach((track) => track.stop());
+          videoStream = null;
+          logMessage('system', 'camera', 'Camera stopped', elements.messageLog);
+        }
+
+        if (scanInterval) {
+          clearInterval(scanInterval);
+          scanInterval = null;
+        }
+
+        // Update UI
+        cameraActive = false;
+        elements.videoContainer.classList.remove('camera-active');
+        elements.cameraLabel.textContent = 'Start Camera';
+      }
+
+      // QR code scanning function
+      function scanQrCode(elements) {
+        if (elements.video.readyState === elements.video.HAVE_ENOUGH_DATA) {
+          const canvasContext = elements.canvas.getContext('2d');
+          elements.canvas.width = elements.video.videoWidth;
+          elements.canvas.height = elements.video.videoHeight;
+
+          // Draw video frame to canvas
+          canvasContext.drawImage(elements.video, 0, 0, elements.canvas.width, elements.canvas.height);
+
+          // Get image data from canvas
+          const imageData = canvasContext.getImageData(0, 0, elements.canvas.width, elements.canvas.height);
+
+          // Scan for QR code
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: 'dontInvert',
+          });
+
+          // Process QR code if found
+          if (code && code.data) {
+            qrProtocol.parseCode(code.data);
+          }
+        }
+      }
+
+      // UI update helper functions
+      function updateQRCode(qrData, container) {
+        // Clear previous QR code
+        container.innerHTML = '';
+
+        // Create a new canvas element
+        const canvas = document.createElement('canvas');
+        container.appendChild(canvas);
+
+        // Calculate container size to determine QR code size
+        const containerWidth = container.clientWidth;
+
+        QRCode.toCanvas(
+          canvas,
+          qrData,
+          {
+            width: containerWidth,
+            margin: 4,
+          },
+          function (error) {
+            if (error) {
+              console.error(error);
+            }
+          },
+        );
+      }
+
+      function updateReceivedText(chunkData, isComplete, displayElement) {
+        if (isComplete) {
+          // On complete, show the full message
+          displayElement.textContent = chunkData;
+        } else {
+          // For new chunks, append with highlight
+          const highlightSpan = document.createElement('span');
+          highlightSpan.className = 'highlight-chunk';
+          highlightSpan.textContent = chunkData;
+          displayElement.appendChild(highlightSpan);
+        }
+
+        // Scroll to the bottom
+        displayElement.scrollTop = displayElement.scrollHeight;
+      }
+
+      function logMessage(direction, type, message, logElement, data = null) {
+        const logEntry = document.createElement('div');
+        logEntry.className = `log-entry log-entry-${direction}`;
+
+        // Add specific styling for different message types
+        if (['error', 'warning', 'audio', 'qr'].includes(type)) {
+          logEntry.className += ` log-entry-${type}`;
+        }
+
+        const timestamp = new Date().toLocaleTimeString();
+
+        let html = `<span class="log-timestamp">${timestamp}</span>`;
+        html += `<span class="log-direction">${direction.toUpperCase()}</span>`;
+        html += `<span class="log-type">[${type}]</span>`;
+        html += `<span class="log-message">${message}</span>`;
+
+        if (data && typeof data === 'string') {
+          html += `<div class="log-data">${data}</div>`;
+        }
+
+        logEntry.innerHTML = html;
+        logElement.appendChild(logEntry);
+
+        // Auto-scroll to bottom
+        logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      // Initialize progress segments
+      function initProgressSegments(containerElement, totalSegments) {
+        // Clear existing segments
+        containerElement.innerHTML = '';
+
+        // Add the progress text element
+        const textElement = document.createElement('div');
+        textElement.className = 'progress-text';
+        textElement.textContent = `0/${totalSegments}`;
+        containerElement.appendChild(textElement);
+
+        // Create segments
+        for (let i = 0; i < totalSegments; i++) {
+          const segment = document.createElement('div');
+          segment.className = 'progress-segment';
+          segment.setAttribute('data-index', i);
+          containerElement.appendChild(segment);
+
+          // Add tooltip behavior for hovering
+          segment.title = `Chunk ${i + 1}`;
+        }
+      }
+
+      // Clear all progress segments
+      function clearProgressSegments(containerElement) {
+        // Keep only the text element
+        const textElement = containerElement.querySelector('.progress-text');
+        containerElement.innerHTML = '';
+        if (textElement) {
+          containerElement.appendChild(textElement);
+        }
+      }
+
+      // Update a progress segment status
+      function updateProgressSegment(containerElement, index, status) {
+        // Find the segment
+        const segment = containerElement.querySelector(`.progress-segment[data-index="${index}"]`);
+
+        // If segment doesn't exist and we need to create it
+        if (!segment && containerElement.querySelectorAll('.progress-segment').length === 0) {
+          // This is the first update, initialize with a reasonable number of segments
+          const totalSegments = Math.max(25, index + 1);
+          initProgressSegments(containerElement, totalSegments);
+          // Get the segment we just created
+          return updateProgressSegment(containerElement, index, status);
+        }
+
+        // Update the existing segment
+        if (segment) {
+          // Update title based on status
+          segment.title = `Chunk ${parseInt(index) + 1}: ${status}`;
+
+          // Update class based on status
+          if (status === 'received') {
+            segment.classList.add('received');
+            segment.classList.remove('missing');
+          } else if (status === 'missing') {
+            segment.classList.add('missing');
+            segment.classList.remove('received');
+          }
+
+          // Update the progress counter to show how many chunks are received
+          updateProgressCounter(containerElement);
+        }
+      }
+
+      // Helper function to update progress counter based on received segments
+      function updateProgressCounter(containerElement) {
+        const receivedSegments = containerElement.querySelectorAll('.progress-segment.received').length;
+        const totalSegments = containerElement.querySelectorAll('.progress-segment').length;
+
+        const textElement = containerElement.querySelector('.progress-text');
+        if (textElement && totalSegments > 0) {
+          textElement.textContent = `${receivedSegments}/${totalSegments}`;
+        }
+      }
+
+      // Update current segment indicator
+      function updateCurrentSegment(containerElement, currentIndex, totalSegments) {
+        // Ensure we have segments initialized
+        if (containerElement.querySelectorAll('.progress-segment').length === 0) {
+          initProgressSegments(containerElement, totalSegments);
+        }
+
+        // Remove current status from all segments
+        containerElement.querySelectorAll('.current').forEach((el) => {
+          el.classList.remove('current');
+        });
+
+        // Find and mark the current segment
+        const segment = containerElement.querySelector(`.progress-segment[data-index="${currentIndex}"]`);
+        if (segment) {
+          segment.classList.add('current');
+        }
+      }
+
+      // Show success message when all chunks are acknowledged
+      function showSuccessMessage(container) {
+        // Clear container
+        container.innerHTML = '';
+
+        // Create success message
+        const successDiv = document.createElement('div');
+        successDiv.className = 'qr-success-message';
+
+        // Add checkmark icon
+        const icon = document.createElement('div');
+        icon.className = 'icon';
+        icon.innerHTML = '✓'; // Unicode checkmark
+        successDiv.appendChild(icon);
+
+        // Add success text
+        const text = document.createElement('div');
+        text.className = 'text';
+        text.textContent = 'Transfer Complete!';
+        successDiv.appendChild(text);
+
+        // Add to container
+        container.appendChild(successDiv);
+      }
+
+      // Add bitrate measurement functions
+      function resetTransferStats() {
+        const now = Date.now();
+        transferStats = {
+          startTime: now,
+          lastUpdateTime: now,
+          totalBytesReceived: 0,
+          recentBytesReceived: 0,
+          rollingBitrates: [],
+          currentBitrate: 0,
+          updateInterval: 2000, // Update bitrate every 2 seconds
+        };
+      }
+
+      function updateTransferStats(bytesReceived) {
+        const now = Date.now();
+
+        // Initialize if not started
+        if (!transferStats.startTime) {
+          resetTransferStats();
+        }
+
+        // Update totals
+        transferStats.totalBytesReceived += bytesReceived;
+        transferStats.recentBytesReceived += bytesReceived;
+
+        // Check if it's time to calculate a new bitrate sample
+        const timeSinceLastUpdate = now - transferStats.lastUpdateTime;
+        if (timeSinceLastUpdate >= transferStats.updateInterval) {
+          // Calculate bitrate in bits per second (bps)
+          const bitrate = (transferStats.recentBytesReceived * 8) / (timeSinceLastUpdate / 1000);
+
+          // Add to rolling average (keep last 5 measurements)
+          transferStats.rollingBitrates.push(bitrate);
+          if (transferStats.rollingBitrates.length > 5) {
+            transferStats.rollingBitrates.shift();
+          }
+
+          // Calculate average bitrate
+          const avgBitrate =
+            transferStats.rollingBitrates.reduce((sum, val) => sum + val, 0) / transferStats.rollingBitrates.length;
+
+          // Update current bitrate
+          transferStats.currentBitrate = avgBitrate;
+
+          // Reset for next interval
+          transferStats.lastUpdateTime = now;
+          transferStats.recentBytesReceived = 0;
+        }
+      }
+
+      function formatBitrate(bitsPerSecond) {
+        if (bitsPerSecond < 1000) {
+          return `${Math.round(bitsPerSecond)} b/s`;
+        } else if (bitsPerSecond < 1000000) {
+          return `${(bitsPerSecond / 1000).toFixed(1)} Kb/s`;
+        } else {
+          return `${(bitsPerSecond / 1000000).toFixed(1)} Mb/s`;
+        }
+      }
+
+      function updateReceiverSpeedLabel(elements) {
+        if (!elements.receiverSpeedLabel) return;
+
+        if (transferStats.startTime) {
+          const totalTime = (Date.now() - transferStats.startTime) / 1000; // seconds
+          if (totalTime > 0 && transferStats.totalBytesReceived > 0) {
+            const avgBitrate = (transferStats.totalBytesReceived * 8) / totalTime;
+            elements.receiverSpeedLabel.textContent = `Average: ${formatBitrate(avgBitrate)}`;
+          }
+        }
+      }
+
+      function updateSenderSpeedLabel(elements) {
+        if (!elements.senderSpeedLabel) return;
+
+        // Try to get chunk size
+        const chunkSizeMatch = elements.chunkSizeInfo.textContent.match(/(\d+) bytes per chunk/);
+        if (!chunkSizeMatch) return;
+
+        const chunkSize = parseInt(chunkSizeMatch[1]);
+        if (!chunkSize) return;
+
+        // Count acknowledged chunks from progress segments
+        const acknowledgedSegments =
+          elements.sendingProgressBarContainer.querySelectorAll('.progress-segment.received');
+        const acknowledgedCount = acknowledgedSegments.length;
+
+        if (acknowledgedCount > 0) {
+          const totalTime = (Date.now() - transferStats.startTime) / 1000; // seconds
+          if (totalTime > 0) {
+            const bytesTransferred = acknowledgedCount * chunkSize;
+            const avgBitrate = (bytesTransferred * 8) / totalTime;
+            elements.senderSpeedLabel.textContent = `Average: ${formatBitrate(avgBitrate)}`;
+          }
+        }
+      }
+
+      function updateSpeedLabels(elements) {
+        updateReceiverSpeedLabel(elements);
+        updateSenderSpeedLabel(elements);
+      }
+    </script>
+  </body>
+</html>

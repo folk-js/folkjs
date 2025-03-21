@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
+    <meta charset="utf-8" />
     <title>Data over Sound</title>
     <style>
       * {
@@ -18,14 +19,14 @@
         min-height: 100%;
         position: relative;
         margin: 0;
-        font-family: Arial, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       }
 
       folk-shape {
-        background: rgb(248, 248, 248);
-        border-radius: 8px;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        background: #fff;
+        border: 1px solid #ccc;
         padding: 12px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
       }
 
       .info-panel {
@@ -33,67 +34,121 @@
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        background: transparent;
-        padding: 20px 25px;
+        background: #fafafa;
+        padding: 24px 32px;
         text-align: center;
         font-size: 14px;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
+        border: 1px solid #eee;
         max-width: 80%;
       }
 
       .info-title {
-        font-size: 20px;
-        font-weight: bold;
-        margin-bottom: 12px;
-        color: #333;
+        font-size: 24px;
+        font-weight: 500;
+        margin-bottom: 16px;
+        color: #222;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       .warning {
-        color: #ff5722;
-        font-weight: bold;
+        color: #222;
+        font-weight: 500;
         display: block;
-        margin-top: 12px;
-        font-size: 16px;
+        margin-top: 16px;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       textarea {
         width: 100%;
-        border-radius: 4px;
-        border: 1px solid #ddd;
-        padding: 8px;
-        margin-bottom: 8px;
+        border: 1px solid #222;
+        padding: 12px;
+        margin-bottom: 12px;
+        font-family: inherit;
+        font-size: 14px;
+        line-height: 1.5;
+        resize: none;
+        background: transparent;
       }
 
-      textarea:disabled {
-        background-color: white;
-        color: black;
+      textarea:focus {
+        outline: none;
       }
 
       button {
-        padding: 6px 12px;
-        background-color: #4caf50;
-        color: white;
+        padding: 8px 16px;
+        background: #222;
+        color: #fff;
         border: none;
-        border-radius: 4px;
         cursor: pointer;
+        font-size: 14px;
+        min-width: 80px;
+        font-family: inherit;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       button:hover {
-        background-color: #45a049;
+        background: #000;
+      }
+
+      button.toggle,
+      button.listen {
+        background: transparent;
+        color: #222;
+        border: 1px solid #222;
+      }
+
+      button.toggle:hover,
+      button.listen:hover {
+        background: #fafafa;
+      }
+
+      button.toggle.active,
+      button.listen.active {
+        background: #222;
+        color: #fff;
+      }
+
+      button.toggle.active:hover,
+      button.listen.active:hover {
+        background: #000;
+      }
+
+      button:disabled {
+        background: #ddd;
+        border-color: #ddd;
+        color: #888;
+        cursor: not-allowed;
+      }
+
+      .controls {
+        display: flex;
+        gap: 12px;
+        align-items: center;
       }
 
       h3 {
-        margin-top: 0;
-        margin-bottom: 8px;
-        color: #333;
-        font-size: 16px;
+        margin: 0 0 8px 0;
+        color: #222;
+        font-size: 14px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
       }
 
       folk-spectrogram {
         width: 100%;
-        height: 300px;
+        height: 280px;
         display: block;
+      }
+
+      a {
+        color: #222;
+        text-decoration: none;
+        border-bottom: 1px solid #222;
       }
     </style>
   </head>
@@ -104,31 +159,32 @@
         >Use your speaker and microphone to send and receive data between 2 or more devices with
         <a href="https://github.com/ggerganov/ggwave">ggwave</a>.</p
       >
-      <span class="warning">Volume can be loud!</span>
+      <span class="warning">⚠️ Volume can be loud</span>
     </div>
 
     <!-- Sender Shape -->
-    <folk-shape x="50" y="50" width="300" height="200">
-      <h3>Send Data</h3>
-      <textarea id="txData" style="height: 100px">Hello from Folk Canvas!</textarea>
-      <div style="display: flex; gap: 8px">
-        <button onclick="onSend(ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);">Send</button>
-        <button onclick="onSend(ggwave.ProtocolId.GGWAVE_PROTOCOL_ULTRASOUND_FASTEST);">Send Ultrasonic</button>
+    <folk-shape x="50" y="50" width="300">
+      <h3>Send Message</h3>
+      <textarea id="messageToSend" style="height: 100px" placeholder="Type your message here...">
+Hello from Folk Canvas!</textarea
+      >
+      <div class="controls">
+        <button id="sendButton">Send</button>
+        <button id="modeToggle" class="toggle">Ultrasonic: Off</button>
       </div>
     </folk-shape>
 
     <!-- Receiver Shape -->
-    <folk-shape x="400" y="50" width="300" height="200">
-      <h3>Receive Data</h3>
-      <textarea id="rxData" style="height: 100px" disabled></textarea>
-      <div style="display: flex; gap: 8px">
-        <button id="captureStart">Start Listening</button>
-        <button id="captureStop" hidden>Stop</button>
+    <folk-shape x="400" y="50" width="300">
+      <h3>Received Messages</h3>
+      <textarea id="receivedMessages" style="height: 100px" disabled></textarea>
+      <div class="controls">
+        <button id="listenButton" class="listen">Start Listening</button>
       </div>
     </folk-shape>
 
     <!-- Spectrogram Shape -->
-    <folk-shape x="50" y="280" width="650" height="350">
+    <folk-shape x="50" y="280" width="650">
       <h3>Spectrogram</h3>
       <folk-spectrogram id="spectrogram" scaling="log"></folk-spectrogram>
     </folk-shape>
@@ -136,138 +192,75 @@
     <script type="module">
       import '@labs/standalone/folk-shape.ts';
       import '@labs/standalone/folk-spectrogram.ts';
-    </script>
+      import { GGWave } from '@labs/ggwave';
 
-    <script type="text/javascript" src="/ggwave.js"></script>
+      const wave = new GGWave();
+      const spectrogram = document.getElementById('spectrogram');
+      const messageToSend = document.getElementById('messageToSend');
+      const receivedMessages = document.getElementById('receivedMessages');
+      const sendButton = document.getElementById('sendButton');
+      const modeToggle = document.getElementById('modeToggle');
+      const listenButton = document.getElementById('listenButton');
 
-    <script type="text/javascript">
-      window.AudioContext = window.AudioContext || window.webkitAudioContext;
-      window.OfflineAudioContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      let isUltrasonic = false;
 
-      var context = null;
-      var recorder = null;
-      var mediaStream = null;
-      var analyser = null;
-
-      var ggwave = null;
-      var parameters = null;
-      var instance = null;
-
-      ggwave_factory().then(function (obj) {
-        ggwave = obj;
-      });
-
-      var txData = document.getElementById('txData');
-      var rxData = document.getElementById('rxData');
-      var captureStart = document.getElementById('captureStart');
-      var captureStop = document.getElementById('captureStop');
-      var spectrogram = document.getElementById('spectrogram');
-
-      function convertTypedArray(src, type) {
-        var buffer = new ArrayBuffer(src.byteLength);
-        var baseView = new src.constructor(buffer).set(src);
-        return new type(buffer);
-      }
-
-      function init() {
-        if (!context) {
-          context = new AudioContext({ sampleRate: 48000 });
-          parameters = ggwave.getDefaultParameters();
-          parameters.sampleRateInp = context.sampleRate;
-          parameters.sampleRateOut = context.sampleRate;
-          instance = ggwave.init(parameters);
-        }
-      }
-
-      function onSend(protocol) {
-        init();
-
-        var protocolId = protocol || ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST;
-        var waveform = ggwave.encode(instance, txData.value, protocolId, 10);
-        var buf = convertTypedArray(waveform, Float32Array);
-        var buffer = context.createBuffer(1, buf.length, context.sampleRate);
-        buffer.getChannelData(0).set(buf);
-        var source = context.createBufferSource();
-        source.buffer = buffer;
-
-        // Connect to spectrogram and start visualization
-        spectrogram.connect(source, context);
-        spectrogram.start();
-
-        // Connect to audio output
-        source.connect(context.destination);
-        source.start(0);
-
-        // Stop visualization after the audio is done
-        source.onended = function () {
+      // Set up audio visualization
+      wave.setVisualizer((node, context) => {
+        if (node) {
+          spectrogram.connect(node, context);
+          spectrogram.start();
+        } else {
           spectrogram.stop();
-        };
-      }
-
-      captureStart.addEventListener('click', function () {
-        init();
-
-        navigator.mediaDevices
-          .getUserMedia({
-            audio: {
-              echoCancellation: false,
-              autoGainControl: false,
-              noiseSuppression: false,
-            },
-          })
-          .then(function (stream) {
-            mediaStream = context.createMediaStreamSource(stream);
-
-            // Connect to spectrogram and start visualization
-            spectrogram.connect(mediaStream, context);
-            spectrogram.start();
-
-            var bufferSize = 1024;
-            recorder = context.createScriptProcessor(bufferSize, 1, 1);
-
-            recorder.onaudioprocess = function (e) {
-              var source = e.inputBuffer;
-              var res = ggwave.decode(
-                instance,
-                convertTypedArray(new Float32Array(source.getChannelData(0)), Int8Array),
-              );
-
-              if (res && res.length > 0) {
-                rxData.value = new TextDecoder('utf-8').decode(res);
-              }
-            };
-
-            mediaStream.connect(recorder);
-            recorder.connect(context.destination);
-          })
-          .catch(function (e) {
-            console.error(e);
-          });
-
-        rxData.value = 'Listening...';
-        captureStart.hidden = true;
-        captureStop.hidden = false;
-      });
-
-      captureStop.addEventListener('click', function () {
-        if (recorder) {
-          recorder.disconnect(context.destination);
-          if (mediaStream) {
-            mediaStream.disconnect(recorder);
-          }
-          recorder = null;
         }
-
-        // Stop the spectrogram visualization
-        spectrogram.disconnect();
-        spectrogram.stop();
-
-        rxData.value = '';
-        captureStart.hidden = false;
-        captureStop.hidden = true;
       });
 
-      captureStop.click();
+      // Toggle between audible and ultrasonic modes
+      modeToggle.addEventListener('click', () => {
+        isUltrasonic = !isUltrasonic;
+        modeToggle.textContent = `Ultrasonic: ${isUltrasonic ? 'On' : 'Off'}`;
+        modeToggle.classList.toggle('active', isUltrasonic);
+        wave.setProtocol(
+          isUltrasonic
+            ? FolkAudioWave.GGWAVE_PROTOCOL_ULTRASOUND_FASTEST
+            : FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST,
+        );
+      });
+
+      // Send message
+      sendButton.addEventListener('click', async () => {
+        if (!messageToSend.value.trim()) return;
+
+        // Disable button while sending
+        sendButton.disabled = true;
+        try {
+          await wave.send(messageToSend.value, 10);
+        } catch (error) {
+          console.error('Failed to send message:', error);
+        }
+        sendButton.disabled = false;
+      });
+
+      // Listen for messages
+      listenButton.addEventListener('click', async () => {
+        const isListening = listenButton.textContent === 'Stop Listening';
+
+        if (isListening) {
+          wave.stopListening();
+          listenButton.textContent = 'Start Listening';
+          listenButton.classList.remove('active');
+          receivedMessages.value = '';
+        } else {
+          listenButton.textContent = 'Stop Listening';
+          listenButton.classList.add('active');
+          await wave.startListening((text) => {
+            const timestamp = new Date().toLocaleTimeString();
+            receivedMessages.value = `[${timestamp}] ${text}\n${receivedMessages.value}`;
+          });
+        }
+      });
+
+      // Stop listening by default
+      wave.stopListening();
     </script>
   </body>
 </html>

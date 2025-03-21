@@ -12,6 +12,8 @@
     "experimentalDecorators": true,
     "skipLibCheck": true,
     "noUnusedLocals": false,
+    "allowJs": true,
+    "checkJs": false,
     "lib": ["DOM", "DOM.Iterable", "ESNext", "WebWorker"],
     "types": ["@webgpu/types", "@types/node", "@types/wicg-file-system-access", "bun-types"],
     "baseUrl": ".",
