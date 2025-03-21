@@ -2,7 +2,7 @@ import EventEmitter from 'eventemitter3';
 import { hash } from './utils/hash';
 import { header } from './utils/header';
 
-/** QRTP - Tiny QR Transfer Protocol
+/** QRTP - A tiny QR Transfer Protocol
  * Each device shows a QR code with:
  * 1. payload (the furthest unconfirmed chunk of the full message)
  * 2. ACK hash (the hash of last received chunk)
