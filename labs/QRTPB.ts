@@ -35,6 +35,15 @@ export class QRTPB extends EventEmitter {
   #audioVolume: number = 80; // Increased volume (1-100)
   #totalChunks: number = 0; // Total number of chunks
 
+  // Safe requestAnimationFrame that works in both browser and Node.js
+  #safeRAF = (callback: () => void): void => {
+    if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+      window.requestAnimationFrame(callback);
+    } else {
+      setTimeout(callback, 16); // ~60fps equivalent
+    }
+  };
+
   constructor() {
     super();
     this.#audioWave = new FolkAudioWave();
@@ -332,8 +341,9 @@ export class QRTPB extends EventEmitter {
     this.#enqueueAudioMessage(indices);
 
     // Process queue if not already sending
+    // Use requestAnimationFrame to ensure better timing
     if (!this.#isAudioSending) {
-      this.#processAudioQueue();
+      this.#safeRAF(() => this.#processAudioQueue());
     }
   }
 
@@ -343,17 +353,60 @@ export class QRTPB extends EventEmitter {
   #enqueueAudioMessage(indices: number[]): void {
     if (indices.length === 0) return;
 
-    // Add these indices to the queue
-    this.#audioQueue.push(indices);
+    // Check if queue already has too many items (prevent queue explosion)
+    if (this.#audioQueue.length > 5) {
+      console.warn(
+        `Audio queue is getting too large (${this.#audioQueue.length} items). Merging batches to prevent backlog.`,
+      );
+
+      // Merge all queued indices with the new ones
+      const allQueuedIndices = new Set<number>();
+
+      // Add all existing queued indices
+      this.#audioQueue.forEach((batch) => {
+        batch.forEach((index) => allQueuedIndices.add(index));
+      });
+
+      // Add new indices
+      indices.forEach((index) => allQueuedIndices.add(index));
+
+      // Clear the queue and add the merged batch
+      this.#audioQueue = [];
+
+      // Convert to array and sort
+      const mergedIndices = Array.from(allQueuedIndices).sort((a, b) => a - b);
+
+      // Split into smaller batches if needed (max 10 indices per batch)
+      const MAX_INDICES_PER_BATCH = 10;
+      for (let i = 0; i < mergedIndices.length; i += MAX_INDICES_PER_BATCH) {
+        const batch = mergedIndices.slice(i, i + MAX_INDICES_PER_BATCH);
+        this.#audioQueue.push(batch);
+      }
+    } else {
+      // Normal case: just add these indices to the queue
+      // But ensure no batch is larger than 10 indices
+      const MAX_INDICES_PER_BATCH = 10;
+      if (indices.length > MAX_INDICES_PER_BATCH) {
+        // Split into smaller batches
+        for (let i = 0; i < indices.length; i += MAX_INDICES_PER_BATCH) {
+          const batch = indices.slice(i, i + MAX_INDICES_PER_BATCH);
+          this.#audioQueue.push(batch);
+        }
+      } else {
+        this.#audioQueue.push(indices);
+      }
+    }
   }
 
   /**
    * Process queued audio messages one by one
    */
   async #processAudioQueue(): Promise<void> {
-    if (this.#audioQueue.length === 0 || this.#isAudioSending) return;
+    if (this.#audioQueue.length === 0) return;
+    if (this.#isAudioSending) return;
 
     this.#isAudioSending = true;
+    let processingError = false;
 
     try {
       const indices = this.#audioQueue.shift();
@@ -365,14 +418,22 @@ export class QRTPB extends EventEmitter {
         this.emit('audioSent', { indices });
       }
     } catch (error) {
+      processingError = true;
       console.error('Failed to send audio acknowledgment:', error);
     } finally {
       this.#isAudioSending = false;
 
-      // Process next message if queue isn't empty
+      // Always process next message if queue isn't empty, even after an error
       if (this.#audioQueue.length > 0) {
-        // Add a small delay between messages
-        setTimeout(() => this.#processAudioQueue(), 50);
+        // Use requestAnimationFrame for better timing than setTimeout
+        // This helps ensure we don't lose processing time due to browser throttling
+        this.#safeRAF(() => this.#processAudioQueue());
+      } else if (processingError) {
+        // If we had an error and the queue is now empty,
+        // ensure any pending acknowledgments are not lost
+        if (this.#pendingAckIndices.size > 0) {
+          setTimeout(() => this.#sendAudioAck(), 100);
+        }
       }
     }
   }
