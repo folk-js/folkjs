@@ -103,10 +103,6 @@
         object-fit: cover;
       }
 
-      #canvas {
-        display: none;
-      }
-
       .camera-overlay {
         position: absolute;
         inset: 0;
@@ -363,14 +359,13 @@
       <div id="messageLog" class="message-log"></div>
     </div>
 
-    <canvas id="canvas"></canvas>
-
     <!-- QR Code libraries -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <!-- Import QRTP module -->
     <script type="module">
       import { QRTP } from '@labs/QRTP.ts';
+      import { AsciiDiagram } from '@labs/ascii-diagram.ts';
       import '@labs/BraceLabel.ts';
 
       // Make QRTP available globally for debugging
