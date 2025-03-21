@@ -16,23 +16,24 @@ import { header } from './utils/header';
  * - Uses audio to send back list of received indices
  */
 export class QRTPB extends EventEmitter {
-  #chunks: string[] = []; // Data chunks to send/receive
+  #chunksMap: Map<number, string> = new Map(); // Data chunks map (index -> chunk)
   #currentIndex: number = 0; // Current chunk index being displayed
   #receivedIndices: Set<number> = new Set(); // Indices that have been received
   #acknowledgedIndices: Set<number> = new Set(); // Indices already acknowledged via audio
   #pendingAckIndices: Set<number> = new Set(); // Indices waiting to be acknowledged
   #ackDebounceTimer: any = null; // Timer for debouncing audio acknowledgments
-  #debounceTime: number = 1000; // Wait this many ms to accumulate indices before sending
+  #debounceTime: number = 800; // Wait this many ms to accumulate indices before sending
   #header = header('QRTPB<index:num>/<total:num>');
   #ackHeader = header('QB<indices:nums>');
   #cycleTimer: NodeJS.Timer | null = null;
   #audioWave: FolkAudioWave | null = null;
   #role: 'sender' | 'receiver' | null = null;
-  #cycleInterval: number = 1000; // Cycle every 1 second by default
+  #cycleInterval: number = 600; // Cycle every 1 second by default
   #isAudioInitialized: boolean = false;
   #isAudioSending: boolean = false;
   #audioQueue: number[][] = []; // Queue of indices to send
   #audioVolume: number = 80; // Increased volume (1-100)
+  #totalChunks: number = 0; // Total number of chunks
 
   constructor() {
     super();
@@ -55,9 +56,9 @@ export class QRTPB extends EventEmitter {
    * @param chunkSize Size of each chunk in characters
    * @param cycleInterval Milliseconds between QR code changes
    */
-  async configureSender(data: string, chunkSize = 100, cycleInterval = 1000): Promise<void> {
+  async configureSender(data: string, chunkSize = 250, cycleInterval = 600): Promise<void> {
     this.#role = 'sender';
-    this.#chunks = [];
+    this.#chunksMap = new Map();
     this.#currentIndex = 0;
     this.#receivedIndices = new Set();
     this.#acknowledgedIndices = new Set();
@@ -66,11 +67,13 @@ export class QRTPB extends EventEmitter {
 
     // Break data into chunks
     for (let i = 0; i < data.length; i += chunkSize) {
-      this.#chunks.push(data.substring(i, i + chunkSize));
+      this.#chunksMap.set(Math.floor(i / chunkSize), data.substring(i, i + chunkSize));
     }
 
+    this.#totalChunks = this.#chunksMap.size;
+
     this.emit('init', {
-      total: this.#chunks.length,
+      total: this.#totalChunks,
       size: chunkSize,
       dataLength: data.length,
     });
@@ -91,7 +94,8 @@ export class QRTPB extends EventEmitter {
    */
   async configureReceiver(): Promise<void> {
     this.#role = 'receiver';
-    this.#chunks = [];
+    this.#chunksMap = new Map();
+    this.#totalChunks = 0;
     this.#receivedIndices = new Set();
     this.#acknowledgedIndices = new Set();
     this.#pendingAckIndices = new Set();
@@ -113,6 +117,11 @@ export class QRTPB extends EventEmitter {
     const packet = this.#header.decode(data);
     if (!packet) return;
 
+    // Update total chunks if needed
+    if (packet.total > this.#totalChunks) {
+      this.#totalChunks = packet.total;
+    }
+
     // Store the received chunk if it's valid
     if (packet.payload && packet.index >= 0 && packet.index < packet.total) {
       const isNewChunk = !this.#receivedIndices.has(packet.index);
@@ -121,23 +130,25 @@ export class QRTPB extends EventEmitter {
       // If we've already seen this chunk and acknowledged it, but we're seeing it again,
       // the sender didn't receive our ack, so we need to resend it
       if (needsReacknowledge) {
+        console.log(`Re-acknowledging chunk ${packet.index}/${packet.total}`);
         this.#queueAcknowledgment(packet.index);
       }
       // If this is a new chunk we haven't seen before
       else if (isNewChunk) {
-        // Ensure array is sized correctly
-        while (this.#chunks.length < packet.total) {
-          this.#chunks.push('');
-        }
-
-        this.#chunks[packet.index] = packet.payload;
+        // Store the chunk in our map
+        this.#chunksMap.set(packet.index, packet.payload);
         this.#receivedIndices.add(packet.index);
+
+        // Log the current state for debugging
+        console.log(`Received chunk ${packet.index}/${packet.total}, total received: ${this.#receivedIndices.size}`);
 
         // Notify about the new chunk
         this.emit('chunk', {
           index: packet.index,
           total: packet.total,
           payload: packet.payload,
+          receivedCount: this.#receivedIndices.size,
+          receivedIndices: Array.from(this.#receivedIndices),
         });
 
         // Queue this index for acknowledgment
@@ -145,14 +156,45 @@ export class QRTPB extends EventEmitter {
 
         // Check if we received all chunks
         if (this.#receivedIndices.size === packet.total) {
-          const message = this.#chunks.join('');
-          this.emit('complete', { message });
+          console.log(`All ${packet.total} chunks received! Sending final acknowledgment.`);
+          const message = this.#getOrderedMessage();
+          this.emit('complete', {
+            message,
+            receivedIndices: Array.from(this.#receivedIndices),
+            totalChunks: this.#totalChunks,
+          });
 
           // Make sure we send one final acknowledgment with all indices
-          this.#sendAudioAck();
+          this.#sendAudioAck(Array.from(this.#receivedIndices));
         }
       }
     }
+  }
+
+  /**
+   * Get the complete message from the ordered chunks
+   */
+  #getOrderedMessage(): string {
+    // Convert chunks map to ordered array and join
+    const orderedChunks: string[] = [];
+    const missingChunks: number[] = [];
+
+    for (let i = 0; i < this.#totalChunks; i++) {
+      const chunk = this.#chunksMap.get(i);
+      if (chunk) {
+        orderedChunks.push(chunk);
+      } else {
+        missingChunks.push(i);
+        console.warn(`Missing chunk at index ${i}`);
+        orderedChunks.push(''); // Push empty string for missing chunks
+      }
+    }
+
+    if (missingChunks.length > 0) {
+      console.warn(`Missing chunks: ${missingChunks.join(', ')}`);
+    }
+
+    return orderedChunks.join('');
   }
 
   /**
@@ -203,14 +245,14 @@ export class QRTPB extends EventEmitter {
    * Get the message that has been received so far
    */
   getReceivedMessage(): string {
-    return this.#chunks.join('');
+    return this.#getOrderedMessage();
   }
 
   /**
    * Check if all chunks have been received
    */
-  isComplete(totalChunks: number): boolean {
-    return this.#receivedIndices.size === totalChunks;
+  isComplete(): boolean {
+    return this.#receivedIndices.size === this.#totalChunks && this.#totalChunks > 0;
   }
 
   /**
@@ -231,10 +273,10 @@ export class QRTPB extends EventEmitter {
    * Advance to the next chunk that hasn't been acknowledged
    */
   #advanceToNextChunk(): void {
-    if (this.#chunks.length === 0) return;
+    if (this.#chunksMap.size === 0) return;
 
     // Find the next chunk that hasn't been acknowledged
-    let nextIndex = (this.#currentIndex + 1) % this.#chunks.length;
+    let nextIndex = (this.#currentIndex + 1) % this.#totalChunks;
     const startIndex = nextIndex;
 
     // If we've looped through all indices, start from the beginning
@@ -243,11 +285,11 @@ export class QRTPB extends EventEmitter {
         this.#currentIndex = nextIndex;
         return;
       }
-      nextIndex = (nextIndex + 1) % this.#chunks.length;
+      nextIndex = (nextIndex + 1) % this.#totalChunks;
     } while (nextIndex !== startIndex);
 
     // If all chunks have been acknowledged
-    if (this.#receivedIndices.size === this.#chunks.length) {
+    if (this.#receivedIndices.size === this.#totalChunks) {
       this.emit('allAcknowledged');
       if (this.#cycleTimer) {
         clearInterval(this.#cycleTimer);
@@ -345,7 +387,7 @@ export class QRTPB extends EventEmitter {
     try {
       let hasNewAcks = false;
       for (const index of packet.indices) {
-        if (!this.#receivedIndices.has(index) && index >= 0 && index < this.#chunks.length) {
+        if (!this.#receivedIndices.has(index) && index >= 0 && index < this.#totalChunks) {
           this.#receivedIndices.add(index);
           hasNewAcks = true;
         }
@@ -354,11 +396,11 @@ export class QRTPB extends EventEmitter {
       if (hasNewAcks) {
         this.emit('ack', {
           acknowledged: Array.from(this.#receivedIndices),
-          remaining: this.#chunks.length - this.#receivedIndices.size,
+          remaining: this.#totalChunks - this.#receivedIndices.size,
         });
 
         // If all chunks acknowledged, emit event
-        if (this.#receivedIndices.size === this.#chunks.length) {
+        if (this.#receivedIndices.size === this.#totalChunks) {
           this.emit('allAcknowledged');
           if (this.#cycleTimer) {
             clearInterval(this.#cycleTimer);
@@ -375,19 +417,19 @@ export class QRTPB extends EventEmitter {
    * Update QR code content and emit event
    */
   #emitCodeUpdate(): void {
-    if (this.#role !== 'sender' || this.#chunks.length === 0) return;
+    if (this.#role !== 'sender' || this.#chunksMap.size === 0) return;
 
-    const payload = this.#chunks[this.#currentIndex];
+    const payload = this.#chunksMap.get(this.#currentIndex) || '';
     const data = this.#header.encode({
       index: this.#currentIndex,
-      total: this.#chunks.length,
+      total: this.#totalChunks,
       payload,
     });
 
     this.emit('qrUpdate', {
       data,
       index: this.#currentIndex,
-      total: this.#chunks.length,
+      total: this.#totalChunks,
       acknowledged: Array.from(this.#receivedIndices),
     });
   }

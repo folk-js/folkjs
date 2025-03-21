@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
-    <title>QRTPB - QR with Audio Backchannel</title>
+    <title>QR with Audio Backchannel</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
@@ -153,13 +153,50 @@
         overflow: hidden;
         position: relative;
         border: 1px solid #000;
+        display: flex;
+      }
+
+      .progress-segment {
+        height: 100%;
+        flex: 1;
+        border-right: 1px solid #f0f0f0;
+        transition: background-color 0.3s ease;
+        position: relative;
+      }
+
+      .progress-segment:last-child {
+        border-right: none;
+      }
+
+      .progress-segment.received {
+        background-color: #4caf50;
+      }
+
+      .progress-segment.missing {
+        background-color: #f44336;
+      }
+
+      .progress-segment.current {
+        background-color: #ff9800;
+      }
+
+      .progress-segment.current.received {
+        background-color: #8bc34a;
+        background-image: linear-gradient(
+          45deg,
+          #4caf50 25%,
+          #ff9800 25%,
+          #ff9800 50%,
+          #4caf50 50%,
+          #4caf50 75%,
+          #ff9800 75%,
+          #ff9800 100%
+        );
+        background-size: 20px 20px;
       }
 
       .progress-bar {
-        height: 100%;
-        background-color: #000;
-        width: 0%;
-        transition: width 0.3s ease;
+        display: none; /* Hide the old progress bar */
       }
 
       .progress-text {
@@ -173,8 +210,10 @@
         justify-content: center;
         color: #fff;
         font-size: 14px;
-        font-weight: 500;
+        font-weight: 600;
+        z-index: 2;
         mix-blend-mode: difference;
+        pointer-events: none;
       }
 
       .progress-section {
@@ -225,6 +264,7 @@
         border: 1px solid #000;
         margin-top: 10px;
         background-color: #000;
+        position: relative;
       }
 
       #audioVisualizer {
@@ -233,20 +273,54 @@
       }
 
       .audio-test-button {
-        display: block;
-        margin: 10px 0;
-        padding: 10px 15px;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        padding: 5px 10px;
         background-color: #9c27b0;
         color: white;
         border: none;
         font-weight: bold;
         cursor: pointer;
-        width: 100%;
         text-align: center;
+        font-size: 11px;
+        border-radius: 3px;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        z-index: 10;
+      }
+
+      .visualizer-container:hover .audio-test-button {
+        opacity: 1;
       }
 
       .audio-test-button:hover {
         background-color: #7b1fa2;
+      }
+
+      .qr-success-message {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        width: 100%;
+        color: #4caf50;
+        text-align: center;
+        font-weight: bold;
+        padding: 20px;
+        background-color: #e8f5e9; /* Subtle green background */
+        border-radius: 8px;
+      }
+
+      .qr-success-message .icon {
+        font-size: 48px;
+        margin-bottom: 10px;
+      }
+
+      .qr-success-message .text {
+        font-size: 16px;
       }
 
       .highlight-chunk {
@@ -359,11 +433,42 @@
           margin-top: 4px;
         }
       }
+
+      /* Show/hide elements based on mode */
+      .receiver-mode .qr-container,
+      .receiver-mode .progress-column.sending-column {
+        display: none;
+      }
+
+      /* Adjust layout when QR is hidden in receiver mode */
+      .receiver-mode .media-container #videoContainer {
+        margin: 0 auto;
+      }
+
+      /* Expand video container in receiver mode */
+      .receiver-mode .media-container #videoContainer {
+        flex: 1;
+        max-width: 100%;
+      }
+
+      /* Increase size of receiving area in receiver mode */
+      .receiver-mode .progress-column.receiving-column {
+        max-width: 100%;
+      }
+
+      /* Remove chunk visualization and debug info styling */
+      .debug-info {
+        display: none;
+      }
+
+      .chunks-grid {
+        display: none;
+      }
     </style>
   </head>
   <body>
     <div class="app-container">
-      <div class="title">QRTPB - QR Transfer with Audio Backchannel</div>
+      <div class="title">QR Transfer with Audio Backchannel</div>
 
       <!-- Mode selector -->
       <div class="mode-selector">
@@ -375,7 +480,6 @@
       <div class="media-container">
         <div class="qr-container">
           <div id="qrcode"></div>
-          <div id="qrDataPreview" class="qr-data-preview"></div>
         </div>
 
         <!-- Camera view -->
@@ -388,31 +492,31 @@
         </div>
       </div>
 
-      <!-- Audio visualizer -->
+      <!-- Audio visualizer with overlay button -->
       <div class="visualizer-container">
         <canvas id="audioVisualizer"></canvas>
+        <button id="audioTestButton" class="audio-test-button">Test Audio</button>
       </div>
-
-      <!-- Audio test button -->
-      <button id="audioTestButton" class="audio-test-button">Test Audio Output</button>
 
       <!-- Progress bars for sending and receiving -->
       <div class="progress-section">
-        <div class="progress-column">
+        <div class="progress-column sending-column">
           <div class="progress-title">Sending</div>
-          <div class="progress-bar-container">
+          <div class="progress-bar-container" id="sendingProgressBarContainer">
             <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
             <div id="sendingProgressText" class="progress-text">0/0</div>
           </div>
+          <div id="sendingChunksGrid" class="chunks-grid"></div>
           <textarea id="txData" class="input-text">Hello from QRTPB!</textarea>
           <div id="chunkSizeInfo" style="font-size: 11px; color: #666; margin-top: 5px"></div>
         </div>
-        <div class="progress-column">
+        <div class="progress-column receiving-column">
           <div class="progress-title">Receiving</div>
-          <div class="progress-bar-container">
+          <div class="progress-bar-container" id="receivingProgressBarContainer">
             <div id="receivingProgressBar" class="progress-bar" style="width: 0%"></div>
             <div id="receivingProgressText" class="progress-text">0/0</div>
           </div>
+          <div id="receivingChunksGrid" class="chunks-grid"></div>
           <div id="receivedTextDisplay" class="received-text"></div>
         </div>
       </div>
@@ -462,14 +566,15 @@
           messageLog: document.getElementById('messageLog'),
           sendingProgressBar: document.getElementById('sendingProgressBar'),
           sendingProgressText: document.getElementById('sendingProgressText'),
+          sendingProgressBarContainer: document.getElementById('sendingProgressBarContainer'),
           receivingProgressBar: document.getElementById('receivingProgressBar'),
           receivingProgressText: document.getElementById('receivingProgressText'),
+          receivingProgressBarContainer: document.getElementById('receivingProgressBarContainer'),
           receivedTextDisplay: document.getElementById('receivedTextDisplay'),
           chunkSizeInfo: document.getElementById('chunkSizeInfo'),
           senderBtn: document.getElementById('senderBtn'),
           receiverBtn: document.getElementById('receiverBtn'),
           audioVisualizer: document.getElementById('audioVisualizer'),
-          qrDataPreview: document.getElementById('qrDataPreview'),
           audioTestButton: document.getElementById('audioTestButton'),
         };
 
@@ -552,13 +657,40 @@
             `Data set: ${event.dataLength} bytes, ${event.total} chunks (${event.size} bytes/chunk)`,
             elements.messageLog,
           );
-          updateProgress(0, event.total, elements.sendingProgressBar, elements.sendingProgressText);
+
+          // Initialize progress segments for sender
+          initProgressSegments(elements.sendingProgressBarContainer, event.total);
         });
 
         qrProtocol.on('chunk', (event) => {
           logMessage('incoming', 'qr', `Received chunk ${event.index + 1}/${event.total}`, elements.messageLog);
           updateReceivedText(event.payload, false, elements.receivedTextDisplay);
-          updateProgress(event.index + 1, event.total, elements.receivingProgressBar, elements.receivingProgressText);
+
+          // Update progress text
+          const receivedCount = event.receivedCount || event.index + 1;
+          elements.receivingProgressText.textContent = `${receivedCount}/${event.total}`;
+
+          // Update receiving progress segments
+          updateProgressSegment(elements.receivingProgressBarContainer, event.index, 'received');
+
+          // If we have the full list of received indices, update all segments
+          if (event.receivedIndices && event.receivedIndices.length > 0) {
+            initProgressSegments(elements.receivingProgressBarContainer, event.total);
+
+            // Mark all received segments
+            event.receivedIndices.forEach((idx) => {
+              updateProgressSegment(elements.receivingProgressBarContainer, idx, 'received');
+            });
+
+            // Check for and highlight missing segments - only in sender mode
+            if (currentMode === 'sender') {
+              for (let i = 0; i < event.total; i++) {
+                if (!event.receivedIndices.includes(i)) {
+                  updateProgressSegment(elements.receivingProgressBarContainer, i, 'missing');
+                }
+              }
+            }
+          }
         });
 
         qrProtocol.on('ack', (event) => {
@@ -568,12 +700,14 @@
             `Ack received: ${event.acknowledged.length} chunks, ${event.remaining} remaining`,
             elements.messageLog,
           );
-          updateProgress(
-            event.acknowledged.length,
-            event.acknowledged.length + event.remaining,
-            elements.sendingProgressBar,
-            elements.sendingProgressText,
-          );
+
+          // Update progress text
+          elements.sendingProgressText.textContent = `${event.acknowledged.length}/${event.acknowledged.length + event.remaining}`;
+
+          // Update all acknowledged segments
+          event.acknowledged.forEach((index) => {
+            updateProgressSegment(elements.sendingProgressBarContainer, index, 'received');
+          });
         });
 
         qrProtocol.on('audioSending', (event) => {
@@ -591,20 +725,43 @@
 
         qrProtocol.on('qrUpdate', (event) => {
           updateQRCode(event.data, elements.qrcodeContainer);
-          if (elements.qrDataPreview) {
-            elements.qrDataPreview.textContent = `Chunk ${event.index + 1}/${event.total}, Ack: ${event.acknowledged.length}`;
-          }
+          // Removed the QR data preview update, but keep the current segment update
+
+          // Update current segment indicator
+          updateCurrentSegment(elements.sendingProgressBarContainer, event.index, event.total);
         });
 
         qrProtocol.on('complete', (event) => {
           if (event && event.message) {
             logMessage('incoming', 'complete', `Message received successfully!`, elements.messageLog);
             updateReceivedText(event.message, true, elements.receivedTextDisplay);
+
+            // If we have received indices and total chunks, update all segments
+            if (event.receivedIndices && event.totalChunks) {
+              initProgressSegments(elements.receivingProgressBarContainer, event.totalChunks);
+
+              // Mark all received segments
+              event.receivedIndices.forEach((idx) => {
+                updateProgressSegment(elements.receivingProgressBarContainer, idx, 'received');
+              });
+
+              // In sender mode, also mark missing segments
+              if (currentMode === 'sender') {
+                for (let i = 0; i < event.totalChunks; i++) {
+                  if (!event.receivedIndices.includes(i)) {
+                    updateProgressSegment(elements.receivingProgressBarContainer, i, 'missing');
+                  }
+                }
+              }
+            }
           }
         });
 
         qrProtocol.on('allAcknowledged', () => {
           logMessage('outgoing', 'complete', `All chunks acknowledged!`, elements.messageLog);
+
+          // Show success message in place of QR code
+          showSuccessMessage(elements.qrcodeContainer);
         });
       }
 
@@ -615,7 +772,7 @@
           if (currentMode === 'sender') {
             const text = elements.txData.value.trim();
             if (text) {
-              qrProtocol.configureSender(text, 100, 1000);
+              qrProtocol.configureSender(text);
             }
           }
         });
@@ -661,7 +818,11 @@
 
         // Clear UI
         elements.receivedTextDisplay.innerHTML = '';
-        updateProgress(0, 0, elements.receivingProgressBar, elements.receivingProgressText);
+        clearProgressSegments(elements.receivingProgressBarContainer);
+        elements.receivingProgressText.textContent = '0/0';
+
+        // Update UI for sender mode
+        document.body.classList.remove('receiver-mode');
 
         // Enable text input
         elements.txData.disabled = false;
@@ -669,7 +830,7 @@
         // Configure protocol as sender
         const text = elements.txData.value.trim();
         if (text) {
-          await qrProtocol.configureSender(text, 100, 1000);
+          await qrProtocol.configureSender(text);
           logMessage('system', 'mode', 'Configured as sender', elements.messageLog);
         } else {
           logMessage('system', 'mode', 'Configured as sender - enter text to start', elements.messageLog);
@@ -681,7 +842,11 @@
         // Clear UI
         elements.txData.value = '';
         elements.txData.disabled = true;
-        updateProgress(0, 0, elements.sendingProgressBar, elements.sendingProgressText);
+        clearProgressSegments(elements.sendingProgressBarContainer);
+        elements.sendingProgressText.textContent = '0/0';
+
+        // Update UI for receiver mode
+        document.body.classList.add('receiver-mode');
 
         // Configure protocol as receiver
         await qrProtocol.configureReceiver();
@@ -850,22 +1015,9 @@
           function (error) {
             if (error) {
               console.error(error);
-              // Reference to elements not available here, remove this call
-              // logMessage('system', 'error', `Error generating QR code: ${error.message}`, elements.messageLog);
             }
           },
         );
-      }
-
-      function updateProgress(current, total, progressBar, progressText) {
-        if (total > 0) {
-          const progress = Math.min(100, (current / total) * 100);
-          progressText.textContent = `${current}/${total}`;
-          progressBar.style.width = `${progress}%`;
-        } else {
-          progressText.textContent = '0/0';
-          progressBar.style.width = '0%';
-        }
       }
 
       function updateReceivedText(chunkData, isComplete, displayElement) {
@@ -909,6 +1061,113 @@
 
         // Auto-scroll to bottom
         logElement.scrollTop = logElement.scrollHeight;
+      }
+
+      // Initialize progress segments
+      function initProgressSegments(containerElement, totalSegments) {
+        // Clear existing segments
+        containerElement.innerHTML = '';
+
+        // Add the progress text element
+        const textElement = document.createElement('div');
+        textElement.className = 'progress-text';
+        textElement.textContent = `0/${totalSegments}`;
+        containerElement.appendChild(textElement);
+
+        // Create segments
+        for (let i = 0; i < totalSegments; i++) {
+          const segment = document.createElement('div');
+          segment.className = 'progress-segment';
+          segment.setAttribute('data-index', i);
+          containerElement.appendChild(segment);
+
+          // Add tooltip behavior for hovering
+          segment.title = `Chunk ${i + 1}`;
+        }
+      }
+
+      // Clear all progress segments
+      function clearProgressSegments(containerElement) {
+        // Keep only the text element
+        const textElement = containerElement.querySelector('.progress-text');
+        containerElement.innerHTML = '';
+        if (textElement) {
+          containerElement.appendChild(textElement);
+        }
+      }
+
+      // Update a progress segment status
+      function updateProgressSegment(containerElement, index, status) {
+        // Find the segment
+        const segment = containerElement.querySelector(`.progress-segment[data-index="${index}"]`);
+
+        // If segment doesn't exist and we need to create it
+        if (!segment && containerElement.querySelectorAll('.progress-segment').length === 0) {
+          // This is the first update, initialize with a reasonable number of segments
+          const totalSegments = Math.max(25, index + 1);
+          initProgressSegments(containerElement, totalSegments);
+          // Get the segment we just created
+          return updateProgressSegment(containerElement, index, status);
+        }
+
+        // Update the existing segment
+        if (segment) {
+          // Update title based on status
+          segment.title = `Chunk ${parseInt(index) + 1}: ${status}`;
+
+          // Update class based on status
+          if (status === 'received') {
+            segment.classList.add('received');
+            segment.classList.remove('missing');
+          } else if (status === 'missing') {
+            segment.classList.add('missing');
+            segment.classList.remove('received');
+          }
+        }
+      }
+
+      // Update current segment indicator
+      function updateCurrentSegment(containerElement, currentIndex, totalSegments) {
+        // Ensure we have segments initialized
+        if (containerElement.querySelectorAll('.progress-segment').length === 0) {
+          initProgressSegments(containerElement, totalSegments);
+        }
+
+        // Remove current status from all segments
+        containerElement.querySelectorAll('.current').forEach((el) => {
+          el.classList.remove('current');
+        });
+
+        // Find and mark the current segment
+        const segment = containerElement.querySelector(`.progress-segment[data-index="${currentIndex}"]`);
+        if (segment) {
+          segment.classList.add('current');
+        }
+      }
+
+      // Show success message when all chunks are acknowledged
+      function showSuccessMessage(container) {
+        // Clear container
+        container.innerHTML = '';
+
+        // Create success message
+        const successDiv = document.createElement('div');
+        successDiv.className = 'qr-success-message';
+
+        // Add checkmark icon
+        const icon = document.createElement('div');
+        icon.className = 'icon';
+        icon.innerHTML = '✓'; // Unicode checkmark
+        successDiv.appendChild(icon);
+
+        // Add success text
+        const text = document.createElement('div');
+        text.className = 'text';
+        text.textContent = 'Transfer Complete!';
+        successDiv.appendChild(text);
+
+        // Add to container
+        container.appendChild(successDiv);
       }
     </script>
   </body>
