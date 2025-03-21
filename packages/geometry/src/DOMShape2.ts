@@ -22,9 +22,9 @@ interface DOMShapeInit {
 export class DOMShape implements DOMRect {
   #x;
   #y;
-  #rotation;
   #width;
   #height;
+  #rotation;
   #boundedWidth: number | undefined;
   #boundedHeight: number | undefined;
   #center: Vector2 | undefined;

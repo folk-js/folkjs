@@ -1,4 +1,4 @@
-export const { PI, hypot, cos, sin, atan2, abs, acos } = Math;
+export const { PI, hypot, cos, sin, atan2, abs, acos, sign } = Math;
 
 export const EPSILON = 0.000001;
 
@@ -17,8 +17,6 @@ export const clampRotation = (radians: number) => (PI2 + radians) % PI2;
 export const lerpValue = (a: number, b: number, alpha: number): number => a + (b - a) * alpha;
 
 export const round = (value: number, decimal = 0) => Math.round(value * decimal) / decimal;
-
-export const sign = (value: number): -1 | 1 => (value < 0 ? -1 : 1);
 
 export const toDegree = (a: number) => a * RADIAN;
 
