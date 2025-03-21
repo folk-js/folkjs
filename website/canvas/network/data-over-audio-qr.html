@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
-    <title>Data over QR</title>
+    <title>QRTPB - QR with Audio Backchannel</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
@@ -36,14 +36,25 @@
         color: #000;
       }
 
-      textarea {
-        width: 100%;
+      .mode-selector {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 20px;
+        gap: 10px;
+      }
+
+      .mode-btn {
+        padding: 10px 20px;
+        background-color: #eee;
         border: 1px solid #000;
-        padding: 12px;
-        margin-bottom: 15px;
-        font-size: 14px;
-        resize: none;
-        font-family: inherit;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background-color 0.2s ease;
+      }
+
+      .mode-btn.active {
+        background-color: #000;
+        color: #fff;
       }
 
       .media-container {
@@ -208,6 +219,36 @@
         margin-bottom: 0px;
       }
 
+      .visualizer-container {
+        width: 100%;
+        height: 50px;
+        border: 1px solid #000;
+        margin-top: 10px;
+        background-color: #000;
+      }
+
+      #audioVisualizer {
+        width: 100%;
+        height: 100%;
+      }
+
+      .audio-test-button {
+        display: block;
+        margin: 10px 0;
+        padding: 10px 15px;
+        background-color: #9c27b0;
+        color: white;
+        border: none;
+        font-weight: bold;
+        cursor: pointer;
+        width: 100%;
+        text-align: center;
+      }
+
+      .audio-test-button:hover {
+        background-color: #7b1fa2;
+      }
+
       .highlight-chunk {
         background-color: #ffff00;
         animation: fadeHighlight 2s forwards;
@@ -262,6 +303,11 @@
         background-color: #ffebee;
       }
 
+      .log-entry-audio {
+        border-left: 3px solid #9c27b0;
+        background-color: #f3e5f5;
+      }
+
       .log-timestamp {
         color: #666;
         font-size: 10px;
@@ -285,7 +331,7 @@
       /* Mobile responsiveness */
       @media (max-width: 768px) {
         .title {
-          display: none;
+          font-size: 20px;
         }
 
         .media-container {
@@ -317,9 +363,15 @@
   </head>
   <body>
     <div class="app-container">
-      <div class="title">Data over QR</div>
+      <div class="title">QRTPB - QR Transfer with Audio Backchannel</div>
 
-      <!-- New container for QR and camera side-by-side -->
+      <!-- Mode selector -->
+      <div class="mode-selector">
+        <div id="senderBtn" class="mode-btn active">Sender</div>
+        <div id="receiverBtn" class="mode-btn">Receiver</div>
+      </div>
+
+      <!-- Main media container -->
       <div class="media-container">
         <div class="qr-container">
           <div id="qrcode"></div>
@@ -332,8 +384,17 @@
           <div id="cameraOverlay" class="camera-overlay">
             <div class="camera-label">Start Camera</div>
           </div>
+          <canvas id="canvas" style="display: none"></canvas>
         </div>
       </div>
+
+      <!-- Audio visualizer -->
+      <div class="visualizer-container">
+        <canvas id="audioVisualizer"></canvas>
+      </div>
+
+      <!-- Audio test button -->
+      <button id="audioTestButton" class="audio-test-button">Test Audio Output</button>
 
       <!-- Progress bars for sending and receiving -->
       <div class="progress-section">
@@ -343,7 +404,7 @@
             <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
             <div id="sendingProgressText" class="progress-text">0/0</div>
           </div>
-          <textarea id="txData" class="input-text">Hello from Folk Canvas!</textarea>
+          <textarea id="txData" class="input-text">Hello from QRTPB!</textarea>
           <div id="chunkSizeInfo" style="font-size: 11px; color: #666; margin-top: 5px"></div>
         </div>
         <div class="progress-column">
@@ -362,26 +423,32 @@
     <!-- QR Code libraries -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <!-- Import QRTP module -->
-    <script type="module">
-      import { QRTP } from '@labs/QRTP.ts';
-      import '@labs/BraceLabel.ts';
 
-      // Make QRTP available globally for debugging
-      window.QRTP = QRTP;
+    <!-- Import QRTPB module -->
+    <script type="module">
+      import { QRTPB } from '@labs/QRTPB.ts';
+      import { FolkAudioWave } from '@labs/folk-audio-wave.ts';
+
+      // Make QRTPB available globally for debugging
+      window.QRTPB = QRTPB;
+      window.FolkAudioWave = FolkAudioWave;
 
       // Core elements and state
       let videoStream = null;
       let scanInterval = null;
       let cameraActive = false;
       let qrProtocol;
+      let currentMode = 'sender';
+      let audioContext = null;
+      let analyser = null;
+      let visualizationActive = false;
 
       // Initialize after DOM is loaded
       document.addEventListener('DOMContentLoaded', initApp);
 
       function initApp() {
         // Initialize protocol
-        qrProtocol = new QRTP();
+        qrProtocol = new QRTPB();
 
         // Get DOM elements
         const elements = {
@@ -399,33 +466,88 @@
           receivingProgressText: document.getElementById('receivingProgressText'),
           receivedTextDisplay: document.getElementById('receivedTextDisplay'),
           chunkSizeInfo: document.getElementById('chunkSizeInfo'),
+          senderBtn: document.getElementById('senderBtn'),
+          receiverBtn: document.getElementById('receiverBtn'),
+          audioVisualizer: document.getElementById('audioVisualizer'),
+          qrDataPreview: document.getElementById('qrDataPreview'),
+          audioTestButton: document.getElementById('audioTestButton'),
         };
 
         // Setup event handlers
         setupProtocolEvents(elements);
         setupUIEvents(elements);
+        setupVisualizer(elements);
+        setupAudioTest(elements);
 
         // Initialize UI
         elements.chunkSizeInfo.textContent = `Using default chunk size of 100 bytes`;
-        updateQRCode('Hello world', elements.qrcodeContainer);
+        updateQRCode('Initializing...', elements.qrcodeContainer);
 
-        // Set initial message from textarea
-        const initialText = elements.txData.value.trim();
-        if (initialText) {
-          qrProtocol.setMessage(initialText);
-        }
+        // Configure as sender by default
+        configureAsSender(elements);
       }
 
-      // Setup QRTP protocol event handlers
-      function setupProtocolEvents(elements) {
-        qrProtocol.on('chunk', (event) => {
-          updateReceivedText(event.payload, false, elements.receivedTextDisplay);
-          updateProgress(event.index + 1, event.total, elements.receivingProgressBar, elements.receivingProgressText);
-        });
+      // Setup audio visualizer
+      function setupVisualizer(elements) {
+        const canvas = elements.audioVisualizer;
+        const canvasCtx = canvas.getContext('2d');
+        const WIDTH = (canvas.width = canvas.parentElement.clientWidth);
+        const HEIGHT = (canvas.height = canvas.parentElement.clientHeight);
 
+        // Setup visualization function
+        window.visualizeAudio = (node, context) => {
+          if (!node || !context) {
+            // Clear canvas if no audio
+            canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+            visualizationActive = false;
+            return;
+          }
+
+          if (!visualizationActive) {
+            audioContext = context;
+            analyser = context.createAnalyser();
+            analyser.fftSize = 256;
+            node.connect(analyser);
+            visualizationActive = true;
+          }
+
+          // Draw visualization
+          const bufferLength = analyser.frequencyBinCount;
+          const dataArray = new Uint8Array(bufferLength);
+
+          function draw() {
+            if (!visualizationActive) return;
+
+            requestAnimationFrame(draw);
+            analyser.getByteFrequencyData(dataArray);
+
+            canvasCtx.fillStyle = 'rgb(0, 0, 0)';
+            canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+
+            const barWidth = (WIDTH / bufferLength) * 2.5;
+            let barHeight;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+              barHeight = (dataArray[i] / 255) * HEIGHT;
+              canvasCtx.fillStyle = `rgb(${dataArray[i]}, 100, 200)`;
+              canvasCtx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+              x += barWidth + 1;
+            }
+          }
+
+          draw();
+        };
+
+        // Set visualizer on protocol
+        qrProtocol.setAudioVisualizer(window.visualizeAudio);
+      }
+
+      // Setup QRTPB protocol event handlers
+      function setupProtocolEvents(elements) {
         qrProtocol.on('init', (event) => {
           logMessage(
-            'outgoing',
+            'system',
             'info',
             `Data set: ${event.dataLength} bytes, ${event.total} chunks (${event.size} bytes/chunk)`,
             elements.messageLog,
@@ -433,24 +555,43 @@
           updateProgress(0, event.total, elements.sendingProgressBar, elements.sendingProgressText);
         });
 
+        qrProtocol.on('chunk', (event) => {
+          logMessage('incoming', 'qr', `Received chunk ${event.index + 1}/${event.total}`, elements.messageLog);
+          updateReceivedText(event.payload, false, elements.receivedTextDisplay);
+          updateProgress(event.index + 1, event.total, elements.receivingProgressBar, elements.receivingProgressText);
+        });
+
         qrProtocol.on('ack', (event) => {
-          if (event.matched) {
-            logMessage('incoming', 'ack', `Acknowledged chunk ${event.index + 1}`, elements.messageLog);
-          }
-          updateProgress(event.index, event.total, elements.sendingProgressBar, elements.sendingProgressText);
+          logMessage(
+            'incoming',
+            'audio',
+            `Ack received: ${event.acknowledged.length} chunks, ${event.remaining} remaining`,
+            elements.messageLog,
+          );
+          updateProgress(
+            event.acknowledged.length,
+            event.acknowledged.length + event.remaining,
+            elements.sendingProgressBar,
+            elements.sendingProgressText,
+          );
         });
 
         qrProtocol.on('qrUpdate', (event) => {
           updateQRCode(event.data, elements.qrcodeContainer);
+          if (elements.qrDataPreview) {
+            elements.qrDataPreview.textContent = `Chunk ${event.index + 1}/${event.total}, Ack: ${event.acknowledged.length}`;
+          }
         });
 
         qrProtocol.on('complete', (event) => {
-          if (event && event.payload) {
+          if (event && event.message) {
             logMessage('incoming', 'complete', `Message received successfully!`, elements.messageLog);
-            updateReceivedText(event.payload, true, elements.receivedTextDisplay);
-          } else {
-            logMessage('outgoing', 'complete', `Message sent successfully!`, elements.messageLog);
+            updateReceivedText(event.message, true, elements.receivedTextDisplay);
           }
+        });
+
+        qrProtocol.on('allAcknowledged', () => {
+          logMessage('outgoing', 'complete', `All chunks acknowledged!`, elements.messageLog);
         });
       }
 
@@ -458,14 +599,12 @@
       function setupUIEvents(elements) {
         // Text input handler
         elements.txData.addEventListener('input', function () {
-          const text = elements.txData.value.trim();
-          elements.messageLog.innerHTML = '';
-          elements.receivedTextDisplay.innerHTML = '';
-
-          qrProtocol.setMessage(text);
-
-          // Only reset the receiving progress
-          updateProgress(0, 0, elements.receivingProgressBar, elements.receivingProgressText);
+          if (currentMode === 'sender') {
+            const text = elements.txData.value.trim();
+            if (text) {
+              qrProtocol.configureSender(text, 100, 1000);
+            }
+          }
         });
 
         // Camera toggle handler
@@ -476,13 +615,124 @@
             startCamera(elements);
           }
         });
+
+        // Mode selection handlers
+        elements.senderBtn.addEventListener('click', function () {
+          if (currentMode !== 'sender') {
+            currentMode = 'sender';
+            elements.senderBtn.classList.add('active');
+            elements.receiverBtn.classList.remove('active');
+            configureAsSender(elements);
+          }
+        });
+
+        elements.receiverBtn.addEventListener('click', function () {
+          if (currentMode !== 'receiver') {
+            currentMode = 'receiver';
+            elements.receiverBtn.classList.add('active');
+            elements.senderBtn.classList.remove('active');
+            configureAsReceiver(elements);
+          }
+        });
+
+        // Setup audio test function
+        setupAudioTest(elements);
+      }
+
+      // Configure as sender
+      async function configureAsSender(elements) {
+        // First cleanup if needed
+        if (videoStream) {
+          stopCamera(elements);
+        }
+
+        // Clear UI
+        elements.receivedTextDisplay.innerHTML = '';
+        updateProgress(0, 0, elements.receivingProgressBar, elements.receivingProgressText);
+
+        // Enable text input
+        elements.txData.disabled = false;
+
+        // Configure protocol as sender
+        const text = elements.txData.value.trim();
+        if (text) {
+          await qrProtocol.configureSender(text, 100, 1000);
+          logMessage('system', 'mode', 'Configured as sender', elements.messageLog);
+        } else {
+          logMessage('system', 'mode', 'Configured as sender - enter text to start', elements.messageLog);
+        }
+      }
+
+      // Configure as receiver
+      async function configureAsReceiver(elements) {
+        // Clear UI
+        elements.txData.value = '';
+        elements.txData.disabled = true;
+        updateProgress(0, 0, elements.sendingProgressBar, elements.sendingProgressText);
+
+        // Configure protocol as receiver
+        await qrProtocol.configureReceiver();
+        logMessage('system', 'mode', 'Configured as receiver', elements.messageLog);
+
+        // Start camera automatically
+        startCamera(elements);
+      }
+
+      // Setup audio test function
+      function setupAudioTest(elements) {
+        elements.audioTestButton.addEventListener('click', async function () {
+          // Create a temporary audio context and test tone
+          const testContext = new (window.AudioContext || window.webkitAudioContext)();
+          const oscillator = testContext.createOscillator();
+          const gainNode = testContext.createGain();
+
+          oscillator.type = 'sine';
+          oscillator.frequency.value = 440; // A4 note
+          gainNode.gain.value = 0.5;
+
+          oscillator.connect(gainNode);
+          gainNode.connect(testContext.destination);
+
+          // Start oscillator and visualize it
+          oscillator.start();
+
+          // Play test tone for 1 second
+          logMessage('system', 'audio', 'Playing test tone - you should hear a sound', elements.messageLog);
+
+          // Setup visualization for the test tone
+          if (window.visualizeAudio) {
+            window.visualizeAudio(gainNode, testContext);
+          }
+
+          // Stop after 1 second
+          setTimeout(() => {
+            oscillator.stop();
+            testContext.close();
+            logMessage('system', 'audio', 'Test tone complete', elements.messageLog);
+
+            // Clear visualization
+            if (window.visualizeAudio) {
+              window.visualizeAudio(null, null);
+            }
+          }, 1000);
+        });
       }
 
       // Camera control functions
       function startCamera(elements) {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          // Use the environment facing (back) camera on mobile devices
+          const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+          const facingMode = isMobile ? 'environment' : 'user';
+
           navigator.mediaDevices
-            .getUserMedia({ video: { facingMode: 'user' } })
+            .getUserMedia({
+              video: {
+                facingMode: facingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
+            })
             .then(function (stream) {
               videoStream = stream;
               elements.video.srcObject = stream;
@@ -502,6 +752,8 @@
               cameraActive = true;
               elements.videoContainer.classList.add('camera-active');
               elements.cameraLabel.textContent = 'Stop Camera';
+
+              logMessage('system', 'camera', `Camera started (${facingMode} facing)`, elements.messageLog);
             })
             .catch(function (error) {
               console.error('Camera error:', error);
@@ -516,7 +768,7 @@
         if (videoStream) {
           videoStream.getTracks().forEach((track) => track.stop());
           videoStream = null;
-          logMessage('system', 'info', 'Camera stopped', elements.messageLog);
+          logMessage('system', 'camera', 'Camera stopped', elements.messageLog);
         }
 
         if (scanInterval) {
@@ -550,10 +802,7 @@
 
           // Process QR code if found
           if (code && code.data) {
-            const result = qrProtocol.parseCode(code.data);
-            if (result === null) {
-              logMessage('system', 'error', `Error processing QR code: ${result}`, elements.messageLog);
-            }
+            qrProtocol.parseCode(code.data);
           }
         }
       }
@@ -574,20 +823,17 @@
           canvas,
           qrData,
           {
-            width: containerWidth, // Use the container width instead of fixed 400px
+            width: containerWidth,
             margin: 4,
           },
           function (error) {
             if (error) {
               console.error(error);
-              logMessage('system', 'error', `Error generating QR code: ${error.message}`, elements.messageLog);
+              // Reference to elements not available here, remove this call
+              // logMessage('system', 'error', `Error generating QR code: ${error.message}`, elements.messageLog);
             }
           },
         );
-
-        // Update text preview of QR data
-        const qrDataPreview = document.getElementById('qrDataPreview');
-        qrDataPreview.textContent = qrData.length > 20 ? qrData.substring(0, 20) + '...' : qrData;
       }
 
       function updateProgress(current, total, progressBar, progressText) {
@@ -622,7 +868,7 @@
         logEntry.className = `log-entry log-entry-${direction}`;
 
         // Add specific styling for different message types
-        if (['error', 'warning', 'debug', 'hash'].includes(type)) {
+        if (['error', 'warning', 'audio', 'qr'].includes(type)) {
           logEntry.className += ` log-entry-${type}`;
         }
 
