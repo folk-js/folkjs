@@ -1,11 +1,9 @@
 import { header } from './header';
 
-const qrtpHeader = header('QRTPB<indices:nums>:<hash:text-16><payload>');
+const qrtpHeader = header('Q<indices:list-2>');
 const encoded = qrtpHeader.encode({
-  indices: [0, 555],
-  hash: '1234567890',
-  payload: 'some random payload',
+  indices: ['ab', 'qw', 'wldfs'],
 });
-// Output: QRTPB0/555:1234567890521523some random payload
-const decoded = qrtpHeader.decode('QRTPB0/555:1234567890521523some random payload');
-// output: { indices: [0, 555], hash: '1234567890', payload: 'some random payload' }
+console.log({ encoded });
+const decoded = qrtpHeader.decode('Q05552rs93jdh');
+console.log({ decoded });

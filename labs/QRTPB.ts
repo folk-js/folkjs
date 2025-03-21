@@ -19,6 +19,10 @@ export class QRTPB extends EventEmitter {
   #chunks: string[] = []; // Data chunks to send/receive
   #currentIndex: number = 0; // Current chunk index being displayed
   #receivedIndices: Set<number> = new Set(); // Indices that have been received
+  #acknowledgedIndices: Set<number> = new Set(); // Indices already acknowledged via audio
+  #pendingAckIndices: Set<number> = new Set(); // Indices waiting to be acknowledged
+  #ackDebounceTimer: any = null; // Timer for debouncing audio acknowledgments
+  #debounceTime: number = 1000; // Wait this many ms to accumulate indices before sending
   #header = header('QRTPB<index:num>/<total:num>');
   #ackHeader = header('QB<indices:nums>');
   #cycleTimer: NodeJS.Timer | null = null;
@@ -26,6 +30,9 @@ export class QRTPB extends EventEmitter {
   #role: 'sender' | 'receiver' | null = null;
   #cycleInterval: number = 1000; // Cycle every 1 second by default
   #isAudioInitialized: boolean = false;
+  #isAudioSending: boolean = false;
+  #audioQueue: number[][] = []; // Queue of indices to send
+  #audioVolume: number = 80; // Increased volume (1-100)
 
   constructor() {
     super();
@@ -53,6 +60,8 @@ export class QRTPB extends EventEmitter {
     this.#chunks = [];
     this.#currentIndex = 0;
     this.#receivedIndices = new Set();
+    this.#acknowledgedIndices = new Set();
+    this.#pendingAckIndices = new Set();
     this.#cycleInterval = cycleInterval;
 
     // Break data into chunks
@@ -84,6 +93,8 @@ export class QRTPB extends EventEmitter {
     this.#role = 'receiver';
     this.#chunks = [];
     this.#receivedIndices = new Set();
+    this.#acknowledgedIndices = new Set();
+    this.#pendingAckIndices = new Set();
 
     // Initialize audio for sending acknowledgments
     if (!this.#isAudioInitialized) {
@@ -103,36 +114,65 @@ export class QRTPB extends EventEmitter {
     if (!packet) return;
 
     // Store the received chunk if it's valid
-    if (
-      packet.payload &&
-      packet.index >= 0 &&
-      packet.index < packet.total &&
-      !this.#receivedIndices.has(packet.index)
-    ) {
-      // Ensure array is sized correctly
-      while (this.#chunks.length < packet.total) {
-        this.#chunks.push('');
+    if (packet.payload && packet.index >= 0 && packet.index < packet.total) {
+      const isNewChunk = !this.#receivedIndices.has(packet.index);
+      const needsReacknowledge = this.#acknowledgedIndices.has(packet.index);
+
+      // If we've already seen this chunk and acknowledged it, but we're seeing it again,
+      // the sender didn't receive our ack, so we need to resend it
+      if (needsReacknowledge) {
+        this.#queueAcknowledgment(packet.index);
       }
+      // If this is a new chunk we haven't seen before
+      else if (isNewChunk) {
+        // Ensure array is sized correctly
+        while (this.#chunks.length < packet.total) {
+          this.#chunks.push('');
+        }
 
-      this.#chunks[packet.index] = packet.payload;
-      this.#receivedIndices.add(packet.index);
+        this.#chunks[packet.index] = packet.payload;
+        this.#receivedIndices.add(packet.index);
 
-      // Notify about the new chunk
-      this.emit('chunk', {
-        index: packet.index,
-        total: packet.total,
-        payload: packet.payload,
-      });
+        // Notify about the new chunk
+        this.emit('chunk', {
+          index: packet.index,
+          total: packet.total,
+          payload: packet.payload,
+        });
 
-      // Send acknowledgment via audio
-      this.#sendAudioAck();
+        // Queue this index for acknowledgment
+        this.#queueAcknowledgment(packet.index);
 
-      // Check if we received all chunks
-      if (this.#receivedIndices.size === packet.total) {
-        const message = this.#chunks.join('');
-        this.emit('complete', { message });
+        // Check if we received all chunks
+        if (this.#receivedIndices.size === packet.total) {
+          const message = this.#chunks.join('');
+          this.emit('complete', { message });
+
+          // Make sure we send one final acknowledgment with all indices
+          this.#sendAudioAck();
+        }
       }
     }
+  }
+
+  /**
+   * Queue an index to be acknowledged and schedule a debounced send
+   */
+  #queueAcknowledgment(index: number): void {
+    // Add to pending set
+    this.#pendingAckIndices.add(index);
+
+    // Clear existing timer if any
+    if (this.#ackDebounceTimer) {
+      clearTimeout(this.#ackDebounceTimer);
+    }
+
+    // Set new timer to send acknowledgments after a short delay
+    // This allows multiple indices received in quick succession to be batched
+    this.#ackDebounceTimer = setTimeout(() => {
+      this.#sendAudioAck();
+      this.#ackDebounceTimer = null;
+    }, this.#debounceTime);
   }
 
   /**
@@ -142,6 +182,11 @@ export class QRTPB extends EventEmitter {
     if (this.#cycleTimer) {
       clearInterval(this.#cycleTimer);
       this.#cycleTimer = null;
+    }
+
+    if (this.#ackDebounceTimer) {
+      clearTimeout(this.#ackDebounceTimer);
+      this.#ackDebounceTimer = null;
     }
 
     if (this.#audioWave) {
@@ -214,17 +259,79 @@ export class QRTPB extends EventEmitter {
   /**
    * Send list of received indices via audio
    */
-  async #sendAudioAck(): Promise<void> {
+  async #sendAudioAck(indicesToAcknowledge?: number[]): Promise<void> {
     if (!this.#audioWave) return;
 
-    // Convert set to sorted array and use header encoding
-    const indices = Array.from(this.#receivedIndices).sort((a, b) => a - b);
-    const ackMessage = this.#ackHeader.encode({ indices });
+    let indices: number[];
+
+    if (indicesToAcknowledge) {
+      // Use specified indices to acknowledge
+      indices = indicesToAcknowledge;
+    } else {
+      // Use pending indices if available, otherwise find unacknowledged indices
+      if (this.#pendingAckIndices.size > 0) {
+        indices = Array.from(this.#pendingAckIndices).sort((a, b) => a - b);
+        this.#pendingAckIndices.clear();
+      } else {
+        // Find indices that haven't been acknowledged yet
+        indices = Array.from(this.#receivedIndices)
+          .filter((index) => !this.#acknowledgedIndices.has(index))
+          .sort((a, b) => a - b);
+      }
+    }
+
+    // Skip if nothing to acknowledge
+    if (indices.length === 0) return;
+
+    // Mark these indices as acknowledged
+    indices.forEach((index) => this.#acknowledgedIndices.add(index));
+
+    // Queue the acknowledgments
+    this.#enqueueAudioMessage(indices);
+
+    // Process queue if not already sending
+    if (!this.#isAudioSending) {
+      this.#processAudioQueue();
+    }
+  }
+
+  /**
+   * Add indices to the audio queue
+   */
+  #enqueueAudioMessage(indices: number[]): void {
+    if (indices.length === 0) return;
+
+    // Add these indices to the queue
+    this.#audioQueue.push(indices);
+  }
+
+  /**
+   * Process queued audio messages one by one
+   */
+  async #processAudioQueue(): Promise<void> {
+    if (this.#audioQueue.length === 0 || this.#isAudioSending) return;
+
+    this.#isAudioSending = true;
 
     try {
-      await this.#audioWave.send(ackMessage, 20);
+      const indices = this.#audioQueue.shift();
+      if (indices && indices.length > 0 && this.#audioWave) {
+        const ackMessage = this.#ackHeader.encode({ indices });
+
+        this.emit('audioSending', { indices });
+        await this.#audioWave.send(ackMessage, this.#audioVolume);
+        this.emit('audioSent', { indices });
+      }
     } catch (error) {
       console.error('Failed to send audio acknowledgment:', error);
+    } finally {
+      this.#isAudioSending = false;
+
+      // Process next message if queue isn't empty
+      if (this.#audioQueue.length > 0) {
+        // Add a small delay between messages
+        setTimeout(() => this.#processAudioQueue(), 50);
+      }
     }
   }
 
