@@ -515,8 +515,8 @@
           <textarea id="txData" class="input-text">Hello from QRTPB!</textarea>
           <div id="chunkSizeInfo" style="display: none"></div>
           <div class="speed-indicator" style="display: none">
-            <span class="current">Current: 0 bps</span>
-            <span class="average">Average: 0 bps</span>
+            <span class="current">Current: 0 b/s</span>
+            <span class="average">Average: 0 b/s</span>
           </div>
         </div>
         <div class="progress-column receiving-column">
@@ -528,8 +528,8 @@
           <div id="receivingChunksGrid" class="chunks-grid"></div>
           <div id="receivedTextDisplay" class="received-text"></div>
           <div class="speed-indicator" style="display: none">
-            <span class="current">Current: 0 bps</span>
-            <span class="average">Average: 0 bps</span>
+            <span class="current">Current: 0 b/s</span>
+            <span class="average">Average: 0 b/s</span>
           </div>
         </div>
       </div>
@@ -608,7 +608,7 @@
         senderSpeedLabel.style.color = '#666';
         senderSpeedLabel.style.marginTop = '5px';
         senderSpeedLabel.id = 'senderSpeedLabel';
-        senderSpeedLabel.textContent = 'Average: 0 bps';
+        senderSpeedLabel.textContent = 'Average: 0 b/s';
         document.querySelector('.sending-column').appendChild(senderSpeedLabel);
 
         const receiverSpeedLabel = document.createElement('div');
@@ -616,7 +616,7 @@
         receiverSpeedLabel.style.color = '#666';
         receiverSpeedLabel.style.marginTop = '5px';
         receiverSpeedLabel.id = 'receiverSpeedLabel';
-        receiverSpeedLabel.textContent = 'Average: 0 bps';
+        receiverSpeedLabel.textContent = 'Average: 0 b/s';
         document.querySelector('.receiving-column').appendChild(receiverSpeedLabel);
 
         elements.senderSpeedLabel = senderSpeedLabel;
@@ -710,6 +710,9 @@
           // Initialize progress segments for sender
           initProgressSegments(elements.sendingProgressBarContainer, event.total);
 
+          // Make sure the sending progress text shows 0/total
+          elements.sendingProgressText.textContent = `0/${event.total}`;
+
           // Reset transfer stats
           resetTransferStats();
         });
@@ -722,19 +725,16 @@
           logMessage('incoming', 'qr', `Received chunk ${event.index + 1}/${event.total}`, elements.messageLog);
           updateReceivedText(event.payload, false, elements.receivedTextDisplay);
 
-          // Update progress text
-          const receivedCount = event.receivedCount || event.index + 1;
-          elements.receivingProgressText.textContent = `${receivedCount}/${event.total}`;
-
-          // Update speed label
-          updateReceiverSpeedLabel(elements);
-
           // Update receiving progress segments
           updateProgressSegment(elements.receivingProgressBarContainer, event.index, 'received');
 
           // If we have the full list of received indices, update all segments
           if (event.receivedIndices && event.receivedIndices.length > 0) {
-            initProgressSegments(elements.receivingProgressBarContainer, event.total);
+            // Only initialize if we don't have the right number of segments
+            const currentSegments = elements.receivingProgressBarContainer.querySelectorAll('.progress-segment').length;
+            if (currentSegments !== event.total) {
+              initProgressSegments(elements.receivingProgressBarContainer, event.total);
+            }
 
             // Mark all received segments
             event.receivedIndices.forEach((idx) => {
@@ -750,6 +750,9 @@
               }
             }
           }
+
+          // Update speed label
+          updateReceiverSpeedLabel(elements);
         });
 
         qrProtocol.on('ack', (event) => {
@@ -760,15 +763,16 @@
             elements.messageLog,
           );
 
-          // Update progress text (without rate to avoid flickering)
-          const acknowledged = event.acknowledged.length;
-          const total = acknowledged + event.remaining;
-          elements.sendingProgressText.textContent = `${acknowledged}/${total}`;
-
           // Update all acknowledged segments
           event.acknowledged.forEach((index) => {
             updateProgressSegment(elements.sendingProgressBarContainer, index, 'received');
           });
+
+          // Check if this is a complete acknowledgment (all chunks received)
+          if (event.remaining === 0 && event.acknowledged.length > 0) {
+            logMessage('incoming', 'complete', 'All chunks acknowledged by receiver!', elements.messageLog);
+            showSuccessMessage(elements.qrcodeContainer);
+          }
         });
 
         qrProtocol.on('audioSending', (event) => {
@@ -817,15 +821,23 @@
 
             // If we have received indices and total chunks, update all segments
             if (event.receivedIndices && event.totalChunks) {
-              initProgressSegments(elements.receivingProgressBarContainer, event.totalChunks);
-
-              // Update progress text
-              elements.receivingProgressText.textContent = `${event.receivedIndices.length}/${event.totalChunks}`;
+              // Only initialize if needed
+              const currentSegments =
+                elements.receivingProgressBarContainer.querySelectorAll('.progress-segment').length;
+              if (currentSegments !== event.totalChunks) {
+                initProgressSegments(elements.receivingProgressBarContainer, event.totalChunks);
+              }
 
               // Mark all received segments
               event.receivedIndices.forEach((idx) => {
                 updateProgressSegment(elements.receivingProgressBarContainer, idx, 'received');
               });
+
+              // Force update of progress text to show completion
+              const textElement = elements.receivingProgressBarContainer.querySelector('.progress-text');
+              if (textElement) {
+                textElement.textContent = `${event.receivedIndices.length}/${event.totalChunks}`;
+              }
 
               // In sender mode, also mark missing segments
               if (currentMode === 'sender') {
@@ -841,6 +853,15 @@
 
         qrProtocol.on('allAcknowledged', () => {
           logMessage('outgoing', 'complete', `All chunks acknowledged!`, elements.messageLog);
+
+          // Count segments to ensure progress text is accurate
+          const totalSegments = elements.sendingProgressBarContainer.querySelectorAll('.progress-segment').length;
+
+          // Force update of the progress counter
+          const textElement = elements.sendingProgressBarContainer.querySelector('.progress-text');
+          if (textElement && totalSegments > 0) {
+            textElement.textContent = `${totalSegments}/${totalSegments}`;
+          }
 
           // Show success message in place of QR code
           showSuccessMessage(elements.qrcodeContainer);
@@ -1212,6 +1233,20 @@
             segment.classList.add('missing');
             segment.classList.remove('received');
           }
+
+          // Update the progress counter to show how many chunks are received
+          updateProgressCounter(containerElement);
+        }
+      }
+
+      // Helper function to update progress counter based on received segments
+      function updateProgressCounter(containerElement) {
+        const receivedSegments = containerElement.querySelectorAll('.progress-segment.received').length;
+        const totalSegments = containerElement.querySelectorAll('.progress-segment').length;
+
+        const textElement = containerElement.querySelector('.progress-text');
+        if (textElement && totalSegments > 0) {
+          textElement.textContent = `${receivedSegments}/${totalSegments}`;
         }
       }
 
