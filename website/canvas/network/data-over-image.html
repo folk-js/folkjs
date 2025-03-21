@@ -2,6 +2,8 @@
 <html lang="en-us">
   <head>
     <title>Data over QR</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
       * {
         box-sizing: border-box;
@@ -13,93 +15,60 @@
         height: 100%;
         margin: 0;
         padding: 0;
-        font-family: Arial, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
         background-color: #f5f5f5;
         overflow-x: hidden;
         min-height: 100vh;
         position: relative;
+        -webkit-font-smoothing: antialiased;
       }
 
       .app-container {
         max-width: 900px;
         margin: 0 auto;
-        padding: 20px;
+        padding: 24px 16px;
       }
 
       .title {
-        font-size: 28px;
-        font-weight: bold;
+        font-size: 24px;
+        font-weight: 600;
         text-align: center;
-        margin-bottom: 20px;
-        color: #333;
-      }
-
-      .sender-section {
-        background: white;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        padding: 20px;
-        margin-bottom: 20px;
-      }
-
-      .receiver-section {
-        background: white;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .section-title {
-        font-size: 18px;
-        margin-top: 0;
-        margin-bottom: 15px;
-        color: #333;
+        margin-bottom: 24px;
+        color: #000;
       }
 
       textarea {
         width: 100%;
-        border-radius: 8px;
-        border: 1px solid #ddd;
+        border: 1px solid #000;
         padding: 12px;
         margin-bottom: 15px;
-        font-size: 16px;
+        font-size: 14px;
         resize: none;
+        font-family: inherit;
       }
 
-      button {
-        padding: 10px 16px;
-        background-color: #4caf50;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 16px;
-        transition: background-color 0.2s;
-      }
-
-      button:hover {
-        background-color: #45a049;
+      .media-container {
+        display: flex;
+        flex-direction: row;
+        gap: 20px;
+        margin-bottom: 24px;
       }
 
       .qr-container {
+        flex: 1;
         display: flex;
         justify-content: center;
-        margin: 20px 0;
+        margin: 0;
+        aspect-ratio: 1;
+        max-width: none;
       }
 
       #qrcode {
-        background-color: white;
-        padding: 15px;
-        border-radius: 8px;
-        text-align: center;
-        width: 350px;
-        height: 350px;
+        width: 100%;
+        height: 100%;
         display: flex;
         align-items: center;
         justify-content: center;
-        border: 1px solid #eee;
       }
 
       #qrcode canvas {
@@ -107,31 +76,14 @@
         max-height: 100%;
       }
 
-      .camera-controls {
-        display: flex;
-        gap: 10px;
-        margin-bottom: 15px;
-      }
-
-      .camera-container {
-        display: flex;
-        gap: 20px;
-        align-items: flex-start;
-      }
-
-      .protocol-description {
-        margin-left: 1rem;
-        margin-right: 1rem;
-      }
-
       #videoContainer {
+        flex: 1;
         position: relative;
         overflow: hidden;
         background-color: #000;
-        border-radius: 8px;
-        flex-shrink: 0;
         cursor: pointer;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        aspect-ratio: 1;
+        margin: 0;
       }
 
       #video {
@@ -144,39 +96,22 @@
         display: none;
       }
 
-      .message-container {
-        flex-grow: 1;
-        width: 100%;
-      }
-
-      .status {
-        margin-top: 10px;
-        font-size: 14px;
-        color: #666;
-      }
-
       .camera-overlay {
         position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
+        inset: 0;
         display: flex;
         align-items: center;
         justify-content: center;
         background-color: rgba(0, 0, 0, 0.5);
-        border-radius: 8px;
         transition: opacity 0.3s ease;
       }
 
       .camera-label {
         color: white;
         font-size: 16px;
-        font-weight: bold;
+        font-weight: 500;
         text-align: center;
         padding: 10px;
-        opacity: 1;
-        visibility: visible;
       }
 
       /* Show stop camera text on hover when camera is active */
@@ -185,63 +120,26 @@
         visibility: hidden;
       }
 
-      .camera-active:hover .camera-overlay {
-        opacity: 1;
-        visibility: visible;
-        background-color: rgba(0, 0, 0, 0.7);
-      }
-
-      /* New styles for streaming controls */
-      .streaming-controls {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-top: 15px;
-      }
-
-      .chunk-controls {
-        display: flex;
-        gap: 10px;
-      }
-
-      .chunk-info {
-        font-size: 14px;
-        color: #666;
-        display: flex;
-        align-items: center;
-      }
-
-      .chunk-size-control {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .chunk-size-control label {
-        font-size: 14px;
-        color: #666;
-      }
-
-      .chunk-size-control input {
-        width: 60px;
-        padding: 5px;
-        border-radius: 4px;
-        border: 1px solid #ddd;
+      @media (hover: hover) {
+        .camera-active:hover .camera-overlay {
+          opacity: 1;
+          visibility: visible;
+          background-color: rgba(0, 0, 0, 0.7);
+        }
       }
 
       .progress-bar-container {
-        height: 24px;
+        height: 40px;
         background-color: #f0f0f0;
-        border-radius: 5px;
         margin-top: 10px;
         overflow: hidden;
         position: relative;
-        border: 1px solid #ddd;
+        border: 1px solid #000;
       }
 
       .progress-bar {
         height: 100%;
-        background-color: #4caf50;
+        background-color: #000;
         width: 0%;
         transition: width 0.3s ease;
       }
@@ -255,10 +153,10 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #333;
-        font-size: 12px;
-        font-weight: bold;
-        text-shadow: 0 0 2px white;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 500;
+        mix-blend-mode: difference;
       }
 
       .progress-section {
@@ -273,22 +171,22 @@
 
       .progress-title {
         font-size: 14px;
-        margin-bottom: 5px;
-        color: #666;
+        margin-bottom: 8px;
+        color: #000;
+        font-weight: 500;
       }
 
       .received-text {
         margin-top: 10px;
-        padding: 10px;
+        padding: 12px;
         background-color: #f9f9f9;
-        border-radius: 5px;
-        border: 1px solid #ddd;
-        font-family: monospace;
+        border: 1px solid #000;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 14px;
         line-height: 1.4;
         white-space: pre-wrap;
         word-break: break-all;
-        height: 100px; /* Match the height of input-text */
+        height: 100px;
         overflow-y: auto;
       }
 
@@ -296,10 +194,9 @@
         margin-top: 10px;
         width: 100%;
         height: 100px;
-        border-radius: 8px;
-        border: 1px solid #ddd;
+        border: 1px solid #000;
         padding: 12px;
-        font-size: 12px;
+        font-size: 14px;
         resize: none;
         margin-bottom: 0px;
       }
@@ -321,59 +218,45 @@
       .message-log {
         max-height: 200px;
         overflow-y: auto;
-        font-family: monospace;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
         line-height: 1.4;
-        padding: 10px;
-        background-color: #f5f5f5;
-        border-radius: 8px;
-        border: 1px solid #ddd;
+        padding: 8px;
+        background-color: #fafafa;
+        border: 1px solid #000;
         margin-top: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
       }
 
       .log-entry {
-        margin-bottom: 4px;
-        padding: 4px;
-        border-radius: 2px;
+        padding: 4px 8px;
+        border: 1px solid #00000013;
       }
 
       .log-entry-outgoing {
-        background-color: #e6f7ff;
-        border-left: 3px solid #1890ff;
+        border-left: 3px solid #0070f3;
+        background-color: #f5f9ff;
       }
 
       .log-entry-incoming {
-        background-color: #f6ffed;
-        border-left: 3px solid #52c41a;
+        border-left: 3px solid #4caf50;
+        background-color: #e8f5e9;
       }
 
       .log-entry-system {
+        border-left: 3px solid #999;
         background-color: #f9f9f9;
-        border-left: 3px solid #d9d9d9;
       }
 
       .log-entry-error {
-        background-color: #fff1f0;
-        border-left: 3px solid #f5222d;
-      }
-
-      .log-entry-warning {
-        background-color: #fffbe6;
-        border-left: 3px solid #faad14;
-      }
-
-      .log-entry-debug {
-        background-color: #f0f5ff;
-        border-left: 3px solid #597ef7;
-      }
-
-      .log-entry-hash {
-        font-family: monospace;
-        font-size: 11px;
+        border-left: 3px solid #f44336;
+        background-color: #ffebee;
       }
 
       .log-timestamp {
-        color: #888;
+        color: #666;
         font-size: 10px;
         margin-right: 5px;
       }
@@ -392,11 +275,31 @@
         color: #333;
       }
 
-      .log-data {
-        margin-top: 2px;
-        color: #666;
-        font-size: 10px;
-        font-style: italic;
+      /* Mobile responsiveness */
+      @media (max-width: 768px) {
+        .title {
+          display: none;
+        }
+
+        .media-container {
+          flex-direction: column;
+          margin-bottom: 0px;
+        }
+
+        .qr-container,
+        #videoContainer {
+          width: 100%;
+          max-width: 400px;
+          margin: 0 auto;
+        }
+
+        .progress-section {
+          flex-direction: column;
+        }
+
+        .progress-column {
+          margin-bottom: 20px;
+        }
       }
     </style>
   </head>
@@ -404,43 +307,43 @@
     <div class="app-container">
       <div class="title">Data over QR</div>
 
-      <!-- Sender Section -->
-      <div class="sender-section">
+      <!-- New container for QR and camera side-by-side -->
+      <div class="media-container">
         <div class="qr-container">
           <div id="qrcode"></div>
         </div>
 
-        <!-- Camera view moved here, under the QR code -->
-        <div id="videoContainer" style="width: 320px; height: 240px; margin: 20px auto; border-radius: 12px">
+        <!-- Camera view -->
+        <div id="videoContainer">
           <video id="video" playsinline></video>
           <div id="cameraOverlay" class="camera-overlay">
             <div class="camera-label">Start Camera</div>
           </div>
         </div>
-
-        <!-- Progress bars for sending and receiving -->
-        <div class="progress-section">
-          <div class="progress-column">
-            <div class="progress-title">Sending</div>
-            <div class="progress-bar-container">
-              <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
-              <div id="sendingProgressText" class="progress-text">0/0</div>
-            </div>
-            <textarea id="txData" class="input-text">Hello from Folk Canvas!</textarea>
-            <div id="chunkSizeInfo" style="font-size: 11px; color: #666; margin-top: 5px"></div>
-          </div>
-          <div class="progress-column">
-            <div class="progress-title">Receiving</div>
-            <div class="progress-bar-container">
-              <div id="receivingProgressBar" class="progress-bar" style="width: 0%"></div>
-              <div id="receivingProgressText" class="progress-text">0/0</div>
-            </div>
-            <div id="receivedTextDisplay" class="received-text"></div>
-          </div>
-        </div>
-
-        <div id="messageLog" class="message-log"></div>
       </div>
+
+      <!-- Progress bars for sending and receiving -->
+      <div class="progress-section">
+        <div class="progress-column">
+          <div class="progress-title">Sending</div>
+          <div class="progress-bar-container">
+            <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
+            <div id="sendingProgressText" class="progress-text">0/0</div>
+          </div>
+          <textarea id="txData" class="input-text">Hello from Folk Canvas!</textarea>
+          <div id="chunkSizeInfo" style="font-size: 11px; color: #666; margin-top: 5px"></div>
+        </div>
+        <div class="progress-column">
+          <div class="progress-title">Receiving</div>
+          <div class="progress-bar-container">
+            <div id="receivingProgressBar" class="progress-bar" style="width: 0%"></div>
+            <div id="receivingProgressText" class="progress-text">0/0</div>
+          </div>
+          <div id="receivedTextDisplay" class="received-text"></div>
+        </div>
+      </div>
+
+      <div id="messageLog" class="message-log"></div>
     </div>
 
     <canvas id="canvas"></canvas>
@@ -494,8 +397,6 @@
         // Initialize UI
         elements.chunkSizeInfo.textContent = `Using default chunk size of 100 bytes`;
         updateQRCode('Hello world', elements.qrcodeContainer);
-        logMessage('system', 'info', 'QR Code Protocol initialized', elements.messageLog);
-        logMessage('system', 'info', 'Ready to scan QR codes - click the camera view to start', elements.messageLog);
 
         // Set initial message from textarea
         const initialText = elements.txData.value.trim();
@@ -507,7 +408,6 @@
       // Setup QRTP protocol event handlers
       function setupProtocolEvents(elements) {
         qrProtocol.on('chunk', (event) => {
-          logMessage('incoming', 'chunk', `Received chunk ${event.index + 1}/${event.total}`, elements.messageLog);
           updateReceivedText(event.payload, false, elements.receivedTextDisplay);
           updateProgress(event.index + 1, event.total, elements.receivingProgressBar, elements.receivingProgressText);
         });
@@ -533,8 +433,13 @@
           updateQRCode(event.data, elements.qrcodeContainer);
         });
 
-        qrProtocol.on('complete', () => {
-          logMessage('system', 'info', 'Transmission complete!', elements.messageLog);
+        qrProtocol.on('complete', (event) => {
+          if (event && event.payload) {
+            logMessage('incoming', 'complete', `Message received successfully!`, elements.messageLog);
+            updateReceivedText(event.payload, true, elements.receivedTextDisplay);
+          } else {
+            logMessage('outgoing', 'complete', `Message sent successfully!`, elements.messageLog);
+          }
         });
       }
 
@@ -550,8 +455,6 @@
 
           // Only reset the receiving progress
           updateProgress(0, 0, elements.receivingProgressBar, elements.receivingProgressText);
-
-          logMessage('system', 'info', 'Protocol state reset', elements.messageLog);
         });
 
         // Camera toggle handler
@@ -567,7 +470,6 @@
       // Camera control functions
       function startCamera(elements) {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          logMessage('system', 'info', 'Starting camera...', elements.messageLog);
           navigator.mediaDevices
             .getUserMedia({ video: { facingMode: 'user' } })
             .then(function (stream) {
@@ -580,16 +482,9 @@
               elements.video.onloadedmetadata = function () {
                 elements.canvas.width = elements.video.videoWidth;
                 elements.canvas.height = elements.video.videoHeight;
-                logMessage(
-                  'system',
-                  'info',
-                  `Camera started, resolution: ${elements.video.videoWidth}x${elements.video.videoHeight}`,
-                  elements.messageLog,
-                );
               };
 
               // Start scanning for QR codes
-              logMessage('system', 'info', 'Scanning for QR codes...', elements.messageLog);
               scanInterval = setInterval(() => scanQrCode(elements), 100);
 
               // Update UI
@@ -661,13 +556,15 @@
         const canvas = document.createElement('canvas');
         container.appendChild(canvas);
 
+        // Calculate container size to determine QR code size
+        const containerWidth = container.clientWidth;
+
         QRCode.toCanvas(
           canvas,
           qrData,
           {
-            width: 320,
-            margin: 1,
-            color: { dark: '#000', light: '#fff' },
+            width: containerWidth, // Use the container width instead of fixed 400px
+            margin: 0,
           },
           function (error) {
             if (error) {
