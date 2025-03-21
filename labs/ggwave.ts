@@ -1,18 +1,8 @@
 /**
- * A wrapper class for ggwave audio communication functionality.
- * Provides a simpler interface for sending and receiving data over sound.
+ * A wrapper class for ggwave.
  */
 
 import { ggwave_factory } from '@labs/utils/ggwave.js';
-
-// Operating modes for GGWave
-interface GGWaveOperatingModes {
-  GGWAVE_OPERATING_MODE_RX: 2;
-  GGWAVE_OPERATING_MODE_TX: 4;
-  GGWAVE_OPERATING_MODE_RX_AND_TX: 6;
-  GGWAVE_OPERATING_MODE_TX_ONLY_TONES: 8;
-  GGWAVE_OPERATING_MODE_USE_DSS: 16;
-}
 
 // Protocol ID structure
 interface GGWaveProtocolId {
@@ -26,7 +16,7 @@ interface GGWaveParameters {
   // Add more parameters as we discover them
 }
 
-interface GGWave {
+interface iGGWave {
   // Constants and modes
   readonly ProtocolId: GGWaveProtocolId;
   readonly GGWAVE_OPERATING_MODE_RX: 2;
@@ -66,7 +56,7 @@ interface GGWave {
   HEAPF64: Float64Array;
 }
 
-export class FolkAudioWave {
+export class GGWave {
   // Protocol constants
   static readonly GGWAVE_PROTOCOL_AUDIBLE_NORMAL = 0;
   static readonly GGWAVE_PROTOCOL_AUDIBLE_FAST = 1;
@@ -82,7 +72,7 @@ export class FolkAudioWave {
   static readonly SAMPLE_RATE = 48000;
 
   #context: AudioContext | null = null;
-  #ggwave: GGWave | null = null;
+  #ggwave: iGGWave | null = null;
   #instance: any = null;
   #mediaStream: MediaStreamAudioSourceNode | null = null;
   #recorder: ScriptProcessorNode | null = null;
@@ -119,7 +109,7 @@ export class FolkAudioWave {
       throw new Error('Failed to initialize GGWave');
     }
 
-    this.setProtocol(FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
+    this.setProtocol(GGWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
 
     // Create a single AudioContext at initialization
     this.#context = new AudioContext();

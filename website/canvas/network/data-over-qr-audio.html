@@ -541,14 +541,8 @@
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
-    <!-- Import QRTPB module -->
     <script type="module">
-      import { QRTPB } from '@labs/QRTPB.ts';
-      import { FolkAudioWave } from '@labs/folk-audio-wave.ts';
-
-      // Make QRTPB available globally for debugging
-      window.QRTPB = QRTPB;
-      window.FolkAudioWave = FolkAudioWave;
+      import { QRTPB } from '@labs/QRTP-B.ts';
 
       // Core elements and state
       let videoStream = null;

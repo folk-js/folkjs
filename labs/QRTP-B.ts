@@ -1,5 +1,5 @@
 import EventEmitter from 'eventemitter3';
-import { FolkAudioWave } from './folk-audio-wave';
+import { GGWave } from './ggwave';
 import { hash } from './utils/hash';
 import { header } from './utils/header';
 
@@ -23,7 +23,7 @@ export class QRTPB extends EventEmitter {
   #header = header('QRTPB<index:num>/<total:num>');
   #ackHeader = header('QB<ranges:numPairs>');
   #cycleTimer: NodeJS.Timer | null = null;
-  #audioWave: FolkAudioWave | null = null;
+  #audioWave: GGWave | null = null;
   #audioAckTimer: NodeJS.Timer | null = null; // Timer for periodic audio acknowledgments
   #role: 'sender' | 'receiver' | null = null;
   #cycleInterval: number = 600; // Cycle every 0.6 seconds by default
@@ -36,7 +36,7 @@ export class QRTPB extends EventEmitter {
 
   constructor() {
     super();
-    this.#audioWave = new FolkAudioWave();
+    this.#audioWave = new GGWave();
   }
 
   /**
@@ -100,7 +100,7 @@ export class QRTPB extends EventEmitter {
     // Initialize audio for sending acknowledgments
     if (!this.#isAudioInitialized) {
       await this.#audioWave!.ready();
-      this.#audioWave!.setProtocol(FolkAudioWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
+      this.#audioWave!.setProtocol(GGWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
 
       // Play a silent or very quiet tone to "warm up" the audio system
       await this.warmUpAudio();
