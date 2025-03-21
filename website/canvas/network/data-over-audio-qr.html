@@ -714,13 +714,21 @@
           logMessage(
             'outgoing',
             'audio',
-            `Sending audio ack for ${event.indices.length} chunks: [${event.indices.join(', ')}]`,
+            `Sending audio ack for ${event.indices ? event.indices.length : 0} chunks` +
+              (event.ranges ? ` (${event.ranges.length} ranges)` : '') +
+              (event.indices ? `: [${event.indices.join(', ')}]` : ''),
             elements.messageLog,
           );
         });
 
         qrProtocol.on('audioSent', (event) => {
-          logMessage('outgoing', 'audio', `Audio ack sent successfully`, elements.messageLog);
+          logMessage(
+            'outgoing',
+            'audio',
+            `Audio ack sent successfully` +
+              (event.totalIndices ? ` (${event.totalIndices} indices in ${event.ranges.length} ranges)` : ''),
+            elements.messageLog,
+          );
         });
 
         qrProtocol.on('qrUpdate', (event) => {

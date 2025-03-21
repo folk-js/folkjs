@@ -24,14 +24,14 @@ export class QRTPB extends EventEmitter {
   #ackDebounceTimer: any = null; // Timer for debouncing audio acknowledgments
   #debounceTime: number = 800; // Wait this many ms to accumulate indices before sending
   #header = header('QRTPB<index:num>/<total:num>');
-  #ackHeader = header('QB<indices:nums>');
+  #ackHeader = header('QB<ranges:numPairs>');
   #cycleTimer: NodeJS.Timer | null = null;
   #audioWave: FolkAudioWave | null = null;
   #role: 'sender' | 'receiver' | null = null;
   #cycleInterval: number = 600; // Cycle every 1 second by default
   #isAudioInitialized: boolean = false;
   #isAudioSending: boolean = false;
-  #audioQueue: number[][] = []; // Queue of indices to send
+  #audioQueue: [number, number][][] = []; // Queue of ranges to send (each item is an array of [start, end] pairs)
   #audioVolume: number = 80; // Increased volume (1-100)
   #totalChunks: number = 0; // Total number of chunks
 
@@ -308,6 +308,55 @@ export class QRTPB extends EventEmitter {
   }
 
   /**
+   * Convert array of indices to ranges for more efficient transmission
+   * e.g. [1,2,3,4,5,9,10,11,15] becomes [[1,5],[9,11],[15,15]]
+   */
+  #indicesToRanges(indices: number[]): [number, number][] {
+    if (indices.length === 0) return [];
+
+    // Sort the indices first
+    const sortedIndices = [...indices].sort((a, b) => a - b);
+
+    const ranges: [number, number][] = [];
+    let rangeStart = sortedIndices[0];
+    let rangeLast = sortedIndices[0];
+
+    for (let i = 1; i < sortedIndices.length; i++) {
+      const current = sortedIndices[i];
+      // If current index is consecutive, extend the range
+      if (current === rangeLast + 1) {
+        rangeLast = current;
+      } else {
+        // Otherwise close the current range and start a new one
+        ranges.push([rangeStart, rangeLast]);
+        rangeStart = current;
+        rangeLast = current;
+      }
+    }
+
+    // Add the last range
+    ranges.push([rangeStart, rangeLast]);
+
+    return ranges;
+  }
+
+  /**
+   * Convert ranges back to individual indices
+   * e.g. [[1,5],[9,11],[15,15]] becomes [1,2,3,4,5,9,10,11,15]
+   */
+  #rangesToIndices(ranges: [number, number][]): number[] {
+    const indices: number[] = [];
+
+    for (const [start, end] of ranges) {
+      for (let i = start; i <= end; i++) {
+        indices.push(i);
+      }
+    }
+
+    return indices;
+  }
+
+  /**
    * Send list of received indices via audio
    */
   async #sendAudioAck(indicesToAcknowledge?: number[]): Promise<void> {
@@ -337,8 +386,9 @@ export class QRTPB extends EventEmitter {
     // Mark these indices as acknowledged
     indices.forEach((index) => this.#acknowledgedIndices.add(index));
 
-    // Queue the acknowledgments
-    this.#enqueueAudioMessage(indices);
+    // Convert indices to ranges and queue them
+    const ranges = this.#indicesToRanges(indices);
+    this.#enqueueAudioMessage(ranges);
 
     // Process queue if not already sending
     // Use requestAnimationFrame to ensure better timing
@@ -348,10 +398,10 @@ export class QRTPB extends EventEmitter {
   }
 
   /**
-   * Add indices to the audio queue
+   * Add ranges to the audio queue
    */
-  #enqueueAudioMessage(indices: number[]): void {
-    if (indices.length === 0) return;
+  #enqueueAudioMessage(ranges: [number, number][]): void {
+    if (ranges.length === 0) return;
 
     // Check if queue already has too many items (prevent queue explosion)
     if (this.#audioQueue.length > 5) {
@@ -359,41 +409,42 @@ export class QRTPB extends EventEmitter {
         `Audio queue is getting too large (${this.#audioQueue.length} items). Merging batches to prevent backlog.`,
       );
 
-      // Merge all queued indices with the new ones
+      // Convert all queued ranges and new ranges to indices
       const allQueuedIndices = new Set<number>();
 
-      // Add all existing queued indices
+      // Add all existing queued ranges
       this.#audioQueue.forEach((batch) => {
-        batch.forEach((index) => allQueuedIndices.add(index));
+        this.#rangesToIndices(batch).forEach((index) => allQueuedIndices.add(index));
       });
 
-      // Add new indices
-      indices.forEach((index) => allQueuedIndices.add(index));
+      // Add new ranges
+      this.#rangesToIndices(ranges).forEach((index) => allQueuedIndices.add(index));
 
-      // Clear the queue and add the merged batch
+      // Clear the queue
       this.#audioQueue = [];
 
-      // Convert to array and sort
+      // Convert to array, sort, and convert back to ranges
       const mergedIndices = Array.from(allQueuedIndices).sort((a, b) => a - b);
+      const mergedRanges = this.#indicesToRanges(mergedIndices);
 
-      // Split into smaller batches if needed (max 10 indices per batch)
-      const MAX_INDICES_PER_BATCH = 10;
-      for (let i = 0; i < mergedIndices.length; i += MAX_INDICES_PER_BATCH) {
-        const batch = mergedIndices.slice(i, i + MAX_INDICES_PER_BATCH);
+      // Split into smaller batches if needed (max 5 ranges per batch for reliability)
+      const MAX_RANGES_PER_BATCH = 5;
+      for (let i = 0; i < mergedRanges.length; i += MAX_RANGES_PER_BATCH) {
+        const batch = mergedRanges.slice(i, i + MAX_RANGES_PER_BATCH);
         this.#audioQueue.push(batch);
       }
     } else {
-      // Normal case: just add these indices to the queue
-      // But ensure no batch is larger than 10 indices
-      const MAX_INDICES_PER_BATCH = 10;
-      if (indices.length > MAX_INDICES_PER_BATCH) {
+      // Normal case: just add these ranges to the queue
+      // But ensure no batch is larger than 5 ranges
+      const MAX_RANGES_PER_BATCH = 5;
+      if (ranges.length > MAX_RANGES_PER_BATCH) {
         // Split into smaller batches
-        for (let i = 0; i < indices.length; i += MAX_INDICES_PER_BATCH) {
-          const batch = indices.slice(i, i + MAX_INDICES_PER_BATCH);
+        for (let i = 0; i < ranges.length; i += MAX_RANGES_PER_BATCH) {
+          const batch = ranges.slice(i, i + MAX_RANGES_PER_BATCH);
           this.#audioQueue.push(batch);
         }
       } else {
-        this.#audioQueue.push(indices);
+        this.#audioQueue.push(ranges);
       }
     }
   }
@@ -409,13 +460,19 @@ export class QRTPB extends EventEmitter {
     let processingError = false;
 
     try {
-      const indices = this.#audioQueue.shift();
-      if (indices && indices.length > 0 && this.#audioWave) {
-        const ackMessage = this.#ackHeader.encode({ indices });
+      const ranges = this.#audioQueue.shift();
+      if (ranges && ranges.length > 0 && this.#audioWave) {
+        const ackMessage = this.#ackHeader.encode({ ranges });
 
-        this.emit('audioSending', { indices });
+        // Calculate the total indices being acknowledged in this message
+        const totalIndices = ranges.reduce((sum, [start, end]) => sum + (end - start + 1), 0);
+
+        // Convert ranges back to indices for backward compatibility
+        const indices = this.#rangesToIndices(ranges);
+
+        this.emit('audioSending', { ranges, totalIndices, indices });
         await this.#audioWave.send(ackMessage, this.#audioVolume);
-        this.emit('audioSent', { indices });
+        this.emit('audioSent', { ranges, totalIndices, indices });
       }
     } catch (error) {
       processingError = true;
@@ -447,7 +504,11 @@ export class QRTPB extends EventEmitter {
 
     try {
       let hasNewAcks = false;
-      for (const index of packet.indices) {
+
+      // Convert ranges to individual indices
+      const indices = this.#rangesToIndices(packet.ranges);
+
+      for (const index of indices) {
         if (!this.#receivedIndices.has(index) && index >= 0 && index < this.#totalChunks) {
           this.#receivedIndices.add(index);
           hasNewAcks = true;
