@@ -32,14 +32,6 @@
         background-color: #f8f9fa;
       }
 
-      folk-space#main {
-        width: 100%;
-        height: 100%;
-        background: #2a2b2e;
-        --grid-dot-color: 255, 255, 255;
-        overflow: hidden;
-      }
-
       folk-shape {
         background: #fff;
         border: 1px solid #ccc;
@@ -47,15 +39,25 @@
         box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
       }
 
-      #space-container {
+      #main {
+        width: 100%;
+        height: 100%;
+        background: #2a2b2e;
+        --grid-dot-color: 255, 255, 255;
+        overflow: hidden;
         padding: 0;
-        transition: border-radius 0.5s ease-in-out;
+        position: relative;
+        top: 0;
+        left: 0;
+        transform-origin: center;
       }
-
-      #space-container.circle {
+      #main.circle {
         width: 50px !important;
         height: 50px !important;
         border-radius: 50%;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
       }
     </style>
   </head>
@@ -63,12 +65,10 @@
     <folk-space id="meta">
       <folk-shape x="50" y="50" width="300" height="300">Meta</folk-shape>
       <folk-shape x="400" y="50" width="300" height="300">This is a meta space</folk-shape>
-      <folk-shape id="space-container" x="100" y="400" width="600" height="400">
-        <folk-space id="main">
-          <folk-shape x="50" y="50" width="300" height="300">Hello world</folk-shape>
-          <folk-shape x="400" y="50" width="300" height="300">Lorem ipsum dolor sit amet</folk-shape>
-        </folk-space>
-      </folk-shape>
+      <folk-space id="main">
+        <folk-shape x="50" y="50" width="300" height="300">Hello world</folk-shape>
+        <folk-shape x="400" y="50" width="300" height="300">Lorem ipsum dolor sit amet</folk-shape>
+      </folk-space>
     </folk-space>
 
     <script type="module">
@@ -79,21 +79,69 @@
       document.addEventListener('keydown', (e) => {
         if (e.code === 'Space' && !e.repeat) {
           e.preventDefault(); // Prevent page scroll
-          const container = document.getElementById('space-container');
+          const container = document.getElementById('main');
+          const isCircle = container.classList.contains('circle');
 
-          // Add width/height transitions before adding circle class
-          if (!container.classList.contains('circle')) {
-            container.style.transition =
-              'width 0.5s ease-in-out, height 0.5s ease-in-out, border-radius 0.5s ease-in-out';
+          // Store original scale and position before any transitions if not already stored
+          if (!container.dataset.originalScale) {
+            container.dataset.originalScale = container.scale || '1';
+            container.dataset.originalX = container.x || '0';
+            container.dataset.originalY = container.y || '0';
           }
 
+          // Get current dimensions of the container before any changes
+          const rect = container.getBoundingClientRect();
+          const originalWidth = rect.width;
+          const originalHeight = rect.height;
+          const circleSize = 50; // The target circle size
+
+          // Calculate the correct scale factor based on container dimensions
+          const dimensionRatio = circleSize / Math.min(originalWidth, originalHeight);
+
+          // Calculate the target scale only - we'll let CSS handle positioning
+          const targetScale = isCircle
+            ? parseFloat(container.dataset.originalScale || '1')
+            : parseFloat(container.dataset.originalScale || '1') * dimensionRatio;
+
+          // Add transitions for CSS properties
+          container.style.transition =
+            'width 0.5s ease-in-out, height 0.5s ease-in-out, border-radius 0.5s ease-in-out, transform 0.5s ease-in-out, top 0.5s ease-in-out, left 0.5s ease-in-out';
+
+          // Get current scale
+          const currentScale = parseFloat(container.scale) || 1;
+
+          // Toggle the class first so the CSS positioning takes effect
           container.classList.toggle('circle');
 
-          // Remove width/height transitions after animation
+          // Manually animate only the scale property
+          const startTime = performance.now();
+          const duration = 500; // 0.5s to match CSS transitions
+
+          function animateScale(timestamp) {
+            const elapsed = timestamp - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const easeProgress = 0.5 - Math.cos(progress * Math.PI) / 2; // Ease in-out
+
+            // Calculate intermediate scale value
+            const currentScaleValue = currentScale + (targetScale - currentScale) * easeProgress;
+
+            // Apply only the scale value
+            container.scale = currentScaleValue;
+
+            // Continue animation if not complete
+            if (progress < 1) {
+              requestAnimationFrame(animateScale);
+            }
+          }
+
+          // Start the animation
+          requestAnimationFrame(animateScale);
+
+          // Remove transitions after animation
           container.addEventListener(
             'transitionend',
             () => {
-              container.style.transition = 'border-radius 0.5s ease-in-out';
+              container.style.transition = '';
             },
             { once: true },
           );
