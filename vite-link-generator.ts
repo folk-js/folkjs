@@ -14,11 +14,10 @@ const CONFIG = {
 
 // A canvas file with its metadata
 interface CanvasFile {
-  path: string; // Path relative to base dir, used for URL
+  fullPath: string; // Full path to the file (needed for vite.config.ts)
+  relativePath: string; // Path relative to base dir
   group: string | null; // Directory name or null if in root
   displayName: string; // Human-readable name
-  fullPath: string; // Full path to the file (needed for vite.config.ts)
-  relativePath: string; // Path relative to base dir (for compatibility)
 }
 
 /**
@@ -44,9 +43,8 @@ export function getCanvasFiles(baseDir: string): CanvasFile[] {
         const dirName = dirname(relativePath);
 
         canvasFiles.push({
-          path: relativePath,
-          relativePath: relativePath,
-          fullPath: fullPath,
+          fullPath,
+          relativePath,
           group: dirName === '.' ? null : dirName,
           displayName: basename(entry.name, CONFIG.htmlExtension).replaceAll('-', ' '),
         });
@@ -58,6 +56,35 @@ export function getCanvasFiles(baseDir: string): CanvasFile[] {
   return canvasFiles;
 }
 
+/**
+ * Generate a link for a canvas file
+ */
+function formatLink(file: CanvasFile): string {
+  const url = `/${CONFIG.canvasPath}/${file.relativePath.replace(CONFIG.htmlExtension, '')}`;
+  return `<li><a href="${url}">${file.displayName}</a></li>`;
+}
+
+/**
+ * Generate links for a group of files
+ */
+function generateGroupLinks(groupName: string | null, files: CanvasFile[]): string {
+  // Sort files by display name
+  const sortedFiles = [...files].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const linksHtml = sortedFiles.map(formatLink).join('\n');
+
+  // For root files, just return the links
+  if (groupName === null) {
+    return linksHtml;
+  }
+
+  // For grouped files, add a heading
+  const groupTitle = groupName.replaceAll('-', ' ');
+  return `\n<h2 id="${groupName}">${groupTitle}</h2>\n<ul>${linksHtml}</ul>`;
+}
+
+/**
+ * Vite plugin to generate links in the canvas index page
+ */
 export const linkGenerator = (baseDir: string): Plugin => {
   return {
     name: 'link-generator',
@@ -67,70 +94,40 @@ export const linkGenerator = (baseDir: string): Plugin => {
         return html;
       }
 
-      // --- Step 1: Find all canvas files ---
-      const canvasFiles = getCanvasFiles(baseDir);
+      // Get all valid canvas files (excluding those in excluded groups)
+      const validFiles = getCanvasFiles(baseDir).filter(
+        (file) => !file.group || !CONFIG.excludedGroups.includes(file.group),
+      );
 
-      // --- Step 2: Filter and prepare files ---
+      if (validFiles.length === 0) {
+        return html;
+      }
 
-      // Remove files in excluded groups
-      const validFiles = canvasFiles.filter((file) => !file.group || !CONFIG.excludedGroups.includes(file.group));
+      // Group files by their group
+      const filesByGroup: Record<string, CanvasFile[]> = {};
+      validFiles.forEach((file) => {
+        const group = file.group ?? 'root';
+        filesByGroup[group] = filesByGroup[group] || [];
+        filesByGroup[group].push(file);
+      });
 
-      // Separate files into ungrouped and grouped
-      const ungroupedFiles = validFiles.filter((file) => file.group === null);
-      const groupedFiles = validFiles.filter((file) => file.group !== null);
-
-      // --- Step 3: Generate HTML ---
-
-      // Format a single link
-      const formatLink = (file: CanvasFile) => {
-        const url = `/${CONFIG.canvasPath}/${file.path.replace(CONFIG.htmlExtension, '')}`;
-        return `<li><a href="${url}">${file.displayName}</a></li>`;
-      };
-
-      // Generate HTML for ungrouped files
+      // Generate HTML for each group
       let resultHtml = '';
 
-      if (ungroupedFiles.length > 0) {
-        // Sort by display name
-        ungroupedFiles.sort((a, b) => a.displayName.localeCompare(b.displayName));
-
-        // Create HTML links
-        const ungroupedLinksHtml = ungroupedFiles.map(formatLink).join('\n');
-        resultHtml += ungroupedLinksHtml;
+      // Add root files first if they exist
+      if (filesByGroup['root']) {
+        resultHtml += generateGroupLinks(null, filesByGroup['root']);
+        delete filesByGroup['root'];
       }
 
-      // Generate HTML for grouped files
-      if (groupedFiles.length > 0) {
-        // Create a map of group name -> files
-        const groupMap: Record<string, CanvasFile[]> = {};
-
-        // Group files by their group name
-        groupedFiles.forEach((file) => {
-          const group = file.group as string;
-          groupMap[group] = groupMap[group] || [];
-          groupMap[group].push(file);
+      // Add all other groups in alphabetical order
+      Object.keys(filesByGroup)
+        .sort()
+        .forEach((groupName) => {
+          resultHtml += generateGroupLinks(groupName, filesByGroup[groupName]);
         });
 
-        // Sort group names alphabetically
-        const sortedGroupNames = Object.keys(groupMap).sort();
-
-        // Generate HTML for each group
-        for (const groupName of sortedGroupNames) {
-          const groupTitle = groupName.replaceAll('-', ' ');
-          const groupFiles = groupMap[groupName];
-
-          // Sort files in this group by display name
-          groupFiles.sort((a, b) => a.displayName.localeCompare(b.displayName));
-
-          // Create links for this group
-          const groupLinksHtml = groupFiles.map(formatLink).join('\n');
-
-          // Add group heading and links to result
-          resultHtml += `\n<h2 id="${groupName}">${groupTitle}</h2>\n<ul>${groupLinksHtml}</ul>`;
-        }
-      }
-
-      // --- Step 4: Insert HTML into template ---
+      // Insert HTML into template
       return html.replace(CONFIG.templateMarker, resultHtml);
     },
   };

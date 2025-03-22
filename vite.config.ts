@@ -1,78 +1,42 @@
-import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import htmlGenerator from 'remark-html';
-import markdownParser from 'remark-parse';
-import wikiLink from 'remark-wiki-link';
-import { unified } from 'unified';
-import { defineConfig, Plugin } from 'vite';
+import { resolve } from 'node:path';
+import { defineConfig } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import wasm from 'vite-plugin-wasm';
 import tsconfigPaths from 'vite-tsconfig-paths';
+
+// Local plugins
+import { cleanUrlHandler } from './vite-clean-urls';
 import { getCanvasFiles, linkGenerator } from './vite-link-generator';
-
-function remark(): Plugin {
-  const processor = unified()
-    .use(markdownParser)
-    .use(htmlGenerator)
-    .use(wikiLink, {
-      pageResolver: (name: string) => [name],
-      hrefTemplate: (permalink: string) => `#${permalink}`,
-    });
-
-  return {
-    name: 'vite-remark-html',
-    async transform(code, id) {
-      if (id.endsWith('.md')) {
-        const result = await processor.process(code);
-        return {
-          code: `export default ` + JSON.stringify(result.toString('utf8')),
-          map: { mappings: '' },
-        };
-      }
-    },
-  };
-}
+import { remark } from './vite-remark-md';
 
 const websiteDir = resolve(__dirname, './website');
 const canvasWebsiteDir = resolve(__dirname, './website/canvas');
 
-// Simplified clean URL handler
-function cleanUrlHandler(): Plugin {
-  return {
-    name: 'clean-url-handler',
-    configureServer(server) {
-      return () => {
-        server.middlewares.use((req, res, next) => {
-          const url = req.originalUrl || '/';
-
-          // Skip assets and root URL
-          if (url === '/' || url.includes('.')) {
-            return next();
-          }
-
-          // Redirect /dir to /dir/ if directory exists with index.html
-          if (!url.endsWith('/') && existsSync(join(websiteDir, url, 'index.html'))) {
-            res.writeHead(301, { Location: `${url}/` });
-            return res.end();
-          }
-
-          // Try .html version for clean URLs
-          if (!url.endsWith('/') && existsSync(join(websiteDir, `${url}.html`))) {
-            req.url = `${url}.html`;
-          }
-
-          next();
-        });
-      };
-    },
+function getEntryPoints() {
+  // Main index
+  const entries: Record<string, string> = {
+    index: resolve(websiteDir, 'index.html'),
   };
+
+  // Add site-level folders
+  ['file-space', 'hyperzoom', 'canvas'].forEach((section) => {
+    entries[section] = resolve(websiteDir, section, 'index.html');
+  });
+
+  // Add all canvas files
+  getCanvasFiles(canvasWebsiteDir).forEach((file) => {
+    const key = `canvas/${file.relativePath.replace('.html', '')}`;
+    entries[key] = resolve(canvasWebsiteDir, file.fullPath);
+  });
+
+  return entries;
 }
 
 export default defineConfig({
   root: 'website',
   plugins: [
-    cleanUrlHandler(),
+    cleanUrlHandler(websiteDir),
     linkGenerator(canvasWebsiteDir),
     mkcert(),
     wasm(),
@@ -86,28 +50,7 @@ export default defineConfig({
   build: {
     target: 'esnext',
     rollupOptions: {
-      input: {
-        index: resolve(__dirname, './website/index.html'),
-        fileSpace: resolve(__dirname, './website/file-space/index.html'),
-        hyperzoom: resolve(__dirname, './website/hyperzoom/index.html'),
-        canvas: resolve(__dirname, './website/canvas/index.html'),
-        ...getCanvasFiles(canvasWebsiteDir).reduce(
-          (acc, file) => {
-            const cleanPath = file.relativePath.replace('.html', '');
-            acc[`canvas/${cleanPath}`] = resolve(canvasWebsiteDir, file.fullPath);
-            return acc;
-          },
-          {} as Record<string, string>,
-        ),
-      },
-      output: {
-        entryFileNames: 'assets/[name].[hash].js',
-        chunkFileNames: 'assets/[name].[hash].js',
-        assetFileNames: 'assets/[name].[hash].[ext]',
-      },
-    },
-    modulePreload: {
-      polyfill: false,
+      input: getEntryPoints(),
     },
     outDir: './dist',
     emptyOutDir: true,
