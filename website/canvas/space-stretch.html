@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <title>Folk Shape Demo</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        position: relative;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior-x: none;
+        touch-action: none;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      folk-space {
+        width: 100%;
+        height: 100%;
+        background-color: #f8f9fa;
+        border: 1px solid #ccc;
+      }
+
+      folk-space#main {
+        width: 100%;
+        height: 100%;
+        background: #fff;
+        overflow: hidden;
+      }
+
+      folk-shape {
+        background: #fff;
+        border: 1px solid #ccc;
+        padding: 12px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        overflow: visible;
+      }
+
+      #space-container {
+        padding: 0;
+        transition: border-radius 0.5s ease-in-out;
+      }
+
+      #space-container.circle {
+        width: 50px !important;
+        height: 50px !important;
+        border-radius: 50%;
+      }
+    </style>
+  </head>
+  <body>
+    <folk-space id="meta">
+      <folk-shape x="50" y="50" width="300" height="300">Meta</folk-shape>
+      <folk-shape x="400" y="50" width="300" height="300">This is a meta space</folk-shape>
+      <folk-shape id="space-container" x="100" y="400" width="600" height="400">
+        <folk-space id="main">
+          <folk-shape x="50" y="50" width="300" height="300">Hello world</folk-shape>
+          <folk-shape x="400" y="50" width="300" height="300">Lorem ipsum dolor sit amet</folk-shape>
+        </folk-space>
+      </folk-shape>
+    </folk-space>
+
+    <script type="module">
+      import '@labs/standalone/folk-space.ts';
+      import '@labs/standalone/folk-shape.ts';
+
+      // Add event listener for spacebar
+      document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && !e.repeat) {
+          e.preventDefault(); // Prevent page scroll
+          const container = document.getElementById('space-container');
+
+          // Add width/height transitions before adding circle class
+          if (!container.classList.contains('circle')) {
+            container.style.transition =
+              'width 0.5s ease-in-out, height 0.5s ease-in-out, border-radius 0.5s ease-in-out';
+          }
+
+          container.classList.toggle('circle');
+
+          // Remove width/height transitions after animation
+          container.addEventListener(
+            'transitionend',
+            () => {
+              container.style.transition = 'border-radius 0.5s ease-in-out';
+            },
+            { once: true },
+          );
+        }
+      });
+    </script>
+  </body>
+</html>

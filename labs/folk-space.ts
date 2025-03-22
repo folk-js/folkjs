@@ -61,7 +61,8 @@ export class FolkSpace extends FolkElement implements IPointTransform {
       --bg-color-5: rgba(0, 0, 0, clamp(0, calc(0.5 * var(--scale) - 2), 1));
 
       /* Draw points for each level of grid as set of a background image. First background is on top.*/
-      background-image: radial-gradient(var(--circle), var(--bg-color-1) var(--circle-width), transparent 0),
+      background-image:
+        radial-gradient(var(--circle), var(--bg-color-1) var(--circle-width), transparent 0),
         radial-gradient(var(--circle), var(--bg-color-2) var(--circle-width), transparent 0),
         radial-gradient(var(--circle), var(--bg-color-3) var(--circle-width), transparent 0),
         radial-gradient(var(--circle), var(--bg-color-4) var(--circle-width), transparent 0),
@@ -234,8 +235,6 @@ export class FolkSpace extends FolkElement implements IPointTransform {
   connectedCallback(): void {
     super.connectedCallback();
 
-    // FolkElement (ReactiveElement) already creates a shadow root
-    // So we don't need to create one, just access it
     const shadowRoot = this.shadowRoot;
     if (!shadowRoot) {
       console.error('Shadow root not found');
@@ -248,11 +247,9 @@ export class FolkSpace extends FolkElement implements IPointTransform {
     // Create grid if needed
     this.#updateGrid();
 
-    // Set up event listeners
-    window.addEventListener('wheel', this.#onWheel, { passive: false });
-    // Add mouseup listener to reset panning state
-    window.addEventListener('mouseup', this.#onMouseUp);
-    // Add blur listener to reset panning state if window loses focus
+    // Set up event listeners directly on the element instead of window
+    this.addEventListener('wheel', this.#onWheel, { passive: false });
+    this.addEventListener('mouseup', this.#onMouseUp);
     window.addEventListener('blur', this.#onBlur);
 
     // Add touch event listeners
@@ -264,11 +261,10 @@ export class FolkSpace extends FolkElement implements IPointTransform {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    window.removeEventListener('wheel', this.#onWheel);
-    window.removeEventListener('mouseup', this.#onMouseUp);
+    this.removeEventListener('wheel', this.#onWheel);
+    this.removeEventListener('mouseup', this.#onMouseUp);
     window.removeEventListener('blur', this.#onBlur);
 
-    // Remove touch event listeners
     this.removeEventListener('touchstart', this.#onTouchStart);
     this.removeEventListener('touchmove', this.#onTouchMove);
     this.removeEventListener('touchend', this.#onTouchEnd);
@@ -304,6 +300,9 @@ export class FolkSpace extends FolkElement implements IPointTransform {
   }
 
   #onWheel = (event: WheelEvent) => {
+    // Stop event from bubbling to parent spaces
+    event.stopPropagation();
+
     // If we're already panning, continue regardless of what element we're over
     if (this.#isPanning) {
       event.preventDefault();
@@ -356,14 +355,17 @@ export class FolkSpace extends FolkElement implements IPointTransform {
     let el = wheelEvent.target as Element | null;
 
     while (el) {
-      if (
-        el === this &&
-        this.offsetLeft < wheelEvent.clientX &&
-        wheelEvent.clientX < this.offsetLeft + this.offsetWidth &&
-        this.offsetTop < wheelEvent.clientY &&
-        wheelEvent.clientY < this.offsetTop + this.offsetHeight
-      )
-        return true;
+      if (el === this) {
+        const rect = this.getBoundingClientRect();
+        if (
+          rect.left < wheelEvent.clientX &&
+          wheelEvent.clientX < rect.right &&
+          rect.top < wheelEvent.clientY &&
+          wheelEvent.clientY < rect.bottom
+        ) {
+          return true;
+        }
+      }
 
       if (el.scrollHeight > el.clientHeight) return false;
 
@@ -377,6 +379,9 @@ export class FolkSpace extends FolkElement implements IPointTransform {
    * Handle touch start event
    */
   #onTouchStart = (event: TouchEvent) => {
+    // Stop event from bubbling to parent spaces
+    event.stopPropagation();
+
     // Prevent default to avoid browser's native handling
     event.preventDefault();
 
@@ -397,6 +402,9 @@ export class FolkSpace extends FolkElement implements IPointTransform {
    * Handle touch move event
    */
   #onTouchMove = (event: TouchEvent) => {
+    // Stop event from bubbling to parent spaces
+    event.stopPropagation();
+
     // Prevent default to avoid browser's native handling
     event.preventDefault();
 
