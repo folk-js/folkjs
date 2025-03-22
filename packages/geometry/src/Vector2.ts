@@ -202,8 +202,8 @@ export function rotate(v: Vector2Readonly, angle: number): Vector2 {
 export function rotateAround(v: Vector2Readonly, pivot: Vector2Readonly, angle: number): Vector2 {
   const dx = v.x - pivot.x;
   const dy = v.y - pivot.y;
-  const c = cos(-angle);
-  const s = sin(-angle);
+  const c = cos(angle);
+  const s = sin(angle);
   return {
     x: pivot.x + dx * c - dy * s,
     y: pivot.y + dx * s + dy * c,

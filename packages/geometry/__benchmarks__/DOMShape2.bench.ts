@@ -45,8 +45,13 @@ bench('DOMShape: update bottom right corner', () => {
 });
 
 bench('DOMShape: bounds', () => {
-  shape.height;
-  shape.width;
+  shape.x = 0;
+  const height = shape.height;
+  const width = shape.width;
+  const left = shape.left;
+  const right = shape.right;
+  const top = shape.top;
+  const bottom = shape.bottom;
 });
 
 bench('DOMShape: flip handles', () => {

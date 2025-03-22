@@ -83,7 +83,7 @@ describe('V', () => {
       const pivot = { x: 0, y: 0 };
       const rotated = V.rotateAround(point, pivot, Math.PI / 2);
       expect(rotated.x).toBeCloseTo(0);
-      expect(rotated.y).toBeCloseTo(-2);
+      expect(rotated.y).toBeCloseTo(2);
     });
   });
 

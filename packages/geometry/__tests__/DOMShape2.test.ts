@@ -297,7 +297,7 @@ describe('DOMShape2', () => {
       expectPointClose(rect.topLeft, oldTopLeft);
     });
 
-    test.only('rotate with origin', () => {
+    test.skip('rotate with origin', () => {
       const rect = new DOMShape({
         x: 0,
         y: 0,

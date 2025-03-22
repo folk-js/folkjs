@@ -1,6 +1,7 @@
 import type { Matrix2D } from './Matrix2D';
-import { sign } from './utilities';
-import type { Vector2 } from './Vector2';
+import { sign } from './utilities.js';
+import type { Vector2 } from './Vector2.js';
+import * as V from './Vector2.js';
 
 export interface Rect2D {
   x: number;
@@ -9,15 +10,17 @@ export interface Rect2D {
   height: number;
 }
 
-export class Hit {
+export type Hit = Readonly<{
   /** The point of contact between the two objects. */
-  pos: Vector2 = { x: 0, y: 0 };
-
+  pos: Vector2;
   /** The a vector representing the overlap between the two objects. */
-  delta: Vector2 = { x: 0, y: 0 };
-
+  delta: Vector2;
   /** The surface normal at the point of contact. */
-  normal: Vector2 = { x: 0, y: 0 };
+  normal: Vector2;
+}>;
+
+export function fromHit(pos = V.zero(), delta = V.zero(), normal = V.zero()) {
+  return { pos, delta, normal };
 }
 
 export function center(rect: Rect2D) {
@@ -41,7 +44,7 @@ export function aabbHitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly)
   const py = center2.height + center1.height - Math.abs(dy);
   if (py <= 0) return null;
 
-  const hit = new Hit();
+  const hit = fromHit();
   if (px < py) {
     const sx = sign(dx);
     hit.delta.x = px * sx;
