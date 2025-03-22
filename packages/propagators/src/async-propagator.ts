@@ -188,16 +188,22 @@ export class AsyncPropagator {
       // Create the async handler function
       const handler = async (from: EventTarget, to: EventTarget, event: Event) => {
         const pendingUpdates = updates.map(({ prop, expr, type, method, property }) => {
+          // Force all expressions to be evaluated in the same tick of the event loop
+          // by wrapping them in a microtask (Promise)
           const evalFn = new Function(
             'from',
             'to',
             'event',
             `
-              return (async function() { 
+              return (async function() {
+                // Force a microtask delay even for non-async expressions
+                await Promise.resolve();
+                // Now evaluate the expression in this async context
                 return ${expr}; 
               })();
             `,
           );
+
           return {
             type,
             method,
@@ -207,9 +213,13 @@ export class AsyncPropagator {
         });
 
         try {
-          // Wait for all promises to resolve and apply updates
-          for (const update of pendingUpdates) {
-            const result = await update.promise;
+          // First, wait for all promises to resolve and collect results
+          const results = await Promise.all(pendingUpdates.map((update) => update.promise));
+
+          // Then apply all updates in order using the resolved values
+          for (let i = 0; i < pendingUpdates.length; i++) {
+            const update = pendingUpdates[i]!;
+            const result = results[i];
 
             if (update.type === 'direct') {
               // Direct execution already happened
