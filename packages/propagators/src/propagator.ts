@@ -156,57 +156,35 @@ export class Propagator {
     }
   };
 
-  // This approach turns object syntax into imperative code.
-  // We could alternatively use a parser (i.e. Babel) to statically analyse the code
-  // and check on keystrokes if the code is valid.
-  // We should try a few different things to figure out how this class could work best.
   #defaultParser = (body: string): PropagatorFunction | null => {
-    const processedExp = body.trim();
-
-    const codeLines: string[] = [];
-
-    // Split the expression into lines, handling different line endings
-    const lines = processedExp.split(/\r?\n/);
-
-    for (const line of lines) {
-      let line_trimmed = line.trim();
-      if (!line_trimmed) continue;
-
-      // Remove trailing comma if it exists (only if it's at the very end of the line)
-      if (line_trimmed.endsWith(',')) {
-        line_trimmed = line_trimmed.slice(0, -1).trim();
-      }
-
-      // Find the first colon index, which separates the key and value.
-      // Colons can still be used in ternary operators or other expressions,
-      const colonIndex = line_trimmed.indexOf(':');
-      if (colonIndex === -1) {
-        continue;
-      }
-
-      const key = line_trimmed.slice(0, colonIndex).trim();
-      const value = line_trimmed.slice(colonIndex + 1).trim();
-
-      if (key === '()') {
-        // Anonymous function: directly evaluate the value
-        codeLines.push(`${value};`);
-      } else if (key.endsWith('()')) {
-        // If the key is a method, execute it if the condition is true
-        const methodName = key.slice(0, -2);
-        codeLines.push(`
-  if (typeof to.${methodName} !== 'function') throw new Error(\`Method '${methodName}' does not exist on the target.\`);
-  else if (${value}) to.${methodName}();`);
-      } else {
-        // For property assignments, assign the value directly
-        codeLines.push(`
-  if (!('${key}' in to)) throw new Error(\`Property '${key}' does not exist on the target.\`);
-  to.${key} = ${value};`);
-      }
-    }
-
-    const functionBody = codeLines.join('\n');
-
     try {
+      const lines = body.trim().split(/\r?\n/);
+      const statements = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        const colonIndex = trimmed.indexOf(':');
+        if (colonIndex === -1) continue;
+
+        const key = trimmed.slice(0, colonIndex).trim();
+        const value = trimmed
+          .slice(colonIndex + 1)
+          .trim()
+          .replace(/,\s*$/, '');
+
+        if (key === '()') {
+          statements.push(`${value};`);
+        } else if (key.endsWith('()')) {
+          const methodName = key.slice(0, -2);
+          statements.push(`if (typeof to.${methodName} === 'function' && (${value})) to.${methodName}();`);
+        } else {
+          statements.push(`to.${key} = ${value};`);
+        }
+      }
+
+      const functionBody = statements.join('\n');
       const handler = new Function('from', 'to', 'event', functionBody) as PropagatorFunction;
       this.#onParse?.(functionBody);
       return handler;
