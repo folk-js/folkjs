@@ -1,4 +1,4 @@
-import { Propagator } from '@folk-systems/propagators';
+import { AsyncPropagator, Propagator } from '@folk-systems/propagators';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { property } from '@lit/reactive-element/decorators.js';
 import { FolkRope } from './folk-rope.ts';
@@ -48,7 +48,7 @@ export class FolkEventPropagator extends FolkRope {
 
   #triggerTextarea = document.createElement('textarea');
   #expressionTextarea = document.createElement('textarea');
-  #propagator: Propagator | null = null;
+  #propagator: AsyncPropagator | null = null;
   #container = document.createElement('div');
   #hasError = false;
 
@@ -105,7 +105,7 @@ export class FolkEventPropagator extends FolkRope {
 
   #initializePropagator() {
     this.#propagator?.dispose();
-    this.#propagator = new Propagator({
+    this.#propagator = new AsyncPropagator({
       source: this.sourceElement,
       target: this.targetElement,
       event: this.trigger,

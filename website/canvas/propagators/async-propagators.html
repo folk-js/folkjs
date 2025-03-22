@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Async Propagators</title>
+    <style>
+      html {
+        height: 100%;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        padding: 20px;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        line-height: 1.5;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+
+      .demo-section {
+        margin: 40px 0;
+      }
+
+      folk-shape {
+        background-color: black;
+        border-radius: 5px;
+        color: white;
+        padding: 5px 10px;
+        z-index: 10;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      pre {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 5px;
+        overflow-x: auto;
+      }
+
+      code {
+        font-family: monospace;
+      }
+
+      h2 {
+        margin-top: 30px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 8px;
+      }
+
+      button {
+        padding: 8px 16px;
+        border-radius: 4px;
+        border: 1px solid #ccc;
+        background-color: #f8f8f8;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 15px;
+      }
+
+      button:hover {
+        background-color: #e8e8e8;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Async Propagators</h1>
+
+    <p>
+      Asynchronous propagators extend the standard propagator functionality by allowing the use of async/await in
+      expressions. This enables you to fetch data, perform asynchronous operations, and apply all changes at once only
+      after all promises have resolved.
+    </p>
+
+    <h2>How Async Propagators Work</h2>
+
+    <p> When you use <code>await</code> in a propagator expression, the system will: </p>
+
+    <ol>
+      <li>Automatically detect the presence of <code>await</code> keywords in your expressions</li>
+      <li>Use an AsyncFunction to evaluate your expression</li>
+      <li>Wait for all async operations to complete</li>
+      <li>Apply all property changes at once after all promises resolve</li>
+    </ol>
+
+    <h2>Usage Examples</h2>
+
+    <p>There are two ways to enable async behavior in propagators:</p>
+
+    <h3>Method 1: Auto-detection (Recommended)</h3>
+
+    <p>
+      Simply use <code>await</code> in your expressions, and the propagator will automatically detect and enable async
+      mode:
+    </p>
+
+    <pre><code>&lt;folk-event-propagator
+  source="#sourceElement"
+  target="#targetElement"
+  trigger="click"
+  expression="backgroundColor: await fetchRandomColor()
+textContent: 'Data: ' + await fetchRandomData()"
+&gt;&lt;/folk-event-propagator&gt;</code></pre>
+
+    <h3>Method 2: Explicit async attribute</h3>
+
+    <p> You can also explicitly set the <code>async</code> attribute to <code>true</code>: </p>
+
+    <pre><code>&lt;folk-event-propagator
+  source="#sourceElement"
+  target="#targetElement"
+  trigger="click"
+  async="true"
+  expression="backgroundColor: await fetchRandomColor()
+textContent: 'Data: ' + await fetchRandomData()"
+&gt;&lt;/folk-event-propagator&gt;</code></pre>
+
+    <h2>Live Demo</h2>
+
+    <p>Click on the box below or use the button to trigger an async propagation:</p>
+
+    <div class="demo-section">
+      <button id="demoButton">Trigger Async Propagation</button>
+      <folk-shape id="box1" x="100" y="150" width="100" height="100">Click me</folk-shape>
+      <folk-shape id="box2" x="400" y="150" width="100" height="100">Target</folk-shape>
+      <folk-event-propagator
+        source="#box1"
+        target="#box2"
+        trigger="click"
+        expression="x: to.x + 10
+y: to.y - 10
+backgroundColor: await fetchRandomColor()
+textContent: await fetchRandomText()"
+      ></folk-event-propagator>
+    </div>
+
+    <p>For a more advanced demo, see the <a href="async-propagators-demo.html">Async Propagators Demo</a>.</p>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-event-propagator.ts';
+
+      window.fetchRandomColor = async () => {
+        // Simulate a network delay
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const colors = ['#1E88E5', '#D81B60', '#8E24AA', '#43A047', '#FFB300', '#F4511E'];
+        return colors[Math.floor(Math.random() * colors.length)];
+      };
+
+      window.fetchRandomText = async () => {
+        // Simulate a network delay
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const words = ['Success!', 'Complete!', 'Loaded!', 'Ready!', 'Done!'];
+        return words[Math.floor(Math.random() * words.length)];
+      };
+
+      document.getElementById('demoButton').addEventListener('click', () => {
+        document.getElementById('box1').click();
+      });
+    </script>
+  </body>
+</html>
