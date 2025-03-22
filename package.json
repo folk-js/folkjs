@@ -55,6 +55,7 @@
     "prettier-plugin-organize-imports": "^4.1.0",
     "typescript": "^5.8.2",
     "vite": "^6.0.3",
-    "vite-plugin-mkcert": "^1.17.6"
+    "vite-plugin-mkcert": "^1.17.6",
+    "vite-tsconfig-paths": "^5.1.4"
   }
 }
