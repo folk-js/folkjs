@@ -32,6 +32,7 @@ export class FolkSpace extends FolkElement implements IPointTransform {
       overflow: hidden;
       touch-action: none;
       overscroll-behavior: none;
+      --grid-dot-color: 0, 0, 0;
     }
 
     .space-content {
@@ -41,6 +42,7 @@ export class FolkSpace extends FolkElement implements IPointTransform {
       width: 100%;
       height: 100%;
       transform-origin: 0 0;
+      overflow: hidden;
     }
 
     .grid {
@@ -54,11 +56,11 @@ export class FolkSpace extends FolkElement implements IPointTransform {
       --circle-width: 1px;
       --circle: circle at var(--circle-width) var(--circle-width);
       /* Map color transparency to scale for each level of the grid */
-      --bg-color-1: rgba(0, 0, 0, 1);
-      --bg-color-2: rgba(0, 0, 0, clamp(0, var(--scale), 1));
-      --bg-color-3: rgba(0, 0, 0, clamp(0, calc(var(--scale) - 0.1), 1));
-      --bg-color-4: rgba(0, 0, 0, clamp(0, calc(var(--scale) - 1), 1));
-      --bg-color-5: rgba(0, 0, 0, clamp(0, calc(0.5 * var(--scale) - 2), 1));
+      --bg-color-1: rgba(var(--grid-dot-color), 1);
+      --bg-color-2: rgba(var(--grid-dot-color), clamp(0, var(--scale), 1));
+      --bg-color-3: rgba(var(--grid-dot-color), clamp(0, calc(var(--scale) - 0.1), 1));
+      --bg-color-4: rgba(var(--grid-dot-color), clamp(0, calc(var(--scale) - 1), 1));
+      --bg-color-5: rgba(var(--grid-dot-color), clamp(0, calc(0.5 * var(--scale) - 2), 1));
 
       /* Draw points for each level of grid as set of a background image. First background is on top.*/
       background-image:
