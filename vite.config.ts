@@ -37,79 +37,34 @@ function remark(): Plugin {
 const websiteDir = resolve(__dirname, './website');
 const canvasWebsiteDir = resolve(__dirname, './website/canvas');
 
-// Clean URL handler for both dev and preview
+// Simplified clean URL handler
 function cleanUrlHandler(): Plugin {
   return {
     name: 'clean-url-handler',
     configureServer(server) {
       return () => {
-        // Apply clean URL middleware
         server.middlewares.use((req, res, next) => {
-          // Skip if URL has a file extension or is the root
-          const url = req.originalUrl;
-          if (!url || url === '/' || url.includes('.')) {
+          const url = req.originalUrl || '/';
+
+          // Skip assets and root URL
+          if (url === '/' || url.includes('.')) {
             return next();
           }
 
-          // Redirect /dir to /dir/
-          if (
-            !url.endsWith('/') &&
-            existsSync(join(websiteDir, url)) &&
-            existsSync(join(websiteDir, url, 'index.html'))
-          ) {
+          // Redirect /dir to /dir/ if directory exists with index.html
+          if (!url.endsWith('/') && existsSync(join(websiteDir, url, 'index.html'))) {
             res.writeHead(301, { Location: `${url}/` });
-            res.end();
-            return;
+            return res.end();
           }
 
-          // Rewrite /dir/ to /dir/index.html
-          if (url.endsWith('/')) {
-            const indexPath = join(websiteDir, url, 'index.html');
-            if (existsSync(indexPath)) {
-              req.url = join(url, 'index.html');
-              return next();
-            }
-          }
-
-          // Rewrite /file to /file.html
-          const htmlPath = join(websiteDir, `${url}.html`);
-          if (existsSync(htmlPath)) {
+          // Try .html version for clean URLs
+          if (!url.endsWith('/') && existsSync(join(websiteDir, `${url}.html`))) {
             req.url = `${url}.html`;
-            return next();
           }
 
           next();
         });
       };
-    },
-    configurePreviewServer(server) {
-      server.middlewares.use((req, res, next) => {
-        // Similar logic for preview server
-        const url = req.originalUrl;
-        if (!url || url === '/' || url.includes('.')) {
-          return next();
-        }
-
-        // Redirect /dir to /dir/
-        if (
-          !url.endsWith('/') &&
-          existsSync(join(websiteDir, url)) &&
-          existsSync(join(websiteDir, url, 'index.html'))
-        ) {
-          res.writeHead(301, { Location: `${url}/` });
-          res.end();
-          return;
-        }
-
-        // Rewrite /file to /file.html
-        const htmlPath = `${url}.html`;
-        if (!url.endsWith('/')) {
-          req.url = htmlPath;
-          return next();
-        }
-
-        next();
-      });
     },
   };
 }
