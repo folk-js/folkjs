@@ -2,7 +2,7 @@
 <html lang="en-us">
   <head>
     <meta charset="utf-8" />
-    <title>Folk Shape Demo</title>
+    <title>Meta Space</title>
     <style>
       * {
         box-sizing: border-box;
@@ -46,15 +46,18 @@
         --grid-dot-color: 255, 255, 255;
         overflow: hidden;
         padding: 0;
-        position: relative;
-        top: 0;
-        left: 0;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
         transform-origin: center;
+        transition: all 0.5s ease-in-out;
       }
       #main.circle {
-        width: 50px !important;
-        height: 50px !important;
+        width: 50px;
+        height: 50px;
         border-radius: 50%;
+        position: absolute;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
@@ -75,76 +78,11 @@
       import '@labs/standalone/folk-space.ts';
       import '@labs/standalone/folk-shape.ts';
 
-      // Add event listener for spacebar
       document.addEventListener('keydown', (e) => {
         if (e.code === 'Space' && !e.repeat) {
           e.preventDefault(); // Prevent page scroll
           const container = document.getElementById('main');
-          const isCircle = container.classList.contains('circle');
-
-          // Store original scale and position before any transitions if not already stored
-          if (!container.dataset.originalScale) {
-            container.dataset.originalScale = container.scale || '1';
-            container.dataset.originalX = container.x || '0';
-            container.dataset.originalY = container.y || '0';
-          }
-
-          // Get current dimensions of the container before any changes
-          const rect = container.getBoundingClientRect();
-          const originalWidth = rect.width;
-          const originalHeight = rect.height;
-          const circleSize = 50; // The target circle size
-
-          // Calculate the correct scale factor based on container dimensions
-          const dimensionRatio = circleSize / Math.min(originalWidth, originalHeight);
-
-          // Calculate the target scale only - we'll let CSS handle positioning
-          const targetScale = isCircle
-            ? parseFloat(container.dataset.originalScale || '1')
-            : parseFloat(container.dataset.originalScale || '1') * dimensionRatio;
-
-          // Add transitions for CSS properties
-          container.style.transition =
-            'width 0.5s ease-in-out, height 0.5s ease-in-out, border-radius 0.5s ease-in-out, transform 0.5s ease-in-out, top 0.5s ease-in-out, left 0.5s ease-in-out';
-
-          // Get current scale
-          const currentScale = parseFloat(container.scale) || 1;
-
-          // Toggle the class first so the CSS positioning takes effect
           container.classList.toggle('circle');
-
-          // Manually animate only the scale property
-          const startTime = performance.now();
-          const duration = 500; // 0.5s to match CSS transitions
-
-          function animateScale(timestamp) {
-            const elapsed = timestamp - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const easeProgress = 0.5 - Math.cos(progress * Math.PI) / 2; // Ease in-out
-
-            // Calculate intermediate scale value
-            const currentScaleValue = currentScale + (targetScale - currentScale) * easeProgress;
-
-            // Apply only the scale value
-            container.scale = currentScaleValue;
-
-            // Continue animation if not complete
-            if (progress < 1) {
-              requestAnimationFrame(animateScale);
-            }
-          }
-
-          // Start the animation
-          requestAnimationFrame(animateScale);
-
-          // Remove transitions after animation
-          container.addEventListener(
-            'transitionend',
-            () => {
-              container.style.transition = '';
-            },
-            { once: true },
-          );
         }
       });
     </script>
