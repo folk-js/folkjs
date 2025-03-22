@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <title>Space Stretch</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        position: relative;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior-x: none;
+        touch-action: none;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      folk-space {
+        width: 100%;
+        height: 100%;
+        background-color: #f8f9fa;
+      }
+
+      folk-shape:not(.text) {
+        background: #fff;
+        border: 1px solid #ccc;
+        padding: 12px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+      }
+
+      #main folk-shape:not(.text) {
+        background: #3a3b3e;
+        border: 1px solid #4a4b4e;
+        color: #ffffff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+      }
+
+      #main {
+        width: 100%;
+        height: 100%;
+        background: #2a2b2e;
+        --grid-dot-color: 255, 255, 255;
+        overflow: hidden;
+        padding: 0;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        transform-origin: center;
+        transition: all 0.5s ease-in-out;
+      }
+      #main.circle {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+      }
+    </style>
+  </head>
+  <body>
+    <folk-space id="meta">
+      <folk-shape x="73" y="502" width="320" height="280">Quantum butterflies dream in hexadecimal</folk-shape>
+      <folk-shape id="recipe" x="425" y="588" width="290" height="310">Dancing algorithms</folk-shape>
+      <folk-shape x="42" y="68" width="285" height="220">Robot picnics under digital rainbows</folk-shape>
+      <folk-shape x="58" y="315" width="310" height="165">Cybernetic tea parties with ASCII art</folk-shape>
+      <folk-shape x="392" y="45" width="315" height="280">Pixel dragons eating cloud computing</folk-shape>
+      <folk-shape x="785" y="62" width="320" height="190">Binary sunsets in the matrix</folk-shape>
+      <folk-shape x="810" y="485" width="295" height="225">Recursive dreams of electric sheep</folk-shape>
+      <folk-shape class="text" x="660" y="470">
+        <span contenteditable>this is a space</span>
+      </folk-shape>
+      <folk-space id="main" class="circle" onclick="toggleSpace(event)">
+        <folk-shape x="45" y="58" width="290" height="310">Quantum entangled toast</folk-shape>
+        <folk-shape x="415" y="42" width="285" height="295">Digital hamsters powering the mainframe</folk-shape>
+      </folk-space>
+      <folk-event-propagator
+        source="#recipe"
+        target="#main"
+        trigger="click"
+        expression="scale: 2"
+      ></folk-event-propagator>
+    </folk-space>
+
+    <script type="module">
+      import '@labs/standalone/folk-space.ts';
+      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-event-propagator.ts';
+
+      function toggleSpace(event) {
+        if (event && event.target !== document.getElementById('main')) return;
+
+        const container = document.getElementById('main');
+        const isExpanding = container.classList.contains('circle');
+        container.classList.toggle('circle');
+
+        // Get all folk-shapes in the meta space except those inside main
+        const shapes = Array.from(document.querySelectorAll('folk-space#meta > folk-shape')).filter(
+          (shape) => shape.parentElement.id === 'meta',
+        );
+
+        // Get the center point of the main space and viewport dimensions
+        const mainRect = container.getBoundingClientRect();
+        const centerX = mainRect.left + mainRect.width / 2;
+        const centerY = mainRect.top + mainRect.height / 2;
+
+        // Calculate the maximum possible distance (from center to furthest screen corner)
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const maxDistanceX = Math.max(centerX, viewportWidth - centerX);
+        const maxDistanceY = Math.max(centerY, viewportHeight - centerY);
+        const maxDistance = Math.sqrt(maxDistanceX * maxDistanceX + maxDistanceY * maxDistanceY);
+
+        // Animate each shape
+        shapes.forEach((shape) => {
+          const rect = shape.getBoundingClientRect();
+          const shapeX = rect.left + rect.width / 2;
+          const shapeY = rect.top + rect.height / 2;
+
+          // Calculate vector from shape to center
+          const dx = centerX - shapeX;
+          const dy = centerY - shapeY;
+          const currentDistance = Math.sqrt(dx * dx + dy * dy);
+
+          // Calculate the target distance from center
+          const circleRadius = 25; // circle is 50px wide so radius is 25
+          const minDistance = circleRadius + 50; // 50px from circle edge when contracted
+          const maxTargetDistance = maxDistance - 50; // 50px from screen edge when expanded
+
+          const targetDistance = isExpanding ? minDistance : maxTargetDistance;
+          const currentTargetDistance = isExpanding ? maxTargetDistance : minDistance;
+
+          // Calculate how far we need to move
+          const distanceToMove = targetDistance - currentTargetDistance;
+
+          // Normalize the vector and scale it
+          const moveX = (dx / currentDistance) * distanceToMove;
+          const moveY = (dy / currentDistance) * distanceToMove;
+
+          // Animate the shape's position
+          requestAnimationFrame(() => {
+            shape.style.transition = 'all 0.5s ease-in-out';
+            shape.x += moveX;
+            shape.y += moveY;
+
+            // Remove transition style after animation completes
+            const onTransitionEnd = () => {
+              shape.style.transition = '';
+              shape.removeEventListener('transitionend', onTransitionEnd);
+            };
+            shape.addEventListener('transitionend', onTransitionEnd);
+          });
+        });
+      }
+
+      // Handle space key press
+      document.addEventListener('keydown', (e) => {
+        // Only trigger on space if not typing in a contenteditable element
+        if (
+          e.code === 'Space' &&
+          !e.repeat &&
+          !(document.activeElement && document.activeElement.hasAttribute('contenteditable'))
+        ) {
+          e.preventDefault(); // Prevent page scroll
+          toggleSpace();
+        }
+      });
+
+      // Make the toggleSpace function available globally
+      window.toggleSpace = toggleSpace;
+    </script>
+  </body>
+</html>

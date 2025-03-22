@@ -92,7 +92,7 @@ export class TransformStack {
 
     // Walk up the DOM tree and collect all transforms
     while (current) {
-      if (satisfies<IPointTransform>(current, IPointTransform)) {
+      if (satisfies<IPointTransform>(current, IPointTransform) && current !== element) {
         transforms.unshift(current);
       }
       current = current.parentElement;

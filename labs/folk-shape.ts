@@ -3,12 +3,14 @@ import {
   DOMRectTransform,
   DOMRectTransformReadonly,
   FolkElement,
+  Matrix,
   Point,
   round,
   toDOMPrecision,
   TransformEvent,
   Vector,
 } from '@lib';
+import { IPointTransform } from '@lib/interfaces/IPointTransform';
 import { ResizeManager } from '@lib/resize-manger';
 import { html } from '@lib/tags';
 import { TransformStack } from '@lib/TransformStack';
@@ -195,7 +197,8 @@ declare global {
   }
 }
 
-export class FolkShape extends FolkElement {
+export class FolkShape extends FolkElement implements IPointTransform {
+  [IPointTransform] = true;
   static tagName = 'folk-shape';
   static importSrc = '/labs/standalone/folk-shape.ts';
 
@@ -674,6 +677,63 @@ export class FolkShape extends FolkElement {
     }
 
     this.requestUpdate();
+  }
+
+  /**
+   * Converts a point from parent coordinates to local shape coordinates.
+   *
+   * @param point The point in parent coordinates
+   * @returns The point in local shape coordinates
+   */
+  mapPointFromParent(point: Point): Point {
+    // Create a transform matrix based on current shape properties
+    const matrix = new Matrix().translate(this.#rect.x, this.#rect.y).rotate(this.#rect.rotation).scale(1, 1); // We don't change scale for shapes
+
+    // Apply the inverse transformation to convert from parent to shape coordinates
+    return matrix.clone().invert().applyToPoint(point);
+  }
+
+  /**
+   * Converts a vector from parent coordinates to local shape coordinates.
+   * Vectors are affected by scale and rotation, but not by translation.
+   *
+   * @param vector The vector in parent coordinates
+   * @returns The vector in local shape coordinates
+   */
+  mapVectorFromParent(vector: Point): Point {
+    // Create a matrix with just the rotation component (no translation)
+    const matrix = new Matrix().rotate(this.#rect.rotation);
+
+    // Apply the inverse transformation to the vector
+    return matrix.clone().invert().applyToPoint(vector);
+  }
+
+  /**
+   * Converts a point from local shape coordinates to parent coordinates.
+   *
+   * @param point The point in local shape coordinates
+   * @returns The point in parent coordinates
+   */
+  mapPointToParent(point: Point): Point {
+    // Create a transform matrix based on current shape properties
+    const matrix = new Matrix().translate(this.#rect.x, this.#rect.y).rotate(this.#rect.rotation).scale(1, 1); // We don't change scale for shapes
+
+    // Apply the transformation to convert from shape coordinates to parent coordinates
+    return matrix.applyToPoint(point);
+  }
+
+  /**
+   * Converts a vector from local shape coordinates to parent coordinates.
+   *
+   * @param vector The vector in local shape coordinates
+   * @returns The vector in parent coordinates
+   */
+  mapVectorToParent(vector: Point): Point {
+    // Create a matrix with just the rotation component (no translation)
+    const matrix = new Matrix().rotate(this.#rect.rotation);
+
+    // Apply the transformation to the vector
+    return matrix.applyToPoint(vector);
   }
 }
 
