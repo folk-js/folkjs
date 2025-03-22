@@ -23,12 +23,12 @@ export function fromHit(pos = V.zero(), delta = V.zero(), normal = V.zero()) {
   return { pos, delta, normal };
 }
 
-export function center(rect: Rect2D) {
+function center(rect: Rect2D) {
   return {
-    width: rect.width / 2,
-    height: rect.height / 2,
-    x: rect.x + rect.width / 2,
-    y: rect.y + rect.height / 2,
+    width: rect.width * 0.5,
+    height: rect.height * 0.5,
+    x: rect.x + rect.width * 0.5,
+    y: rect.y + rect.height * 0.5,
   };
 }
 
@@ -138,8 +138,8 @@ export function isScreenCoveredByRectangle(
     const pt = new DOMPoint(corner.x, corner.y);
     const transformedPt = pt.matrixTransform(transform);
     return {
-      x: transformedPt.x + containerWidth / 2,
-      y: transformedPt.y + containerHeight / 2,
+      x: transformedPt.x + containerWidth * 0.5,
+      y: transformedPt.y + containerHeight * 0.5,
     };
   });
 

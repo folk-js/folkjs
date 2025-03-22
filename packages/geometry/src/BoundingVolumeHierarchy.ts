@@ -46,8 +46,8 @@ type BVHNode =
   | {
       rect: R.Rect2D;
       isLeaf: true;
-      left: undefined;
-      right: undefined;
+      left: null;
+      right: null;
     };
 
 export class BoundingVolumeHierarchy {
@@ -71,7 +71,10 @@ export class BoundingVolumeHierarchy {
     for (let i = 0; i < len; i++) {
       const rect = rects[i]!;
       // TODO: we need to normalize this point between [0, 32767]
-      const normalizedCenter = R.center(rect);
+      const normalizedCenter = {
+        x: rect.x + rect.width * 0.5,
+        y: rect.y + rect.height * 0.5,
+      };
 
       mortonCodes.push({ rect, mortonCode: morton2DEncode(normalizedCenter) });
     }
@@ -85,12 +88,13 @@ export class BoundingVolumeHierarchy {
   #constructSubTree(rects: readonly R.Rect2D[], start: number, end: number): BVHNode {
     if (start >= end) {
       const rect = rects[start]!;
-      return { rect, isLeaf: true, left: undefined, right: undefined };
+      return { rect, isLeaf: true, left: null, right: null };
     }
 
     const mid = Math.floor((start + end) / 2);
     const left = this.#constructSubTree(rects, start, mid);
     const right = this.#constructSubTree(rects, mid + 1, end);
+
     const leftRect = left.rect;
     const rightRect = right.rect;
     const x = Math.min(leftRect.x, rightRect.x);

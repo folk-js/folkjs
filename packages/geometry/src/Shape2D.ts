@@ -1,29 +1,12 @@
-import type { Matrix2D } from './Matrix2D.js';
-import { sign } from './utilities.js';
-import type { Vector2, Vector2Readonly } from './Vector2.js';
+import type { Rect2D } from './Rect2D.js';
+import type { Vector2Readonly } from './Vector2.js';
 import * as V from './Vector2.js';
-
-export interface Rect2D {
-  x: number;
-  y: number;
-  height: number;
-  width: number;
-}
 
 export type Shape2D = Rect2D & {
   rotation: number;
 };
 
 export type Shape2DReadonly = Readonly<Shape2D>;
-
-export type Shape2DBounds = Readonly<
-  Rect2D & {
-    top: number;
-    right: number;
-    bottom: number;
-    left: number;
-  }
->;
 
 export type Shape2DCorners = Readonly<{
   topLeft: Vector2Readonly;
@@ -42,8 +25,8 @@ export function clone({ x, y, width, height, rotation }: Shape2D): Shape2D {
 
 export function center(shape: Shape2DReadonly): Vector2Readonly {
   return {
-    x: shape.x + shape.width / 2,
-    y: shape.y + shape.height / 2,
+    x: shape.x + shape.width * 0.5,
+    y: shape.y + shape.height * 0.5,
   };
 }
 
@@ -74,8 +57,8 @@ export function corners(shape: Shape2DReadonly, c = center(shape)): Shape2DCorne
 
 function updateTopLeftAndBottomRightCorners(shape: Shape2D, topLeft: Vector2Readonly, bottomRight: Vector2Readonly) {
   const newCenter = {
-    x: (topLeft.x + bottomRight.x) / 2,
-    y: (topLeft.y + bottomRight.y) / 2,
+    x: (topLeft.x + bottomRight.x) * 0.5,
+    y: (topLeft.y + bottomRight.y) * 0.5,
   };
 
   // Undo shape rotation
@@ -90,8 +73,8 @@ function updateTopLeftAndBottomRightCorners(shape: Shape2D, topLeft: Vector2Read
 
 function updateTopRightAndBottomLeftCorners(shape: Shape2D, topRight: Vector2Readonly, bottomLeft: Vector2Readonly) {
   const newCenter = {
-    x: (bottomLeft.x + topRight.x) / 2,
-    y: (bottomLeft.y + topRight.y) / 2,
+    x: (bottomLeft.x + topRight.x) * 0.5,
+    y: (bottomLeft.y + topRight.y) * 0.5,
   };
 
   // Undo shape rotations
@@ -128,27 +111,25 @@ export function rotateAround(shape: Shape2D, angle: number, origin: Vector2Reado
   updateTopLeftAndBottomRightCorners(shape, newTopLeft, newBottomRight);
 }
 
-export function bounds(
-  shape: Shape2DReadonly,
-  { topLeft, topRight, bottomRight, bottomLeft } = corners(shape),
-): Shape2DBounds {
-  const x = shape.x;
-  const y = shape.y;
-  const height =
-    Math.max(topLeft.y, topRight.y, bottomRight.y, bottomLeft.y) -
-    Math.min(topLeft.y, topRight.y, bottomRight.y, bottomLeft.y);
-  const width =
-    Math.max(topLeft.x, topRight.x, bottomRight.x, bottomLeft.x) -
-    Math.min(topLeft.x, topRight.x, bottomRight.x, bottomLeft.x);
+export function bounds(shape: Shape2DReadonly, c?: Shape2DCorners): Rect2D {
+  if (shape.rotation === 0) {
+    return {
+      x: shape.x,
+      y: shape.y,
+      width: shape.width,
+      height: shape.height,
+    };
+  }
+
+  const { topLeft, topRight, bottomRight, bottomLeft } = c ?? corners(shape);
+
+  const x = Math.min(topLeft.x, topRight.x, bottomRight.x, bottomLeft.x);
+  const y = Math.min(topLeft.y, topRight.y, bottomRight.y, bottomLeft.y);
 
   return {
     x,
     y,
-    height,
-    width,
-    top: y,
-    right: x + width,
-    bottom: y + height,
-    left: x,
+    width: Math.max(topLeft.x, topRight.x, bottomRight.x, bottomLeft.x) - x,
+    height: Math.max(topLeft.y, topRight.y, bottomRight.y, bottomLeft.y) - y,
   };
 }

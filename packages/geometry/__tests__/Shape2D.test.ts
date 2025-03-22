@@ -30,10 +30,19 @@ describe('Shape2D', () => {
   test('bounds are calculated correctly', () => {
     const shape = S.fromValues(10, 20, 100, 50);
     const bounds = S.bounds(shape);
-    expect(bounds.left).toBe(10);
-    expect(bounds.top).toBe(20);
-    expect(bounds.right).toBe(110);
-    expect(bounds.bottom).toBe(70);
+    expect(bounds.x).toBe(10);
+    expect(bounds.y).toBe(20);
+    expect(bounds.width).toBe(100);
+    expect(bounds.height).toBe(50);
+  });
+
+  test('bounds with rotation are calculated correctly', () => {
+    const shape = S.fromValues(10, 20, 100, 50, Math.PI / 4);
+    const bounds = S.bounds(shape);
+    expect(bounds.x).toBeCloseTo(6.967);
+    expect(bounds.y).toBeCloseTo(-8.033);
+    expect(bounds.width).toBeCloseTo(106.066);
+    expect(bounds.height).toBeCloseTo(106.066);
   });
 
   test('corners returns correct values', () => {
