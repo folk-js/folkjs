@@ -1,6 +1,6 @@
-import * as S from '@folkjs/geometry/Shape2D';
-import type { Vector2Readonly } from '@folkjs/geometry/Vector2';
 import { describe, expect, test } from 'bun:test';
+import * as S from '../src/Shape2D';
+import type { Vector2Readonly } from '../src/Vector2';
 
 // Helper for comparing points with floating point values
 const expectPointClose = (actual: Vector2Readonly, expected: Vector2Readonly) => {
