@@ -12,8 +12,6 @@
 
     /* Strictness */
     "strict": true,
-    // TODO: MAYBE turn on later, this is a lot and might be a poor tradeoff for performance
-    "noUncheckedIndexedAccess": false,
     // TODO: turn back on after packages refactor
     "noImplicitOverride": true,
     "erasableSyntaxOnly": true,
