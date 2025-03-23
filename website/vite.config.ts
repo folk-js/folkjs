@@ -6,12 +6,12 @@ import wasm from 'vite-plugin-wasm';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
 // Local plugins
-import { cleanUrlHandler } from './_scripts_/vite-clean-urls';
-import { getCanvasFiles, linkGenerator } from './_scripts_/vite-link-generator';
-import { remark } from './_scripts_/vite-remark-md';
+import { cleanUrlHandler } from './vite-clean-urls';
+import { getCanvasFiles, linkGenerator } from './vite-link-generator';
+import { remark } from './vite-remark-md';
 
-const websiteDir = resolve(__dirname, './website');
-const canvasWebsiteDir = resolve(__dirname, './website/canvas');
+const websiteDir = resolve(__dirname, './src');
+const canvasWebsiteDir = resolve(__dirname, './src/canvas');
 
 function getEntryPoints() {
   // Main index
@@ -50,10 +50,10 @@ export default defineConfig({
   resolve: {
     // Ensure proper resolution for local packages
     alias: {
-      '@folkjs/lib': resolve(__dirname, './packages/lib/src'),
-      '@folkjs/labs': resolve(__dirname, './packages/labs/src'),
-      '@folkjs/propagators': resolve(__dirname, './packages/propagators/src'),
-      '@folkjs/geometry': resolve(__dirname, './packages/geometry/src'),
+      '@folkjs/lib': resolve(__dirname, '../packages/lib/src'),
+      '@folkjs/labs': resolve(__dirname, '../packages/labs/src'),
+      '@folkjs/propagators': resolve(__dirname, '../packages/propagators/src'),
+      '@folkjs/geometry': resolve(__dirname, '../packages/geometry/src'),
     },
   },
   optimizeDeps: {

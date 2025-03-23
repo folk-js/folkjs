@@ -1,0 +1,29 @@
+{
+  "name": "folkjs-website",
+  "version": "0.0.1",
+  "description": "FolkJS Website",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc --build --pretty",
+    "test": "bun test"
+  },
+  "references": [
+    {
+      "path": "../packages/lib"
+    },
+    {
+      "path": "../packages/labs"
+    },
+    {
+      "path": "../packages/propagators"
+    },
+    {
+      "path": "../packages/geometry"
+    }
+  ]
+}
