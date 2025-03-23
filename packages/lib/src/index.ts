@@ -37,5 +37,5 @@ export * from './custom-attribute-registry';
 export * from './CanIUse';
 
 // Interfaces
+export * from './interfaces/InterfaceKey';
 export * from './interfaces/IPointTransform';
-export * from './interfaces/satisfies';

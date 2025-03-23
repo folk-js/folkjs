@@ -1,6 +1,8 @@
-import type { Point } from '@folkjs/lib';
+import type { Point } from '../types.ts';
+import { interfaceKey } from './InterfaceKey.js';
 
-export const IPointTransform = Symbol('IPointTransform');
+export const IPointTransform = interfaceKey<IPointTransform>('IPointTransform');
+
 export interface IPointTransform {
   /**
    * Converts a point from parent coordinates to local space coordinates.
