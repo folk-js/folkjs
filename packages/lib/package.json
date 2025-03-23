@@ -26,7 +26,6 @@
   ],
   "scripts": {
     "build": "tsc --build --pretty",
-    "bench": "bun run __benchmarks__/script.ts",
     "test": "bun test"
   },
   "devDependencies": {
