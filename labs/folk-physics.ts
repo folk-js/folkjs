@@ -1,10 +1,8 @@
-import RAPIER, { init } from '@dimforge/rapier2d-compat';
+import RAPIER from '@dimforge/rapier2d';
 import { DOMRectTransform, TransformIntegrator } from '@lib';
 import { PropertyValues } from '@lit/reactive-element';
 import { FolkBaseSet } from './folk-base-set.ts';
 import { FolkShape } from './folk-shape';
-
-await init();
 
 export class FolkPhysics extends FolkBaseSet {
   static override tagName = 'folk-physics';

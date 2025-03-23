@@ -23,7 +23,7 @@
     "@automerge/automerge-repo-network-websocket": "^1.2.1",
     "@automerge/automerge-repo-storage-indexeddb": "^1.2.1",
     "@babel/parser": "^7.26.2",
-    "@dimforge/rapier2d-compat": "^0.14.0",
+    "@dimforge/rapier2d": "^0.15.0",
     "@folk-systems/propagators": "workspace:*",
     "@lit/reactive-element": "^2.0.4",
     "@mlc-ai/web-llm": "^0.2.78",
