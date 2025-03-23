@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chemical Programming</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        padding: 20px;
+      }
+
+      .content-container {
+        max-width: 800px;
+        margin: 0 auto;
+      }
+
+      .content-title {
+        font-size: 24px;
+        font-weight: 500;
+        margin-bottom: 16px;
+        color: #222;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        text-align: center;
+      }
+
+      .machine-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+
+      .control-panel,
+      .solution-view {
+        padding: 20px;
+        background: #fafafa;
+        border: 1px solid #eee;
+        border-radius: 4px;
+      }
+
+      .control-panel {
+        max-height: 600px;
+        overflow-y: auto;
+      }
+
+      .control-panel h3,
+      .solution-view h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 18px;
+        color: #444;
+      }
+
+      .control-group {
+        margin-bottom: 15px;
+      }
+
+      button {
+        background: #4a6ed0;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        margin-right: 8px;
+        margin-bottom: 8px;
+      }
+
+      button:hover {
+        background: #3a5ec0;
+      }
+
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
+
+      .higher-order-btn {
+        background: #9966cc;
+      }
+
+      .higher-order-btn:hover {
+        background: #8855bb;
+      }
+
+      .quick-add-btn {
+        background: #50c878;
+        font-weight: bold;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .quick-add-btn:hover {
+        background: #40b868;
+      }
+
+      .solution-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      .solution-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 12px;
+        margin-bottom: 4px;
+        background: white;
+        border-radius: 3px;
+        border-left: 4px solid #4a6ed0;
+      }
+
+      .solution-item.rule {
+        border-left-color: #d04a6e;
+      }
+
+      .solution-item.higher-rule {
+        border-left-color: #9966cc;
+      }
+
+      .element-count {
+        font-weight: bold;
+      }
+
+      .log-container {
+        margin-top: 20px;
+        padding: 10px;
+        background: #f5f5f5;
+        border: 1px solid #eee;
+        border-radius: 4px;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+
+      .log-entry {
+        margin-bottom: 4px;
+        font-family: monospace;
+        font-size: 14px;
+      }
+
+      input,
+      select {
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        margin-right: 8px;
+      }
+
+      .preset-rules {
+        margin-bottom: 15px;
+      }
+
+      .rule-part {
+        display: inline-block;
+        background: #f0f0f0;
+        border-radius: 3px;
+        padding: 2px 6px;
+        margin: 0 2px;
+      }
+
+      .rule-arrow {
+        color: #666;
+        margin: 0 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="content-container">
+      <div class="content-title">Chemical Programming</div>
+
+      <div class="machine-container">
+        <div class="control-panel">
+          <h3>Control Panel</h3>
+
+          <div class="control-group">
+            <h4>Quick Add (10x)</h4>
+            <div class="quick-add-container">
+              <button class="quick-add-btn" data-element="A">A</button>
+              <button class="quick-add-btn" data-element="B">B</button>
+              <button class="quick-add-btn" data-element="C">C</button>
+              <button class="quick-add-btn" data-element="D">D</button>
+              <button class="quick-add-btn" data-element="E">E</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <h4>Add Element</h4>
+            <input type="text" id="element-input" placeholder="Element name" />
+            <input type="number" id="element-count" placeholder="Count" min="1" value="1" />
+            <button id="add-element-btn">Add</button>
+          </div>
+
+          <div class="control-group">
+            <h4>Basic Rules</h4>
+            <div class="preset-rules">
+              <button id="add-rule-1">A + B → C</button>
+              <button id="add-rule-2">2C → D</button>
+              <button id="add-rule-3">D → 2A + B</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <h4>Higher-Order Rules</h4>
+            <div class="preset-rules">
+              <button id="add-meta-rule-1" class="higher-order-btn">X + (A+B→C) → (2C→D)</button>
+              <button id="add-meta-rule-2" class="higher-order-btn">Y → (A+B→C) + A</button>
+              <button id="add-meta-rule-3" class="higher-order-btn">(A+B→C) + (2C→D) → Z</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <button id="step-btn">Step</button>
+            <button id="run-btn">Run</button>
+            <button id="reset-btn">Reset</button>
+          </div>
+        </div>
+
+        <div class="solution-view">
+          <h3>Current Solution</h3>
+          <ul id="solution-list" class="solution-list">
+            <li class="solution-item">No elements yet</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="log-container">
+        <div id="log-output"></div>
+      </div>
+    </div>
+
+    <script type="module">
+      // Import the ChemicalMachine class and REACTION_RULE_TYPE symbol from the labs directory
+      import { REACTION_RULE_TYPE, ChemicalMachine } from '@labs/ChemicalMachine.ts';
+
+      // Create a new chemical machine
+      const machine = new ChemicalMachine();
+
+      // UI elements
+      const solutionList = document.getElementById('solution-list');
+      const logOutput = document.getElementById('log-output');
+      const elementInput = document.getElementById('element-input');
+      const elementCount = document.getElementById('element-count');
+      const addElementBtn = document.getElementById('add-element-btn');
+      const stepBtn = document.getElementById('step-btn');
+      const runBtn = document.getElementById('run-btn');
+      const resetBtn = document.getElementById('reset-btn');
+      const addRule1Btn = document.getElementById('add-rule-1');
+      const addRule2Btn = document.getElementById('add-rule-2');
+      const addRule3Btn = document.getElementById('add-rule-3');
+      const addMetaRule1Btn = document.getElementById('add-meta-rule-1');
+      const addMetaRule2Btn = document.getElementById('add-meta-rule-2');
+      const addMetaRule3Btn = document.getElementById('add-meta-rule-3');
+      const quickAddButtons = document.querySelectorAll('.quick-add-btn');
+
+      // Helper function to create reaction rules
+      function createRule(consumes, produces) {
+        return {
+          [REACTION_RULE_TYPE]: true,
+          consumes: new Map(consumes),
+          produces: new Map(produces),
+        };
+      }
+
+      // Create common rules for reuse
+      const ruleABtoC = createRule(
+        [
+          ['A', 1],
+          ['B', 1],
+        ],
+        [['C', 1]],
+      );
+      const rule2CtoD = createRule([['C', 2]], [['D', 1]]);
+      const ruleDtoAB = createRule(
+        [['D', 1]],
+        [
+          ['A', 2],
+          ['B', 1],
+        ],
+      );
+
+      // Helper function to log messages
+      function log(message) {
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.textContent = message;
+        logOutput.appendChild(entry);
+        logOutput.scrollTop = logOutput.scrollHeight;
+      }
+
+      // Helper function to format a rule object to a readable string
+      function formatRule(rule) {
+        if (!rule || !rule[REACTION_RULE_TYPE]) {
+          return 'Invalid Rule';
+        }
+
+        let consumesStr = [...rule.consumes.entries()]
+          .map(([e, c]) => {
+            if (typeof e === 'string') {
+              return `${c > 1 ? c : ''}${e}`;
+            } else if (e && e[REACTION_RULE_TYPE]) {
+              return `(${formatRule(e)})`;
+            } else {
+              return 'Rule';
+            }
+          })
+          .join(' + ');
+
+        let producesStr = [...rule.produces.entries()]
+          .map(([e, c]) => {
+            if (typeof e === 'string') {
+              return `${c > 1 ? c : ''}${e}`;
+            } else if (e && e[REACTION_RULE_TYPE]) {
+              return `(${formatRule(e)})`;
+            } else {
+              return 'Rule';
+            }
+          })
+          .join(' + ');
+
+        return `${consumesStr} → ${producesStr}`;
+      }
+
+      // Helper function to update the solution view
+      function updateSolutionView() {
+        const solution = machine.getSolution();
+
+        if (solution.size === 0) {
+          solutionList.innerHTML = '<li class="solution-item">No elements yet</li>';
+          return;
+        }
+
+        solutionList.innerHTML = '';
+
+        for (const [element, count] of solution.entries()) {
+          const item = document.createElement('li');
+          item.className = 'solution-item';
+
+          if (typeof element === 'object' && REACTION_RULE_TYPE in element) {
+            item.classList.add('rule');
+
+            // Check if this is a higher-order rule (consumes or produces rules)
+            let isHigherOrder = false;
+
+            // Check consumes for rules
+            for (const [e, c] of element.consumes.entries()) {
+              if (typeof e === 'object' && REACTION_RULE_TYPE in e) {
+                isHigherOrder = true;
+                break;
+              }
+            }
+
+            // Check produces for rules
+            if (!isHigherOrder) {
+              for (const [e, c] of element.produces.entries()) {
+                if (typeof e === 'object' && REACTION_RULE_TYPE in e) {
+                  isHigherOrder = true;
+                  break;
+                }
+              }
+            }
+
+            if (isHigherOrder) {
+              item.classList.add('higher-rule');
+            }
+
+            // Format the rule for display using the helper function
+            const ruleStr = formatRule(element);
+
+            item.innerHTML = `
+              <span>${ruleStr}</span>
+              <span class="element-count">${count}</span>
+            `;
+          } else {
+            item.innerHTML = `
+              <span>${element}</span>
+              <span class="element-count">${count}</span>
+            `;
+          }
+
+          solutionList.appendChild(item);
+        }
+      }
+
+      // Add an element to the solution
+      addElementBtn.addEventListener('click', () => {
+        const element = elementInput.value.trim();
+        const count = parseInt(elementCount.value, 10);
+
+        if (!element) {
+          log('Please enter an element name');
+          return;
+        }
+
+        if (isNaN(count) || count < 1) {
+          log('Count must be a positive number');
+          return;
+        }
+
+        try {
+          machine.add(element, count);
+          log(`Added ${count} of element "${element}"`);
+          updateSolutionView();
+          elementInput.value = '';
+          elementCount.value = '1';
+        } catch (error) {
+          log(`Error: ${error.message}`);
+        }
+      });
+
+      // Quick add buttons (add 10 at a time)
+      quickAddButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          const element = button.dataset.element;
+          const count = 10;
+
+          try {
+            machine.add(element, count);
+            log(`Added ${count} of element "${element}"`);
+            updateSolutionView();
+          } catch (error) {
+            log(`Error: ${error.message}`);
+          }
+        });
+      });
+
+      // Step the system forward
+      stepBtn.addEventListener('click', () => {
+        const didStep = machine.step();
+        if (didStep) {
+          log('Step completed - reaction occurred');
+        } else {
+          log('Step completed - no reaction possible');
+        }
+        updateSolutionView();
+      });
+
+      // Run the system
+      runBtn.addEventListener('click', () => {
+        const steps = machine.run(100);
+        log(`Run completed - ${steps} reactions occurred`);
+        updateSolutionView();
+      });
+
+      // Reset the system
+      resetBtn.addEventListener('click', () => {
+        // Create a new machine
+        window.machine = new ChemicalMachine();
+        machine = window.machine;
+        log('System reset');
+        updateSolutionView();
+      });
+
+      // Add preset rule 1: A + B → C
+      addRule1Btn.addEventListener('click', () => {
+        machine.add(ruleABtoC);
+        log('Added rule: A + B → C');
+        updateSolutionView();
+      });
+
+      // Add preset rule 2: 2C → D
+      addRule2Btn.addEventListener('click', () => {
+        machine.add(rule2CtoD);
+        log('Added rule: 2C → D');
+        updateSolutionView();
+      });
+
+      // Add preset rule 3: D → 2A + B
+      addRule3Btn.addEventListener('click', () => {
+        machine.add(ruleDtoAB);
+        log('Added rule: D → 2A + B');
+        updateSolutionView();
+      });
+
+      // Add higher-order rule 1: X + (A+B→C) → (2C→D)
+      addMetaRule1Btn.addEventListener('click', () => {
+        const metaRule = createRule(
+          [
+            ['X', 1],
+            [ruleABtoC, 1],
+          ],
+          [[rule2CtoD, 1]],
+        );
+        machine.add(metaRule);
+        log('Added higher-order rule: X + (A+B→C) → (2C→D)');
+        updateSolutionView();
+      });
+
+      // Add higher-order rule 2: Y → (A+B→C) + A
+      addMetaRule2Btn.addEventListener('click', () => {
+        const metaRule = createRule(
+          [['Y', 1]],
+          [
+            [ruleABtoC, 1],
+            ['A', 1],
+          ],
+        );
+        machine.add(metaRule);
+        log('Added higher-order rule: Y → (A+B→C) + A');
+        updateSolutionView();
+      });
+
+      // Add higher-order rule 3: (A+B→C) + (2C→D) → Z
+      addMetaRule3Btn.addEventListener('click', () => {
+        const metaRule = createRule(
+          [
+            [ruleABtoC, 1],
+            [rule2CtoD, 1],
+          ],
+          [['Z', 1]],
+        );
+        machine.add(metaRule);
+        log('Added higher-order rule: (A+B→C) + (2C→D) → Z');
+        updateSolutionView();
+      });
+
+      // Initialize the view
+      updateSolutionView();
+      log('Chemical Machine initialized');
+    </script>
+  </body>
+</html>
