@@ -14,7 +14,8 @@ export type TransformChangeCallback = (scale: number, position: Point) => void;
  * elements inside the space.
  */
 export class FolkSpace extends FolkElement implements IPointTransform {
-  [IPointTransform] = true;
+  [IPointTransform] = undefined;
+
   static override tagName = 'folk-space';
 
   static override styles = css`

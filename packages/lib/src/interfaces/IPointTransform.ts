@@ -4,6 +4,8 @@ import { interfaceKey } from './InterfaceKey.js';
 export const IPointTransform = interfaceKey<IPointTransform>('IPointTransform');
 
 export interface IPointTransform {
+  [IPointTransform]: undefined;
+
   /**
    * Converts a point from parent coordinates to local space coordinates.
    *
