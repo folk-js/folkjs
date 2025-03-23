@@ -362,7 +362,6 @@ export class FolkShape extends FolkElement {
 
   refreshTransformStack() {
     this.#transformStack = TransformStack.fromElement(this);
-    console.log(this.#transformStack);
   }
 
   // todo: rename to `getDOMRectTransform`

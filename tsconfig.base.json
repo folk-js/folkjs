@@ -18,6 +18,7 @@
     "noImplicitOverride": false,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
+    "useDefineForClassFields": false,
 
     "experimentalDecorators": true,
 
