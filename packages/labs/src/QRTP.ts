@@ -71,9 +71,6 @@ export class QRTP extends EventEmitter {
     // Handle acknowledgment of our outgoing message if we are sending
     if (packet.ack && this.isSending) {
       const chunk = this.#sendingData[this.#sendingIndex];
-      if (chunk === undefined) {
-        throw new Error(`Missing chunk at index ${this.#sendingIndex}`);
-      }
       const expectedAck = hash(this.#sendingIndex, this.#sendingData.length, chunk);
       if (packet.ack === expectedAck) {
         this.#sendingIndex++;
