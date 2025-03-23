@@ -1,4 +1,4 @@
-import { FolkSpace } from '../folk-space.ts';
+import { FolkSpace } from '../folk-space';
 
 FolkSpace.define();
 

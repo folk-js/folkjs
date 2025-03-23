@@ -3,40 +3,34 @@
     /* Base Options: */
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "target": "es2022",
+    "target": "ES2020",
     "resolveJsonModule": true,
     "moduleDetection": "force",
     "isolatedModules": true,
     // TODO: turn back on after packages refactor
-    "verbatimModuleSyntax": true,
+    "verbatimModuleSyntax": false,
 
     /* Strictness */
     "strict": true,
-    "noUncheckedIndexedAccess": true,
+    // TODO: MAYBE turn on later, this is a lot and might be a poor tradeoff for performance
+    "noUncheckedIndexedAccess": false,
     // TODO: turn back on after packages refactor
     "noImplicitOverride": false,
     "erasableSyntaxOnly": true,
 
+    "experimentalDecorators": true,
+
     /* If transpiling with TypeScript: */
     "moduleResolution": "bundler",
     "allowJs": true,
-    "module": "es2022",
+    "module": "ESNext",
     "sourceMap": true,
-    "lib": ["es2022", "dom", "dom.iterable"],
+    "lib": ["esnext", "dom", "dom.iterable"],
     "composite": true,
     "declarationMap": true,
     "baseUrl": ".",
     "paths": {
-      "@folkjs/lib": ["packages/lib/src"],
-      "@folkjs/lib/*": ["packages/lib/src/*"],
-      "@folkjs/labs": ["packages/labs/src"],
-      "@folkjs/labs/*": ["packages/labs/src/*"],
-      "@folkjs/propagators": ["packages/propagators/src"],
-      "@folkjs/propagators/*": ["packages/propagators/src/*"],
-      "@folkjs/geometry": ["packages/geometry/src"],
-      "@folkjs/geometry/*": ["packages/geometry/src/*"],
-      "@folkjs/web-extensions": ["packages/web-extension/src"],
-      "@folkjs/web-extensions/*": ["packages/web-extension/src/*"]
+      "@folkjs/*": ["packages/*/src"]
     }
   }
 }

@@ -1,4 +1,5 @@
 import {
+  css,
   CustomAttribute,
   customAttributes,
   DOMRectTransform,
@@ -8,7 +9,6 @@ import {
   toDOMPrecision,
   TransformEvent,
 } from '@folkjs/lib';
-import { css } from '@folkjs/lib/tags';
 import { FolkShapeOverlay } from './folk-shape-overlay';
 
 declare global {

@@ -4,12 +4,17 @@
     "rootDir": "src",
     "outDir": "dist",
     "declaration": true,
-    "composite": true
+    "composite": true,
+    "lib": ["DOM", "DOM.Iterable", "ESNext", "WebWorker"],
+    "types": ["@webgpu/types", "@types/node", "@types/wicg-file-system-access", "bun-types"]
   },
   "include": ["src/"],
   "references": [
     {
       "path": "../lib"
+    },
+    {
+      "path": "../propagators"
     }
   ]
 }

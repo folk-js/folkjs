@@ -1,4 +1,4 @@
-import type { Point, Rect } from '@folkjs/lib/types';
+import type { Point, Rect } from '@folkjs/lib';
 
 /**
  * Utility class with geometry-related functions for 2D graphics and transformations.

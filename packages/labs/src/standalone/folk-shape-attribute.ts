@@ -1,4 +1,4 @@
-import { FolkShapeAttribute } from '../folk-shape-attribute.ts';
+import { FolkShapeAttribute } from '../folk-shape-attribute';
 
 FolkShapeAttribute.define();
 

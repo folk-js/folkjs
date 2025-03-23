@@ -1,7 +1,7 @@
 // this needs to move to the web extension once that's set up.
 
-import { FolkObserver } from '../../labs/src/folk-observer.ts';
-import { ClientRectObserverEntry } from './client-rect-observer.ts';
+import { ClientRectObserverEntry } from '@folkjs/lib/client-rect-observer';
+import { FolkObserver } from './folk-observer';
 
 const folkObserver = new FolkObserver();
 

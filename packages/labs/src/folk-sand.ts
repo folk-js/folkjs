@@ -1,6 +1,6 @@
 import { DOMRectTransform, WebGLUtils } from '@folkjs/lib';
 import { css, PropertyValues } from '@lit/reactive-element';
-import { FolkBaseSet } from './folk-base-set.ts';
+import { FolkBaseSet } from './folk-base-set';
 import {
   collisionFragmentShader,
   collisionVertexShader,
@@ -9,7 +9,7 @@ import {
   simulationShader,
   vertexShader,
   visualizationShader,
-} from './folk-sand.glsl.ts';
+} from './folk-sand.glsl';
 
 export class FolkSand extends FolkBaseSet {
   static override tagName = 'folk-sand';

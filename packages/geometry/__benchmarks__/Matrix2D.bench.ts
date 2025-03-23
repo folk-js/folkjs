@@ -30,8 +30,8 @@ import {
   toPoint,
   translate,
   translateSelf,
-} from '../src/Matrix2D.ts';
-import { PI } from '../src/utilities.ts';
+} from '../src/Matrix2D';
+import { PI } from '../src/utilities';
 
 const m1 = fromValues(1, 2, 3, 4, 5, 6);
 const m2 = fromValues(7, 8, 9, 10, 11, 12);

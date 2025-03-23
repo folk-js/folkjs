@@ -1,21 +1,21 @@
-import { getResizeCursorUrl, getRotateCursorUrl } from '@folkjs/labs/utils/cursors';
 import {
   DOMRectTransform,
   DOMRectTransformReadonly,
   FolkElement,
+  html,
+  IPointTransform,
   Matrix,
+  MAX_Z_INDEX,
+  ResizeManager,
   round,
   toDOMPrecision,
   TransformEvent,
+  TransformStack,
   Vector,
+  type Point,
 } from '@folkjs/lib';
-import { IPointTransform } from '@folkjs/lib/interfaces/IPointTransform';
-import { ResizeManager } from '@folkjs/lib/resize-manger';
-import { html } from '@folkjs/lib/tags';
-import { TransformStack } from '@folkjs/lib/TransformStack';
-import type { Point } from '@folkjs/lib/types';
-import { MAX_Z_INDEX } from '@folkjs/lib/utils';
 import { css } from '@lit/reactive-element';
+import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 const resizeManager = new ResizeManager();
 

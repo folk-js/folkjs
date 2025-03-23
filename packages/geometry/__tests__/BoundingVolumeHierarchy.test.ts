@@ -1,5 +1,5 @@
+import { BoundingVolumeHierarchy } from '@folkjs/geometry/BoundingVolumeHierarchy';
 import { describe, expect, test } from 'bun:test';
-import { BoundingVolumeHierarchy } from '../src/BoundingVolumeHierarchy.ts';
 
 describe('BoundingVolumeHierarchy', () => {
   test('constructor initializes with no rectangles', () => {

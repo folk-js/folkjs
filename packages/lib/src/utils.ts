@@ -1,7 +1,7 @@
 // Adopted from: https://github.com/pshihn/bezier-points/blob/master/lib/index.ts
 
-import type { Point } from './types.ts';
-import { Vector } from './Vector.ts';
+import type { Point } from './types';
+import { Vector } from './Vector';
 
 export const MAX_Z_INDEX = 2147483647;
 
@@ -22,10 +22,10 @@ export function lerp(a: number, b: number, alpha: number): number {
 
 // Adapted from https://seant23.wordpress.com/2010/11/12/offset-bezier-curves/
 function flatness(points: readonly Point[], offset: number): number {
-  const p1 = points[offset + 0];
-  const p2 = points[offset + 1];
-  const p3 = points[offset + 2];
-  const p4 = points[offset + 3];
+  const p1 = points[offset + 0]!;
+  const p2 = points[offset + 1]!;
+  const p3 = points[offset + 2]!;
+  const p4 = points[offset + 3]!;
 
   let ux = 3 * p2.x - 2 * p1.x - p4.x;
   ux *= ux;
@@ -55,23 +55,23 @@ function getPointsOnBezierCurveWithSplitting(
 ): Point[] {
   const outPoints = newPoints || [];
   if (flatness(points, offset) < tolerance) {
-    const p0 = points[offset + 0];
+    const p0 = points[offset + 0]!;
     if (outPoints.length) {
-      const d = Vector.distance(outPoints[outPoints.length - 1], p0);
+      const d = Vector.distance(outPoints[outPoints.length - 1]!, p0);
       if (d > 1) {
         outPoints.push(p0);
       }
     } else {
       outPoints.push(p0);
     }
-    outPoints.push(points[offset + 3]);
+    outPoints.push(points[offset + 3]!);
   } else {
     // subdivide
     const t = 0.5;
-    const p1 = points[offset + 0];
-    const p2 = points[offset + 1];
-    const p3 = points[offset + 2];
-    const p4 = points[offset + 3];
+    const p1 = points[offset + 0]!;
+    const p2 = points[offset + 1]!;
+    const p3 = points[offset + 2]!;
+    const p4 = points[offset + 3]!;
 
     const q1 = Vector.lerp(p1, p2, t);
     const q2 = Vector.lerp(p2, p3, t);
@@ -102,12 +102,12 @@ export function simplifyPoints(
   const outPoints = newPoints || [];
 
   // find the most distance point from the endpoints
-  const s = points[start];
-  const e = points[end - 1];
+  const s = points[start]!;
+  const e = points[end - 1]!;
   let maxDistSq = 0;
   let maxNdx = 1;
   for (let i = start + 1; i < end - 1; ++i) {
-    const distSq = distanceToSegmentSq(points[i], s, e);
+    const distSq = distanceToSegmentSq(points[i]!, s, e);
     if (distSq > maxDistSq) {
       maxDistSq = distSq;
       maxNdx = i;
@@ -145,17 +145,17 @@ export function getSvgPathFromStroke(stroke: number[][]): string {
   if (stroke.length === 0) return '';
 
   for (const point of stroke) {
-    point[0] = Math.round(point[0] * 100) / 100;
-    point[1] = Math.round(point[1] * 100) / 100;
+    point[0] = Math.round(point[0]! * 100) / 100;
+    point[1] = Math.round(point[1]! * 100) / 100;
   }
 
   const d = stroke.reduce(
     (acc, [x0, y0], i, arr) => {
-      const [x1, y1] = arr[(i + 1) % arr.length];
-      acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+      const [x1, y1] = arr[(i + 1) % arr.length]!;
+      acc.push(x0!, y0!, (x0! + x1!) / 2, (y0! + y1!) / 2);
       return acc;
     },
-    ['M', ...stroke[0], 'Q'],
+    ['M', ...stroke[0]!, 'Q'],
   );
 
   d.push('Z');

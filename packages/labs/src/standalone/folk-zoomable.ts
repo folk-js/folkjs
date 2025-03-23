@@ -1,4 +1,4 @@
-import { FolkZoomable } from '../folk-zoomable.ts';
+import { FolkZoomable } from '../folk-zoomable';
 
 FolkZoomable.define();
 

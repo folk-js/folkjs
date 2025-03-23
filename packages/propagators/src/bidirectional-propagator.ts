@@ -1,4 +1,4 @@
-import type { PropagatorFunction, PropagatorParser } from './types.ts';
+import type { PropagatorFunction, PropagatorParser } from './types';
 
 interface PropagatorOptions {
   source?: EventTarget | null;

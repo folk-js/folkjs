@@ -28,6 +28,8 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
-    "@folkjs/lib": "workspace:*"
+    "@folkjs/lib": "workspace:*",
+    "@folkjs/propagators": "workspace:*",
+    "@folkjs/geometry": "workspace:*"
   }
 }

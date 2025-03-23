@@ -1,6 +1,4 @@
-import { DOMRectTransform, FolkElement, type Point } from '@folkjs/lib';
-import { html } from '@folkjs/lib/tags';
-import { Vector } from '@folkjs/lib/Vector';
+import { DOMRectTransform, FolkElement, type Point, Vector, html } from '@folkjs/lib';
 import { css } from '@lit/reactive-element';
 
 interface GizmoOptions {

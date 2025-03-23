@@ -1,6 +1,6 @@
-import { hash } from '@folkjs/labs/utils/hash';
-import { header } from '@folkjs/labs/utils/header';
 import EventEmitter from 'eventemitter3';
+import { hash } from './utils/hash';
+import { header } from './utils/header';
 
 /** QRTP - A tiny QR Transfer Protocol
  * Each device shows a QR code with:

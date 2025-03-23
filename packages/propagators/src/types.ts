@@ -1,4 +1,4 @@
-import { Propagator } from './propagator';
+import { Propagator } from '@folkjs/propagators';
 
 /**
  * A function that processes the event and updates the target.

@@ -1,4 +1,4 @@
-import { IntlNumber } from '../intl-elements/intl-number.ts';
+import { IntlNumber } from '../intl-elements/intl-number';
 
 IntlNumber.define();
 

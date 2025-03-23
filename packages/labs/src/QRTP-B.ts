@@ -1,6 +1,6 @@
-import { GGWave } from '@folkjs/labs/ggwave';
-import { header } from '@folkjs/labs/utils/header';
 import EventEmitter from 'eventemitter3';
+import { GGWave } from './ggwave';
+import { header } from './utils/header';
 
 /**
  * QRTP-B - QR Transfer Protocol with Audio Backchannel

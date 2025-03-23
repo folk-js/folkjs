@@ -1,6 +1,6 @@
 import { aabbIntersection, TransformEvent } from '@folkjs/lib';
 import { FolkHull } from './folk-hull';
-import { FolkShape } from './folk-shape.ts';
+import { FolkShape } from './folk-shape';
 
 interface ElementConstructor<E extends Element = Element> {
   new (): E;

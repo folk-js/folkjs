@@ -1,4 +1,4 @@
-import type { Point } from '@folkjs/lib/types';
+import type { Point } from '@folkjs/lib';
 
 export const IPointTransform = Symbol('IPointTransform');
 export interface IPointTransform {

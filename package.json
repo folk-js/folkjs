@@ -9,14 +9,14 @@
     "dev": "vite",
     "dev:host": "vite --host",
     "dev:extension": "vite build packages/web-extension -w",
-    "build": "bun run build:packages && tsc --noEmit && vite build",
-    "build:packages": "bun run build:package lib && bun run build:package propagators && bun run build:package geometry && bun run build:package labs",
+    "build": "for dir in packages/*; do if [ -d \"$dir\" ]; then echo \"Building $dir\" && (cd \"$dir\" && bun run build); fi; done && tsc --noEmit && vite build",
+    "build:packages": "for dir in packages/*; do if [ -d \"$dir\" ]; then echo \"Building $dir\" && (cd \"$dir\" && bun run build); fi; done",
     "build:package": "cd packages/$1 && bun run build",
     "build:extension": "tsc --noEmit && vite build packages/web-extension",
     "preview": "tsc --noEmit && vite build && vite preview",
     "test": "bun test",
     "test:lib": "bun test packages/lib",
-    "types": "tsc --noEmit",
+    "types": "tsc --noEmit && for dir in packages/*; do if [ -d \"$dir\" ] && [ -f \"$dir/tsconfig.json\" ]; then echo \"Checking types in $dir\" && tsc --project \"$dir/tsconfig.json\" --noEmit; fi; done",
     "bench": "bun run packages/lib/__tests__/bench.ts"
   },
   "dependencies": {

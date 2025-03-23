@@ -1,5 +1,5 @@
+import { DOMShape } from '@folkjs/geometry/DOMShape2';
 import { bench, run } from 'mitata';
-import { DOMShape } from '../src/DOMShape2.ts';
 
 const shape = new DOMShape({
   x: 0,
