@@ -18,6 +18,7 @@
     "test": "bun test",
     "test:lib": "bun test packages/lib",
     "types": "tsc --noEmit && for pkg in packages/*; do if [ -d \"$pkg\" ] && [ -f \"$pkg/tsconfig.json\" ]; then echo \"Checking types in $pkg\" && (cd \"$pkg\" && tsc --noEmit); fi; done",
+    "types:autofix": "npx ts-autofix",
     "bench": "bun run packages/lib/__tests__/bench.ts",
     "build:lib": "tsc --build --pretty --verbose"
   },

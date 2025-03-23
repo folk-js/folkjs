@@ -12,11 +12,11 @@ type PointerEventTypes =
   | 'pointerup';
 
 export class FolkModalTool extends FolkElement {
-  static tagName = 'folk-modal-tool';
+  static override tagName = 'folk-modal-tool';
 
-  static shadowRootOptions = { ...FolkElement.shadowRootOptions, delegatesFocus: true };
+  static override shadowRootOptions = { ...FolkElement.shadowRootOptions, delegatesFocus: true };
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       border: solid 1px black;
@@ -29,7 +29,7 @@ export class FolkModalTool extends FolkElement {
     }
   `;
 
-  protected createRenderRoot(): HTMLElement | DocumentFragment {
+  protected override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
 
     const button = document.createElement('button');

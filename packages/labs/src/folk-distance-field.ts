@@ -39,7 +39,7 @@ export class FolkDistanceField extends FolkBaseSet {
     [groupName: string]: Float32Array;
   } = {};
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
 
     // Initialize groups for 'mergeA', 'mergeB', and 'others'
@@ -71,7 +71,7 @@ export class FolkDistanceField extends FolkBaseSet {
     window.addEventListener('resize', this.#handleResize);
   }
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     super.disconnectedCallback();
 
     window.removeEventListener('resize', this.#handleResize);

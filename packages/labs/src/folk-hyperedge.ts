@@ -13,7 +13,7 @@ declare global {
 export class FolkHyperedge extends FolkBaseHyperedge {
   static override tagName = 'folk-hyperedge';
 
-  static styles = [
+  static override styles = [
     FolkBaseHyperedge.styles,
     css`
       #hullA,

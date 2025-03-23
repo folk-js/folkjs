@@ -10,9 +10,9 @@ declare global {
 }
 
 export class FolkPinch extends FolkElement {
-  static tagName = 'folk-pinch';
+  static override tagName = 'folk-pinch';
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       overflow: hidden;

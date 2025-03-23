@@ -12,7 +12,7 @@ type NumberFormatOptions = Intl.NumberFormatOptions;
 
 // Ported from https://github.com/elematic/heximal/blob/main/packages/components/src/lib/num.ts
 export class IntlNumber extends FolkElement {
-  static tagName = 'intl-number';
+  static override tagName = 'intl-number';
 
   static override styles = css`
     slot {

@@ -12,9 +12,9 @@ declare global {
 }
 
 export class FolkDirectory extends FolkBaseSet {
-  static tagName = 'folk-directory';
+  static override tagName = 'folk-directory';
 
-  static styles = css`
+  static override styles = css`
     * {
       box-sizing: border-box;
     }

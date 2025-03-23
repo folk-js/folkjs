@@ -17,9 +17,9 @@ class AngularPoint {
 }
 
 export class FolkKnob extends FolkElement {
-  static tagName = 'folk-knob';
+  static override tagName = 'folk-knob';
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
     }

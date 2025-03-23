@@ -56,8 +56,8 @@ export interface PeerNetwork {
  * and peer discovery via PeerSet.
  */
 export class FolkMultiPeerAdapter extends NetworkAdapter implements PeerNetwork {
-  peerId?: PeerId;
-  peerMetadata?: PeerMetadata;
+  override peerId?: PeerId;
+  override peerMetadata?: PeerMetadata;
 
   #peer: Peer;
   #peerSet: PeerSet;

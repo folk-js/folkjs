@@ -14,7 +14,7 @@ export class FolkTimer extends FolkElement {
 
   #intervalMs = 100;
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.reset();
   }

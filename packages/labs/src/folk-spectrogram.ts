@@ -25,7 +25,7 @@ export type ColorScheme = 'dark' | 'light';
  * that can be connected to any Web Audio API source or analyzer node.
  */
 export class FolkSpectrogram extends FolkElement {
-  static tagName = 'folk-spectrogram';
+  static override tagName = 'folk-spectrogram';
 
   static override styles = css`
     :host {

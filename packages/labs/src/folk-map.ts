@@ -48,7 +48,7 @@ export class FolkMap extends FolkElement {
     return root;
   }
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
 
     // fix tile loading problem
@@ -58,7 +58,7 @@ export class FolkMap extends FolkElement {
     this.#map.on('moveend', this.handleEvent);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
 
     // Move end includes changes to zoom

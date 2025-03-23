@@ -19,14 +19,14 @@ export class FolkGraph extends FolkBaseSet implements AnimationFrameControllerHo
     return Number(this.getAttribute('distance')) || 200;
   }
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.#rAF.start();
   }
 
   render() {}
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     super.disconnectedCallback();
     this.#rAF.stop();
     this.#nodes.clear();

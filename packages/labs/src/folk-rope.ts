@@ -35,7 +35,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
 
   static #resolution = 5;
 
-  static styles = [
+  static override styles = [
     FolkBaseConnection.styles,
     css`
       svg {

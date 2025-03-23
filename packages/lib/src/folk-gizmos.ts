@@ -64,7 +64,7 @@ export class Gizmos extends FolkElement {
 
   static #hasLoggedInitMessage = false;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       position: absolute;

@@ -55,9 +55,9 @@ declare global {
 }
 
 export class FolkShapeOverlay extends FolkElement {
-  static tagName = 'folk-shape-overlay';
+  static override tagName = 'folk-shape-overlay';
 
-  static styles = css`
+  static override styles = css`
     :host {
       box-sizing: border-box;
       position: absolute;
@@ -231,13 +231,13 @@ export class FolkShapeOverlay extends FolkElement {
     return root;
   }
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
 
     window.addEventListener('keydown', this.#handleTabbing, { capture: true });
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
 
     window.removeEventListener('keydown', this.#handleTabbing, { capture: true });

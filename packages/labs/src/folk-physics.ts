@@ -17,7 +17,7 @@ export class FolkPhysics extends FolkBaseSet {
   #lastTimestamp?: number;
   #integrator = TransformIntegrator.register('physics');
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
 
     this.#world = new RAPIER.World({
@@ -30,7 +30,7 @@ export class FolkPhysics extends FolkBaseSet {
     this.#startSimulation();
   }
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     super.disconnectedCallback();
 
     if (this.#animationFrameId) {

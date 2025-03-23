@@ -7,7 +7,7 @@ const folkObserver = new FolkObserver();
 
 // TODO: use mutation observer to track the addition an removal of elements
 export class FolkBaseSet extends FolkElement {
-  static styles: CSSResultGroup = css`
+  static override styles: CSSResultGroup = css`
     :host {
       display: block;
       position: absolute;

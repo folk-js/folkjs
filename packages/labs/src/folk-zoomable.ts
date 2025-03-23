@@ -17,7 +17,7 @@ const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;
 
 export class FolkZoomable extends CustomAttribute {
-  static attributeName = 'folk-zoomable';
+  static override attributeName = 'folk-zoomable';
 
   static styles = css`
     @layer folk {
@@ -135,13 +135,13 @@ export class FolkZoomable extends CustomAttribute {
 
   #shapes = new Set<FolkShapeAttribute>();
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     this.ownerElement.addEventListener('shape-connected', this.#onShapeConnected);
     this.ownerElement.addEventListener('shape-disconnected', this.#onShapeDisconnected);
     window.addEventListener('wheel', this.#onWheel, { passive: false });
   }
 
-  changedCallback(_oldValue: string, newValue: string): void {
+  override changedCallback(_oldValue: string, newValue: string): void {
     if (newValue.length === 0) {
       this.x = 0;
       this.y = 0;
@@ -167,7 +167,7 @@ export class FolkZoomable extends CustomAttribute {
     }
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     this.ownerElement.removeEventListener('shape-connected', this.#onShapeConnected);
     this.ownerElement.removeEventListener('shape-disconnected', this.#onShapeDisconnected);
     window.removeEventListener('wheel', this.#onWheel);

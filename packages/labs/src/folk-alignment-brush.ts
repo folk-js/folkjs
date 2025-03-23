@@ -36,14 +36,14 @@ export class FolkAlignmentBrush extends FolkBaseSet {
   // Add property to track dragging state
   #draggedShape: FolkShape | null = null;
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.#setupCanvas();
     this.#setupEventListeners();
     requestAnimationFrame(this.#updateCanvas);
   }
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('resize', this.#handleResize);
   }

@@ -12,7 +12,7 @@ declare global {
 export class FolkHull extends FolkBaseSet {
   static override tagName = 'folk-hull';
 
-  static styles = [
+  static override styles = [
     FolkBaseSet.styles,
     css`
       #hull {

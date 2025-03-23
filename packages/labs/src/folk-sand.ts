@@ -14,7 +14,7 @@ import {
 export class FolkSand extends FolkBaseSet {
   static override tagName = 'folk-sand';
 
-  static styles = [
+  static override styles = [
     FolkBaseSet.styles,
     css`
       canvas {
@@ -25,7 +25,7 @@ export class FolkSand extends FolkBaseSet {
     `,
   ];
 
-  static properties = {
+  static override properties = {
     initialSand: { type: Number, attribute: 'initial-sand' },
   };
 
@@ -81,7 +81,7 @@ export class FolkSand extends FolkBaseSet {
 
   onMaterialChange?: (type: number) => void;
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
 
     this.renderRoot.appendChild(this.#canvas);
@@ -93,7 +93,7 @@ export class FolkSand extends FolkBaseSet {
     this.#render();
   }
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     super.disconnectedCallback();
     this.#detachEventListeners();
   }

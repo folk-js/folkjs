@@ -196,7 +196,7 @@ export class FolkShape extends FolkElement {
   static override tagName = 'folk-shape';
   static importSrc = '/labs/standalone/folk-shape.ts';
 
-  static styles = styles;
+  static override styles = styles;
 
   #internals = this.attachInternals();
 
@@ -350,13 +350,13 @@ export class FolkShape extends FolkElement {
     return root;
   }
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     // Find all ancestor folk-space elements when connected to the DOM
     this.refreshTransformStack();
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
   }
 

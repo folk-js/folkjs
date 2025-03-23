@@ -62,9 +62,9 @@ const shortNouns = [
  * the synchronization of pointer positions across clients using FolkAutomerge.
  */
 export class FolkPresence extends FolkElement {
-  static tagName = 'folk-presence';
+  static override tagName = 'folk-presence';
 
-  static styles = css`
+  static override styles = css`
     :host {
       position: absolute;
       top: 0;
@@ -187,7 +187,7 @@ export class FolkPresence extends FolkElement {
     };
   }
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
 
     // Find the container (parent element, usually folk-space)
@@ -224,7 +224,7 @@ export class FolkPresence extends FolkElement {
     }, 5000); // Check every 5 seconds for more responsive removal
   }
 
-  disconnectedCallback() {
+  override disconnectedCallback() {
     super.disconnectedCallback();
 
     // Clean up event listeners
@@ -527,7 +527,7 @@ export class FolkPresence extends FolkElement {
     return this.localPointerData.color;
   }
 
-  static define() {
+  static override define() {
     if (!customElements.get(FolkPresence.tagName)) {
       customElements.define(FolkPresence.tagName, FolkPresence);
     }

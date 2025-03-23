@@ -6,7 +6,7 @@ import { FolkRope } from './folk-rope';
 export class FolkEventPropagator extends FolkRope {
   static override tagName = 'folk-event-propagator';
 
-  static styles = [
+  static override styles = [
     ...FolkRope.styles,
     css`
       .input-container {

@@ -44,7 +44,7 @@ interface SyncOperation {
 // DOMSyncDocument interface is no longer needed as we use DOMNode directly
 
 export class FolkSyncAttribute extends CustomAttribute {
-  static attributeName = 'folk-sync';
+  static override attributeName = 'folk-sync';
 
   // The FolkAutomerge instance for network sync
   #automerge!: FolkAutomerge<DOMNode>;
@@ -814,7 +814,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Initialize when the attribute is connected to the DOM
    */
-  connectedCallback(): void {
+  override connectedCallback(): void {
     console.log(`FolkSync connected to <${this.ownerElement.tagName.toLowerCase()}>`);
 
     if (!this.ownerElement) {
@@ -874,7 +874,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Clean up when the attribute is disconnected from the DOM
    */
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     this.#stopObserving();
     console.log(`FolkSync disconnected from <${this.ownerElement.tagName.toLowerCase()}>`);
   }

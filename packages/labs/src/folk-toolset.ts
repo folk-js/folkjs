@@ -47,9 +47,9 @@ export class FolkInteractionHandler extends HTMLElement {
 }
 
 export class FolkPropagatorTool extends FolkInteractionHandler {
-  static tagName = 'folk-propagator-tool';
+  static override tagName = 'folk-propagator-tool';
 
-  readonly events = ['pointerdown', 'pointermove', 'pointerup'];
+  override readonly events = ['pointerdown', 'pointermove', 'pointerup'];
 
   #currentPropagator: FolkEventPropagator | null = null;
   #startPoint: { x: number; y: number } | null = null;
@@ -59,7 +59,7 @@ export class FolkPropagatorTool extends FolkInteractionHandler {
     this.button.textContent = 'Create Propagator';
   }
 
-  handleEvent(event: Event): void {
+  override handleEvent(event: Event): void {
     if (!(event instanceof PointerEvent)) return;
     const target = event.target as HTMLElement;
 
@@ -124,8 +124,8 @@ export class FolkPropagatorTool extends FolkInteractionHandler {
 }
 
 export class FolkShapeTool extends FolkInteractionHandler {
-  static tagName = 'folk-shape-tool';
-  readonly events = ['pointerdown', 'pointermove', 'pointerup'];
+  static override tagName = 'folk-shape-tool';
+  override readonly events = ['pointerdown', 'pointermove', 'pointerup'];
 
   #currentShape: FolkShape | null = null;
   #startPoint: { x: number; y: number } | null = null;
@@ -136,7 +136,7 @@ export class FolkShapeTool extends FolkInteractionHandler {
     this.button.textContent = 'Create Shape';
   }
 
-  handleEvent(event: Event): void {
+  override handleEvent(event: Event): void {
     if (!(event instanceof PointerEvent)) return;
     const target = event.target as HTMLElement;
 
@@ -214,15 +214,15 @@ export class FolkShapeTool extends FolkInteractionHandler {
 }
 
 export class FolkDeleteTool extends FolkInteractionHandler {
-  static tagName = 'folk-delete-tool';
-  readonly events = ['pointerdown'];
+  static override tagName = 'folk-delete-tool';
+  override readonly events = ['pointerdown'];
 
   constructor() {
     super();
     this.button.textContent = 'Delete';
   }
 
-  handleEvent(event: Event): void {
+  override handleEvent(event: Event): void {
     if (!(event instanceof PointerEvent)) return;
     const target = event.target as HTMLElement;
     if (!target || !(target instanceof FolkShape)) return;

@@ -74,9 +74,9 @@ declare global {
 
 // TODO: if an auto position/size is defined as a style then we should probably save it and set it back
 export class FolkShapeAttribute extends CustomAttribute {
-  static attributeName = 'folk-shape';
+  static override attributeName = 'folk-shape';
 
-  static define() {
+  static override define() {
     FolkShapeOverlay.define();
     super.define();
   }
@@ -376,7 +376,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     ownerElement.addEventListener('blur', this);
   }
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     const el = this.ownerElement as HTMLElement;
 
     // We need to make this element focusable if it isn't already
@@ -389,7 +389,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     this.#spaces = Array.from(event.spaces);
   }
 
-  changedCallback(_oldValue: string, newValue: string): void {
+  override changedCallback(_oldValue: string, newValue: string): void {
     let autoX = true;
     let autoY = true;
     let autoHeight = true;
@@ -428,7 +428,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     this.autoWidth = autoWidth;
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     const el = this.ownerElement as HTMLElement;
 
     if (this.#autoHeight || this.#autoWidth) {

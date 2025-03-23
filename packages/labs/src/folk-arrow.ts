@@ -28,7 +28,7 @@ export type Arrow = [
 export class FolkArrow extends FolkBaseConnection {
   static override tagName = 'folk-arrow';
 
-  static styles = [
+  static override styles = [
     FolkBaseConnection.styles,
     css`
       svg {

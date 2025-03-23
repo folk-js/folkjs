@@ -15,9 +15,9 @@ export type TransformChangeCallback = (scale: number, position: Point) => void;
  */
 export class FolkSpace extends FolkElement implements IPointTransform {
   [IPointTransform] = true;
-  static tagName = 'folk-space';
+  static override tagName = 'folk-space';
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       position: relative;
@@ -226,7 +226,7 @@ export class FolkSpace extends FolkElement implements IPointTransform {
     this.#onTransformChange = callback;
   }
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
 
     const shadowRoot = this.shadowRoot;
@@ -253,7 +253,7 @@ export class FolkSpace extends FolkElement implements IPointTransform {
     this.addEventListener('touchcancel', this.#onTouchEnd, { passive: false });
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
     this.removeEventListener('wheel', this.#onWheel);
     this.removeEventListener('mouseup', this.#onMouseUp);

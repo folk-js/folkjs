@@ -15,7 +15,7 @@
     // TODO: MAYBE turn on later, this is a lot and might be a poor tradeoff for performance
     "noUncheckedIndexedAccess": false,
     // TODO: turn back on after packages refactor
-    "noImplicitOverride": false,
+    "noImplicitOverride": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "useDefineForClassFields": false,

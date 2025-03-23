@@ -35,14 +35,14 @@ export class FolkSpaceProjector extends FolkBaseSet {
     return root;
   }
 
-  connectedCallback(): void {
+  override connectedCallback(): void {
     super.connectedCallback();
     this.#spreadsheet.addEventListener('propagate', this.#onPropagate);
     this.#spreadsheet.addEventListener('focusin', this.#onFocusin);
     this.#spreadsheet.addEventListener('focusout', this.#onFocusout);
   }
 
-  disconnectedCallback(): void {
+  override disconnectedCallback(): void {
     super.disconnectedCallback();
     this.#spreadsheet.removeEventListener('propagate', this.#onPropagate);
     this.#spreadsheet.removeEventListener('focusin', this.#onFocusin);

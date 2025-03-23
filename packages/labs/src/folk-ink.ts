@@ -111,7 +111,7 @@ export class FolkInk extends FolkElement {
     }
   }
 
-  update(changedProperties: PropertyValues<this>) {
+  override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
 
     const options: StrokeOptions = {
