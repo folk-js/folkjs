@@ -14,7 +14,7 @@
     "build:package": "cd packages/$1 && bun run build",
     "build:extension": "tsc --noEmit && vite build packages/web-extension",
     "preview": "tsc --noEmit && vite build && vite preview",
-    "clean": "rm -rf dist && find packages -name 'dist' -type d -exec rm -rf {} + && find packages -name 'tsconfig.tsbuildinfo' -type f -delete",
+    "clean": "rm -rf dist && find packages -name 'dist' -type d -exec rm -rf {} + && find packages -name 'tsconfig.tsbuildinfo' -type f -delete && rm -rf tsconfig.tsbuildinfo && rm -rf node_modules && find packages -name 'node_modules' -type d -exec rm -rf {} +",
     "test": "bun test",
     "test:lib": "bun test packages/lib",
     "types": "tsc --noEmit && for pkg in packages/*; do if [ -d \"$pkg\" ] && [ -f \"$pkg/tsconfig.json\" ]; then echo \"Checking types in $pkg\" && (cd \"$pkg\" && tsc --noEmit); fi; done",
