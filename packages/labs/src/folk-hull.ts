@@ -1,5 +1,5 @@
 import type { Point } from '@folkjs/lib';
-import { verticesToPolygon } from '@folkjs/lib/utils';
+import { verticesToPolygon } from '@folkjs/lib';
 import { PropertyValues, css } from '@lit/reactive-element';
 import { FolkBaseSet } from './folk-base-set';
 

@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/lib';
-import { css } from '@folkjs/lib/tags';
+import { css, FolkElement } from '@folkjs/lib';
 
 declare global {
   interface HTMLElementTagNameMap {

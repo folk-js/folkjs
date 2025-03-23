@@ -1,6 +1,6 @@
 // this needs to move to the web extension once that's set up.
 
-import { ClientRectObserverEntry } from '@folkjs/lib/client-rect-observer';
+import type { ClientRectObserverEntry } from '@folkjs/lib';
 import { FolkObserver } from './folk-observer';
 
 const folkObserver = new FolkObserver();

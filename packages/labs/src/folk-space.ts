@@ -1,6 +1,4 @@
-import { FolkElement, Matrix, Point, toDOMPrecision } from '@folkjs/lib';
-import { IPointTransform } from '@folkjs/lib/interfaces/IPointTransform';
-import { css } from '@folkjs/lib/tags';
+import { css, FolkElement, IPointTransform, Matrix, Point, toDOMPrecision } from '@folkjs/lib';
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;

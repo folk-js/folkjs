@@ -1,5 +1,5 @@
 import type { Point } from '@folkjs/lib';
-import { verticesToPolygon } from '@folkjs/lib/utils';
+import { verticesToPolygon } from '@folkjs/lib';
 import { PropertyValues } from '@lit/reactive-element';
 import { FolkBaseConnection } from './folk-base-connection.js';
 export class FolkXanadu extends FolkBaseConnection {

@@ -2,7 +2,7 @@
  * A wrapper class for ggwave.
  */
 
-import { ggwave_factory } from '@folkjs/labs/utils/ggwave.js';
+import { ggwave_factory } from './utils/ggwave.js';
 
 // Protocol ID structure
 interface GGWaveProtocolId {

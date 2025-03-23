@@ -1,4 +1,4 @@
-import { KeyValueStore } from '@folkjs/lib/indexeddb';
+import { KeyValueStore } from '@folkjs/lib';
 
 export class FilePicker {
   #id;

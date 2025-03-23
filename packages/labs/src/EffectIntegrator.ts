@@ -1,4 +1,4 @@
-import type { FolkShape } from '@folkjs/labs/folk-shape';
+import type { FolkShape } from './folk-shape';
 
 /**
  * Coordinates effects between multiple systems, integrating their proposals into a single result.

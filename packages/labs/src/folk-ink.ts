@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/lib';
-import { getSvgPathFromStroke } from '@folkjs/lib/utils';
+import { FolkElement, getSvgPathFromStroke } from '@folkjs/lib';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { property } from '@lit/reactive-element/decorators.js';
 import { getStroke, StrokeOptions } from 'perfect-freehand';
