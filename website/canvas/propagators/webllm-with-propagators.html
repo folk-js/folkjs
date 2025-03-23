@@ -55,7 +55,7 @@
       source="#recipe"
       target="folk-webllm"
       trigger="click"
-      expression="prompt: `Double this list of ingredients and format it nicely as HTML with the measurements and notes preserved. Format the output as a clean list. Here are the ingredients:\n${from.innerHTML}`"
+      expression="prompt: `Double all the quantities in this recipe:\n${from.innerHTML}`"
     ></folk-event-propagator>
 
     <script type="module">

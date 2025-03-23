@@ -1,4 +1,4 @@
-import { DOMRectTransform, FolkElement, type Point, Vector, html } from '@folkjs/lib';
+import { DOMRectTransform, FolkElement, html, type Point, Vector } from '@folkjs/lib';
 import { css } from '@lit/reactive-element';
 
 interface GizmoOptions {
@@ -95,7 +95,7 @@ export class Gizmos extends FolkElement {
   override createRenderRoot() {
     const root = super.createRenderRoot() as ShadowRoot;
 
-    root.setHTMLUnsafe(html` <canvas class="gizmos-canvas"></canvas> `);
+    root.setHTMLUnsafe(`<canvas class="gizmos-canvas"></canvas> `);
 
     const canvas = root.querySelector('.gizmos-canvas') as HTMLCanvasElement;
     const ctx = canvas?.getContext('2d') ?? null;
