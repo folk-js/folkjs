@@ -3,7 +3,6 @@
 export * from './folk-element';
 
 // Observers (move these to the top since they're dependencies)
-export * from '../../labs/src/folk-observer';
 export * from './client-rect-observer';
 export * from './resize-manger';
 
@@ -18,13 +17,13 @@ export * from './Vector';
 // DOM and transformation
 export * from './DOMRectTransform';
 export * from './TransformEvent';
+export * from './TransformStack';
 
 // Animation and timing
 export * from './animation-frame-controller';
 export * from './rAF';
 
 // Integration and effects
-export * from '../../labs/src/EffectIntegrator';
 export * from './collision';
 
 // WebGL utilities
@@ -38,4 +37,5 @@ export * from './custom-attribute-registry';
 export * from './CanIUse';
 
 // Interfaces
+export * from './interfaces/IPointTransform';
 export * from './interfaces/satisfies';

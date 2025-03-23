@@ -4,7 +4,6 @@ import {
   DOMRectTransformReadonly,
   FolkElement,
   Matrix,
-  type Point,
   round,
   toDOMPrecision,
   TransformEvent,
@@ -14,6 +13,7 @@ import { IPointTransform } from '@folkjs/lib/interfaces/IPointTransform';
 import { ResizeManager } from '@folkjs/lib/resize-manger';
 import { html } from '@folkjs/lib/tags';
 import { TransformStack } from '@folkjs/lib/TransformStack';
+import type { Point } from '@folkjs/lib/types';
 import { MAX_Z_INDEX } from '@folkjs/lib/utils';
 import { css } from '@lit/reactive-element';
 
