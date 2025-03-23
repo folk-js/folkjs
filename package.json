@@ -7,15 +7,17 @@
   ],
   "scripts": {
     "dev": "vite",
-    "dev:host": "vite --host --port 5174",
-    "dev:extension": "vite build web-extension -w",
-    "build": "bun run build:propagators && tsc --noEmit && vite build",
-    "build:propagators": "cd packages/propagators && bun run build",
-    "build:extension": "tsc --noEmit && vite build web-extension",
+    "dev:host": "vite --host",
+    "dev:extension": "vite build packages/web-extension -w",
+    "build": "bun run build:packages && tsc --noEmit && vite build",
+    "build:packages": "bun run build:package lib && bun run build:package propagators && bun run build:package geometry && bun run build:package labs",
+    "build:package": "cd packages/$1 && bun run build",
+    "build:extension": "tsc --noEmit && vite build packages/web-extension",
     "preview": "tsc --noEmit && vite build && vite preview",
-    "test": "bun test lib",
+    "test": "bun test",
+    "test:lib": "bun test packages/lib",
     "types": "tsc --noEmit",
-    "bench": "bun run lib/__tests__/bench.ts"
+    "bench": "bun run packages/lib/__tests__/bench.ts"
   },
   "dependencies": {
     "@automerge/automerge": "^2.2.8",
@@ -24,7 +26,6 @@
     "@automerge/automerge-repo-storage-indexeddb": "^1.2.1",
     "@babel/parser": "^7.26.2",
     "@dimforge/rapier2d": "^0.15.0",
-    "@folk-systems/propagators": "workspace:*",
     "@lit/reactive-element": "^2.0.4",
     "@mlc-ai/web-llm": "^0.2.78",
     "@types/uuid": "^10.0.0",

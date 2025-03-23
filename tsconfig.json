@@ -18,12 +18,16 @@
     "types": ["@webgpu/types", "@types/node", "@types/wicg-file-system-access", "bun-types"],
     "baseUrl": ".",
     "paths": {
-      "@lib": ["lib"],
-      "@lib/*": ["lib/*"],
-      "@labs": ["labs"],
-      "@labs/*": ["labs/*"],
-      "@folk-systems/propagators": ["packages/propagators/src"],
-      "@folk-systems/propagators/*": ["packages/propagators/src/*"]
+      "@folkjs/lib": ["packages/lib/src"],
+      "@folkjs/lib/*": ["packages/lib/src/*"],
+      "@folkjs/labs": ["packages/labs/src"],
+      "@folkjs/labs/*": ["packages/labs/src/*"],
+      "@folkjs/propagators": ["packages/propagators/src"],
+      "@folkjs/propagators/*": ["packages/propagators/src/*"],
+      "@folkjs/geometry": ["packages/geometry/src"],
+      "@folkjs/geometry/*": ["packages/geometry/src/*"],
+      "@folkjs/web-extensions": ["packages/web-extension/src"],
+      "@folkjs/web-extensions/*": ["packages/web-extension/src/*"]
     }
   },
   "include": ["**/*.ts", "**/*.js", "**/*.html", "vite.config.ts", "packages/**/*.ts"],

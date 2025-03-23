@@ -1,5 +1,5 @@
 {
-  "name": "@folk-systems/web-extension",
+  "name": "@folkjs/web-extension",
   "private": true,
   "description": "Folk Canvas web extension",
   "keywords": [

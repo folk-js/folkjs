@@ -1,4 +1,4 @@
-import { FolkElement } from '@lib';
+import { FolkElement } from '@folkjs/lib';
 import { css } from '@lit/reactive-element';
 import { AwaitableInstance, ink } from 'ink-mde';
 

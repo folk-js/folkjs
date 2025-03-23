@@ -1,1 +1,1 @@
-# @folk-systems/propagators
+# @folkjs/propagators

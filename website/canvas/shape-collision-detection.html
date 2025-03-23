@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -49,8 +49,8 @@
     <folk-shape x="400" y="275" width="50" height="50"></folk-shape>
 
     <script type="module">
-      import { FolkShape } from '@labs/standalone/folk-shape.ts';
-      import { aabbHitDetection } from '@lib/collision.ts';
+      import { FolkShape } from '@folkjs/labs/standalone/folk-shape.ts';
+      import { aabbHitDetection } from '@folkjs/lib/collision.ts';
 
       const shapes = Array.from(document.querySelectorAll('folk-shape, p'));
 

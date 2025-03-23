@@ -7,20 +7,36 @@
     "resolveJsonModule": true,
     "moduleDetection": "force",
     "isolatedModules": true,
+    // TODO: turn back on after packages refactor
     "verbatimModuleSyntax": true,
 
     /* Strictness */
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
+    // TODO: turn back on after packages refactor
+    "noImplicitOverride": false,
     "erasableSyntaxOnly": true,
 
     /* If transpiling with TypeScript: */
     "moduleResolution": "bundler",
+    "allowJs": true,
     "module": "es2022",
     "sourceMap": true,
     "lib": ["es2022", "dom", "dom.iterable"],
     "composite": true,
-    "declarationMap": true
+    "declarationMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@folkjs/lib": ["packages/lib/src"],
+      "@folkjs/lib/*": ["packages/lib/src/*"],
+      "@folkjs/labs": ["packages/labs/src"],
+      "@folkjs/labs/*": ["packages/labs/src/*"],
+      "@folkjs/propagators": ["packages/propagators/src"],
+      "@folkjs/propagators/*": ["packages/propagators/src/*"],
+      "@folkjs/geometry": ["packages/geometry/src"],
+      "@folkjs/geometry/*": ["packages/geometry/src/*"],
+      "@folkjs/web-extensions": ["packages/web-extension/src"],
+      "@folkjs/web-extensions/*": ["packages/web-extension/src/*"]
+    }
   }
 }

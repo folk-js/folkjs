@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -45,7 +45,10 @@
         padding: 12px;
         text-align: center;
         z-index: 1000;
-        font-family: system-ui, -apple-system, sans-serif;
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
       }
     </style>
   </head>
@@ -58,7 +61,7 @@
     <folk-shape x="100" y="300" width="50" height="50" rotation="45"></folk-shape>
 
     <script type="module">
-      import '@labs/standalone/folk-shape.ts';
+      import '@folkjs/labs/standalone/folk-shape.ts';
 
       // Check for moveBefore support
       if (!Element.prototype.moveBefore) {

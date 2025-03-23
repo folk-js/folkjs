@@ -1,5 +1,5 @@
 // Ported from https://github.com/bitu467/record-player
-import { css, html } from '@lib/tags';
+import { css, html } from '@folkjs/lib/tags';
 
 const styles = css`
   ::slotted(*) {
@@ -151,7 +151,9 @@ const styles = css`
   }
 
   :host(:state(playing)) .tone-arm {
-    animation: ready-arm var(--move-time), move-arm var(--duration) var(--move-time),
+    animation:
+      ready-arm var(--move-time),
+      move-arm var(--duration) var(--move-time),
       reset-arm var(--move-time) calc(var(--duration) + var(--move-time));
   }
 
@@ -233,17 +235,19 @@ export class RecordPlayer extends HTMLElement {
     const shadow = this.attachShadow({ mode: 'open' });
     shadow.adoptedStyleSheets.push(styles);
 
-    shadow.setHTMLUnsafe(html` <div class="player">
-        <div class="record">
-          <div class="label"></div>
+    shadow.setHTMLUnsafe(
+      html` <div class="player">
+          <div class="record">
+            <div class="label"></div>
+          </div>
+          <div class="tone-arm">
+            <div class="control"></div>
+          </div>
+          <button class="btn"></button>
+          <input type="range" class="slider" min="0" max="1" step="0.01" value="1" />
         </div>
-        <div class="tone-arm">
-          <div class="control"></div>
-        </div>
-        <button class="btn"></button>
-        <input type="range" class="slider" min="0" max="1" step="0.01" value="1" />
-      </div>
-      <slot></slot>`);
+        <slot></slot>`,
+    );
 
     this.#volumeInput = shadow.querySelector('input[type="range"]')!;
     this.#volumeInput.addEventListener('input', this);
@@ -348,7 +352,7 @@ function reverseAnimation(el: HTMLElement) {
       { offset: 0.2, rotate, transform: 'rotateX(20deg)' },
       { offset: 0.8, transform: 'rotateX(20deg)' },
     ],
-    { duration: 3000 }
+    { duration: 3000 },
   );
 }
 

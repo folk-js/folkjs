@@ -1,4 +1,4 @@
-import { FolkElement } from '@lib';
+import { FolkElement } from '@folkjs/lib';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { state } from '@lit/reactive-element/decorators.js';
 

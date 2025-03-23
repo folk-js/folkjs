@@ -1,6 +1,6 @@
-import '@labs/standalone/folk-pinch.ts';
-import '@labs/standalone/folk-shape.ts';
-import { FolkDirectory } from './folk-directory.ts';
+import '@folkjs/labs/standalone/folk-pinch';
+import '@folkjs/labs/standalone/folk-shape';
+import { FolkDirectory } from './folk-directory';
 
 FolkDirectory.define();
 
