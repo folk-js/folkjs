@@ -53,6 +53,10 @@ bench('BVH: instantiate 10000 shapes', () => {
 });
 
 bench('BVH: check collsion 10000 shapes', () => {
+  BVH.intersectionRecursion(bvh10000, shapes10000[0]);
+});
+
+bench('BVH: check collsion 10000 shapes', () => {
   BVH.intersections(bvh10000, shapes10000[0]);
 });
 

@@ -69,32 +69,28 @@ export function intersections(root: BVHNode, rect: R.Rect2D): R.Rect2D[] {
 
     if (node.isLeaf) {
       collisions.push(node.rect);
-      continue;
+    } else {
+      // push right node before left node
+      stack.push(node.right, node.left);
     }
-
-    // push right node before left node
-    stack.push(node.right, node.left);
   }
 
   return collisions;
 }
 
-// collisions2(rect: R.Rect2D): R.Rect2D[] {
-//   if (this.#root === undefined) return [];
+function intersectionHelper(rect: R.Rect2D, node: BVHNode, collisions: R.Rect2D[]) {
+  if (rect === node.rect || !R.intersecting(rect, node.rect)) return;
 
-//   const collisions: R.Rect2D[] = [];
-//   this.#collisions(rect, this.#root, collisions);
-//   return collisions;
-// }
+  if (node.isLeaf) {
+    collisions.push(node.rect);
+  } else {
+    intersectionHelper(rect, node.left, collisions);
+    intersectionHelper(rect, node.right, collisions);
+  }
+}
 
-// #collisions(rect: R.Rect2D, node: BVHNode, collisions: R.Rect2D[]) {
-//   if (rect === node.rect || !R.aabbIntersection(rect, node.rect)) return;
-
-//   if (node.isLeaf) {
-//     collisions.push(node.rect);
-//     return;
-//   }
-
-//   this.#collisions(rect, node.left, collisions);
-//   this.#collisions(rect, node.right, collisions);
-// }
+export function intersectionRecursion(root: BVHNode, rect: R.Rect2D): R.Rect2D[] {
+  const collisions: R.Rect2D[] = [];
+  intersectionHelper(rect, root, collisions);
+  return collisions;
+}
