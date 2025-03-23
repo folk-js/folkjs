@@ -9,7 +9,7 @@
     "dev": "vite",
     "dev:host": "vite --host",
     "dev:extension": "vite build packages/web-extension -w",
-    "build": "bun run build:packages && tsc --noEmit",
+    "build": "bun run build:packages && tsc --noEmit && vite build",
     "build:packages": "(cd packages/lib && bun run build) && (cd packages/geometry && bun run build) && (cd packages/propagators && bun run build) && (cd packages/labs && bun run build)",
     "build:package": "cd packages/$1 && bun run build",
     "build:extension": "tsc --noEmit && vite build packages/web-extension",
