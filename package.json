@@ -27,7 +27,6 @@
     "@dimforge/rapier2d": "^0.15.0",
     "@lit/reactive-element": "^2.0.4",
     "@mlc-ai/web-llm": "^0.2.78",
-    "@types/uuid": "^10.0.0",
     "eventemitter3": "^5.0.1",
     "gun": "^0.2020.1240",
     "ink-mde": "^0.34.0",
@@ -46,6 +45,7 @@
     "webcola": "^3.4.0"
   },
   "devDependencies": {
+    "@types/uuid": "^10.0.0",
     "@types/leaflet": "^1.9.14",
     "@types/node": "^22.10.1",
     "@types/wicg-file-system-access": "^2023.10.5",
