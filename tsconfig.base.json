@@ -29,7 +29,7 @@
     "module": "ESNext",
     "sourceMap": true,
     "lib": ["esnext", "dom", "dom.iterable"],
-    "types": ["@webgpu/types", "@types/node", "@types/wicg-file-system-access", "bun-types"],
+    "types": ["@webgpu/types", "@types/wicg-file-system-access", "bun-types"],
     "composite": true,
     "declarationMap": true,
     "baseUrl": ".",
