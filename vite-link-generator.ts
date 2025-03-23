@@ -33,11 +33,7 @@ export function getCanvasFiles(baseDir: string): CanvasFile[] {
 
       if (entry.isDirectory()) {
         scanDirectory(fullPath);
-      } else if (
-        extname(entry.name) === CONFIG.htmlExtension &&
-        entry.name !== CONFIG.indexFilename &&
-        !entry.name.startsWith(CONFIG.hiddenPrefix)
-      ) {
+      } else if (extname(entry.name) === CONFIG.htmlExtension && entry.name !== CONFIG.indexFilename) {
         // Get path relative to base directory
         const relativePath = relative(baseDir, fullPath);
         const dirName = dirname(relativePath);
@@ -106,6 +102,8 @@ export const linkGenerator = (baseDir: string): Plugin => {
       // Group files by their group
       const filesByGroup: Record<string, CanvasFile[]> = {};
       validFiles.forEach((file) => {
+        if (file.relativePath.includes(CONFIG.hiddenPrefix)) return;
+
         const group = file.group ?? 'root';
         filesByGroup[group] = filesByGroup[group] || [];
         filesByGroup[group].push(file);
