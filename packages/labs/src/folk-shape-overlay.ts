@@ -2,7 +2,7 @@ import { getResizeCursorUrl, getRotateCursorUrl } from '@folkjs/labs/utils/curso
 import { FolkElement, type Point, round, toDOMPrecision, Vector } from '@folkjs/lib';
 import { html } from '@folkjs/lib/tags';
 import { css } from '@lit/reactive-element';
-import { FolkShapeAttribute } from './folk-shape-attribute';
+import { type FolkShapeAttribute } from './folk-shape-attribute';
 
 type ResizeHandle = 'resize-top-left' | 'resize-top-right' | 'resize-bottom-right' | 'resize-bottom-left';
 

@@ -25,12 +25,6 @@ export type Arrow = [
   ac: number,
 ];
 
-declare global {
-  interface HTMLElementTagNameMap {
-    'folk-arrow': FolkArrow;
-  }
-}
-
 export class FolkArrow extends FolkBaseConnection {
   static override tagName = 'folk-arrow';
 

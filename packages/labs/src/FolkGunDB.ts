@@ -9,6 +9,7 @@ export class FolkGunDB {
   private processedMessages: Set<string> = new Set(); // Track processed message IDs
   private relayUrl: string;
   private debug: boolean;
+  private readonly roomId: string;
 
   /**
    * Create a new FolkGunDB instance
@@ -18,11 +19,12 @@ export class FolkGunDB {
    * @param debug - Enable debug logging
    */
   constructor(
-    public readonly roomId: string,
+    roomId: string,
     clientId?: string,
     relayUrl: string = 'https://gun-manhattan.herokuapp.com/gun',
     debug: boolean = false,
   ) {
+    this.roomId = roomId;
     this.clientId = clientId || this.generateClientId();
     this.relayUrl = relayUrl;
     this.debug = debug;

@@ -54,7 +54,6 @@ export default defineConfig({
       '@folkjs/labs': resolve(__dirname, './packages/labs/src'),
       '@folkjs/propagators': resolve(__dirname, './packages/propagators/src'),
       '@folkjs/geometry': resolve(__dirname, './packages/geometry/src'),
-      '@folkjs/web-extensions': resolve(__dirname, './packages/web-extension/src'),
     },
   },
   optimizeDeps: {

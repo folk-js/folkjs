@@ -6,12 +6,6 @@ const MAX_SCALE = 8;
 // Define the transform change callback type
 export type TransformChangeCallback = (scale: number, position: Point) => void;
 
-declare global {
-  interface HTMLElementTagNameMap {
-    'folk-space': FolkSpace;
-  }
-}
-
 /**
  * FolkSpace is a zoomable and pannable container.
  *

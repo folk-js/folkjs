@@ -191,15 +191,9 @@ const styles = css`
   }
 `;
 
-declare global {
-  interface HTMLElementTagNameMap {
-    'folk-shape': FolkShape;
-  }
-}
-
-export class FolkShape extends FolkElement implements IPointTransform {
+export class FolkShape extends FolkElement {
   [IPointTransform] = true;
-  static tagName = 'folk-shape';
+  static override tagName = 'folk-shape';
   static importSrc = '/labs/standalone/folk-shape.ts';
 
   static styles = styles;

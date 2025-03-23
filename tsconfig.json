@@ -1,4 +1,5 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
@@ -25,11 +26,9 @@
       "@folkjs/propagators": ["packages/propagators/src"],
       "@folkjs/propagators/*": ["packages/propagators/src/*"],
       "@folkjs/geometry": ["packages/geometry/src"],
-      "@folkjs/geometry/*": ["packages/geometry/src/*"],
-      "@folkjs/web-extensions": ["packages/web-extension/src"],
-      "@folkjs/web-extensions/*": ["packages/web-extension/src/*"]
+      "@folkjs/geometry/*": ["packages/geometry/src/*"]
     }
   },
   "include": ["**/*.ts", "**/*.js", "**/*.html", "vite.config.ts", "packages/**/*.ts"],
-  "exclude": ["node_modules/**/*"]
+  "exclude": ["node_modules/**/*", "**/dist/**", "_web-extension/**"]
 }
