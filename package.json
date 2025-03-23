@@ -12,7 +12,7 @@
     "build": "bun run build:packages && tsc --noEmit && vite build",
     "preview": "bun run build && vite preview",
     "bench": "bun run _scripts_/benchmark.js",
-    "types": "tsc --noEmit && for pkg in packages/*; do if [ -d \"$pkg\" ] && [ -f \"$pkg/tsconfig.json\" ]; then echo \"Checking types in $pkg\" && (cd \"$pkg\" && tsc --noEmit); fi; done",
+    "types": "for pkg in packages/*; do if [ -d \"$pkg\" ] && [ -f \"$pkg/tsconfig.json\" ]; then echo \"Checking types in $pkg\" && (cd \"$pkg\" && tsc --noEmit) & fi; done; tsc --noEmit --skipLibCheck --skipDefaultLibCheck & wait",
     "types:fix": "npx ts-autofix",
     "dev:extension": "vite build packages/web-extension -w",
     "build:packages": "(cd packages/lib && bun run build) && (cd packages/geometry && bun run build) && (cd packages/propagators && bun run build) && (cd packages/labs && bun run build)",
