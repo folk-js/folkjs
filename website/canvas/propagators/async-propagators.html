@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Async Propagators Demo</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      folk-shape {
+        background: #fff;
+        border: 1px solid #ccc;
+        padding: 12px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+      }
+
+      .info-panel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #fafafa;
+        padding: 24px 32px;
+        text-align: center;
+        font-size: 14px;
+        border: 1px solid #eee;
+        max-width: 80%;
+      }
+
+      .info-title {
+        font-size: 24px;
+        font-weight: 500;
+        margin-bottom: 16px;
+        color: #222;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      #apiResponse {
+        width: 100%;
+        height: 100px;
+        border: 1px solid #ccc;
+        padding: 8px;
+        font-family: monospace;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        margin-bottom: 12px;
+        background: #f8f8f8;
+      }
+
+      h3 {
+        margin: 0 0 8px 0;
+        color: #222;
+        font-size: 14px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+    </style>
+  </head>
+  <body>
+    <folk-shape x="50" y="50" width="650">
+      <h3>Async Propagators</h3>
+      <p>This demo shows how async propagators can wait for promises to resolve before applying changes.</p>
+    </folk-shape>
+
+    <folk-shape x="50" y="200" width="650">
+      <h3>API Responses</h3>
+      <div id="apiResponse"></div>
+    </folk-shape>
+
+    <folk-shape id="box1" x="50" y="500" width="200" height="100">Click me</folk-shape>
+    <folk-shape id="box2" x="400" y="500" width="250" height="100">Updates after both async calls</folk-shape>
+
+    <folk-event-propagator
+      async
+      source="#box1"
+      target="#box2"
+      trigger="click"
+      expression="x: to.x + 50
+(): to.style.backgroundColor = await fetchRandomColor()
+textContent: 'Data: ' + await fetchRandomData()"
+    ></folk-event-propagator>
+
+    <script type="module">
+      import '@labs/standalone/folk-shape.ts';
+      import '@labs/standalone/folk-event-propagator.ts';
+
+      // Mock API functions
+      window.fetchRandomColor = async () => {
+        const timestamp = new Date().toLocaleTimeString();
+        document.getElementById('apiResponse').textContent += `\n[${timestamp}] Started color fetch`;
+
+        // Simulate a network delay
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const colors = ['#1E88E5', '#D81B60', '#8E24AA', '#43A047', '#FFB300', '#F4511E'];
+        const randomColor = colors[Math.floor(Math.random() * colors.length)];
+
+        document.getElementById('apiResponse').textContent += `\n[${timestamp}] Finished color fetch: ${randomColor}`;
+        return randomColor;
+      };
+
+      window.fetchRandomData = async () => {
+        const timestamp = new Date().toLocaleTimeString();
+        document.getElementById('apiResponse').textContent += `\n[${timestamp}] Started data fetch`;
+
+        // Simulate a network delay
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        const words = ['Amazing', 'Wonderful', 'Fantastic', 'Spectacular', 'Incredible'];
+        const randomWord = words[Math.floor(Math.random() * words.length)];
+
+        document.getElementById('apiResponse').textContent += `\n[${timestamp}] Finished data fetch: ${randomWord}`;
+        return randomWord;
+      };
+    </script>
+  </body>
+</html>

@@ -1,4 +1,4 @@
-import { Propagator } from '@folk-systems/propagators';
+import { AsyncPropagator, Propagator } from '@folk-systems/propagators';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { property } from '@lit/reactive-element/decorators.js';
 import { FolkRope } from './folk-rope.ts';
@@ -46,9 +46,11 @@ export class FolkEventPropagator extends FolkRope {
 
   @property({ reflect: true }) expression?: string;
 
+  @property({ type: Boolean, reflect: true }) async = false;
+
   #triggerTextarea = document.createElement('textarea');
   #expressionTextarea = document.createElement('textarea');
-  #propagator: Propagator | null = null;
+  #propagator: AsyncPropagator | Propagator | null = null;
   #container = document.createElement('div');
   #hasError = false;
 
@@ -93,7 +95,7 @@ export class FolkEventPropagator extends FolkRope {
       this.#expressionTextarea.value = this.expression ?? '';
     }
 
-    if (changedProperties.has('trigger') || changedProperties.has('expression')) {
+    if (changedProperties.has('trigger') || changedProperties.has('expression') || changedProperties.has('async')) {
       this.#initializePropagator();
     }
   }
@@ -105,7 +107,8 @@ export class FolkEventPropagator extends FolkRope {
 
   #initializePropagator() {
     this.#propagator?.dispose();
-    this.#propagator = new Propagator({
+
+    const options = {
       source: this.sourceElement,
       target: this.targetElement,
       event: this.trigger,
@@ -119,7 +122,9 @@ export class FolkEventPropagator extends FolkRope {
         }
         this.#hasError = false;
       },
-    });
+    };
+
+    this.#propagator = this.async ? new AsyncPropagator(options) : new Propagator(options);
   }
 
   override render() {

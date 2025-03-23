@@ -21,9 +21,11 @@
       "@lib": ["lib"],
       "@lib/*": ["lib/*"],
       "@labs": ["labs"],
-      "@labs/*": ["labs/*"]
+      "@labs/*": ["labs/*"],
+      "@folk-systems/propagators": ["packages/propagators/src"],
+      "@folk-systems/propagators/*": ["packages/propagators/src/*"]
     }
   },
-  "include": ["**/*.ts", "vite.config.ts"],
+  "include": ["**/*.ts", "**/*.js", "**/*.html", "vite.config.ts", "packages/**/*.ts"],
   "exclude": ["node_modules/**/*"]
 }
