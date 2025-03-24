@@ -16,7 +16,6 @@ import type { ReactiveController, ReactiveControllerHost } from './reactive-cont
 // In the Node build, this import will be injected by Rollup:
 // import {HTMLElement, customElements} from '@lit-labs/ssr-dom-shim';
 
-export * from './css-tag.js';
 export type { ReactiveController, ReactiveControllerHost } from './reactive-controller.js';
 
 /**
@@ -35,6 +34,11 @@ const { is, defineProperty, getOwnPropertyDescriptor, getOwnPropertyNames, getOw
   Object;
 
 const DEV_MODE = true;
+
+// TODO: remove this
+let global = {
+  litPropertyMetadata: new WeakMap(),
+};
 
 /*
  * When using Closure Compiler, JSCompiler_renameProperty(property, object) is

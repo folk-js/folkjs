@@ -4,11 +4,6 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-const NODE_MODE = false;
-
-// Allows minifiers to rename references to globalThis
-const global = globalThis;
-
 /**
  * A CSSResult or native CSSStyleSheet.
  *
@@ -148,7 +143,5 @@ const cssResultFromStyleSheet = (sheet: CSSStyleSheet) => {
   return unsafeCSS(cssText);
 };
 
-export const getCompatibleStyle =
-  NODE_MODE && global.CSSStyleSheet === undefined
-    ? (s: CSSResultOrNative) => s
-    : (s: CSSResultOrNative) => (s instanceof CSSStyleSheet ? cssResultFromStyleSheet(s) : s);
+export const getCompatibleStyle = (s: CSSResultOrNative) =>
+  s instanceof CSSStyleSheet ? cssResultFromStyleSheet(s) : s;
