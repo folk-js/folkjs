@@ -1,6 +1,5 @@
 import { FolkElement } from '@folkjs/lib';
-import { css, PropertyValues } from '@folkjs/lib/reactive-element';
-import { state } from '@folkjs/lib/reactive-element/decorators.js';
+import { css, PropertyValues, state } from '@folkjs/lib/reactive-element';
 
 declare global {
   interface HTMLElementTagNameMap {

@@ -1,5 +1,4 @@
-import { css, type PropertyValues } from '@folkjs/lib/reactive-element';
-import { property } from '@folkjs/lib/reactive-element/decorators.js';
+import { css, property, type PropertyValues } from '@folkjs/lib/reactive-element';
 import { AsyncPropagator, Propagator } from '@folkjs/propagators';
 import { FolkRope } from './folk-rope';
 

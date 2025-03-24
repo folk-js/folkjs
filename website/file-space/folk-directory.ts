@@ -1,6 +1,5 @@
 import { FolkBaseSet } from '@folkjs/labs/folk-base-set';
-import { css, PropertyValues } from '@folkjs/lib/reactive-element';
-import { state } from '@folkjs/lib/reactive-element/decorators.js';
+import { css, PropertyValues, state } from '@folkjs/lib/reactive-element';
 import { FolkFile } from './folk-file.ts';
 
 FolkFile.define();

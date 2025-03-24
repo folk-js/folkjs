@@ -34,100 +34,7 @@ type Mutable<T, K extends keyof T> = Omit<T, K> & {
 const { is, defineProperty, getOwnPropertyDescriptor, getOwnPropertyNames, getOwnPropertySymbols, getPrototypeOf } =
   Object;
 
-const NODE_MODE = false;
-
-if (NODE_MODE) {
-  global.customElements ??= customElements;
-}
-
 const DEV_MODE = true;
-
-let issueWarning: (code: string, warning: string) => void;
-
-const trustedTypes = (global as unknown as { trustedTypes?: { emptyScript: '' } }).trustedTypes;
-
-// Temporary workaround for https://crbug.com/993268
-// Currently, any attribute starting with "on" is considered to be a
-// TrustedScript source. Such boolean attributes must be set to the equivalent
-// trusted emptyScript value.
-const emptyStringForBooleanAttribute = trustedTypes ? (trustedTypes.emptyScript as unknown as '') : '';
-
-const polyfillSupport = DEV_MODE ? global.reactiveElementPolyfillSupportDevMode : global.reactiveElementPolyfillSupport;
-
-if (DEV_MODE) {
-  // Ensure warnings are issued only 1x, even if multiple versions of Lit
-  // are loaded.
-  global.litIssuedWarnings ??= new Set();
-
-  /**
-   * Issue a warning if we haven't already, based either on `code` or `warning`.
-   * Warnings are disabled automatically only by `warning`; disabling via `code`
-   * can be done by users.
-   */
-  issueWarning = (code: string, warning: string) => {
-    warning += ` See https://lit.dev/msg/${code} for more information.`;
-    if (!global.litIssuedWarnings!.has(warning) && !global.litIssuedWarnings!.has(code)) {
-      console.warn(warning);
-      global.litIssuedWarnings!.add(warning);
-    }
-  };
-
-  queueMicrotask(() => {
-    issueWarning('dev-mode', `Lit is in dev mode. Not recommended for production!`);
-  });
-}
-
-/**
- * Contains types that are part of the unstable debug API.
- *
- * Everything in this API is not stable and may change or be removed in the future,
- * even on patch releases.
- */
-// eslint-disable-next-line @typescript-eslint/no-namespace
-export namespace ReactiveUnstable {
-  /**
-   * When Lit is running in dev mode and `window.emitLitDebugLogEvents` is true,
-   * we will emit 'lit-debug' events to window, with live details about the update and render
-   * lifecycle. These can be useful for writing debug tooling and visualizations.
-   *
-   * Please be aware that running with window.emitLitDebugLogEvents has performance overhead,
-   * making certain operations that are normally very cheap (like a no-op render) much slower,
-   * because we must copy data and dispatch events.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  export namespace DebugLog {
-    export type Entry = Update;
-    export interface Update {
-      kind: 'update';
-    }
-  }
-}
-
-interface DebugLoggingWindow {
-  // Even in dev mode, we generally don't want to emit these events, as that's
-  // another level of cost, so only emit them when DEV_MODE is true _and_ when
-  // window.emitLitDebugEvents is true.
-  emitLitDebugLogEvents?: boolean;
-}
-
-/**
- * Useful for visualizing and logging insights into what the Lit template system is doing.
- *
- * Compiled out of prod mode builds.
- */
-const debugLogEvent = DEV_MODE
-  ? (event: ReactiveUnstable.DebugLog.Entry) => {
-      const shouldEmit = (global as unknown as DebugLoggingWindow).emitLitDebugLogEvents;
-      if (!shouldEmit) {
-        return;
-      }
-      global.dispatchEvent(
-        new CustomEvent<ReactiveUnstable.DebugLog.Entry>('lit-debug', {
-          detail: event,
-        }),
-      );
-    }
-  : undefined;
 
 /*
  * When using Closure Compiler, JSCompiler_renameProperty(property, object) is
@@ -308,7 +215,7 @@ export const defaultConverter: ComplexAttributeConverter = {
   toAttribute(value: unknown, type?: unknown): unknown {
     switch (type) {
       case Boolean:
-        value = value ? emptyStringForBooleanAttribute : null;
+        value = value ? '' : null;
         break;
       case Object:
       case Array:
@@ -371,13 +278,6 @@ const defaultPropertyDeclaration: PropertyDeclaration = {
 export type WarningKind = 'change-in-update' | 'migration' | 'async-perform-update';
 
 export type Initializer = (element: ReactiveElement) => void;
-
-// Temporary, until google3 is on TypeScript 5.2
-declare global {
-  interface SymbolConstructor {
-    readonly metadata: unique symbol;
-  }
-}
 
 // Ensure metadata is enabled. TypeScript does not polyfill
 // Symbol.metadata, so we must ensure that it exists.
@@ -652,11 +552,7 @@ export abstract class ReactiveElement
     }
     this.elementProperties.set(name, options);
     if (!options.noAccessor) {
-      const key = DEV_MODE
-        ? // Use Symbol.for in dev mode to make it easier to maintain state
-          // when doing HMR.
-          Symbol.for(`${String(name)} (@property() cache)`)
-        : Symbol();
+      const key = Symbol();
       const descriptor = this.getPropertyDescriptor(name, key, options);
       if (descriptor !== undefined) {
         defineProperty(this.prototype, name, descriptor);
@@ -704,7 +600,8 @@ export abstract class ReactiveElement
         (this as unknown as Record<string | symbol, unknown>)[key] = v;
       },
     };
-    if (DEV_MODE && get == null) {
+    // TODO: cleanup
+    if (get == null) {
       if ('value' in (getOwnPropertyDescriptor(this.prototype, name) ?? {})) {
         throw new Error(
           `Field ${JSON.stringify(String(name))} on ` +
@@ -713,7 +610,7 @@ export abstract class ReactiveElement
             `Usually this is due to using @property or @state on a method.`,
         );
       }
-      issueWarning(
+      console.warn(
         'reactive-property-without-getter',
         `Field ${JSON.stringify(String(name))} on ` +
           `${this.name} was declared as a reactive property ` +
@@ -833,21 +730,20 @@ export abstract class ReactiveElement
 
     this.elementStyles = this.finalizeStyles(this.styles);
 
-    if (DEV_MODE) {
-      if (this.hasOwnProperty('createProperty')) {
-        issueWarning(
-          'no-override-create-property',
-          'Overriding ReactiveElement.createProperty() is deprecated. ' +
-            'The override will not be called with standard decorators',
-        );
-      }
-      if (this.hasOwnProperty('getPropertyDescriptor')) {
-        issueWarning(
-          'no-override-get-property-descriptor',
-          'Overriding ReactiveElement.getPropertyDescriptor() is deprecated. ' +
-            'The override will not be called with standard decorators',
-        );
-      }
+    // TODO: cleanup
+    if (this.hasOwnProperty('createProperty')) {
+      console.warn(
+        'no-override-create-property',
+        'Overriding ReactiveElement.createProperty() is deprecated. ' +
+          'The override will not be called with standard decorators',
+      );
+    }
+    if (this.hasOwnProperty('getPropertyDescriptor')) {
+      console.warn(
+        'no-override-get-property-descriptor',
+        'Overriding ReactiveElement.getPropertyDescriptor() is deprecated. ' +
+          'The override will not be called with standard decorators',
+      );
     }
   }
 
@@ -1104,19 +1000,7 @@ export abstract class ReactiveElement
           ? (options.converter as ComplexAttributeConverter)
           : defaultConverter;
       const attrValue = converter.toAttribute!(value, options.type);
-      if (
-        DEV_MODE &&
-        (this.constructor as typeof ReactiveElement).enabledWarnings!.includes('migration') &&
-        attrValue === undefined
-      ) {
-        issueWarning(
-          'undefined-attribute-value',
-          `The attribute value for the ${name as string} property is ` +
-            `undefined on element ${this.localName}. The attribute will be ` +
-            `removed, but in the previous version of \`ReactiveElement\`, ` +
-            `the attribute would not have changed.`,
-        );
-      }
+
       // Track if the property is being reflected to avoid
       // setting the property again via `attributeChangedCallback`. Note:
       // 1. this takes advantage of the fact that the callback is synchronous.
@@ -1181,8 +1065,8 @@ export abstract class ReactiveElement
   requestUpdate(name?: PropertyKey, oldValue?: unknown, options?: PropertyDeclaration): void {
     // If we have a property key, perform property update steps.
     if (name !== undefined) {
-      if (DEV_MODE && (name as unknown) instanceof Event) {
-        issueWarning(
+      if ((name as unknown) instanceof Event) {
+        console.warn(
           ``,
           `The requestUpdate() method was called with an Event as the property name. This is probably a mistake caused by binding this.requestUpdate as an event listener. Instead bind a function that will call it with no arguments: () => this.requestUpdate()`,
         );
@@ -1286,20 +1170,7 @@ export abstract class ReactiveElement
    * @category updates
    */
   protected scheduleUpdate(): void | Promise<unknown> {
-    const result = this.performUpdate();
-    if (
-      DEV_MODE &&
-      (this.constructor as typeof ReactiveElement).enabledWarnings!.includes('async-perform-update') &&
-      typeof (result as unknown as Promise<unknown> | undefined)?.then === 'function'
-    ) {
-      issueWarning(
-        'async-perform-update',
-        `Element ${this.localName} returned a Promise from performUpdate(). ` +
-          `This behavior is deprecated and will be removed in a future ` +
-          `version of ReactiveElement.`,
-      );
-    }
-    return result;
+    return this.performUpdate();
   }
 
   /**
@@ -1319,7 +1190,6 @@ export abstract class ReactiveElement
     if (!this.isUpdatePending) {
       return;
     }
-    debugLogEvent?.({ kind: 'update' });
     if (!this.hasUpdated) {
       // Create renderRoot before first update. This occurs in `connectedCallback`
       // but is done here to support out of tree calls to `enableUpdating`/`performUpdate`.
@@ -1436,7 +1306,7 @@ export abstract class ReactiveElement
       this.isUpdatePending &&
       (this.constructor as typeof ReactiveElement).enabledWarnings!.includes('change-in-update')
     ) {
-      issueWarning(
+      console.warn(
         'change-in-update',
         `Element ${this.localName} scheduled an update ` +
           `(generally because a property was set) ` +
@@ -1562,48 +1432,10 @@ export abstract class ReactiveElement
 }
 // Assigned here to work around a jscompiler bug with static fields
 // when compiling to ES5.
+// TODO: cleanup
 // https://github.com/google/closure-compiler/issues/3177
 (ReactiveElement as unknown as Record<string, unknown>)[
   JSCompiler_renameProperty('elementProperties', ReactiveElement)
 ] = new Map();
 (ReactiveElement as unknown as Record<string, unknown>)[JSCompiler_renameProperty('finalized', ReactiveElement)] =
   new Map();
-
-// Apply polyfills if available
-polyfillSupport?.({ ReactiveElement });
-
-// Dev mode warnings...
-if (DEV_MODE) {
-  // Default warning set.
-  ReactiveElement.enabledWarnings = ['change-in-update', 'async-perform-update'];
-  const ensureOwnWarnings = function (ctor: typeof ReactiveElement) {
-    if (!ctor.hasOwnProperty(JSCompiler_renameProperty('enabledWarnings', ctor))) {
-      ctor.enabledWarnings = ctor.enabledWarnings!.slice();
-    }
-  };
-  ReactiveElement.enableWarning = function (this: typeof ReactiveElement, warning: WarningKind) {
-    ensureOwnWarnings(this);
-    if (!this.enabledWarnings!.includes(warning)) {
-      this.enabledWarnings!.push(warning);
-    }
-  };
-  ReactiveElement.disableWarning = function (this: typeof ReactiveElement, warning: WarningKind) {
-    ensureOwnWarnings(this);
-    const i = this.enabledWarnings!.indexOf(warning);
-    if (i >= 0) {
-      this.enabledWarnings!.splice(i, 1);
-    }
-  };
-}
-
-// IMPORTANT: do not change the property name or the assignment expression.
-// This line will be used in regexes to search for ReactiveElement usage.
-(global.reactiveElementVersions ??= []).push('2.0.4');
-if (DEV_MODE && global.reactiveElementVersions.length > 1) {
-  queueMicrotask(() => {
-    issueWarning!(
-      'multiple-versions',
-      `Multiple versions of Lit loaded. Loading multiple versions ` + `is not recommended.`,
-    );
-  });
-}
