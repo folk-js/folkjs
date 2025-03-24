@@ -47,28 +47,6 @@ export default defineConfig({
       loose: true,
     }),
   ],
-  resolve: {
-    // Ensure proper resolution for local packages
-    alias: {
-      '@folkjs/lib': resolve(__dirname, './packages/lib/src'),
-      '@folkjs/labs': resolve(__dirname, './packages/labs/src'),
-      '@folkjs/propagators': resolve(__dirname, './packages/propagators/src'),
-      '@folkjs/geometry': resolve(__dirname, './packages/geometry/src'),
-    },
-  },
-  optimizeDeps: {
-    // Ensure Vite properly processes our local packages
-    include: ['@folkjs/lib', '@folkjs/labs', '@folkjs/propagators', '@folkjs/geometry'],
-    // Make sure type-only imports are properly handled
-    esbuildOptions: {
-      logLevel: 'error',
-      tsconfigRaw: {
-        compilerOptions: {
-          preserveValueImports: true,
-        },
-      },
-    },
-  },
   build: {
     target: 'esnext',
     rollupOptions: {
