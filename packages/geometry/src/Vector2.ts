@@ -306,3 +306,33 @@ export function project(v: Vector2Readonly, axis: Vector2Readonly): Vector2 {
 export function clone(v: Vector2Readonly): Vector2 {
   return { x: v.x, y: v.y };
 }
+
+// Morton codes ported from  https://github.com/liamdon/fast-morton
+
+/**
+ *
+ * @param coord single coord (x/y/z)
+ * @returns component with bits shifted into place
+ */
+function morton2DSplitBy2bits(coord: number) {
+  let x = coord & 0xffffffff;
+  x = (x | (x << 16)) & 0x0000ffff;
+  x = (x | (x << 8)) & 0x00ff00ff;
+  x = (x | (x << 4)) & 0x0f0f0f0f;
+  x = (x | (x << 2)) & 0x33333333;
+  x = (x | (x << 1)) & 0x55555555;
+  return x;
+}
+
+/**
+ * Encode a 2D point as a morton code.
+ * @param x X coordinate (up to 15 bits: 0-32,767)
+ * @param y Y coordinate (up to 15 bits: 0-32,767)
+ * @returns 32-bit 2D Morton code
+ */
+export function mortonCode({ x, y }: Vector2Readonly): number {
+  if (x < 0 || x > 32_767 || (y < 0 && y > 32_767)) {
+    throw new Error('All input coords must be in Uint15 range (0 - 32,767)');
+  }
+  return morton2DSplitBy2bits(x) | (morton2DSplitBy2bits(y) << 1);
+}

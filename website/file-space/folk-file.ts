@@ -1,4 +1,4 @@
-import { FolkElement } from '@lib';
+import { FolkElement } from '@folkjs/lib';
 import { css, PropertyValues } from '@lit/reactive-element';
 import { state } from '@lit/reactive-element/decorators.js';
 
@@ -15,7 +15,7 @@ export interface FileCreator<T extends Element = Element> {
 }
 
 export class FolkFile extends FolkElement {
-  static tagName = 'folk-file';
+  static override tagName = 'folk-file';
 
   static #fileCreators = new Map<string, FileCreator>();
 
@@ -86,7 +86,7 @@ export class FolkFile extends FolkElement {
     // this.addFileType(['csv'], () => {});
   }
 
-  static styles = css`
+  static override styles = css`
     * {
       box-sizing: border-box;
     }

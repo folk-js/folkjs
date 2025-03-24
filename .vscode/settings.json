@@ -1,6 +1,3 @@
 {
-  "typescript.tsdk": "node_modules/typescript/lib",
-  "cSpell.enabledFileTypes": {
-    "typescript": false
-  }
+  "typescript.tsdk": "node_modules/typescript/lib"
 }

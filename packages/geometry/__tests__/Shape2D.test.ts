@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import * as S from '../src/Shape2D.ts';
+import * as S from '../src/Shape2D';
 import type { Vector2Readonly } from '../src/Vector2';
 
 // Helper for comparing points with floating point values

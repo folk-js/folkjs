@@ -3,7 +3,8 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
-    "declaration": true
+    "declaration": true,
+    "composite": true
   },
-  "include": ["src/", "src/web-extension.d.ts"]
+  "include": ["src/**/*"]
 }

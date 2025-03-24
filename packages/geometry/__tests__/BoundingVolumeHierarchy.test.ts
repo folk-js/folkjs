@@ -1,15 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { BoundingVolumeHierarchy } from '../src/BoundingVolumeHierarchy.ts';
+import * as BVH from '../src/BoundingVolumeHierarchy.ts';
 
 describe('BoundingVolumeHierarchy', () => {
   test('constructor initializes with no rectangles', () => {
-    const bvh = new BoundingVolumeHierarchy([]);
-
-    expect(bvh.root).toBeUndefined();
+    expect(() => BVH.fromRects([])).toThrow();
   });
 
   test('constructor initializes with one rectangles', () => {
-    const bvh = new BoundingVolumeHierarchy([
+    const bvh = BVH.fromRects([
       {
         x: 0,
         y: 0,
@@ -18,8 +16,7 @@ describe('BoundingVolumeHierarchy', () => {
       },
     ]);
 
-    expect(bvh.root).toBeDefined();
-    expect(bvh.root?.isLeaf).toBeTrue();
+    expect(bvh.isLeaf).toBeTrue();
   });
 
   test('constructor initializes with two rectangles', () => {
@@ -38,20 +35,19 @@ describe('BoundingVolumeHierarchy', () => {
         height: 10,
       },
     ];
-    const bvh = new BoundingVolumeHierarchy(rects);
+    const bvh = BVH.fromRects(rects);
 
-    expect(bvh.root).toBeDefined();
-    expect(bvh.root?.left?.isLeaf).toBeTrue();
-    expect(bvh.root?.right?.isLeaf).toBeTrue();
+    expect(bvh.left?.isLeaf).toBeTrue();
+    expect(bvh.right?.isLeaf).toBeTrue();
 
-    expect(bvh.root!.rect).toStrictEqual({
+    expect(bvh.rect).toStrictEqual({
       x: 0,
       y: 0,
       width: 25,
       height: 25,
     });
 
-    expect(bvh.collisions(rects[0]).length).toBe(0);
+    expect(BVH.intersections(bvh, rects[0]).length).toBe(0);
   });
 
   test('constructor initializes with three rectangles', () => {
@@ -76,11 +72,9 @@ describe('BoundingVolumeHierarchy', () => {
         height: 10,
       },
     ];
-    const bvh = new BoundingVolumeHierarchy(rects);
+    const bvh = BVH.fromRects(rects);
 
-    expect(bvh.root).toBeDefined();
-
-    expect(bvh.root!.rect).toStrictEqual({
+    expect(bvh.rect).toStrictEqual({
       x: 0,
       y: 0,
       width: 25,
@@ -89,11 +83,11 @@ describe('BoundingVolumeHierarchy', () => {
 
     // console.log(bvh.tree.map((n) => n.toJSON()));
 
-    const c1 = bvh.collisions(rects[0]);
+    const c1 = BVH.intersections(bvh, rects[0]);
     expect(c1.length).toBe(1);
     expect(c1[0]).toBe(rects[2]);
 
-    const c2 = bvh.collisions(rects[2]);
+    const c2 = BVH.intersections(bvh, rects[2]);
     expect(c2.length).toBe(2);
     expect(c2).toContain(rects[0]);
     expect(c2).toContain(rects[1]);

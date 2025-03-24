@@ -1,4 +1,4 @@
-import { FolkElement } from '@lib';
+import { FolkElement } from '@folkjs/lib';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -14,7 +14,7 @@ export class FolkTimer extends FolkElement {
 
   #intervalMs = 100;
 
-  connectedCallback() {
+  override connectedCallback() {
     super.connectedCallback();
     this.reset();
   }

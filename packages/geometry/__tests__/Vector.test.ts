@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import * as V from '../src/Vector2.ts';
+import * as V from '../src/Vector2';
 
 describe('V', () => {
   describe('basic operations', () => {

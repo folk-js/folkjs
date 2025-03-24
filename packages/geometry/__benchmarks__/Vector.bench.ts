@@ -1,4 +1,3 @@
-import { bench, run } from 'mitata';
 import {
   add,
   angle,
@@ -16,7 +15,8 @@ import {
   scale,
   subtract,
   zero,
-} from '../src/Vector2.ts';
+} from '@folkjs/geometry/Vector2';
+import { bench, run } from 'mitata';
 
 // Basic vector operations
 bench('Vector2.zero', () => {

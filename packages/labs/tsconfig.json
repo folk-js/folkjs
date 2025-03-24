@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "composite": true
+  },
+  "include": ["src/"],
+  "references": [
+    {
+      "path": "../lib"
+    },
+    {
+      "path": "../propagators"
+    }
+  ]
+}

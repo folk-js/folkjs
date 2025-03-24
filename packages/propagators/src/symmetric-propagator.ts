@@ -1,4 +1,4 @@
-import type { PropagatorFunction, PropagatorOptions, PropagatorParser } from './types.ts';
+import type { PropagatorFunction, PropagatorOptions, PropagatorParser } from './types';
 
 /**
  * A propagator takes a source and target element and listens for events on both.

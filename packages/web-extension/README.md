@@ -1,1 +1,1 @@
-# @folk-systems/geometry
+# @folkjs/web-extension

@@ -15,7 +15,8 @@
       body {
         min-height: 100%;
         --color: color-mix(in srgb, #000 10%, #fff 90%);
-        background-image: repeating-linear-gradient(var(--color) 0 1px, transparent 1px 100%),
+        background-image:
+          repeating-linear-gradient(var(--color) 0 1px, transparent 1px 100%),
           repeating-linear-gradient(90deg, var(--color) 0 1px, transparent 1px 100%);
         background-size: var(--quantized-width) var(--quantized-height);
       }
@@ -49,7 +50,7 @@
     <folk-shape x="100" y="300" width="50" height="50" rotation="45"></folk-shape>
 
     <script type="module">
-      import '@labs/standalone/folk-shape.ts';
+      import '@folkjs/labs/standalone/folk-shape.ts';
 
       const heightInput = document.querySelector('input[name="height"]');
       const widthInput = document.querySelector('input[name="width"]');

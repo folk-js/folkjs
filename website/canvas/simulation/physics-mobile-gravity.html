@@ -57,11 +57,11 @@
     <folk-gizmos></folk-gizmos>
 
     <script type="module">
-      import { Vector } from '@lib/Vector';
-      import '@labs/standalone/folk-shape.ts';
-      import '@labs/standalone/folk-physics.ts';
-      import '@labs/standalone/folk-rope.ts';
-      import { Gizmos } from '@lib/folk-gizmos';
+      import { Vector } from '@folkjs/lib/Vector';
+      import '@folkjs/labs/standalone/folk-shape.ts';
+      import '@folkjs/labs/standalone/folk-physics.ts';
+      import '@folkjs/labs/standalone/folk-rope.ts';
+      import { Gizmos } from '@folkjs/lib/folk-gizmos';
 
       const physics = document.querySelector('folk-physics');
       const ropes = Array.from(document.querySelectorAll('folk-rope'));

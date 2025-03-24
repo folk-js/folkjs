@@ -6,9 +6,9 @@ import wasm from 'vite-plugin-wasm';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
 // Local plugins
-import { cleanUrlHandler } from './vite-clean-urls';
-import { getCanvasFiles, linkGenerator } from './vite-link-generator';
-import { remark } from './vite-remark-md';
+import { cleanUrlHandler } from './_scripts_/vite-clean-urls';
+import { getCanvasFiles, linkGenerator } from './_scripts_/vite-link-generator';
+import { remark } from './_scripts_/vite-remark-md';
 
 const websiteDir = resolve(__dirname, './website');
 const canvasWebsiteDir = resolve(__dirname, './website/canvas');

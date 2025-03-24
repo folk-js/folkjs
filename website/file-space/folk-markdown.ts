@@ -1,4 +1,4 @@
-import { FolkElement } from '@lib';
+import { FolkElement } from '@folkjs/lib';
 import { css } from '@lit/reactive-element';
 import { AwaitableInstance, ink } from 'ink-mde';
 
@@ -9,9 +9,9 @@ declare global {
 }
 
 export class FolkMarkdown extends FolkElement {
-  static tagName = 'folk-markdown';
+  static override tagName = 'folk-markdown';
 
-  static styles = css`
+  static override styles = css`
     :host > div {
       /* need to specific this for ink-mde */
       color: white;

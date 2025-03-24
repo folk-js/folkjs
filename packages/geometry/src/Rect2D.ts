@@ -23,25 +23,23 @@ export function fromHit(pos = V.zero(), delta = V.zero(), normal = V.zero()) {
   return { pos, delta, normal };
 }
 
-function center(rect: Rect2D) {
+export function center(rect: Rect2D) {
   return {
-    width: rect.width * 0.5,
-    height: rect.height * 0.5,
     x: rect.x + rect.width * 0.5,
     y: rect.y + rect.height * 0.5,
   };
 }
 
-export function aabbHitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly): Hit | null {
+export function hitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly): Hit | null {
   const center1 = center(rect1);
   const center2 = center(rect2);
 
   const dx = center2.x - center1.x;
-  const px = center2.width + center1.width - Math.abs(dx);
+  const px = (rect1.width + rect2.width) / 2 - Math.abs(dx);
   if (px <= 0) return null;
 
   const dy = center2.y - center1.y;
-  const py = center2.height + center1.height - Math.abs(dy);
+  const py = (rect1.height + rect2.height) / 2 - Math.abs(dy);
   if (py <= 0) return null;
 
   const hit = fromHit();
@@ -49,25 +47,37 @@ export function aabbHitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly)
     const sx = sign(dx);
     hit.delta.x = px * sx;
     hit.normal.x = sx;
-    hit.pos.x = center1.x + center1.width * sx;
+    hit.pos.x = center1.x + (rect1.width / 2) * sx;
     hit.pos.y = center2.y;
   } else {
     const sy = sign(dy);
     hit.delta.y = py * sy;
     hit.normal.y = sy;
     hit.pos.x = center2.x;
-    hit.pos.y = center1.y + center1.height * sy;
+    hit.pos.y = center1.y + (rect1.height / 2) * sy;
   }
   return hit;
 }
 
-export function aabbIntersection(rect1: Rect2D, rect2: Rect2D) {
+export function intersecting(rect1: Rect2D, rect2: Rect2D) {
   return (
     rect1.x <= rect2.x + rect2.width &&
     rect1.x + rect1.width >= rect2.x &&
     rect1.y <= rect2.y + rect2.height &&
     rect1.y + rect1.height >= rect2.y
   );
+}
+
+export function bounds(rect1: Rect2D, rect2: Rect2D): Rect2D {
+  const x = Math.min(rect1.x, rect2.x);
+  const y = Math.min(rect1.y, rect2.y);
+
+  return {
+    x,
+    y,
+    width: Math.max(rect1.x + rect1.width, rect2.x + rect2.width) - x,
+    height: Math.max(rect1.y + rect1.height, rect2.y + rect2.height) - y,
+  };
 }
 
 /**
