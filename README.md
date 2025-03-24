@@ -18,6 +18,8 @@ Install [Bun](https://bun.sh/docs/installation)
 ```bash
 bun i
 # then
+bun run build # this links the packages, only needs to be run once
+# then
 bun dev
 ```
 

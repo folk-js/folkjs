@@ -12,11 +12,13 @@
     "build": "bun run build:packages && tsc --noEmit && vite build",
     "preview": "bun run build && vite preview",
     "bench": "bun run _scripts_/benchmark.js",
-    "types": "for pkg in packages/*; do if [ -d \"$pkg\" ] && [ -f \"$pkg/tsconfig.json\" ]; then echo \"Checking types in $pkg\" && (cd \"$pkg\" && tsc --noEmit) & fi; done; tsc --noEmit --skipLibCheck --skipDefaultLibCheck & wait",
+    "types": "concurrently \"tsc --noEmit --skipLibCheck --skipDefaultLibCheck\" \"bun run types:packages\"",
+    "types:packages": "concurrently \"cd packages/lib && tsc --noEmit\" \"cd packages/geometry && tsc --noEmit\" \"cd packages/propagators && tsc --noEmit\" \"cd packages/labs && tsc --noEmit\"",
     "types:fix": "npx ts-autofix",
-    "dev:extension": "vite build packages/web-extension -w",
     "build:packages": "(cd packages/lib && bun run build) && (cd packages/geometry && bun run build) && (cd packages/propagators && bun run build) && (cd packages/labs && bun run build)",
-    "clean": "rm -rf dist && find packages -name 'dist' -type d -exec rm -rf {} + && find packages -name 'tsconfig.tsbuildinfo' -type f -delete && rm -rf tsconfig.tsbuildinfo && rm -rf node_modules && find packages -name 'node_modules' -type d -exec rm -rf {} +"
+    "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
+    "dev:extension": "vite build packages/web-extension -w",
+    "build:extension": "vite build packages/web-extension"
   },
   "dependencies": {
     "@automerge/automerge": "^2.2.8",
@@ -45,12 +47,13 @@
     "webcola": "^3.4.0"
   },
   "devDependencies": {
-    "@types/uuid": "^10.0.0",
     "@types/leaflet": "^1.9.14",
     "@types/node": "^22.10.1",
+    "@types/uuid": "^10.0.0",
     "@types/wicg-file-system-access": "^2023.10.5",
     "@webgpu/types": "^0.1.51",
     "bun-types": "^1.1.38",
+    "concurrently": "^9.1.2",
     "mitata": "^1.0.20",
     "prettier-plugin-organize-imports": "^4.1.0",
     "typescript": "^5.8.2",
