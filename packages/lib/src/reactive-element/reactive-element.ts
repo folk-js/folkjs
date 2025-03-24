@@ -35,11 +35,6 @@ const { is, defineProperty, getOwnPropertyDescriptor, getOwnPropertyNames, getOw
 
 const DEV_MODE = true;
 
-// TODO: remove this
-let global = {
-  litPropertyMetadata: new WeakMap(),
-};
-
 /*
  * When using Closure Compiler, JSCompiler_renameProperty(property, object) is
  * replaced at compile time by the munged name for object[property]. We cannot
@@ -297,7 +292,7 @@ declare global {
 // Map from a class's metadata object to property options
 // Note that we must use nullish-coalescing assignment so that we only use one
 // map even if we load multiple version of this module.
-global.litPropertyMetadata ??= new WeakMap();
+window.litPropertyMetadata ??= new WeakMap();
 
 /**
  * Base element class which manages element properties and attributes. When
@@ -715,7 +710,7 @@ export abstract class ReactiveElement
     // Create properties from standard decorator metadata:
     const metadata = this[Symbol.metadata];
     if (metadata !== null) {
-      const properties = litPropertyMetadata.get(metadata);
+      const properties = window.litPropertyMetadata.get(metadata);
       if (properties !== undefined) {
         for (const [p, options] of properties) {
           this.elementProperties.set(p, options);

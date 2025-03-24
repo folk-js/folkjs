@@ -90,9 +90,9 @@ export const standardProperty = <C extends Interface<ReactiveElement>, V>(
   }
 
   // Store the property options
-  let properties = globalThis.litPropertyMetadata.get(metadata);
+  let properties = window.litPropertyMetadata.get(metadata);
   if (properties === undefined) {
-    globalThis.litPropertyMetadata.set(metadata, (properties = new Map()));
+    window.litPropertyMetadata.set(metadata, (properties = new Map()));
   }
   if (kind === 'setter') {
     options = Object.create(options);
