@@ -35,7 +35,6 @@ export class FolkSpace extends FolkElement implements IPointTransform {
       width: 100%;
       height: 100%;
       transform-origin: 0 0;
-      overflow: hidden;
     }
 
     .grid {

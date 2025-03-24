@@ -16,10 +16,18 @@ interface PointerData {
   color: string;
   name: string;
   lastActive: number;
+  afk: boolean;
 }
 
 interface PointerState {
   pointers: Record<string, PointerData>;
+}
+
+// Define Identity type
+interface Identity {
+  peerId: string;
+  username: string;
+  color: string;
 }
 
 // Add a list of short random name components
@@ -38,7 +46,7 @@ const shortAdjectives = [
   'slow',
   'wise',
   'zany',
-];
+] as const;
 const shortNouns = [
   'cat',
   'dog',
@@ -54,7 +62,7 @@ const shortNouns = [
   'wolf',
   'bear',
   'duck',
-];
+] as const;
 
 /**
  * FolkPresence is a custom element that adds real-time collaborative cursors
@@ -129,27 +137,32 @@ export class FolkPresence extends FolkElement {
   public automerge!: FolkAutomerge<PointerState>;
 
   // Container element (usually the folk-space)
-  private container!: HTMLElement;
-  private folkSpace!: FolkSpace;
+  #container!: HTMLElement;
+  #folkSpace!: FolkSpace;
 
   // Map of pointer elements by ID
-  private pointers: Map<string, HTMLElement> = new Map();
+  #pointers: Map<string, HTMLElement> = new Map();
+
+  // Identity for this client
+  #identity: Identity;
+
+  // Storage key prefix for localStorage
+  private static STORAGE_PREFIX = 'folk-presence-';
 
   // Local pointer information
-  public localPointerId: string;
-  private localPointerData: PointerData;
+  #localPointerData: PointerData;
 
   // Throttling for mouse move events
-  private throttleTimeout: number | null = null;
-  private throttleDelay = 30; // ms
+  #throttleTimeout: number | null = null;
+  #throttleDelay = 30; // ms
 
   // AFK and removal timeouts (in milliseconds)
-  private afkTimeout = 30 * 1000; // 30 seconds for AFK
-  private removalTimeout = 60 * 1000; // 1 minute for removal
-  private activityCheckInterval: number | null = null;
+  #afkTimeout = 30 * 1000; // 30 seconds for AFK
+  #removalTimeout = 60 * 1000; // 1 minute for removal
+  #activityCheckInterval: number | null = null;
 
   // Available colors for pointers
-  private colors = [
+  #colors = [
     '#FF5722', // Deep Orange
     '#2196F3', // Blue
     '#4CAF50', // Green
@@ -160,42 +173,134 @@ export class FolkPresence extends FolkElement {
     '#3F51B5', // Indigo
   ];
 
-  // Username for this client
-  #username: string;
-
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
 
-    // Generate a random ID for this client's pointer
-    this.localPointerId = this.generateId();
-
-    // Set default username with short random name
-    this.#username = this.generateShortRandomName();
-
-    // Generate a random color for this user
-    const randomColor = this.colors[Math.floor(Math.random() * this.colors.length)];
+    // Get or create persistent identity
+    this.#identity = this.#getPersistentIdentity();
 
     // Initialize local pointer data
-    this.localPointerData = {
-      id: this.localPointerId,
+    this.#localPointerData = {
+      id: this.#identity.peerId,
       x: 0,
       y: 0,
-      color: randomColor,
-      name: this.#username,
+      color: this.#identity.color,
+      name: this.#identity.username,
       lastActive: Date.now(),
+      afk: false,
     };
+  }
+
+  /**
+   * Gets or creates a persistent identity for the current URL hash.
+   */
+  #getPersistentIdentity(): Identity {
+    const hash = window.location.hash || '#default';
+    const storageKey = FolkPresence.STORAGE_PREFIX + hash;
+
+    // Try to get existing identity
+    const storedData = localStorage.getItem(storageKey);
+
+    if (storedData) {
+      try {
+        // Parse the stored JSON data
+        const identity = JSON.parse(storedData) as Partial<Identity>;
+
+        // Ensure the identity has all required fields
+        if (identity.peerId && identity.username && identity.color) {
+          return identity as Identity;
+        }
+        // If missing any fields, fall through to create a new one
+      } catch (e) {
+        console.error('Error parsing stored identity:', e);
+        // Fall through to create new identity if parsing fails
+      }
+    }
+
+    // Generate a random color for new users
+    const randomColor = this.#colors[Math.floor(Math.random() * this.#colors.length)];
+
+    // Create new identity if none exists or parsing failed
+    const newIdentity: Identity = {
+      peerId: this.#generateId(),
+      username: this.#generateShortRandomName(),
+      color: randomColor,
+    };
+
+    // Store the new identity
+    localStorage.setItem(storageKey, JSON.stringify(newIdentity));
+
+    return newIdentity;
+  }
+
+  /**
+   * Gets the user's identity (peer ID, username, and color).
+   */
+  get identity(): Identity {
+    return { ...this.#identity }; // Return a copy to prevent direct modification
+  }
+
+  /**
+   * Sets the username for this client.
+   */
+  set username(value: string) {
+    if (value && value !== this.#identity.username) {
+      // Update identity
+      this.#identity.username = value;
+
+      // Update pointer data
+      this.#localPointerData.name = value;
+
+      // Update stored identity
+      this.#saveIdentity();
+
+      // Update the Automerge document
+      this.automerge.change((doc) => {
+        doc.pointers[this.#identity.peerId] = this.#localPointerData;
+      });
+    }
+  }
+
+  /**
+   * Sets the color for this client's pointer.
+   */
+  set color(value: string) {
+    if (value && value !== this.#identity.color) {
+      // Update identity
+      this.#identity.color = value;
+
+      // Update pointer data
+      this.#localPointerData.color = value;
+
+      // Save to localStorage
+      this.#saveIdentity();
+
+      // Update the Automerge document
+      this.automerge.change((doc) => {
+        doc.pointers[this.#identity.peerId] = this.#localPointerData;
+      });
+    }
+  }
+
+  /**
+   * Saves the current identity to localStorage.
+   */
+  #saveIdentity(): void {
+    const hash = window.location.hash || '#default';
+    const storageKey = FolkPresence.STORAGE_PREFIX + hash;
+    localStorage.setItem(storageKey, JSON.stringify(this.#identity));
   }
 
   override connectedCallback() {
     super.connectedCallback();
 
     // Find the container (parent element, usually folk-space)
-    this.container = this.parentElement || document.body;
+    this.#container = this.parentElement || document.body;
 
     // Check if the container is a FolkSpace
-    if (this.container instanceof FolkSpace) {
-      this.folkSpace = this.container;
+    if (this.#container instanceof FolkSpace) {
+      this.#folkSpace = this.#container;
     } else {
       console.error('FolkMultiplayerPointers must be a child of FolkSpace');
     }
@@ -203,55 +308,155 @@ export class FolkPresence extends FolkElement {
     // Initialize Automerge with initial state
     this.automerge = new FolkAutomerge<PointerState>({
       pointers: {
-        [this.localPointerId]: this.localPointerData,
+        [this.#identity.peerId]: this.#localPointerData,
       },
     });
 
     // Listen for remote changes
     this.automerge.onRemoteChange((doc) => {
-      this.updatePointersFromState(doc);
+      this.#updatePointersFromState(doc);
     });
 
     // Add mouse move listener to track local pointer
-    this.container.addEventListener('mousemove', this.handleMouseMove);
+    this.#container.addEventListener('mousemove', this.#handleMouseMove);
 
     // Add mouse leave listener to hide local pointer when mouse leaves container
-    this.container.addEventListener('mouseleave', this.handleMouseLeave);
+    this.#container.addEventListener('mouseleave', this.#handleMouseLeave);
 
     // Start activity check interval
-    this.activityCheckInterval = window.setInterval(() => {
-      this.checkActivityStatus();
+    this.#activityCheckInterval = window.setInterval(() => {
+      this.#checkActivityStatus();
     }, 5000); // Check every 5 seconds for more responsive removal
+
+    // Listen for hashchange to update identity if needed
+    window.addEventListener('hashchange', this.#handleHashChange);
+
+    // Listen for tab visibility changes (user changing tabs)
+    document.addEventListener('visibilitychange', this.#handleVisibilityChange);
+
+    // Listen for window focus/blur (user switching applications)
+    window.addEventListener('blur', this.#handleWindowBlur);
+    window.addEventListener('focus', this.#handleWindowFocus);
+
+    // Listen for beforeunload to remove user when closing browser/tab
+    window.addEventListener('beforeunload', this.#handleBeforeUnload);
   }
+
+  /**
+   * Handles hash changes in the URL to update identity if needed.
+   */
+  #handleHashChange = () => {
+    const newIdentity = this.#getPersistentIdentity();
+    const oldPeerId = this.#identity.peerId;
+
+    // Update identity
+    this.#identity = newIdentity;
+
+    // Update pointer data with new identity
+    this.#localPointerData = {
+      ...this.#localPointerData,
+      id: newIdentity.peerId,
+      name: newIdentity.username,
+      color: newIdentity.color,
+    };
+
+    // Update in Automerge
+    this.automerge.change((doc) => {
+      // Remove old pointer if peer ID changed
+      if (oldPeerId !== newIdentity.peerId && doc.pointers[oldPeerId]) {
+        delete doc.pointers[oldPeerId];
+      }
+
+      // Add/update with new identity
+      doc.pointers[newIdentity.peerId] = this.#localPointerData;
+    });
+  };
+
+  /**
+   * Sets the AFK status of the local pointer and updates lastActive timestamp.
+   * @param afk Whether the pointer is AFK or not
+   */
+  #setAfk(afk: boolean) {
+    this.#updateLocalPointer({
+      ...this.#localPointerData,
+      afk,
+      lastActive: Date.now(),
+    });
+  }
+
+  /**
+   * Handles tab visibility changes (switching tabs)
+   */
+  #handleVisibilityChange = () => {
+    if (document.hidden) {
+      // User switched to another tab, mark as AFK
+      this.#setAfk(true);
+    } else {
+      // User returned to this tab, mark as active
+      this.#setAfk(false);
+    }
+  };
+
+  /**
+   * Handles window losing focus (user switched applications)
+   */
+  #handleWindowBlur = () => {
+    // User switched to another application, mark as AFK
+    this.#setAfk(true);
+  };
+
+  /**
+   * Handles window gaining focus (user returned to application)
+   */
+  #handleWindowFocus = () => {
+    // User returned to the application, mark as active
+    this.#setAfk(false);
+  };
+
+  /**
+   * Handles the beforeunload event to remove the user when closing the browser/tab.
+   */
+  #handleBeforeUnload = () => {
+    // Use synchronous Automerge change to ensure it's sent before page unloads
+    this.#removeSelf();
+  };
 
   override disconnectedCallback() {
     super.disconnectedCallback();
 
     // Clean up event listeners
-    this.container.removeEventListener('mousemove', this.handleMouseMove);
-    this.container.removeEventListener('mouseleave', this.handleMouseLeave);
+    this.#container.removeEventListener('mousemove', this.#handleMouseMove);
+    this.#container.removeEventListener('mouseleave', this.#handleMouseLeave);
+    window.removeEventListener('hashchange', this.#handleHashChange);
+    document.removeEventListener('visibilitychange', this.#handleVisibilityChange);
+    window.removeEventListener('blur', this.#handleWindowBlur);
+    window.removeEventListener('focus', this.#handleWindowFocus);
+    window.removeEventListener('beforeunload', this.#handleBeforeUnload);
+
+    // Try to remove self from the document when component is disconnected
+    this.#removeSelf();
 
     // Clear activity check interval
-    if (this.activityCheckInterval !== null) {
-      clearInterval(this.activityCheckInterval);
-      this.activityCheckInterval = null;
+    if (this.#activityCheckInterval !== null) {
+      clearInterval(this.#activityCheckInterval);
+      this.#activityCheckInterval = null;
     }
 
     // Clear all pointers
-    this.clearPointers();
+    this.#clearPointers();
   }
 
   /**
    * Generates a random ID for a pointer.
    */
-  private generateId(): string {
+  #generateId(): string {
     return `pointer-${Math.random().toString(36).substring(2, 10)}`;
   }
 
   /**
    * Generates a short random name like "redcat" or "bluefox"
    */
-  private generateShortRandomName(): string {
+  #generateShortRandomName(): string {
     const adjective = shortAdjectives[Math.floor(Math.random() * shortAdjectives.length)];
     const noun = shortNouns[Math.floor(Math.random() * shortNouns.length)];
     return adjective + noun;
@@ -260,140 +465,103 @@ export class FolkPresence extends FolkElement {
   /**
    * Handles mouse move events to update the local pointer position.
    */
-  private handleMouseMove = (event: MouseEvent) => {
+  #handleMouseMove = (event: MouseEvent) => {
     // Get mouse position relative to container
-    const rect = this.container.getBoundingClientRect();
+    const rect = this.#container.getBoundingClientRect();
     const clientX = event.clientX - rect.left;
     const clientY = event.clientY - rect.top;
 
     // Use FolkSpace's mapPointFromParent to get the correct space coordinates
     let spacePoint: Point;
-    if (this.folkSpace) {
-      spacePoint = this.folkSpace.mapPointFromParent({ x: clientX, y: clientY });
+    if (this.#folkSpace) {
+      spacePoint = this.#folkSpace.mapPointFromParent({ x: clientX, y: clientY });
     } else {
       // Fallback if not in a FolkSpace
       spacePoint = { x: clientX, y: clientY };
     }
 
     // Update local pointer with throttling
-    if (this.throttleTimeout === null) {
-      this.throttleTimeout = window.setTimeout(() => {
-        this.updateLocalPointer({
-          ...this.localPointerData,
+    if (this.#throttleTimeout === null) {
+      this.#throttleTimeout = window.setTimeout(() => {
+        this.#updateLocalPointer({
+          ...this.#localPointerData,
           x: spacePoint.x,
           y: spacePoint.y,
           lastActive: Date.now(),
+          afk: false,
         });
-        this.throttleTimeout = null;
-      }, this.throttleDelay);
+        this.#throttleTimeout = null;
+      }, this.#throttleDelay);
     }
   };
 
   /**
-   * Handles mouse leave events to hide the local pointer.
+   * Handles mouse leave events when cursor leaves the container
    */
-  private handleMouseLeave = () => {
-    this.updateLocalPointer({
-      ...this.localPointerData,
-      x: -1000,
-      y: -1000,
-      lastActive: Date.now(),
-    });
+  #handleMouseLeave = () => {
+    // Just mark as AFK when mouse leaves the container
+    this.#setAfk(true);
   };
 
   /**
    * Updates the local pointer position and syncs it with other clients.
    */
-  private updateLocalPointer(data: PointerData) {
-    this.localPointerData = data;
+  #updateLocalPointer(data: PointerData) {
+    this.#localPointerData = data;
 
     // Update the Automerge document with the new pointer position
     this.automerge.change((doc) => {
-      doc.pointers[this.localPointerId] = data;
+      doc.pointers[this.#identity.peerId] = data;
     });
   }
 
   /**
-   * Checks the activity status of all pointers and updates their AFK status or removes them.
+   * Removes this peer from the document.
    */
-  private checkActivityStatus() {
-    const now = Date.now();
-    let hasChanges = false;
-
+  #removeSelf() {
     this.automerge.change((doc) => {
-      // Check all pointers
-      for (const [id, pointer] of Object.entries(doc.pointers)) {
-        const timeSinceActive = now - pointer.lastActive;
-
-        // Remove pointers that have been inactive for too long
-        if (timeSinceActive > this.removalTimeout && id !== this.localPointerId) {
-          delete doc.pointers[id];
-          hasChanges = true;
-
-          // Also remove from the DOM immediately
-          const pointerElement = this.pointers.get(id);
-          if (pointerElement) {
-            pointerElement.remove();
-            this.pointers.delete(id);
-          }
-        }
-      }
+      delete doc.pointers[this.#identity.peerId];
     });
-
-    // Update the UI to reflect AFK status
-    if (hasChanges) {
-      this.automerge.whenReady((doc) => {
-        this.updatePointersFromState(doc);
-      });
-    } else {
-      // Even if no removals, still update AFK status
-      this.automerge.whenReady((doc) => {
-        this.updatePointersFromState(doc);
-      });
-    }
   }
 
   /**
    * Updates the pointers based on the current state from Automerge.
    */
-  private updatePointersFromState(state: PointerState) {
+  #updatePointersFromState(state: PointerState) {
     // Skip our own pointer
-    const remotePointers = Object.values(state.pointers).filter((pointer) => pointer.id !== this.localPointerId);
-    const now = Date.now();
+    const remotePointers = Object.values(state.pointers).filter((pointer) => pointer.id !== this.#identity.peerId);
 
     // Remove pointers that no longer exist
-    for (const [id, pointerElement] of this.pointers.entries()) {
+    for (const [id, pointerElement] of this.#pointers.entries()) {
       if (!remotePointers.some((p) => p.id === id)) {
         pointerElement.remove();
-        this.pointers.delete(id);
+        this.#pointers.delete(id);
       }
     }
 
     // Update or create pointers
     for (const pointerData of remotePointers) {
-      let pointerElement = this.pointers.get(pointerData.id);
+      let pointerElement = this.#pointers.get(pointerData.id);
 
       if (!pointerElement) {
         // Create new pointer element
-        pointerElement = this.createPointerElement(pointerData);
+        pointerElement = this.#createPointerElement(pointerData);
         this.shadowRoot?.appendChild(pointerElement);
-        this.pointers.set(pointerData.id, pointerElement);
+        this.#pointers.set(pointerData.id, pointerElement);
       }
 
       // Update pointer with coordinates directly from the data
-      // No need to transform coordinates here as they are already in space coordinates
-      this.updatePointerElement(pointerElement, pointerData);
+      this.#updatePointerElement(pointerElement, pointerData);
 
-      // Check if pointer is AFK
-      const isAfk = now - pointerData.lastActive > this.afkTimeout;
-      pointerElement.classList.toggle('afk', isAfk);
+      // Update AFK status from the explicit afk property
+      pointerElement.classList.toggle('afk', pointerData.afk);
     }
   }
 
   /**
    * Creates a new pointer element.
    */
-  private createPointerElement(data: PointerData): HTMLElement {
+  #createPointerElement(data: PointerData): HTMLElement {
     const pointerElement = document.createElement('div');
     pointerElement.className = 'pointer';
     pointerElement.dataset.pointerId = data.id;
@@ -425,12 +593,12 @@ export class FolkPresence extends FolkElement {
     pointerElement.appendChild(nameElement);
 
     // Check if pointer is AFK
-    const isAfk = Date.now() - data.lastActive > this.afkTimeout;
+    const isAfk = Date.now() - data.lastActive > this.#afkTimeout;
     if (isAfk) {
       pointerElement.classList.add('afk');
     }
 
-    this.updatePointerElement(pointerElement, data);
+    this.#updatePointerElement(pointerElement, data);
 
     return pointerElement;
   }
@@ -438,7 +606,7 @@ export class FolkPresence extends FolkElement {
   /**
    * Updates an existing pointer element with new data.
    */
-  private updatePointerElement(element: HTMLElement, data: PointerData) {
+  #updatePointerElement(element: HTMLElement, data: PointerData) {
     // Update position directly using the space coordinates
     element.style.transform = `translate(${data.x}px, ${data.y}px)`;
 
@@ -459,77 +627,45 @@ export class FolkPresence extends FolkElement {
   /**
    * Clears all pointer elements.
    */
-  private clearPointers() {
-    for (const pointer of this.pointers.values()) {
+  #clearPointers() {
+    for (const pointer of this.#pointers.values()) {
       pointer.remove();
     }
-    this.pointers.clear();
+    this.#pointers.clear();
   }
 
   /**
-   * Gets all active pointers (excluding AFK ones if specified)
+   * Checks the activity status of all pointers and updates their AFK status or removes them.
    */
-  getActivePointers(excludeAfk = false): PointerData[] {
+  #checkActivityStatus() {
     const now = Date.now();
-    let pointers: PointerData[] = [];
+    let hasChanges = false;
 
-    this.automerge.whenReady((doc) => {
-      pointers = Object.values(doc.pointers);
+    this.automerge.change((doc) => {
+      // Check all pointers
+      for (const [id, pointer] of Object.entries(doc.pointers)) {
+        const timeSinceActive = now - pointer.lastActive;
 
-      if (excludeAfk) {
-        pointers = pointers.filter((p) => now - p.lastActive <= this.afkTimeout);
+        // Remove pointers that have been AFK for too long (except our own)
+        if (pointer.afk && timeSinceActive > this.#removalTimeout && id !== this.#identity.peerId) {
+          delete doc.pointers[id];
+          hasChanges = true;
+
+          // Also remove from the DOM immediately
+          const pointerElement = this.#pointers.get(id);
+          if (pointerElement) {
+            pointerElement.remove();
+            this.#pointers.delete(id);
+          }
+        }
       }
     });
 
-    return pointers;
-  }
-
-  /**
-   * Sets the username for this client.
-   */
-  set username(value: string) {
-    if (value && value !== this.#username) {
-      this.#username = value;
-      this.localPointerData.name = value;
-
-      // Update the Automerge document with the new username
-      this.automerge.change((doc) => {
-        doc.pointers[this.localPointerId] = this.localPointerData;
+    // Update the UI to reflect AFK status
+    if (hasChanges) {
+      this.automerge.whenReady((doc) => {
+        this.#updatePointersFromState(doc);
       });
-    }
-  }
-
-  /**
-   * Gets the username for this client.
-   */
-  get username(): string {
-    return this.#username;
-  }
-
-  /**
-   * Sets the color for this client's pointer.
-   */
-  set usercolor(value: string) {
-    if (value && value !== this.localPointerData.color) {
-      this.localPointerData.color = value;
-
-      // Update the Automerge document with the new color
-      this.automerge.change((doc) => {
-        doc.pointers[this.localPointerId] = this.localPointerData;
-      });
-    }
-  }
-
-  /**
-   * Gets the color of the local pointer.
-   */
-  get color(): string {
-    return this.localPointerData.color;
-  }
-
-  static override define() {
-    if (!customElements.get(FolkPresence.tagName)) {
-      customElements.define(FolkPresence.tagName, FolkPresence);
     }
   }
 }

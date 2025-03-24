@@ -266,9 +266,10 @@
 
           collaboratorList.innerHTML = '';
           const allPointers = Object.values(doc.pointers);
-          const yourPointer = allPointers.find((p) => p.id === pointers.localPointerId);
+          const userIdentity = pointers.identity;
+          const yourPointer = allPointers.find((p) => p.id === userIdentity.peerId);
           const otherPointers = allPointers
-            .filter((p) => p.id !== pointers.localPointerId)
+            .filter((p) => p.id !== userIdentity.peerId)
             .sort((a, b) => a.name.localeCompare(b.name));
 
           if (yourPointer) {
@@ -326,7 +327,7 @@
 
           colorOption.addEventListener('click', () => {
             if (pointers) {
-              pointers.usercolor = color;
+              pointers.color = color;
               if (document.body.contains(colorPicker)) {
                 document.body.removeChild(colorPicker);
               }
