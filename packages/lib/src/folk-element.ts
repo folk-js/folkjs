@@ -1,4 +1,4 @@
-import { ReactiveElement } from '@lit/reactive-element';
+import { ReactiveElement } from '@folkjs/lib/reactive-element';
 
 /**
  *  Base class for all custom elements. Extends Lit's `ReactiveElement` and adds some utilities for defining the element.
@@ -6,7 +6,7 @@ import { ReactiveElement } from '@lit/reactive-element';
  * class MyElement extends FolkElement {
  *   static tagName = 'my-element';
  * }
- * 
+ *
  * MyElement.define();
  * ```
  */

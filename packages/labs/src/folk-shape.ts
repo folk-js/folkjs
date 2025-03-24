@@ -14,7 +14,7 @@ import {
   Vector,
   type Point,
 } from '@folkjs/lib';
-import { css } from '@lit/reactive-element';
+import { css } from '@folkjs/lib/reactive-element';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 const resizeManager = new ResizeManager();

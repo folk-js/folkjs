@@ -27,7 +27,6 @@
     "@automerge/automerge-repo-storage-indexeddb": "^1.2.1",
     "@babel/parser": "^7.26.2",
     "@dimforge/rapier2d": "^0.15.0",
-    "@lit/reactive-element": "^2.0.4",
     "@mlc-ai/web-llm": "^0.2.78",
     "eventemitter3": "^5.0.1",
     "gun": "^0.2020.1240",

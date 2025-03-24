@@ -7,8 +7,7 @@ import {
   Vector,
   type Point,
 } from '@folkjs/lib';
-import { css, PropertyValues } from '@lit/reactive-element';
-import { property } from '@lit/reactive-element/decorators.js';
+import { css, property, PropertyValues } from '@folkjs/lib/reactive-element';
 import { FolkBaseConnection } from './folk-base-connection';
 
 // Each rope part is one of these uses a high precision variant of Störmer–Verlet integration to keep the simulation consistent otherwise it would "explode"!

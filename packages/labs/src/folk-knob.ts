@@ -1,6 +1,5 @@
 import { FolkElement, Vector } from '@folkjs/lib';
-import { css } from '@lit/reactive-element';
-import { property } from '@lit/reactive-element/decorators.js';
+import { css, property } from '@folkjs/lib/reactive-element';
 
 // Ported from https://github.com/ivanreese/knob
 

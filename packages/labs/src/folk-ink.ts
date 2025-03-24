@@ -1,6 +1,5 @@
 import { FolkElement, getSvgPathFromStroke } from '@folkjs/lib';
-import { css, PropertyValues } from '@lit/reactive-element';
-import { property } from '@lit/reactive-element/decorators.js';
+import { css, property, PropertyValues } from '@folkjs/lib/reactive-element';
 import { getStroke, StrokeOptions } from 'perfect-freehand';
 
 export type Point = [x: number, y: number, pressure: number];

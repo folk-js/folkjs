@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/lib';
-import { css } from '@lit/reactive-element';
+import { css } from '@folkjs/lib/reactive-element';
 import { AwaitableInstance, ink } from 'ink-mde';
 
 declare global {
