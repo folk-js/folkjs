@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/lib';
-import { css, CSSResultGroup } from '@lit/reactive-element';
+import { css, CSSResultGroup } from '@folkjs/lib/reactive-element';
 
 type PointerEventTypes =
   | 'pointercancel'

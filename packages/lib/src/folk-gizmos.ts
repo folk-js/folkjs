@@ -1,5 +1,5 @@
 import { DOMRectTransform, FolkElement, html, type Point, Vector } from '@folkjs/lib';
-import { css } from '@lit/reactive-element';
+import { css } from '@folkjs/lib/reactive-element';
 
 interface GizmoOptions {
   color?: string;

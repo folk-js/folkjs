@@ -1,7 +1,7 @@
 import { FolkElement, Matrix, Vector } from '@folkjs/lib';
 import PointerTracker, { Pointer } from '@folkjs/lib/pointer-tracker';
-import { css, PropertyValues } from '@lit/reactive-element';
-import { property } from '@lit/reactive-element/decorators.js';
+import { css, PropertyValues } from '@folkjs/lib/reactive-element';
+import { property } from '@folkjs/lib/reactive-element/decorators.js';
 
 declare global {
   interface HTMLElementTagNameMap {

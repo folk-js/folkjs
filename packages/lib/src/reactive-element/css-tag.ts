@@ -10,15 +10,6 @@ const NODE_MODE = false;
 const global = globalThis;
 
 /**
- * Whether the current browser supports `adoptedStyleSheets`.
- */
-export const supportsAdoptingStyleSheets: boolean =
-  global.ShadowRoot &&
-  (global.ShadyCSS === undefined || global.ShadyCSS.nativeShadow) &&
-  'adoptedStyleSheets' in Document.prototype &&
-  'replace' in CSSStyleSheet.prototype;
-
-/**
  * A CSSResult or native CSSStyleSheet.
  *
  * In browsers that support constructible CSS style sheets, CSSStyleSheet
@@ -52,15 +43,9 @@ export class CSSResult {
   private _styleSheet?: CSSStyleSheet;
   private _strings: TemplateStringsArray | undefined;
 
-  private constructor(
-    cssText: string,
-    strings: TemplateStringsArray | undefined,
-    safeToken: symbol
-  ) {
+  private constructor(cssText: string, strings: TemplateStringsArray | undefined, safeToken: symbol) {
     if (safeToken !== constructionToken) {
-      throw new Error(
-        'CSSResult is not constructable. Use `unsafeCSS` or `css` instead.'
-      );
+      throw new Error('CSSResult is not constructable. Use `unsafeCSS` or `css` instead.');
     }
     this.cssText = cssText;
     this._strings = strings;
@@ -73,15 +58,13 @@ export class CSSResult {
     // constructable.
     let styleSheet = this._styleSheet;
     const strings = this._strings;
-    if (supportsAdoptingStyleSheets && styleSheet === undefined) {
+    if (styleSheet === undefined) {
       const cacheable = strings !== undefined && strings.length === 1;
       if (cacheable) {
         styleSheet = cssTagCache.get(strings);
       }
       if (styleSheet === undefined) {
-        (this._styleSheet = styleSheet = new CSSStyleSheet()).replaceSync(
-          this.cssText
-        );
+        (this._styleSheet = styleSheet = new CSSStyleSheet()).replaceSync(this.cssText);
         if (cacheable) {
           cssTagCache.set(strings, styleSheet);
         }
@@ -96,11 +79,7 @@ export class CSSResult {
 }
 
 type ConstructableCSSResult = CSSResult & {
-  new (
-    cssText: string,
-    strings: TemplateStringsArray | undefined,
-    safeToken: symbol
-  ): CSSResult;
+  new (cssText: string, strings: TemplateStringsArray | undefined, safeToken: symbol): CSSResult;
 };
 
 const textFromCSSResult = (value: CSSResultGroup | number) => {
@@ -113,7 +92,7 @@ const textFromCSSResult = (value: CSSResultGroup | number) => {
     throw new Error(
       `Value passed to 'css' function must be a 'css' function result: ` +
         `${value}. Use 'unsafeCSS' to pass non-literal values, but take care ` +
-        `to ensure page security.`
+        `to ensure page security.`,
     );
   }
 };
@@ -129,7 +108,7 @@ export const unsafeCSS = (value: unknown) =>
   new (CSSResult as ConstructableCSSResult)(
     typeof value === 'string' ? value : String(value),
     undefined,
-    constructionToken
+    constructionToken,
   );
 
 /**
@@ -140,22 +119,12 @@ export const unsafeCSS = (value: unknown) =>
  * embedded expressions. To incorporate non-literal values {@linkcode unsafeCSS}
  * may be used inside an expression.
  */
-export const css = (
-  strings: TemplateStringsArray,
-  ...values: (CSSResultGroup | number)[]
-): CSSResult => {
+export const css = (strings: TemplateStringsArray, ...values: (CSSResultGroup | number)[]): CSSResult => {
   const cssText =
     strings.length === 1
       ? strings[0]
-      : values.reduce(
-          (acc, v, idx) => acc + textFromCSSResult(v) + strings[idx + 1],
-          strings[0]
-        );
-  return new (CSSResult as ConstructableCSSResult)(
-    cssText,
-    strings,
-    constructionToken
-  );
+      : values.reduce((acc, v, idx) => acc + textFromCSSResult(v) + strings[idx + 1], strings[0]);
+  return new (CSSResult as ConstructableCSSResult)(cssText, strings, constructionToken);
 };
 
 /**
@@ -167,26 +136,8 @@ export const css = (
  * will match spec behavior that gives adopted sheets precedence over styles in
  * shadowRoot.
  */
-export const adoptStyles = (
-  renderRoot: ShadowRoot,
-  styles: Array<CSSResultOrNative>
-) => {
-  if (supportsAdoptingStyleSheets) {
-    (renderRoot as ShadowRoot).adoptedStyleSheets = styles.map((s) =>
-      s instanceof CSSStyleSheet ? s : s.styleSheet!
-    );
-  } else {
-    for (const s of styles) {
-      const style = document.createElement('style');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const nonce = (global as any)['litNonce'];
-      if (nonce !== undefined) {
-        style.setAttribute('nonce', nonce);
-      }
-      style.textContent = (s as CSSResult).cssText;
-      renderRoot.appendChild(style);
-    }
-  }
+export const adoptStyles = (renderRoot: ShadowRoot, styles: Array<CSSResultOrNative>) => {
+  (renderRoot as ShadowRoot).adoptedStyleSheets = styles.map((s) => (s instanceof CSSStyleSheet ? s : s.styleSheet!));
 };
 
 const cssResultFromStyleSheet = (sheet: CSSStyleSheet) => {
@@ -198,8 +149,6 @@ const cssResultFromStyleSheet = (sheet: CSSStyleSheet) => {
 };
 
 export const getCompatibleStyle =
-  supportsAdoptingStyleSheets ||
-  (NODE_MODE && global.CSSStyleSheet === undefined)
+  NODE_MODE && global.CSSStyleSheet === undefined
     ? (s: CSSResultOrNative) => s
-    : (s: CSSResultOrNative) =>
-        s instanceof CSSStyleSheet ? cssResultFromStyleSheet(s) : s;
+    : (s: CSSResultOrNative) => (s instanceof CSSStyleSheet ? cssResultFromStyleSheet(s) : s);

@@ -1,7 +1,7 @@
 import { FolkObserver, parseDeepCSSSelector } from '@folkjs/labs/folk-observer';
 import { type ClientRectObserverEntry, FolkElement } from '@folkjs/lib';
-import { css, type CSSResultGroup, type PropertyValues } from '@lit/reactive-element';
-import { property, state } from '@lit/reactive-element/decorators.js';
+import { css, type CSSResultGroup, type PropertyValues } from '@folkjs/lib/reactive-element';
+import { property, state } from '@folkjs/lib/reactive-element/decorators.js';
 
 const folkObserver = new FolkObserver();
 

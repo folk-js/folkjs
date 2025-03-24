@@ -1,6 +1,6 @@
 import { TransformIntegrator } from '@folkjs/labs/EffectIntegrator';
 import { AnimationFrameController, type AnimationFrameControllerHost } from '@folkjs/lib';
-import { type PropertyValues } from '@lit/reactive-element';
+import { type PropertyValues } from '@folkjs/lib/reactive-element';
 import { Layout } from 'webcola';
 import { FolkBaseConnection } from './folk-base-connection';
 import { FolkBaseSet } from './folk-base-set';

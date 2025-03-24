@@ -1,5 +1,5 @@
 import { DOMRectTransform } from '@folkjs/lib';
-import { css, PropertyValues } from '@lit/reactive-element';
+import { css, PropertyValues } from '@folkjs/lib/reactive-element';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 import { CellTemplate, FolkSpreadsheet, FolkSpreadSheetCell, templateCells } from './folk-spreadsheet';
