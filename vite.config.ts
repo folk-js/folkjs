@@ -49,6 +49,7 @@ export default defineConfig({
   ],
   build: {
     target: 'esnext',
+    sourcemap: true,
     rollupOptions: {
       input: getEntryPoints(),
     },
