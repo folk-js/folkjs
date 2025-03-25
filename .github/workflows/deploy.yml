@@ -43,7 +43,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ env.BUILD_PATH }}/website/dist
+          path: website/dist
 
   deploy:
     # Add a dependency to the build job
