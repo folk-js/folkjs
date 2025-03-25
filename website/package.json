@@ -4,15 +4,14 @@
   "type": "module",
   "scripts": {
     "build": "wireit",
-    "dev": "vite",
-    "dev:host": "vite --host",
+    "dev": "wireit",
+    "dev:host": "npm run dev -- --host",
     "preview": "npm run build && vite preview",
     "test": "echo 'No tests to run'"
   },
   "wireit": {
     "build": {
       "command": "tsc --build --pretty && vite build",
-      "clean": "if-file-deleted",
       "dependencies": [
         "../packages/canvas:build",
         "../packages/labs:build"
@@ -27,6 +26,27 @@
       "output": [
         "dist/**",
         "tsconfig.tsbuildinfo"
+      ]
+    },
+    "dev": {
+      "command": "vite",
+      "service": true,
+      "dependencies": [
+        {
+          "script": "../packages/canvas:build",
+          "cascade": false
+        },
+        {
+          "script": "../packages/labs:build",
+          "cascade": false
+        }
+      ],
+      "files": [
+        "**.*.html",
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "__scripts__/**"
       ]
     }
   },

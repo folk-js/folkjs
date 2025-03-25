@@ -32,6 +32,7 @@
   "wireit": {
     "build": {
       "command": "tsc --build --pretty",
+      "clean": "if-file-deleted",
       "files": [
         "src/**",
         "package.json",
