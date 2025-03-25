@@ -20,8 +20,7 @@
         "src/**",
         "package.json",
         "tsconfig.json",
-        "vite.config.ts",
-        "__scripts__/**"
+        "vite.config.ts"
       ],
       "output": [
         "dist/**",
@@ -45,8 +44,7 @@
         "**.*.html",
         "package.json",
         "tsconfig.json",
-        "vite.config.ts",
-        "__scripts__/**"
+        "vite.config.ts"
       ]
     }
   },

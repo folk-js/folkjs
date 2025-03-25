@@ -1,4 +1,5 @@
-import { bench, run } from 'mitata';
+import { runBenchmarks } from '@folkjs/repo-utils';
+import { bench } from 'mitata';
 import type { BVHNode } from '../src/BoundingVolumeHierarchy.ts';
 import * as BVH from '../src/BoundingVolumeHierarchy.ts';
 import { Rect2D } from '../src/Rect2D.ts';
@@ -61,4 +62,4 @@ bench('BVH: instantiate 10000 shapes and check one collision', () => {
   BVH.intersections(bvh10000, shapes10000[0]);
 });
 
-await run();
+await runBenchmarks();

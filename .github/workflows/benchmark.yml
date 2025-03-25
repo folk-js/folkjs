@@ -1,0 +1,61 @@
+name: Run Benchmarks
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to push to the stats repository
+      contents: write
+
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Need full history for accurate git info
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+          cache: 'npm' # Enable npm caching
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Checkout the benchmark results repository
+      - name: Checkout stats repository
+        uses: actions/checkout@v3
+        with:
+          repository: folk-systems/folk-canvas-stats
+          path: folk-canvas-stats
+          token: ${{ secrets.BENCHMARK_REPO_TOKEN }}
+
+      # Build packages first
+      - name: Build packages
+        run: npm run build
+
+      # Run benchmarks with path to existing results
+      - name: Run benchmarks
+        run: npm run bench
+        env:
+          BENCHMARK_HISTORY_PATH: folk-canvas-stats/mitata_benchmarks.json
+
+      # Commit and push updates if there are changes
+      - name: Update benchmark results
+        run: |
+          cd folk-canvas-stats
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Changes detected in benchmark results"
+            git add mitata_benchmarks.json
+            git commit -m "Update benchmark results for ${{ github.sha }}"
+            git push
+          else
+            echo "No changes in benchmark results"
+          fi
