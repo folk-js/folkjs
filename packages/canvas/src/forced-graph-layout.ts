@@ -1,5 +1,5 @@
 import { DOMRectTransform } from './DOMRectTransform';
-import { Point } from './types';
+import type { Point } from './types';
 import { Vector } from './Vector';
 
 class Rect {

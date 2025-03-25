@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'node:test';
-import { Matrix } from '../src/Matrix';
+import { expect } from 'expect';
+import { describe, test } from 'node:test';
+import { Matrix } from '../src/Matrix.ts';
 
 describe('Matrix', () => {
   describe('lerp', () => {

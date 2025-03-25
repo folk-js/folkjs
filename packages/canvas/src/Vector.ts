@@ -1,4 +1,4 @@
-import type { Point } from './types';
+import type { Point } from './types.ts';
 
 const { hypot, cos, sin, atan2 } = Math;
 

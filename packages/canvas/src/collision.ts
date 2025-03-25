@@ -1,5 +1,5 @@
 import { DOMRectTransform } from './DOMRectTransform';
-import { Point } from './types';
+import type { Point } from './types';
 
 const sign = (value: number): -1 | 1 => (value < 0 ? -1 : 1);
 

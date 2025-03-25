@@ -1,7 +1,7 @@
 // Adopted from: https://github.com/pshihn/bezier-points/blob/master/lib/index.ts
 
-import type { Point } from './types';
-import { Vector } from './Vector';
+import type { Point } from './types.ts';
+import { Vector } from './Vector.ts';
 
 export const MAX_Z_INDEX = 2147483647;
 

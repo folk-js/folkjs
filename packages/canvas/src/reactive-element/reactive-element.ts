@@ -10,7 +10,7 @@
  * @packageDocumentation
  */
 
-import { adoptStyles, CSSResultGroup, CSSResultOrNative, getCompatibleStyle } from './css-tag.js';
+import { adoptStyles, type CSSResultGroup, type CSSResultOrNative, getCompatibleStyle } from './css-tag.js';
 import type { ReactiveController, ReactiveControllerHost } from './reactive-controller.js';
 
 // In the Node build, this import will be injected by Rollup:

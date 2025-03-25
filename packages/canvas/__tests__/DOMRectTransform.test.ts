@@ -1,6 +1,7 @@
-import { describe, expect, test } from 'node:test';
-import { DOMRectTransform, DOMRectTransformReadonly } from '../src/DOMRectTransform';
-import { Point } from '../src/types';
+import { expect } from 'expect';
+import { describe, test } from 'node:test';
+import { DOMRectTransform, DOMRectTransformReadonly } from '../src/DOMRectTransform.ts';
+import type { Point } from '../src/types.ts';
 
 // Helper for comparing points with floating point values
 const expectPointClose = (actual: Point, expected: Point) => {

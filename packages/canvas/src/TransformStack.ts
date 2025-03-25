@@ -1,6 +1,6 @@
 import { satisfies } from "./interfaces/InterfaceKey";
 import { IPointTransform } from "./interfaces/IPointTransform";
-import { Point } from "./types";
+import type { Point } from "./types";
 
 /**
  * A class that manages a stack of transformations and provides methods

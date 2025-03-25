@@ -1,4 +1,4 @@
-import { Point, Rect } from "./types";
+import type { Point,Rect } from "./types";
 
 /**
  * Utility class with geometry-related functions for 2D graphics and transformations.

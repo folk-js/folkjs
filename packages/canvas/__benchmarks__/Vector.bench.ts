@@ -1,5 +1,5 @@
-import { Vector } from '../src/Vector';
 import { bench, run } from 'mitata';
+import { Vector } from '../src/Vector.ts';
 
 // Basic vector operations
 bench('Vector.zero()', () => {

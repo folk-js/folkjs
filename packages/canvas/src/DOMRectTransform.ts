@@ -1,5 +1,5 @@
-import { Matrix } from './Matrix';
-import { type Point } from './types';
+import { Matrix } from './Matrix.ts';
+import type { Point } from './types.ts';
 
 interface DOMRectTransformInit {
   height?: number;

@@ -1,5 +1,5 @@
 import { cancelAnimationFrame, requestAnimationFrame } from './rAF';
-import { ReactiveController, ReactiveControllerHost } from './reactive-element';
+import type { ReactiveController,ReactiveControllerHost } from './reactive-element';
 
 export interface AnimationFrameControllerHost extends ReactiveControllerHost {
   tick(): void;
