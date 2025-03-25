@@ -20,8 +20,6 @@
       }
 
       folk-shape {
-        view-transition-name: shape;
-
         span {
           font-size: 15rem;
           /* this font have equal line height for this unicode character */
@@ -38,8 +36,8 @@
     </folk-space-radial>
 
     <script type="module">
-      import '@folkjs/labs/standalone/folk-shape.ts';
-      import '@folkjs/labs/standalone/folk-space-radial.ts';
+      import '@folkjs/labs/standalone/folk-shape';
+      import '@folkjs/labs/standalone/folk-space-radial';
 
       const shape = document.querySelector('folk-shape');
 

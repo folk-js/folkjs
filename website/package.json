@@ -1,18 +1,37 @@
 {
-  "name": "folk-canvas",
+  "name": "@folkjs/website",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "packages/*",
-    "website"
-  ],
   "scripts": {
-    "build": "tsc && vite build",
+    "build": "wireit",
     "dev": "vite",
     "dev:host": "vite --host",
     "preview": "npm run build && vite preview"
   },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty && vite build",
+      "clean": "if-file-deleted",
+      "dependencies": [
+        "../packages/canvas:build",
+        "../packages/labs:build"
+      ],
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "__scripts__/**"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    }
+  },
   "dependencies": {
+    "@folkjs/canvas": "^0.0.1",
+    "@folkjs/labs": "^0.0.1",
     "ink-mde": "^0.34.0",
     "remark-html": "^16.0.1",
     "remark-parse": "^11.0.0",
@@ -27,7 +46,6 @@
     "@types/wicg-file-system-access": "^2023.10.5",
     "typescript": "^5.8.2",
     "vite": "^6.0.3",
-    "vite-plugin-mkcert": "^1.17.6",
-    "vite-tsconfig-paths": "^5.1.4"
+    "vite-plugin-mkcert": "^1.17.6"
   }
 }

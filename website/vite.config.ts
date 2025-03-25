@@ -3,15 +3,14 @@ import { defineConfig } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import wasm from 'vite-plugin-wasm';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 // Local plugins
-import { cleanUrlHandler } from '../_scripts_/vite-clean-urls';
-import { getCanvasFiles, linkGenerator } from '../_scripts_/vite-link-generator';
-import { remark } from '../_scripts_/vite-remark-md';
+import { cleanUrlHandler } from './__scripts__/vite-clean-urls';
+import { getCanvasFiles, linkGenerator } from './__scripts__/vite-link-generator';
+import { remark } from './__scripts__/vite-remark-md';
 
-const websiteDir = resolve(__dirname, './website');
-const canvasWebsiteDir = resolve(__dirname, './website/canvas');
+const websiteDir = resolve(__dirname, '.');
+const canvasWebsiteDir = resolve(__dirname, './canvas');
 
 function getEntryPoints() {
   // Main index
@@ -34,19 +33,7 @@ function getEntryPoints() {
 }
 
 export default defineConfig({
-  root: 'website',
-  plugins: [
-    cleanUrlHandler(websiteDir),
-    linkGenerator(canvasWebsiteDir),
-    mkcert(),
-    wasm(),
-    topLevelAwait(),
-    remark(),
-    tsconfigPaths({
-      root: __dirname,
-      loose: true,
-    }),
-  ],
+  plugins: [cleanUrlHandler(websiteDir), linkGenerator(canvasWebsiteDir), mkcert(), wasm(), topLevelAwait(), remark()],
   build: {
     target: 'esnext',
     sourcemap: true,

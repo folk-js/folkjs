@@ -1,6 +1,6 @@
 import { readdirSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
-import { IndexHtmlTransformContext, Plugin } from 'vite';
+import type { IndexHtmlTransformContext, Plugin } from 'vite';
 
 // Simple configuration
 const CONFIG = {

@@ -5,6 +5,5 @@
     "allowImportingTsExtensions": true,
     "types": ["@types/wicg-file-system-access"]
   },
-  "include": ["**/*.ts", "**/*.js", "**/*.html", "vite.config.ts", "packages/**/*.ts"],
-  "exclude": ["node_modules/**/*", "**/dist/**", "_web-extension/**"]
+  "include": ["**/*.ts", "**/*.html", "vite.config.ts"]
 }

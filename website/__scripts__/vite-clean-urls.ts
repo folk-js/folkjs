@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { Plugin } from 'vite';
+import type { Plugin } from 'vite';
 
 export function cleanUrlHandler(websiteDir: string): Plugin {
   return {

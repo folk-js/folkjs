@@ -144,8 +144,8 @@
     <folk-arrow source="#box1" target="#box3"></folk-arrow>
 
     <script type="module">
-      import '@folkjs/labs/standalone/folk-shape.ts';
-      import '@folkjs/labs/standalone/folk-arrow.ts';
+      import '@folkjs/labs/standalone/folk-shape';
+      import '@folkjs/labs/standalone/folk-arrow';
 
       document.body.querySelectorAll('folk-shape').forEach((el, i) => (el.style.viewTransitionName = `g${i}`));
       document.body.querySelectorAll('folk-arrow').forEach((el, i) => (el.style.viewTransitionName = `c${i}`));

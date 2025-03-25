@@ -2,7 +2,7 @@ import htmlGenerator from 'remark-html';
 import markdownParser from 'remark-parse';
 import wikiLink from 'remark-wiki-link';
 import { unified } from 'unified';
-import { Plugin } from 'vite';
+import type { Plugin } from 'vite';
 
 export function remark(): Plugin {
   const processor = unified()

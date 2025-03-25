@@ -1,6 +1,6 @@
 import { FolkElement } from '@folkjs/canvas';
 import { css } from '@folkjs/canvas/reactive-element';
-import { AwaitableInstance, ink } from 'ink-mde';
+import { type AwaitableInstance, ink } from 'ink-mde';
 
 declare global {
   interface HTMLElementTagNameMap {

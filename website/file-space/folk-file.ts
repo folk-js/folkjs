@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/canvas';
-import { css, PropertyValues, state } from '@folkjs/canvas/reactive-element';
+import { css, type PropertyValues, state } from '@folkjs/canvas/reactive-element';
 
 declare global {
   interface HTMLElementTagNameMap {

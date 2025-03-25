@@ -9,13 +9,13 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
     "./*": {
       "import": "./dist/*.js",
       "types": "./dist/*.d.ts"
+    },
+    "./standalone/*": {
+      "import": "./dist/standalone/*.js",
+      "types": "./dist/standalone/*.d.ts"
     }
   },
   "files": [
