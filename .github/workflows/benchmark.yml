@@ -19,22 +19,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Checkout the benchmark results repository first
-      - name: Checkout benchmark repository
+      # Checkout the benchmark results repository
+      - name: Checkout stats repository
         uses: actions/checkout@v3
         with:
-          repository: folk-canvas/folk-canvas-benchmarks
-          path: folk-canvas-benchmarks
+          repository: folk-systems/folk-canvas-stats
+          path: folk-canvas-stats
           token: ${{ secrets.BENCHMARK_REPO_TOKEN }}
 
       # Run benchmarks with path to existing results
       - name: Run benchmarks
-        run: BENCHMARK_HISTORY_PATH=folk-canvas-benchmarks/mitata_benchmarks.json node _scripts_/benchmark.js
+        run: BENCHMARK_HISTORY_PATH=folk-canvas-stats/mitata_benchmarks.json node packages/repo-utils/dist/benchmark.js
 
       # Commit and push updates
       - name: Update benchmark results
         run: |
-          cd folk-canvas-benchmarks
+          cd folk-canvas-stats
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add mitata_benchmarks.json

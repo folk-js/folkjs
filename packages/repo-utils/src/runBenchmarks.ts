@@ -45,7 +45,7 @@ function getCurrentCommit() {
   }
 }
 
-export async function run() {
+export async function runBenchmarks() {
   // If not in GitHub Actions, just run normally and return
   // if (!process.env.GITHUB_ACTIONS) {
   //   const results = await mitataRun();
@@ -88,8 +88,8 @@ export async function run() {
   const commit = process.env.GITHUB_SHA || getCurrentCommit();
 
   try {
-    const { readFileSync, writeFileSync } = await import('fs');
-    const { join } = await import('path');
+    const { readFileSync, writeFileSync, mkdirSync } = await import('fs');
+    const { join, dirname } = await import('path');
 
     const resultsPath = join(process.cwd(), OUTPUT_FILE);
     let history: BenchmarkHistory = {};
@@ -97,9 +97,10 @@ export async function run() {
     try {
       // Try to read existing history from the benchmark repo
       history = JSON.parse(readFileSync(resultsPath, 'utf8'));
+      console.log(`Loaded existing benchmark history from ${resultsPath}`);
     } catch {
       // File doesn't exist or is invalid, start fresh
-      console.log('Creating new benchmark history');
+      console.log(`Creating new benchmark history at ${resultsPath}`);
     }
 
     // Initialize structure if needed
@@ -118,7 +119,10 @@ export async function run() {
       results: cleanResults,
     };
 
+    // Ensure the directory exists before writing
+    mkdirSync(dirname(resultsPath), { recursive: true });
     writeFileSync(resultsPath, JSON.stringify(history, null, 2));
+    console.log(`Successfully wrote benchmark results for ${packageName}/${benchmarkFile} to ${resultsPath}`);
   } catch (error) {
     console.error('Failed to save benchmark results:', error);
   }

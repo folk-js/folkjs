@@ -1,0 +1,56 @@
+{
+  "name": "@folkjs/repo-utils",
+  "version": "0.0.1",
+  "description": "Repository utilities",
+  "author": "Christopher Shank <chris.shank.23@gmail.com>",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./*": {
+      "import": "./dist/*.js",
+      "types": "./dist/*.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit",
+    "test:dev": "npm run test --watch"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty",
+      "clean": "if-file-deleted",
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    },
+    "test": {
+      "command": "node --experimental-strip-types --test './__tests__/*.test.ts'",
+      "dependencies": [
+        "build"
+      ],
+      "files": [
+        "__tests__/*.test.ts"
+      ]
+    }
+  },
+  "devDependencies": {
+    "expect": "^29.7.0",
+    "mitata": "^1.0.34",
+    "typescript": "^5.8.2"
+  }
+}

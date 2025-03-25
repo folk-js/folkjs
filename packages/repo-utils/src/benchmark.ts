@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
  * @param packageName Name of the package
  * @param extension Benchmark file extension
  */
-async function runDirBenchmarks(dirPath, packageName, extension = '.bench.ts') {
+async function runDirBenchmarks(dirPath: string, packageName: string, extension = '.bench.ts') {
   if (!existsSync(dirPath)) {
     console.error(`Directory not found: ${dirPath}`);
     return;
@@ -27,7 +27,7 @@ async function runDirBenchmarks(dirPath, packageName, extension = '.bench.ts') {
       process.env.BENCHMARK_FILE = file;
       await import(join(dirPath, file));
     } catch (error) {
-      console.error(`Error running ${file}: ${error.message}`);
+      console.error(`Error running ${file}:`, error);
     }
   }
 }
@@ -60,7 +60,7 @@ async function main() {
     const pkgPath = join(packagesDir, pkg);
     const pkgJsonPath = join(pkgPath, 'package.json');
     const benchDir = join(pkgPath, '__benchmarks__');
-    
+
     return existsSync(pkgPath) && existsSync(pkgJsonPath) && existsSync(benchDir);
   });
 
