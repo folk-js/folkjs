@@ -1,7 +1,8 @@
 import { execSync } from 'child_process';
 import { run as mitataRun } from 'mitata';
 
-const OUTPUT_FILE = './website/benchmark-history.json';
+// Get path from environment or use default
+const OUTPUT_FILE = process.env.BENCHMARK_HISTORY_PATH || './mitata_benchmarks.json';
 
 interface BenchmarkHistory {
   [commit: string]: {
@@ -94,9 +95,11 @@ export async function run() {
     let history: BenchmarkHistory = {};
 
     try {
+      // Try to read existing history from the benchmark repo
       history = JSON.parse(readFileSync(resultsPath, 'utf8'));
     } catch {
       // File doesn't exist or is invalid, start fresh
+      console.log('Creating new benchmark history');
     }
 
     // Initialize structure if needed
