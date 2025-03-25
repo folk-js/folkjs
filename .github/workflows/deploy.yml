@@ -1,4 +1,4 @@
-name: Test and Build
+name: Test, Build, and Deploy
 
 on:
   # Runs on pushes targeting the default branch
@@ -47,7 +47,7 @@ jobs:
 
   deploy:
     # Add a dependency to the build job
-    needs: build
+    needs: build_and_test
 
     # Deploy to the github-pages environment
     environment:
