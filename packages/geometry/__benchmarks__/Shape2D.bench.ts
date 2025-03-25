@@ -1,4 +1,4 @@
-import { bench, run } from 'mitata';
+import { bench, run } from '@folkjs/repo-utils';
 import type { Shape2D } from '../src/Shape2D.ts';
 import * as S from '../src/Shape2D.ts';
 

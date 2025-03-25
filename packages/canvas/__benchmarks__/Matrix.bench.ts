@@ -1,5 +1,4 @@
-import { runBenchmarks } from '@folkjs/repo-utils/runBenchmarks';
-import { bench } from 'mitata';
+import { bench, run } from '@folkjs/repo-utils';
 import { Matrix } from '../src/Matrix.ts';
 
 const m1 = new Matrix(1, 2, 3, 4, 5, 6);
@@ -82,4 +81,4 @@ bench('Matrix2D multiple transformations', () => {
   mi.copy(mt).invert();
 });
 
-await runBenchmarks();
+await run();

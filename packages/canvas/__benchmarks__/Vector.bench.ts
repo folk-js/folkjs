@@ -1,4 +1,4 @@
-import { bench, run } from 'mitata';
+import { bench, run } from '@folkjs/repo-utils';
 import { Vector } from '../src/Vector.ts';
 
 // Basic vector operations

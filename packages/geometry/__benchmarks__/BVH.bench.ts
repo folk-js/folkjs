@@ -1,8 +1,7 @@
-import { runBenchmarks } from '@folkjs/repo-utils';
-import { bench } from 'mitata';
+import { bench, run } from '@folkjs/repo-utils';
 import type { BVHNode } from '../src/BoundingVolumeHierarchy.ts';
 import * as BVH from '../src/BoundingVolumeHierarchy.ts';
-import { Rect2D } from '../src/Rect2D.ts';
+import type { Rect2D } from '../src/Rect2D.ts';
 
 function createRandomShapes(length: number): Rect2D[] {
   return Array.from({ length }).map(() => ({
@@ -62,4 +61,4 @@ bench('BVH: instantiate 10000 shapes and check one collision', () => {
   BVH.intersections(bvh10000, shapes10000[0]);
 });
 
-await runBenchmarks();
+await run();
