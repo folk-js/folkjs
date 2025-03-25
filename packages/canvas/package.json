@@ -29,8 +29,7 @@
     "src"
   ],
   "scripts": {
-    "build": "wireit",
-    "test": "bun test"
+    "build": "wireit"
   },
   "wireit": {
     "build": {

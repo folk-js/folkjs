@@ -16,7 +16,7 @@ import {
   scale,
   subtract,
   zero,
-} from '../src/Vector2';
+} from '../src/Vector2.ts';
 
 // Basic vector operations
 bench('Vector2.zero', () => {

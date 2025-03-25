@@ -1,5 +1,5 @@
-import { acos, approximatelyEqual, clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.js';
-import type { Vector2, Vector2Readonly } from './Vector2.js';
+import { acos, approximatelyEqual, clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.ts';
+import type { Vector2, Vector2Readonly } from './Vector2.ts';
 
 /** A homogeneous matrix for 2D transformations. */
 export interface Matrix2D {

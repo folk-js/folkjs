@@ -13,21 +13,12 @@
 
 ## Development
 
-Install [Bun](https://bun.sh/docs/installation)
+Install [NodeJS and NPM](https://nodejs.org/en/download).
 
 ```bash
-bun i
+npm i
 # then
-bun run build # this links the packages, only needs to be run once
+npm run build # this links the packages, only needs to be run once
 # then
-bun dev
-```
-
-you can also do
-
-```bash
-bun types # type check
-bun test # run tests
-bun bench # run benchmarks
-bun dev:extension # watch for changes in the extension
+npm run dev
 ```

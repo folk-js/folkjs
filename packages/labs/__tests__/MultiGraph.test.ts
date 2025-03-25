@@ -1,5 +1,5 @@
+import { describe, expect, test } from 'node:test';
 import { BaseEdge, BaseNode, MultiGraph } from '../src/MultiGraph';
-import { describe, expect, test } from 'bun:test';
 
 // Define test node type that extends BaseNode
 interface TestNode extends BaseNode {

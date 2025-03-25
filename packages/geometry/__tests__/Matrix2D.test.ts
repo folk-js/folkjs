@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { expect } from 'expect';
+import { describe, test } from 'node:test';
 import * as M from '../src/Matrix2D.ts';
 import { PI } from '../src/utilities.ts';
 
@@ -6,19 +7,19 @@ describe('Matrix2D', () => {
   test('rotate', () => {
     const m = M.rotate(M.fromValues(1, 2, 3, 4, 5, 6), PI / 2);
 
-    expect(M.equals(m, M.fromValues(3, 4, -1, -2, 5, 6))).toBeTrue();
+    expect(M.equals(m, M.fromValues(3, 4, -1, -2, 5, 6))).toBe(true);
   });
 
   test('scale', () => {
     const m = M.scale(M.fromValues(1, 2, 3, 4, 5, 6), 2, 3);
 
-    expect(M.equals(m, M.fromValues(2, 4, 9, 12, 5, 6))).toBeTrue();
+    expect(M.equals(m, M.fromValues(2, 4, 9, 12, 5, 6))).toBe(true);
   });
 
   test('translate', () => {
     const m = M.translate(M.fromValues(1, 2, 3, 4, 5, 6), 2, 3);
 
-    expect(M.equals(m, M.fromValues(1, 2, 3, 4, 16, 22))).toBeTrue();
+    expect(M.equals(m, M.fromValues(1, 2, 3, 4, 16, 22))).toBe(true);
   });
 
   test('invert', () => {

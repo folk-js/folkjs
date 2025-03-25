@@ -1,7 +1,7 @@
 import { bench, run } from 'mitata';
 import * as BVH from '../src/BoundingVolumeHierarchy.ts';
 import { BVHNode } from '../src/BoundingVolumeHierarchy.ts';
-import { Rect2D } from '../src/Rect2D';
+import { Rect2D } from '../src/Rect2D.ts';
 
 function createRandomShapes(length: number): Rect2D[] {
   return Array.from({ length }).map(() => ({

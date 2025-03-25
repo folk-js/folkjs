@@ -1,5 +1,5 @@
+import { describe, expect, test } from 'node:test';
 import { Vector } from '../src/Vector';
-import { describe, expect, test } from 'bun:test';
 
 describe('Vector', () => {
   describe('basic operations', () => {

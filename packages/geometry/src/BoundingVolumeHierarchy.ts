@@ -1,5 +1,5 @@
-import * as R from './Rect2D.js';
-import * as V from './Vector2.js';
+import * as R from './Rect2D.ts';
+import * as V from './Vector2.ts';
 
 interface MortonItem {
   mortonCode: number;

@@ -1,6 +1,6 @@
-import type { Rect2D } from './Rect2D.js';
-import type { Vector2Readonly } from './Vector2.js';
-import * as V from './Vector2.js';
+import type { Rect2D } from './Rect2D.ts';
+import type { Vector2Readonly } from './Vector2.ts';
+import * as V from './Vector2.ts';
 
 export type Shape2D = Rect2D & {
   rotation: number;

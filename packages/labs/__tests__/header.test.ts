@@ -1,5 +1,5 @@
+import { describe, expect, test } from 'node:test';
 import { header } from '../src/utils/header';
-import { describe, expect, test } from 'bun:test';
 
 // Basic header functionality
 describe('Header template strings', () => {

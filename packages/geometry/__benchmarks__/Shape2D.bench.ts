@@ -1,6 +1,6 @@
 import { bench, run } from 'mitata';
-import type { Shape2D } from '../src/Shape2D.js';
-import * as S from '../src/Shape2D.js';
+import type { Shape2D } from '../src/Shape2D.ts';
+import * as S from '../src/Shape2D.ts';
 
 const shape: Shape2D = {
   x: 0,

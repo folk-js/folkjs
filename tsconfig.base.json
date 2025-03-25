@@ -7,12 +7,10 @@
     "resolveJsonModule": true,
     "moduleDetection": "force",
     "isolatedModules": true,
-    // TODO: turn back on after packages refactor
-    "verbatimModuleSyntax": false,
+    "verbatimModuleSyntax": true,
 
     /* Strictness */
     "strict": true,
-    // TODO: turn back on after packages refactor
     "noImplicitOverride": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,

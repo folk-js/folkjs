@@ -1,4 +1,4 @@
-import { atan2, cos, hypot, sin } from './utilities.js';
+import { atan2, cos, hypot, sin } from './utilities.ts';
 
 export type Vector2 = {
   x: number;

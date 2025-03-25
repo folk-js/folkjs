@@ -26,7 +26,7 @@
   ],
   "scripts": {
     "build": "wireit",
-    "test": "bun test"
+    "test": "node --experimental-strip-types --test './__tests__/*.test.ts'"
   },
   "wireit": {
     "build": {
@@ -44,6 +44,7 @@
     }
   },
   "devDependencies": {
+    "expect": "^29.7.0",
     "mitata": "^1.0.34",
     "typescript": "^5.8.2"
   }

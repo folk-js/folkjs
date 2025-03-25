@@ -1,5 +1,5 @@
+import { describe, expect, test } from 'node:test';
 import { Matrix } from '../src/Matrix';
-import { describe, expect, test } from 'bun:test';
 
 describe('Matrix', () => {
   describe('lerp', () => {
