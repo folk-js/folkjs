@@ -19,7 +19,8 @@
     "src"
   ],
   "scripts": {
-    "build": "wireit"
+    "build": "wireit",
+    "test": "echo 'No tests to run'"
   },
   "wireit": {
     "build": {

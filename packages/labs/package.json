@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "build": "wireit",
-    "test": "node test"
+    "test": "wireit"
   },
   "wireit": {
     "build": {
@@ -43,6 +43,15 @@
       "output": [
         "dist/**",
         "tsconfig.tsbuildinfo"
+      ]
+    },
+    "test": {
+      "command": "node --experimental-strip-types --test './__tests__/*.test.ts'",
+      "dependencies": [
+        "build"
+      ],
+      "files": [
+        "__tests__/*.test.ts"
       ]
     }
   },
@@ -64,6 +73,7 @@
     "webcola": "^3.4.0"
   },
   "devDependencies": {
+    "expect": "^29.7.0",
     "mitata": "^1.0.34",
     "typescript": "^5.8.2"
   }

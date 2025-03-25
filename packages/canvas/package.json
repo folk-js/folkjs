@@ -30,7 +30,8 @@
   ],
   "scripts": {
     "build": "wireit",
-    "test": "node --experimental-strip-types --test './__tests__/*.test.ts'"
+    "test": "wireit",
+    "test:dev": "npm run test --watch"
   },
   "wireit": {
     "build": {
@@ -44,6 +45,15 @@
       "output": [
         "dist/**",
         "tsconfig.tsbuildinfo"
+      ]
+    },
+    "test": {
+      "command": "node --experimental-strip-types --test './__tests__/*.test.ts'",
+      "dependencies": [
+        "build"
+      ],
+      "files": [
+        "__tests__/*.test.ts"
       ]
     }
   },

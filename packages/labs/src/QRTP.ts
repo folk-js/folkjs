@@ -1,6 +1,6 @@
 import EventEmitter from 'eventemitter3';
-import { hash } from './utils/hash';
-import { header } from './utils/header';
+import { hash } from './utils/hash.ts';
+import { header } from './utils/header.ts';
 
 /** QRTP - A tiny QR Transfer Protocol
  * Each device shows a QR code with:

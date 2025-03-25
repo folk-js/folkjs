@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, test } from 'node:test';
-import { QRTP } from '../src/QRTP';
+import { expect } from 'expect';
+import { beforeEach, describe, test } from 'node:test';
+import { QRTP } from '../src/QRTP.ts';
 
 describe('QRTP Protocol', () => {
   let senderQRTP: QRTP;

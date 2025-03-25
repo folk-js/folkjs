@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'node:test';
-import { BaseEdge, BaseNode, MultiGraph } from '../src/MultiGraph';
+import { expect } from 'expect';
+import { describe, test } from 'node:test';
+import type { BaseEdge, BaseNode } from '../src/MultiGraph.ts';
+import { MultiGraph } from '../src/MultiGraph.ts';
 
 // Define test node type that extends BaseNode
 interface TestNode extends BaseNode {

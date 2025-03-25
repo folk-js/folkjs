@@ -8,9 +8,9 @@
   ],
   "scripts": {
     "bench": "node --experimental-strip-types _scripts_/benchmark.js",
-    "build": "",
+    "build": "npm run build --workspaces",
     "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
-    "test": ""
+    "test": "npm run test --workspaces"
   },
   "devDependencies": {
     "prettier": "^3.5.3",
