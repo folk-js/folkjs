@@ -40,11 +40,9 @@ jobs:
 
       # Run benchmarks with path to existing results
       - name: Run benchmarks
-        run: BENCHMARK_HISTORY_PATH=folk-canvas-stats/mitata_benchmarks.json node --experimental-strip-types packages/repo-utils/dist/benchmark.js
+        run: npm run bench
         env:
-          CI: true
-          GITHUB_ACTIONS: true # Redundant but explicit
-          BENCHMARK_HISTORY_PATH: folk-canvas-stats/mitata_benchmarks.json # Set as env var for clarity
+          BENCHMARK_HISTORY_PATH: folk-canvas-stats/mitata_benchmarks.json
 
       # Commit and push updates if there are changes
       - name: Update benchmark results
