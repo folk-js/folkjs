@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier2d';
-import { TransformIntegrator } from '@folkjs/labs/EffectIntegrator';
+import { TransformIntegrator } from './EffectIntegrator';
 import { DOMRectTransform } from '@folkjs/canvas';
 import { type PropertyValues } from '@folkjs/canvas/reactive-element';
 import { FolkBaseSet } from './folk-base-set';

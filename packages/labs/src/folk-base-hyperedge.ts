@@ -1,4 +1,4 @@
-import { FolkObserver, parseDeepCSSSelector } from '@folkjs/labs/folk-observer';
+import { FolkObserver, parseDeepCSSSelector } from './folk-observer';
 import { type ClientRectObserverEntry, FolkElement } from '@folkjs/canvas';
 import { css, type CSSResultGroup, property, type PropertyValues, state } from '@folkjs/canvas/reactive-element';
 

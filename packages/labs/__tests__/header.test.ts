@@ -1,4 +1,4 @@
-import { header } from '@folkjs/labs/utils/header';
+import { header } from '../src/utils/header';
 import { describe, expect, test } from 'bun:test';
 
 // Basic header functionality

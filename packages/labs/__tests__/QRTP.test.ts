@@ -1,4 +1,4 @@
-import { QRTP } from '@folkjs/labs/QRTP';
+import { QRTP } from '../src/QRTP';
 import { beforeEach, describe, expect, test } from 'bun:test';
 
 describe('QRTP Protocol', () => {

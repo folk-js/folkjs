@@ -1,4 +1,4 @@
-import { TransformIntegrator } from '@folkjs/labs/EffectIntegrator';
+import { TransformIntegrator } from './EffectIntegrator';
 import { AnimationFrameController, type AnimationFrameControllerHost } from '@folkjs/canvas';
 import { type PropertyValues } from '@folkjs/canvas/reactive-element';
 import { Layout } from 'webcola';

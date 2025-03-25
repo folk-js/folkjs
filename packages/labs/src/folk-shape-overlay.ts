@@ -1,4 +1,4 @@
-import { getResizeCursorUrl, getRotateCursorUrl } from '@folkjs/labs/utils/cursors';
+import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 import { FolkElement, type Point, round, toDOMPrecision, Vector } from '@folkjs/canvas';
 import { css } from '@folkjs/canvas/reactive-element';
 import { html } from '@folkjs/canvas/tags';
