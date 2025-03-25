@@ -7,8 +7,10 @@
     "website"
   ],
   "scripts": {
+    "build": "tsc && vite build",
     "dev": "vite",
-    "dev:host": "vite --host"
+    "dev:host": "vite --host",
+    "preview": "npm run build && vite preview"
   },
   "dependencies": {
     "ink-mde": "^0.34.0",
@@ -23,11 +25,6 @@
     "@types/leaflet": "^1.9.14",
     "@types/node": "^22.10.1",
     "@types/wicg-file-system-access": "^2023.10.5",
-    "@webgpu/types": "^0.1.51",
-    "bun-types": "^1.1.38",
-    "concurrently": "^9.1.2",
-    "mitata": "^1.0.20",
-    "prettier-plugin-organize-imports": "^4.1.0",
     "typescript": "^5.8.2",
     "vite": "^6.0.3",
     "vite-plugin-mkcert": "^1.17.6",

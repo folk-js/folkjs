@@ -7,21 +7,14 @@
     "website"
   ],
   "scripts": {
-    "bench": "bun run _scripts_/benchmark.js"
+    "bench": "node run _scripts_/benchmark.js",
+    "build": "",
+    "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
+    "test": ""
   },
   "devDependencies": {
+    "prettier": "^3.5.3",
+    "prettier-plugin-organize-imports": "^4.1.0",
     "wireit": "^0.14.11"
-  },
-  "old_scripts": {
-    "test": "bun test",
-    "build": "bun run build:packages && tsc --noEmit && vite build",
-    "preview": "bun run build && vite preview",
-    "types": "concurrently \"tsc --noEmit --skipLibCheck --skipDefaultLibCheck\" \"bun run types:packages\"",
-    "types:packages": "concurrently \"cd packages/canvas && tsc --noEmit\" \"cd packages/geometry && tsc --noEmit\" \"cd packages/propagators && tsc --noEmit\" \"cd packages/labs && tsc --noEmit\"",
-    "types:fix": "npx ts-autofix",
-    "build:packages": "(cd packages/canvas && bun run build) && (cd packages/geometry && bun run build) && (cd packages/propagators && bun run build) && (cd packages/labs && bun run build)",
-    "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
-    "dev:extension": "vite build packages/web-extension -w",
-    "build:extension": "vite build packages/web-extension"
   }
 }

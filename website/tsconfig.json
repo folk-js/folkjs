@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["@webgpu/types", "@types/wicg-file-system-access"]
+    "types": ["@types/wicg-file-system-access"]
   },
   "include": ["**/*.ts", "**/*.js", "**/*.html", "vite.config.ts", "packages/**/*.ts"],
   "exclude": ["node_modules/**/*", "**/dist/**", "_web-extension/**"]
