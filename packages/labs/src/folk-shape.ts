@@ -13,8 +13,8 @@ import {
   TransformStack,
   Vector,
   type Point,
-} from '@folkjs/lib';
-import { css } from '@folkjs/lib/reactive-element';
+} from '@folkjs/canvas';
+import { css } from '@folkjs/canvas/reactive-element';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 const resizeManager = new ResizeManager();
@@ -190,6 +190,12 @@ const styles = css`
     display: block;
   }
 `;
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'folk-shape': FolkShape;
+  }
+}
 
 export class FolkShape extends FolkElement {
   [IPointTransform] = true;

@@ -1,5 +1,5 @@
-import { FolkElement, Vector } from '@folkjs/lib';
-import { css, property } from '@folkjs/lib/reactive-element';
+import { FolkElement, Vector } from '@folkjs/canvas';
+import { css, property } from '@folkjs/canvas/reactive-element';
 
 // Ported from https://github.com/ivanreese/knob
 

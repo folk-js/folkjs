@@ -1,4 +1,4 @@
-import type { Vector2 } from './Vector2';
+import type { Vector2 } from './Vector2.ts';
 
 /**
  * Projects a point onto a plane defined by an orthographic 3D transformation matrix.

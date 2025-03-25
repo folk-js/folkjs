@@ -1,5 +1,6 @@
-import { header } from '@folkjs/labs/utils/header';
-import { describe, expect, test } from 'bun:test';
+import { expect } from 'expect';
+import { describe, test } from 'node:test';
+import { header } from '../src/utils/header.ts';
 
 // Basic header functionality
 describe('Header template strings', () => {

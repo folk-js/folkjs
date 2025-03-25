@@ -1,7 +1,7 @@
-import type { Matrix2D } from './Matrix2D';
-import { sign } from './utilities.js';
-import type { Vector2 } from './Vector2.js';
-import * as V from './Vector2.js';
+import type { Matrix2D } from './Matrix2D.ts';
+import { sign } from './utilities.ts';
+import type { Vector2 } from './Vector2.ts';
+import * as V from './Vector2.ts';
 
 export interface Rect2D {
   x: number;

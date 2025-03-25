@@ -25,10 +25,36 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc --build --pretty",
-    "test": "bun test"
+    "build": "wireit",
+    "test": "wireit",
+    "test:dev": "npm run test --watch"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty",
+      "clean": "if-file-deleted",
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    },
+    "test": {
+      "command": "node --experimental-strip-types --test './__tests__/*.test.ts'",
+      "dependencies": [
+        "build"
+      ],
+      "files": [
+        "__tests__/*.test.ts"
+      ]
+    }
   },
   "devDependencies": {
+    "expect": "^29.7.0",
     "mitata": "^1.0.34",
     "typescript": "^5.8.2"
   }

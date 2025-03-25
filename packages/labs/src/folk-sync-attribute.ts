@@ -1,4 +1,4 @@
-import { CustomAttribute } from '@folkjs/lib';
+import { CustomAttribute } from '@folkjs/canvas';
 import { FolkAutomerge } from './FolkAutomerge';
 
 /**

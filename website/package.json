@@ -1,0 +1,72 @@
+{
+  "name": "@folkjs/website",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "wireit",
+    "dev": "wireit",
+    "dev:host": "npm run dev -- --host",
+    "preview": "npm run build && vite preview",
+    "test": "echo 'No tests to run'"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty && vite build",
+      "dependencies": [
+        "../packages/canvas:build",
+        "../packages/labs:build"
+      ],
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "__scripts__/**"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    },
+    "dev": {
+      "command": "vite",
+      "service": true,
+      "dependencies": [
+        {
+          "script": "../packages/canvas:build",
+          "cascade": false
+        },
+        {
+          "script": "../packages/labs:build",
+          "cascade": false
+        }
+      ],
+      "files": [
+        "**.*.html",
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "__scripts__/**"
+      ]
+    }
+  },
+  "dependencies": {
+    "@folkjs/canvas": "^0.0.1",
+    "@folkjs/labs": "^0.0.1",
+    "ink-mde": "^0.34.0",
+    "remark-html": "^16.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-wiki-link": "^2.0.1",
+    "unified": "^11.0.5",
+    "vite-plugin-top-level-await": "^1.5.0",
+    "vite-plugin-wasm": "^3.3.0"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.14",
+    "@types/node": "^22.10.1",
+    "@types/wicg-file-system-access": "^2023.10.5",
+    "typescript": "^5.8.2",
+    "vite": "^6.0.3",
+    "vite-plugin-mkcert": "^1.17.6"
+  }
+}

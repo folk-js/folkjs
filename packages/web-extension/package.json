@@ -1,11 +1,9 @@
 {
   "name": "@folkjs/web-extension",
-  "private": true,
+  "version": "0.0.0",
   "description": "Folk Canvas web extension",
   "keywords": [
-    "matrix",
-    "matrices",
-    "vector"
+    "web extension"
   ],
   "author": "Christopher Shank <chris.shank.23@gmail.com>",
   "type": "module",
@@ -22,7 +20,8 @@
   },
   "scripts": {
     "dev": "vite build --watch",
-    "build": "tsc --build --pretty && vite build"
+    "build": "tsc --build --pretty && vite build",
+    "test": "echo 'No tests to run'"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

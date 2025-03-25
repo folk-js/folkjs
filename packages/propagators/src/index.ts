@@ -1,5 +1,5 @@
-export { AsyncPropagator } from './async-propagator';
-export { BidirectionalPropagator } from './bidirectional-propagator';
-export { Propagator } from './propagator';
-export { SymmetricPropagator } from './symmetric-propagator';
-export type { PropagatorFunction, PropagatorOptions, PropagatorParser } from './types';
+export { AsyncPropagator } from './async-propagator.ts';
+export { BidirectionalPropagator } from './bidirectional-propagator.ts';
+export { Propagator } from './propagator.ts';
+export { SymmetricPropagator } from './symmetric-propagator.ts';
+export type { PropagatorFunction, PropagatorOptions, PropagatorParser } from './types.ts';

@@ -3,61 +3,19 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "website"
   ],
   "scripts": {
-    "dev": "vite",
-    "dev:host": "vite --host",
-    "test": "bun test",
-    "build": "bun run build:packages && tsc --noEmit && vite build",
-    "preview": "bun run build && vite preview",
-    "bench": "bun run _scripts_/benchmark.js",
-    "types": "concurrently \"tsc --noEmit --skipLibCheck --skipDefaultLibCheck\" \"bun run types:packages\"",
-    "types:packages": "concurrently \"cd packages/lib && tsc --noEmit\" \"cd packages/geometry && tsc --noEmit\" \"cd packages/propagators && tsc --noEmit\" \"cd packages/labs && tsc --noEmit\"",
-    "types:fix": "npx ts-autofix",
-    "build:packages": "(cd packages/lib && bun run build) && (cd packages/geometry && bun run build) && (cd packages/propagators && bun run build) && (cd packages/labs && bun run build)",
-    "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
-    "dev:extension": "vite build packages/web-extension -w",
-    "build:extension": "vite build packages/web-extension"
-  },
-  "dependencies": {
-    "@automerge/automerge": "^2.2.8",
-    "@automerge/automerge-repo": "^1.2.1",
-    "@automerge/automerge-repo-network-websocket": "^1.2.1",
-    "@automerge/automerge-repo-storage-indexeddb": "^1.2.1",
-    "@babel/parser": "^7.26.2",
-    "@dimforge/rapier2d": "^0.15.0",
-    "@mlc-ai/web-llm": "^0.2.78",
-    "eventemitter3": "^5.0.1",
-    "gun": "^0.2020.1240",
-    "ink-mde": "^0.34.0",
-    "leaflet": "^1.9.4",
-    "partysocket": "^1.0.3",
-    "peerjs": "^1.5.4",
-    "perfect-arrows": "^0.3.7",
-    "perfect-freehand": "^1.2.2",
-    "remark-html": "^16.0.1",
-    "remark-parse": "^11.0.0",
-    "remark-wiki-link": "^2.0.1",
-    "unified": "^11.0.5",
-    "uuid": "^11.1.0",
-    "vite-plugin-top-level-await": "^1.5.0",
-    "vite-plugin-wasm": "^3.3.0",
-    "webcola": "^3.4.0"
+    "bench": "node --experimental-strip-types _scripts_/benchmark.js",
+    "build": "npm run build --workspaces",
+    "dev": "npm run dev -w website --watch",
+    "clean": "find . -name 'dist' -o -name 'node_modules' -o -name '.wireit' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
+    "test": "npm run test --workspaces"
   },
   "devDependencies": {
-    "@types/leaflet": "^1.9.14",
-    "@types/node": "^22.10.1",
-    "@types/uuid": "^10.0.0",
-    "@types/wicg-file-system-access": "^2023.10.5",
-    "@webgpu/types": "^0.1.51",
-    "bun-types": "^1.1.38",
-    "concurrently": "^9.1.2",
-    "mitata": "^1.0.20",
+    "prettier": "^3.5.3",
     "prettier-plugin-organize-imports": "^4.1.0",
-    "typescript": "^5.8.2",
-    "vite": "^6.0.3",
-    "vite-plugin-mkcert": "^1.17.6",
-    "vite-tsconfig-paths": "^5.1.4"
+    "wireit": "^0.14.11"
   }
 }

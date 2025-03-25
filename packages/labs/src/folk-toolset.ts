@@ -1,4 +1,4 @@
-import { Vector } from '@folkjs/lib';
+import { Vector } from '@folkjs/canvas';
 import { FolkEventPropagator } from './folk-event-propagator';
 import { FolkShape } from './folk-shape';
 

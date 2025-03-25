@@ -1,4 +1,4 @@
-import { Message, NetworkAdapter, PeerId, PeerMetadata, RepoMessage, cbor } from '@automerge/automerge-repo';
+import { type Message, NetworkAdapter, type PeerId, type PeerMetadata, type RepoMessage, cbor } from '@automerge/automerge-repo';
 import { EventEmitter } from 'eventemitter3';
 import { DataConnection, Peer } from 'peerjs';
 import { PeerSet } from './PeerSet';

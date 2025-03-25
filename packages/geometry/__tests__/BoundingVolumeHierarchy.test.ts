@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { expect } from 'expect';
+import { describe, test } from 'node:test';
 import * as BVH from '../src/BoundingVolumeHierarchy.ts';
 
 describe('BoundingVolumeHierarchy', () => {
@@ -16,7 +17,7 @@ describe('BoundingVolumeHierarchy', () => {
       },
     ]);
 
-    expect(bvh.isLeaf).toBeTrue();
+    expect(bvh.isLeaf).toBe(true);
   });
 
   test('initializes BVH with two rectangles', () => {
@@ -37,8 +38,8 @@ describe('BoundingVolumeHierarchy', () => {
     ];
     const bvh = BVH.fromRects(rects);
 
-    expect(bvh.left?.isLeaf).toBeTrue();
-    expect(bvh.right?.isLeaf).toBeTrue();
+    expect(bvh.left?.isLeaf).toBe(true);
+    expect(bvh.right?.isLeaf).toBe(true);
 
     expect(bvh.rect).toStrictEqual({
       x: 0,

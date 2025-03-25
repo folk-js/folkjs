@@ -8,7 +8,6 @@ import {
   determinant,
   equals,
   exactlyEqual,
-  fromIdentity,
   fromMatrix2D,
   fromRotate,
   fromScale,
@@ -30,8 +29,8 @@ import {
   toPoint,
   translate,
   translateSelf,
-} from '../src/Matrix2D';
-import { PI } from '../src/utilities';
+} from '../src/Matrix2D.ts';
+import { PI } from '../src/utilities.ts';
 
 const m1 = fromValues(1, 2, 3, 4, 5, 6);
 const m2 = fromValues(7, 8, 9, 10, 11, 12);
@@ -64,10 +63,6 @@ bench('Matrix2D.exactlyEqual', () => {
   exactlyEqual(m1, m1);
 });
 
-bench('Matrix2D.fromIdentity', () => {
-  fromIdentity();
-});
-
 bench('Matrix2D.fromMatrix2D', () => {
   fromMatrix2D(m1);
 });
@@ -82,6 +77,10 @@ bench('Matrix2D.fromScale', () => {
 
 bench('Matrix2D.fromTranslate', () => {
   fromTranslate(10, 15);
+});
+
+bench('Matrix2D.fromValues identify', () => {
+  fromValues();
 });
 
 bench('Matrix2D.fromValues', () => {

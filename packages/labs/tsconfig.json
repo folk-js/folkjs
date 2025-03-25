@@ -4,15 +4,7 @@
     "rootDir": "src",
     "outDir": "dist",
     "declaration": true,
-    "composite": true
+    "rewriteRelativeImportExtensions": true
   },
-  "include": ["src/"],
-  "references": [
-    {
-      "path": "../lib"
-    },
-    {
-      "path": "../propagators"
-    }
-  ]
+  "include": ["src/"]
 }

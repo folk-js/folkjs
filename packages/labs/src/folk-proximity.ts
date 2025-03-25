@@ -1,4 +1,4 @@
-import { aabbIntersection, TransformEvent } from '@folkjs/lib';
+import { aabbIntersection, TransformEvent } from '@folkjs/canvas';
 import { FolkHull } from './folk-hull';
 import { FolkShape } from './folk-shape';
 

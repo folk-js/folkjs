@@ -9,13 +9,13 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
     "./*": {
       "import": "./dist/*.js",
       "types": "./dist/*.d.ts"
+    },
+    "./standalone/*": {
+      "import": "./dist/standalone/*.js",
+      "types": "./dist/standalone/*.d.ts"
     }
   },
   "files": [
@@ -23,17 +23,58 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc --build --pretty",
-    "bench": "bun run __benchmarks__/script.ts",
-    "test": "bun test"
+    "build": "wireit",
+    "test": "wireit"
   },
-  "devDependencies": {
-    "mitata": "^1.0.34",
-    "typescript": "^5.8.2"
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty",
+      "clean": "if-file-deleted",
+      "dependencies": [
+        "../canvas:build",
+        "../geometry:build",
+        "../propagators:build"
+      ],
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    },
+    "test": {
+      "command": "node --experimental-strip-types --test './__tests__/*.test.ts'",
+      "dependencies": [
+        "build"
+      ],
+      "files": [
+        "__tests__/*.test.ts"
+      ]
+    }
   },
   "dependencies": {
-    "@folkjs/lib": "workspace:*",
-    "@folkjs/propagators": "workspace:*",
-    "@folkjs/geometry": "workspace:*"
+    "@automerge/automerge": "^2.2.8",
+    "@automerge/automerge-repo": "^1.2.1",
+    "@automerge/automerge-repo-network-websocket": "^1.2.1",
+    "@dimforge/rapier2d": "^0.15.0",
+    "@folkjs/canvas": "^0.0.1",
+    "@folkjs/geometry": "^0.0.1",
+    "@folkjs/propagators": "^0.0.1",
+    "@mlc-ai/web-llm": "^0.2.78",
+    "eventemitter3": "^5.0.1",
+    "gun": "^0.2020.1240",
+    "leaflet": "^1.9.4",
+    "peerjs": "^1.5.4",
+    "perfect-arrows": "^0.3.7",
+    "perfect-freehand": "^1.2.2",
+    "webcola": "^3.4.0"
+  },
+  "devDependencies": {
+    "expect": "^29.7.0",
+    "mitata": "^1.0.34",
+    "typescript": "^5.8.2"
   }
 }

@@ -1,4 +1,4 @@
-import type { PropagatorFunction, PropagatorOptions } from './types';
+import type { PropagatorFunction, PropagatorOptions } from './types.ts';
 
 /**
  * Custom type definitions for AsyncPropagator

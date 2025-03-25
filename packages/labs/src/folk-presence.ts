@@ -1,5 +1,5 @@
-import { FolkElement, Point } from '@folkjs/lib';
-import { css } from '@folkjs/lib/tags';
+import { FolkElement, type Point } from '@folkjs/canvas';
+import { css } from '@folkjs/canvas/tags';
 import { FolkAutomerge } from './FolkAutomerge';
 import { FolkSpace } from './folk-space';
 

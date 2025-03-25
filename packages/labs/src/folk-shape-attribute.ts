@@ -4,11 +4,11 @@ import {
   customAttributes,
   DOMRectTransform,
   Matrix,
-  Point,
+  type Point,
   ResizeManager,
   toDOMPrecision,
   TransformEvent,
-} from '@folkjs/lib';
+} from '@folkjs/canvas';
 import { FolkShapeOverlay } from './folk-shape-overlay';
 
 declare global {

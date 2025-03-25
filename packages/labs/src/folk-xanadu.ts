@@ -1,7 +1,8 @@
-import type { Point } from '@folkjs/lib';
-import { verticesToPolygon } from '@folkjs/lib';
-import { PropertyValues } from '@folkjs/lib/reactive-element';
+import type { Point } from '@folkjs/canvas';
+import { verticesToPolygon } from '@folkjs/canvas';
+import type { PropertyValues } from '@folkjs/canvas/reactive-element';
 import { FolkBaseConnection } from './folk-base-connection.js';
+
 export class FolkXanadu extends FolkBaseConnection {
   static override tagName = 'folk-xanadu';
 

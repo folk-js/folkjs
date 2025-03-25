@@ -1,5 +1,5 @@
-import { CanIUse, TransformEvent, Vector } from '@folkjs/lib';
-import { css, type PropertyValues } from '@folkjs/lib/reactive-element';
+import { CanIUse, TransformEvent, Vector } from '@folkjs/canvas';
+import { css, type PropertyValues } from '@folkjs/canvas/reactive-element';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 

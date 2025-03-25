@@ -1,5 +1,5 @@
-import { acos, approximatelyEqual, clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.js';
-import type { Vector2, Vector2Readonly } from './Vector2.js';
+import { acos, approximatelyEqual, clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.ts';
+import type { Vector2, Vector2Readonly } from './Vector2.ts';
 
 /** A homogeneous matrix for 2D transformations. */
 export interface Matrix2D {
@@ -28,18 +28,6 @@ export interface DecomposedMatrix2D {
 }
 
 // Factories utilities
-
-/** Creates a new 2D [identity matrix](https://en.wikipedia.org/wiki/Identity_matrix). */
-export function fromIdentity(): Matrix2D {
-  return {
-    a: 1,
-    b: 0,
-    c: 0,
-    d: 1,
-    e: 0,
-    f: 0,
-  };
-}
 
 /** Creates a new 2D matrix from a given translation. */
 export function fromTranslate(x: number, y: number): Matrix2D {
@@ -79,8 +67,8 @@ export function fromRotate(angle: number): Matrix2D {
   };
 }
 
-/** Create a new 2D matrix from a bunch of values. */
-export function fromValues(a: number, b: number, c: number, d: number, e: number, f: number): Matrix2D {
+/** Create a new 2D matrix from a bunch of values. Defaults to the identify matrix. */
+export function fromValues(a = 1, b = 0, c = 0, d = 1, e = 0, f = 0): Matrix2D {
   return {
     a,
     b,
@@ -282,7 +270,7 @@ export function invert(m: Matrix2DReadonly): Matrix2D {
  * @returns An new 2D matrix.
  */
 export function compose(...matrices: Matrix2DReadonly[]): Matrix2D {
-  const matrix = fromIdentity();
+  const matrix = fromValues();
   for (const m of matrices) {
     multiply(matrix, m);
   }
