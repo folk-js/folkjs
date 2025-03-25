@@ -9,7 +9,8 @@
   "scripts": {
     "bench": "node --experimental-strip-types _scripts_/benchmark.js",
     "build": "npm run build --workspaces",
-    "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
+    "dev": "npm run dev -w website",
+    "clean": "find . -name 'dist' -o -name 'node_modules' -o -name '.wireit' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
     "test": "npm run test --workspaces"
   },
   "devDependencies": {

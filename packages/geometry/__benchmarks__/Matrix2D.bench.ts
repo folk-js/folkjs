@@ -8,7 +8,6 @@ import {
   determinant,
   equals,
   exactlyEqual,
-  fromIdentity,
   fromMatrix2D,
   fromRotate,
   fromScale,
@@ -64,10 +63,6 @@ bench('Matrix2D.exactlyEqual', () => {
   exactlyEqual(m1, m1);
 });
 
-bench('Matrix2D.fromIdentity', () => {
-  fromIdentity();
-});
-
 bench('Matrix2D.fromMatrix2D', () => {
   fromMatrix2D(m1);
 });
@@ -82,6 +77,10 @@ bench('Matrix2D.fromScale', () => {
 
 bench('Matrix2D.fromTranslate', () => {
   fromTranslate(10, 15);
+});
+
+bench('Matrix2D.fromValues identify', () => {
+  fromValues();
 });
 
 bench('Matrix2D.fromValues', () => {
