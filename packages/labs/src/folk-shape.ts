@@ -191,6 +191,12 @@ const styles = css`
   }
 `;
 
+declare global {
+  interface HTMLElementTagNameMap {
+    'folk-shape': FolkShape;
+  }
+}
+
 export class FolkShape extends FolkElement {
   [IPointTransform] = true;
   static override tagName = 'folk-shape';

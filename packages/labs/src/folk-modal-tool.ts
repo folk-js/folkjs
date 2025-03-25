@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/canvas';
-import { css, CSSResultGroup } from '@folkjs/canvas/reactive-element';
+import { css, type CSSResultGroup } from '@folkjs/canvas/reactive-element';
 
 type PointerEventTypes =
   | 'pointercancel'

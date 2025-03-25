@@ -2,7 +2,7 @@
  * @note This is a PoC, lots of optimisations are possible. Graph visibility culling, caching, etc.
  */
 
-import { BaseEdge, BaseNode, MultiGraph } from './MultiGraph';
+import { type BaseEdge, type BaseNode, MultiGraph } from './MultiGraph';
 
 export interface ZoomNode<T = any> extends BaseNode {
   data: T;

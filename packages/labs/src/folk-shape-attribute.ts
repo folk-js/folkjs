@@ -4,7 +4,7 @@ import {
   customAttributes,
   DOMRectTransform,
   Matrix,
-  Point,
+  type Point,
   ResizeManager,
   toDOMPrecision,
   TransformEvent,
