@@ -1,5 +1,6 @@
-import { bench, run } from 'mitata';
-import { Matrix } from '../src/Matrix.ts';
+import { bench } from 'mitata';
+import { run } from '../../_shared/bench';
+import { Matrix } from '../src/Matrix';
 
 const m1 = new Matrix(1, 2, 3, 4, 5, 6);
 const m2 = new Matrix(7, 8, 9, 10, 11, 12);

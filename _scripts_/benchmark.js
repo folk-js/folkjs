@@ -4,9 +4,10 @@ import { join, resolve } from 'node:path';
 /**
  * Runs benchmarks in a specific directory
  * @param dirPath Directory containing benchmarks
+ * @param packageName Name of the package
  * @param extension Benchmark file extension
  */
-async function runDirBenchmarks(dirPath, extension = '.bench.ts') {
+async function runDirBenchmarks(dirPath, packageName, extension = '.bench.ts') {
   if (!existsSync(dirPath)) {
     console.error(`Directory not found: ${dirPath}`);
     return;
@@ -19,12 +20,11 @@ async function runDirBenchmarks(dirPath, extension = '.bench.ts') {
     return;
   }
 
-  console.log(`\nRunning ${benchFiles.length} benchmark(s) in ${dirPath}`);
-  console.log('='.repeat(50));
-
   for (const file of benchFiles) {
-    console.log(`\n→ Running ${file}...`);
+    console.log(`→ ${file}`);
     try {
+      process.env.BENCHMARK_PACKAGE = packageName;
+      process.env.BENCHMARK_FILE = file;
       await import(join(dirPath, file));
     } catch (error) {
       console.error(`Error running ${file}: ${error.message}`);
@@ -32,9 +32,6 @@ async function runDirBenchmarks(dirPath, extension = '.bench.ts') {
   }
 }
 
-/**
- * Runs benchmarks in all packages or a specific directory
- */
 async function main() {
   const targetDir = process.argv[2];
 
@@ -44,10 +41,10 @@ async function main() {
     const benchDir = join(path, '__benchmarks__');
 
     if (existsSync(benchDir)) {
-      await runDirBenchmarks(benchDir);
+      await runDirBenchmarks(benchDir, targetDir);
     } else {
       // Maybe the target path itself is a benchmark directory
-      await runDirBenchmarks(path);
+      await runDirBenchmarks(path, targetDir);
     }
     return;
   }
@@ -63,7 +60,7 @@ async function main() {
     const pkgPath = join(packagesDir, pkg);
     const pkgJsonPath = join(pkgPath, 'package.json');
     const benchDir = join(pkgPath, '__benchmarks__');
-
+    
     return existsSync(pkgPath) && existsSync(pkgJsonPath) && existsSync(benchDir);
   });
 
@@ -77,7 +74,7 @@ async function main() {
   for (const pkg of packages) {
     const benchDir = join(packagesDir, pkg, '__benchmarks__');
     console.log(`\nPackage: ${pkg}`);
-    await runDirBenchmarks(benchDir);
+    await runDirBenchmarks(benchDir, pkg);
   }
 }
 

@@ -1,4 +1,5 @@
-import { bench, run } from 'mitata';
+import { bench } from 'mitata';
+import { run } from '../../_shared/bench.ts';
 import type { BVHNode } from '../src/BoundingVolumeHierarchy.ts';
 import * as BVH from '../src/BoundingVolumeHierarchy.ts';
 import { Rect2D } from '../src/Rect2D.ts';
