@@ -6,13 +6,5 @@
     "declaration": true,
     "composite": true
   },
-  "include": ["src/"],
-  "references": [
-    {
-      "path": "../canvas"
-    },
-    {
-      "path": "../propagators"
-    }
-  ]
+  "include": ["src/"]
 }

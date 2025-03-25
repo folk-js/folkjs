@@ -27,19 +27,8 @@
     "module": "ESNext",
     "sourceMap": true,
     "lib": ["esnext", "dom", "dom.iterable"],
-    "types": ["@webgpu/types", "@types/wicg-file-system-access", "bun-types"],
     "composite": true,
     "declarationMap": true,
-    "baseUrl": ".",
-    "paths": {
-      "@folkjs/canvas": ["packages/canvas/src"],
-      "@folkjs/canvas/*": ["packages/canvas/src/*"],
-      "@folkjs/labs": ["packages/labs/src"],
-      "@folkjs/labs/*": ["packages/labs/src/*"],
-      "@folkjs/propagators": ["packages/propagators/src"],
-      "@folkjs/propagators/*": ["packages/propagators/src/*"],
-      "@folkjs/geometry": ["packages/geometry/src"],
-      "@folkjs/geometry/*": ["packages/geometry/src/*"]
-    }
+    "baseUrl": "."
   }
 }

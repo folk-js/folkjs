@@ -1,8 +1,9 @@
 {
-  "extends": "./tsconfig.base.json",
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "types": ["@webgpu/types", "@types/wicg-file-system-access"]
   },
   "include": ["**/*.ts", "**/*.js", "**/*.html", "vite.config.ts", "packages/**/*.ts"],
   "exclude": ["node_modules/**/*", "**/dist/**", "_web-extension/**"]

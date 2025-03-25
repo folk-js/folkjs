@@ -1,4 +1,4 @@
-import { ReactiveElement } from '../src/reactive-element';
+import { ReactiveElement } from './reactive-element';
 
 /**
  *  Base class for all custom elements. Extends Lit's `ReactiveElement` and adds some utilities for defining the element.

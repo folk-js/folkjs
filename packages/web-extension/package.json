@@ -3,9 +3,7 @@
   "private": true,
   "description": "Folk Canvas web extension",
   "keywords": [
-    "matrix",
-    "matrices",
-    "vector"
+    "web extension"
   ],
   "author": "Christopher Shank <chris.shank.23@gmail.com>",
   "type": "module",

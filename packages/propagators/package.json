@@ -19,7 +19,22 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc --build --pretty"
+    "build": "wireit"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty",
+      "clean": "if-file-deleted",
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    }
   },
   "devDependencies": {
     "typescript": "^5.8.2"

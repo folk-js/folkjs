@@ -8,18 +8,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "dev:host": "vite --host",
-    "test": "bun test",
-    "build": "bun run build:packages && tsc --noEmit && vite build",
-    "preview": "bun run build && vite preview",
-    "bench": "bun run _scripts_/benchmark.js",
-    "types": "concurrently \"tsc --noEmit --skipLibCheck --skipDefaultLibCheck\" \"bun run types:packages\"",
-    "types:packages": "concurrently \"cd packages/canvas && tsc --noEmit\" \"cd packages/geometry && tsc --noEmit\" \"cd packages/propagators && tsc --noEmit\" \"cd packages/labs && tsc --noEmit\"",
-    "types:fix": "npx ts-autofix",
-    "build:packages": "(cd packages/canvas && bun run build) && (cd packages/geometry && bun run build) && (cd packages/propagators && bun run build) && (cd packages/labs && bun run build)",
-    "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
-    "dev:extension": "vite build packages/web-extension -w",
-    "build:extension": "vite build packages/web-extension"
+    "dev:host": "vite --host"
   },
   "dependencies": {
     "ink-mde": "^0.34.0",
@@ -28,7 +17,7 @@
     "remark-wiki-link": "^2.0.1",
     "unified": "^11.0.5",
     "vite-plugin-top-level-await": "^1.5.0",
-    "vite-plugin-wasm": "^3.3.0",
+    "vite-plugin-wasm": "^3.3.0"
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.14",

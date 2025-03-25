@@ -18,6 +18,10 @@
     "./*": {
       "import": "./dist/*.js",
       "types": "./dist/*.d.ts"
+    },
+    "./reactive-element": {
+      "import": "./dist/reactive-element/index.js",
+      "types": "./dist/reactive-element/index.d.ts"
     }
   },
   "files": [
@@ -25,8 +29,23 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc --build --pretty",
+    "build": "wireit",
     "test": "bun test"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty",
+      "clean": "if-file-deleted",
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    }
   },
   "devDependencies": {
     "mitata": "^1.0.34",

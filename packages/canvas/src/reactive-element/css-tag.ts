@@ -35,15 +35,16 @@ export class CSSResult {
   // This property needs to remain unminified.
   ['_$cssResult$'] = true;
   readonly cssText: string;
-  private _styleSheet?: CSSStyleSheet;
-  private _strings: TemplateStringsArray | undefined;
+  // These need to be private properties otherwise a weird TS error will happen for consumers
+  #styleSheet?: CSSStyleSheet;
+  #strings: TemplateStringsArray | undefined;
 
   private constructor(cssText: string, strings: TemplateStringsArray | undefined, safeToken: symbol) {
     if (safeToken !== constructionToken) {
       throw new Error('CSSResult is not constructable. Use `unsafeCSS` or `css` instead.');
     }
     this.cssText = cssText;
-    this._strings = strings;
+    this.#strings = strings;
   }
 
   // This is a getter so that it's lazy. In practice, this means stylesheets
@@ -51,15 +52,15 @@ export class CSSResult {
   get styleSheet(): CSSStyleSheet | undefined {
     // If `supportsAdoptingStyleSheets` is true then we assume CSSStyleSheet is
     // constructable.
-    let styleSheet = this._styleSheet;
-    const strings = this._strings;
+    let styleSheet = this.#styleSheet;
+    const strings = this.#strings;
     if (styleSheet === undefined) {
       const cacheable = strings !== undefined && strings.length === 1;
       if (cacheable) {
         styleSheet = cssTagCache.get(strings);
       }
       if (styleSheet === undefined) {
-        (this._styleSheet = styleSheet = new CSSStyleSheet()).replaceSync(this.cssText);
+        (this.#styleSheet = styleSheet = new CSSStyleSheet()).replaceSync(this.cssText);
         if (cacheable) {
           cssTagCache.set(strings, styleSheet);
         }

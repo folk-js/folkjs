@@ -25,8 +25,23 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc --build --pretty",
+    "build": "wireit",
     "test": "bun test"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty",
+      "clean": "if-file-deleted",
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    }
   },
   "devDependencies": {
     "mitata": "^1.0.34",
