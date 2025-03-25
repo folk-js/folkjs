@@ -1,6 +1,6 @@
 # Folk Canvas
 
-> ⚠️ This project is in an active research phase. It hasn't been published to NPM yet, but our work is open and you're more than welcome to take a look, poke around, and try things out.
+> ⚠️ This project is in an _active_ research phase. It hasn't been published to NPM yet, but our work is open and you're more than welcome to take a look, poke around, and try things out.
 
 ## Explorations
 
@@ -11,14 +11,6 @@
 - How can someone annotate, re-layout, and program web pages they did not make or distribute?
 - How can we compose visual programming interfaces, hypermedia, and LLMs that work on any web page?
 
-## Development
+## Contributing
 
-Install [NodeJS and NPM](https://nodejs.org/en/download).
-
-```bash
-npm i
-# then
-npm run build # this links the packages, only needs to be run once
-# then
-npm run dev
-```
+See [`CONTRIBUTING.md`](https://github.com/folk-systems/folk-canvas/blob/main/CONTRIBUTING.md).
