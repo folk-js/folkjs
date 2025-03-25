@@ -1,4 +1,4 @@
-import { ReactiveElement } from '@folkjs/lib/reactive-element';
+import { ReactiveElement } from '@folkjs/canvas/reactive-element';
 
 /**
  *  Base class for all custom elements. Extends Lit's `ReactiveElement` and adds some utilities for defining the element.

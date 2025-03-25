@@ -1,4 +1,4 @@
-import { Gizmos, Point, Vector } from '@folkjs/lib';
+import { Gizmos, Point, Vector } from '@folkjs/canvas';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 

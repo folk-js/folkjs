@@ -9,7 +9,7 @@
   "include": ["src/"],
   "references": [
     {
-      "path": "../lib"
+      "path": "../canvas"
     },
     {
       "path": "../propagators"

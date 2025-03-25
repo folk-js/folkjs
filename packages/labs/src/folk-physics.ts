@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier2d';
 import { TransformIntegrator } from '@folkjs/labs/EffectIntegrator';
-import { DOMRectTransform } from '@folkjs/lib';
-import { type PropertyValues } from '@folkjs/lib/reactive-element';
+import { DOMRectTransform } from '@folkjs/canvas';
+import { type PropertyValues } from '@folkjs/canvas/reactive-element';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 

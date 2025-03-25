@@ -1,6 +1,6 @@
-import type { Point } from '@folkjs/lib';
-import { verticesToPolygon } from '@folkjs/lib';
-import { PropertyValues, css } from '@folkjs/lib/reactive-element';
+import type { Point } from '@folkjs/canvas';
+import { verticesToPolygon } from '@folkjs/canvas';
+import { PropertyValues, css } from '@folkjs/canvas/reactive-element';
 import { FolkBaseSet } from './folk-base-set';
 
 declare global {

@@ -1,7 +1,7 @@
 import { getResizeCursorUrl, getRotateCursorUrl } from '@folkjs/labs/utils/cursors';
-import { FolkElement, type Point, round, toDOMPrecision, Vector } from '@folkjs/lib';
-import { css } from '@folkjs/lib/reactive-element';
-import { html } from '@folkjs/lib/tags';
+import { FolkElement, type Point, round, toDOMPrecision, Vector } from '@folkjs/canvas';
+import { css } from '@folkjs/canvas/reactive-element';
+import { html } from '@folkjs/canvas/tags';
 import { type FolkShapeAttribute } from './folk-shape-attribute';
 
 type ResizeHandle = 'resize-top-left' | 'resize-top-right' | 'resize-bottom-right' | 'resize-bottom-left';

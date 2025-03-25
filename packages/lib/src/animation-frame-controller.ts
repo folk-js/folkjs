@@ -1,4 +1,4 @@
-import { ReactiveController, ReactiveControllerHost } from '@folkjs/lib/reactive-element';
+import { ReactiveController, ReactiveControllerHost } from '@folkjs/canvas/reactive-element';
 import { cancelAnimationFrame, requestAnimationFrame } from './rAF';
 
 export interface AnimationFrameControllerHost extends ReactiveControllerHost {

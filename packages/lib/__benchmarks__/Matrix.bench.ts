@@ -1,4 +1,4 @@
-import { Matrix } from '@folkjs/lib/Matrix';
+import { Matrix } from '@folkjs/canvas/Matrix';
 import { bench, run } from 'mitata';
 
 const m1 = new Matrix(1, 2, 3, 4, 5, 6);

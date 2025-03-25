@@ -1,4 +1,4 @@
-import { IPointTransform, Point, satisfies } from '@folkjs/lib';
+import { IPointTransform, Point, satisfies } from '@folkjs/canvas';
 
 /**
  * A class that manages a stack of transformations and provides methods

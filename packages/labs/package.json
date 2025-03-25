@@ -32,7 +32,7 @@
     "typescript": "^5.8.2"
   },
   "dependencies": {
-    "@folkjs/lib": "workspace:*",
+    "@folkjs/canvas": "workspace:*",
     "@folkjs/propagators": "workspace:*",
     "@folkjs/geometry": "workspace:*"
   }

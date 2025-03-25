@@ -1,5 +1,5 @@
-import { DOMRectTransform, DOMRectTransformReadonly } from '@folkjs/lib/DOMRectTransform';
-import { Point } from '@folkjs/lib/types';
+import { DOMRectTransform, DOMRectTransformReadonly } from '@folkjs/canvas/DOMRectTransform';
+import { Point } from '@folkjs/canvas/types';
 import { describe, expect, test } from 'bun:test';
 
 // Helper for comparing points with floating point values

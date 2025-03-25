@@ -1,5 +1,5 @@
-import { FolkElement } from '@folkjs/lib';
-import { css, unsafeCSS } from '@folkjs/lib/reactive-element';
+import { FolkElement } from '@folkjs/canvas';
+import { css, unsafeCSS } from '@folkjs/canvas/reactive-element';
 import { LatLng, LatLngExpression, LeafletEvent, map, tileLayer } from 'leaflet';
 // @ts-ignore
 // Vite specific import :(

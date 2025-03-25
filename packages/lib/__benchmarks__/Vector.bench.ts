@@ -1,4 +1,4 @@
-import { Vector } from '@folkjs/lib/Vector';
+import { Vector } from '@folkjs/canvas/Vector';
 import { bench, run } from 'mitata';
 
 // Basic vector operations

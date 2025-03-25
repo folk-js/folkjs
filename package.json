@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "website"
   ],
   "scripts": {
     "dev": "vite",
@@ -13,9 +14,9 @@
     "preview": "bun run build && vite preview",
     "bench": "bun run _scripts_/benchmark.js",
     "types": "concurrently \"tsc --noEmit --skipLibCheck --skipDefaultLibCheck\" \"bun run types:packages\"",
-    "types:packages": "concurrently \"cd packages/lib && tsc --noEmit\" \"cd packages/geometry && tsc --noEmit\" \"cd packages/propagators && tsc --noEmit\" \"cd packages/labs && tsc --noEmit\"",
+    "types:packages": "concurrently \"cd packages/canvas && tsc --noEmit\" \"cd packages/geometry && tsc --noEmit\" \"cd packages/propagators && tsc --noEmit\" \"cd packages/labs && tsc --noEmit\"",
     "types:fix": "npx ts-autofix",
-    "build:packages": "(cd packages/lib && bun run build) && (cd packages/geometry && bun run build) && (cd packages/propagators && bun run build) && (cd packages/labs && bun run build)",
+    "build:packages": "(cd packages/canvas && bun run build) && (cd packages/geometry && bun run build) && (cd packages/propagators && bun run build) && (cd packages/labs && bun run build)",
     "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
     "dev:extension": "vite build packages/web-extension -w",
     "build:extension": "vite build packages/web-extension"

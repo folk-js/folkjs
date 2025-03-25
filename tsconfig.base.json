@@ -32,8 +32,8 @@
     "declarationMap": true,
     "baseUrl": ".",
     "paths": {
-      "@folkjs/lib": ["packages/lib/src"],
-      "@folkjs/lib/*": ["packages/lib/src/*"],
+      "@folkjs/canvas": ["packages/canvas/src"],
+      "@folkjs/canvas/*": ["packages/canvas/src/*"],
       "@folkjs/labs": ["packages/labs/src"],
       "@folkjs/labs/*": ["packages/labs/src/*"],
       "@folkjs/propagators": ["packages/propagators/src"],

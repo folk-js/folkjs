@@ -1,4 +1,4 @@
-import { CanIUse } from '@folkjs/lib';
+import { CanIUse } from '@folkjs/canvas';
 import { CreateMLCEngine, prebuiltAppConfig } from '@mlc-ai/web-llm';
 
 export type RolePrompt = {

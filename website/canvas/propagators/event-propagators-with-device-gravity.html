@@ -66,12 +66,12 @@ rotation: from.x"
     <folk-gizmos></folk-gizmos>
 
     <script type="module">
-      import { requestAnimationFrame } from '@folkjs/lib';
-      import { Vector } from '@folkjs/lib/Vector';
+      import { requestAnimationFrame } from '@folkjs/canvas';
+      import { Vector } from '@folkjs/canvas/Vector';
 
       import '@folkjs/labs/standalone/folk-shape.ts';
       import '@folkjs/labs/standalone/folk-event-propagator.ts';
-      import { Gizmos } from '@folkjs/lib/folk-gizmos';
+      import { Gizmos } from '@folkjs/canvas/folk-gizmos';
 
       const ropes = Array.from(document.querySelectorAll('folk-event-propagator'));
       let orientationEvent;

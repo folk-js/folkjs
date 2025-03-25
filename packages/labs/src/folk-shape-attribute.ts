@@ -8,7 +8,7 @@ import {
   ResizeManager,
   toDOMPrecision,
   TransformEvent,
-} from '@folkjs/lib';
+} from '@folkjs/canvas';
 import { FolkShapeOverlay } from './folk-shape-overlay';
 
 declare global {

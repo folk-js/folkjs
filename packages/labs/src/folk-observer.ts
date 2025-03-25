@@ -1,6 +1,6 @@
 import { FolkShape } from '@folkjs/labs/folk-shape';
-import { ClientRectObserver, type ClientRectObserverEntry } from '@folkjs/lib/client-rect-observer';
-import { TransformEvent } from '@folkjs/lib/TransformEvent';
+import { ClientRectObserver, type ClientRectObserverEntry } from '@folkjs/canvas/client-rect-observer';
+import { TransformEvent } from '@folkjs/canvas/TransformEvent';
 
 export type FolkObserverEntry = (entry: ClientRectObserverEntry) => void;
 

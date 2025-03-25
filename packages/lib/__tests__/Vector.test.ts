@@ -1,4 +1,4 @@
-import { Vector } from '@folkjs/lib/Vector';
+import { Vector } from '@folkjs/canvas/Vector';
 import { describe, expect, test } from 'bun:test';
 
 describe('Vector', () => {

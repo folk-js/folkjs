@@ -1,4 +1,4 @@
-import { css } from '@folkjs/lib/tags';
+import { css } from '@folkjs/canvas/tags';
 
 // hardcoded column and row numbers
 const styles = css`

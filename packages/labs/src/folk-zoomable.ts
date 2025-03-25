@@ -1,4 +1,4 @@
-import { css, CustomAttribute, customAttributes, Matrix, toDOMPrecision } from '@folkjs/lib';
+import { css, CustomAttribute, customAttributes, Matrix, toDOMPrecision } from '@folkjs/canvas';
 import { FolkShapeAttribute, ShapeConnectedEvent, ShapeDisconnectedEvent } from './folk-shape-attribute';
 
 declare global {

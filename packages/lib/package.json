@@ -1,7 +1,7 @@
 {
-  "name": "@folkjs/lib",
+  "name": "@folkjs/canvas",
   "version": "0.0.1",
-  "description": "FolkJS Library",
+  "description": "FolkJS Canvas ",
   "keywords": [
     "matrix",
     "matrices",

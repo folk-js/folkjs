@@ -1,1 +1,1 @@
-# @folkjs/lib
+# @folkjs/canvas
