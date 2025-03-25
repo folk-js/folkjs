@@ -1,5 +1,5 @@
-import { readdirSync, existsSync } from 'fs';
-import { join, resolve } from 'path';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 /**
  * Runs benchmarks in a specific directory
@@ -12,8 +12,8 @@ async function runDirBenchmarks(dirPath, extension = '.bench.ts') {
     return;
   }
 
-  const benchFiles = readdirSync(dirPath).filter(file => file.endsWith(extension));
-  
+  const benchFiles = readdirSync(dirPath).filter((file) => file.endsWith(extension));
+
   if (benchFiles.length === 0) {
     console.log(`No benchmark files found in ${dirPath}`);
     return;
@@ -21,7 +21,7 @@ async function runDirBenchmarks(dirPath, extension = '.bench.ts') {
 
   console.log(`\nRunning ${benchFiles.length} benchmark(s) in ${dirPath}`);
   console.log('='.repeat(50));
-  
+
   for (const file of benchFiles) {
     console.log(`\n→ Running ${file}...`);
     try {
@@ -37,12 +37,12 @@ async function runDirBenchmarks(dirPath, extension = '.bench.ts') {
  */
 async function main() {
   const targetDir = process.argv[2];
-  
+
   // If a target directory is specified, just run benchmarks there
   if (targetDir) {
     const path = resolve(targetDir);
     const benchDir = join(path, '__benchmarks__');
-    
+
     if (existsSync(benchDir)) {
       await runDirBenchmarks(benchDir);
     } else {
@@ -51,31 +51,29 @@ async function main() {
     }
     return;
   }
-  
+
   // Otherwise run benchmarks in all packages that have them
   const packagesDir = join(process.cwd(), 'packages');
   if (!existsSync(packagesDir)) {
-    console.error("Packages directory not found");
+    console.error('Packages directory not found');
     return;
   }
-  
-  const packages = readdirSync(packagesDir).filter(pkg => {
+
+  const packages = readdirSync(packagesDir).filter((pkg) => {
     const pkgPath = join(packagesDir, pkg);
     const pkgJsonPath = join(pkgPath, 'package.json');
     const benchDir = join(pkgPath, '__benchmarks__');
-    
-    return existsSync(pkgPath) && 
-           existsSync(pkgJsonPath) && 
-           existsSync(benchDir);
+
+    return existsSync(pkgPath) && existsSync(pkgJsonPath) && existsSync(benchDir);
   });
-  
+
   if (packages.length === 0) {
-    console.log("No packages with benchmarks found");
+    console.log('No packages with benchmarks found');
     return;
   }
-  
+
   console.log(`Found ${packages.length} package(s) with benchmarks`);
-  
+
   for (const pkg of packages) {
     const benchDir = join(packagesDir, pkg, '__benchmarks__');
     console.log(`\nPackage: ${pkg}`);
@@ -83,4 +81,4 @@ async function main() {
   }
 }
 
-main().catch(err => console.error("Benchmark error:", err));
+main().catch((err) => console.error('Benchmark error:', err));
