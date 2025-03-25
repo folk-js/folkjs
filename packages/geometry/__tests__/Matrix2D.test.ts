@@ -7,19 +7,19 @@ describe('Matrix2D', () => {
   test('rotate', () => {
     const m = M.rotate(M.fromValues(1, 2, 3, 4, 5, 6), PI / 2);
 
-    expect(M.equals(m, M.fromValues(3, 4, -1, -2, 5))).toBe(true);
+    expect(m).toBe(M.fromValues(3, 4, -1, -2, 6));
   });
 
   test('scale', () => {
     const m = M.scale(M.fromValues(1, 2, 3, 4, 5, 6), 2, 3);
 
-    expect(M.equals(m, M.fromValues(2, 4, 9, 12, 5, 6))).toBe(true);
+    expect(m).toBe(M.fromValues(2, 4, 9, 12, 5, 6));
   });
 
   test('translate', () => {
     const m = M.translate(M.fromValues(1, 2, 3, 4, 5, 6), 2, 3);
 
-    expect(M.equals(m, M.fromValues(1, 2, 3, 4, 16, 22))).toBe(true);
+    expect(m).toBe(M.fromValues(1, 2, 3, 4, 16, 22));
   });
 
   test('invert', () => {

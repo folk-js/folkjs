@@ -54,7 +54,8 @@
       ],
       "files": [
         "__tests__/*.test.ts"
-      ]
+      ],
+      "output": []
     }
   },
   "devDependencies": {
