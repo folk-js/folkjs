@@ -4,34 +4,40 @@ Here are the steps you need to do to get started:
 
 1. Install [NodeJS v22+ and NPM](https://nodejs.org/en/download).
 
-2. Clone the [repository](https://github.com/folk-systems/folk-canvas).
-
-3. Install the deps
+2. Setup
 
 ```bash
+# Clone the repository (https://github.com/folk-systems/folk-canvas).
+git clone https://github.com/folk-systems/folk-canvas.git
+
+cd folk-canvas
+
+# Install dependencies
 npm i
 ```
 
-3. Develop/build/test
+3. Develop/test/build
 
 ```bash
 # run the dev server
 npm run dev
 
-# or build the packages and website
-npm run build
-
 # or run the test suites
 npm run test
+
+# or build the packages and website
+npm run build
 ```
 
 ## Monorepo
 
-This is a monorepo so there are multiple NPM packages that depend on each other. We are using [wireit](https://github.com/google/wireit) to handle dependencies that arise during development/building/testing.
+This monorepo uses [NPM workspaces](https://docs.npmjs.com/cli/v7/using-npm/workspaces) and [wireit](https://github.com/google/wireit).
+
+The main thing to know about
 
 ## Testing
 
-We are using the NodeJS test runner to run tests. If you run the tests in the `JavaScript Debug Terminal` in VSCode then you can add breakpoints in the gutter of the file to debug and examine execution values. In the future we will setup in-browser testing.
+We are using the [NodeJS test runner](https://nodejs.org/en/learn/test-runner/using-test-runner) to run tests. If you run the tests in the `JavaScript Debug Terminal` in VSCode then you can add breakpoints in the gutter of the file to debug and examine execution values. In the future we will setup in-browser testing.
 
 ## Benchmarking
 
