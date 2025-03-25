@@ -45,14 +45,26 @@ function getCurrentCommit() {
   }
 }
 
+// Check if we're running in CI
+function isInGithubAction() {
+  return Boolean(
+    process.env.CI || // Standard CI environment variable
+      process.env.GITHUB_ACTIONS || // GitHub Actions specific
+      process.env.GITHUB_WORKFLOW, // Also GitHub Actions specific
+  );
+}
+
 export async function runBenchmarks() {
-  // If not in GitHub Actions, just run normally and return
-  // if (!process.env.GITHUB_ACTIONS) {
-  //   const results = await mitataRun();
-  //   return results;
-  // }
+  const inGithubAction = isInGithubAction();
+
+  // If not in a github action, run normally
+  if (!inGithubAction) {
+    const results = await mitataRun();
+    return results;
+  }
 
   const { benchmarks } = await mitataRun();
+  console.log(`Completed ${benchmarks.length} benchmarks`);
 
   const cleanResults = benchmarks
     .map((bench) => {
@@ -98,9 +110,13 @@ export async function runBenchmarks() {
       // Try to read existing history from the benchmark repo
       history = JSON.parse(readFileSync(resultsPath, 'utf8'));
       console.log(`Loaded existing benchmark history from ${resultsPath}`);
-    } catch {
-      // File doesn't exist or is invalid, start fresh
-      console.log(`Creating new benchmark history at ${resultsPath}`);
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        console.log(`Creating new benchmark history at ${resultsPath}`);
+      } else {
+        console.error(`Error reading benchmark history: ${error.message}`);
+        console.log('Starting fresh benchmark history');
+      }
     }
 
     // Initialize structure if needed
@@ -125,6 +141,9 @@ export async function runBenchmarks() {
     console.log(`Successfully wrote benchmark results for ${packageName}/${benchmarkFile} to ${resultsPath}`);
   } catch (error) {
     console.error('Failed to save benchmark results:', error);
+    // In CI, we want to fail the build if we can't save results
+    console.error('Failing CI build due to error saving benchmark results');
+    process.exit(1);
   }
 
   return benchmarks;
