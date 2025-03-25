@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
 
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmark:
     runs-on: ubuntu-latest
@@ -50,6 +55,9 @@ jobs:
           cd folk-canvas-stats
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Pull latest changes before pushing
+          git pull origin main
 
           if [[ -n "$(git status --porcelain)" ]]; then
             echo "Changes detected in benchmark results"
