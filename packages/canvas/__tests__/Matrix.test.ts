@@ -1,4 +1,4 @@
-import { Matrix } from '@folkjs/canvas/Matrix';
+import { Matrix } from '../src/Matrix';
 import { describe, expect, test } from 'bun:test';
 
 describe('Matrix', () => {

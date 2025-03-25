@@ -1,4 +1,6 @@
-import { IPointTransform, Point, satisfies } from '@folkjs/canvas';
+import { satisfies } from "./interfaces/InterfaceKey";
+import { IPointTransform } from "./interfaces/IPointTransform";
+import { Point } from "./types";
 
 /**
  * A class that manages a stack of transformations and provides methods
