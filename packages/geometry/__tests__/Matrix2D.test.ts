@@ -3,29 +3,37 @@ import { describe, test } from 'node:test';
 import * as M from '../src/Matrix2D.ts';
 import { PI } from '../src/utilities.ts';
 
+const expectMatrixClose = (actual: M.Matrix2D, expected: M.Matrix2D) => {
+  expect(actual.a).toBeCloseTo(expected.a);
+  expect(actual.b).toBeCloseTo(expected.b);
+  expect(actual.c).toBeCloseTo(expected.c);
+  expect(actual.d).toBeCloseTo(expected.d);
+  expect(actual.e).toBeCloseTo(expected.e);
+  expect(actual.f).toBeCloseTo(expected.f);
+};
+
 describe('Matrix2D', () => {
   test('rotate', () => {
     const m = M.rotate(M.fromValues(1, 2, 3, 4, 5, 6), PI / 2);
-
-    expect(m).toBe(M.fromValues(3, 4, -1, -2, 6));
+    expectMatrixClose(m, M.fromValues(3, 4, -1, -2, 5, 6));
   });
 
   test('scale', () => {
     const m = M.scale(M.fromValues(1, 2, 3, 4, 5, 6), 2, 3);
 
-    expect(m).toBe(M.fromValues(2, 4, 9, 12, 5, 6));
+    expectMatrixClose(m, M.fromValues(2, 4, 9, 12, 5, 6));
   });
 
   test('translate', () => {
     const m = M.translate(M.fromValues(1, 2, 3, 4, 5, 6), 2, 3);
 
-    expect(m).toBe(M.fromValues(1, 2, 3, 4, 16, 22));
+    expectMatrixClose(m, M.fromValues(1, 2, 3, 4, 16, 22));
   });
 
   test('invert', () => {
     const m = M.invert(M.fromValues(1, 2, 3, 4, 5, 6));
 
-    expect(m).toStrictEqual(M.fromValues(-2, 1, 1.5, -0.5, 1, -2));
+    expectMatrixClose(m, M.fromValues(-2, 1, 1.5, -0.5, 1, -2));
   });
 
   test('determinant', () => {
