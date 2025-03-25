@@ -7,7 +7,7 @@
     "website"
   ],
   "scripts": {
-    "bench": "node run _scripts_/benchmark.js",
+    "bench": "node --experimental-strip-types _scripts_/benchmark.js",
     "build": "",
     "clean": "find . -name 'dist' -o -name 'node_modules' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
     "test": ""

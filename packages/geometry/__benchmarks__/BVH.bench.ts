@@ -1,6 +1,6 @@
 import { bench, run } from 'mitata';
+import type { BVHNode } from '../src/BoundingVolumeHierarchy.ts';
 import * as BVH from '../src/BoundingVolumeHierarchy.ts';
-import { BVHNode } from '../src/BoundingVolumeHierarchy.ts';
 import { Rect2D } from '../src/Rect2D.ts';
 
 function createRandomShapes(length: number): Rect2D[] {
