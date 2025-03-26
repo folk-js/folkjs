@@ -1,5 +1,4 @@
 import { bench, do_not_optimize, run } from '@folkjs/repo-utils';
-import type { BVHNode } from '../src/BoundingVolumeHierarchy.ts';
 import * as BVH from '../src/BoundingVolumeHierarchy.ts';
 import type { Rect2D } from '../src/Rect2D.ts';
 
@@ -24,34 +23,34 @@ bench('BVH: collsion 3 shapes', () => {
 }).gc('inner');
 
 const shapes100 = createRandomShapes(100);
-let bvh100: BVHNode;
 
 bench('BVH: instantiate 100 shapes', () => {
-  do_not_optimize((bvh100 = BVH.fromRects(shapes100)));
+  do_not_optimize(BVH.fromRects(shapes100));
 }).gc('inner');
 
+const bvh100 = BVH.fromRects(shapes100);
 bench('BVH: check collsion 100 shapes', () => {
   do_not_optimize(BVH.intersections(bvh100, shapes100[0]));
 }).gc('inner');
 
 const shapes1000 = createRandomShapes(1000);
-let bvh1000: BVHNode;
 
 bench('BVH: instantiate 1000 shapes', () => {
-  do_not_optimize((bvh1000 = BVH.fromRects(shapes1000)));
+  do_not_optimize(BVH.fromRects(shapes1000));
 }).gc('inner');
 
+const bvh1000 = BVH.fromRects(shapes1000);
 bench('BVH: check collsion 1000 shapes', () => {
   do_not_optimize(BVH.intersections(bvh1000, shapes1000[0]));
 }).gc('inner');
 
 const shapes10000 = createRandomShapes(10000);
-let bvh10000: BVHNode;
 
 bench('BVH: instantiate 10000 shapes', () => {
-  do_not_optimize((bvh10000 = BVH.fromRects(shapes10000)));
+  do_not_optimize(BVH.fromRects(shapes10000));
 }).gc('inner');
 
+const bvh10000 = BVH.fromRects(shapes10000);
 bench('BVH: check collsion 10000 shapes', () => {
   do_not_optimize(BVH.intersections(bvh10000, shapes10000[0]));
 }).gc('inner');

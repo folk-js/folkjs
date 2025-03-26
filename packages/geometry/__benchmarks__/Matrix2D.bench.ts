@@ -1,4 +1,4 @@
-import { bench, run } from '@folkjs/repo-utils';
+import { bench, do_not_optimize, run } from '@folkjs/repo-utils';
 import {
   applyToPoint,
   applyToPoints,
@@ -36,120 +36,120 @@ const m1 = fromValues(1, 2, 3, 4, 5, 6);
 const m2 = fromValues(7, 8, 9, 10, 11, 12);
 
 bench('Matrix2D.applyToPoint', () => {
-  applyToPoint(m1, { x: 1, y: 1 });
-});
+  do_not_optimize(applyToPoint(m1, { x: 1, y: 1 }));
+}).gc('inner');
 
 bench('Matrix2D.applyToPoints', () => {
-  applyToPoints(m1, [{ x: 1, y: 1 }]);
-});
+  do_not_optimize(applyToPoints(m1, [{ x: 1, y: 1 }]));
+}).gc('inner');
 
 bench('Matrix2D.compose', () => {
-  compose(m1, m2);
-});
+  do_not_optimize(compose(m1, m2));
+}).gc('inner');
 
 bench('Matrix2D.decompose', () => {
-  decompose(m1);
-});
+  do_not_optimize(decompose(m1));
+}).gc('inner');
 
 bench('Matrix2D.determinant', () => {
-  determinant(m1);
-});
+  do_not_optimize(determinant(m1));
+}).gc('inner');
 
 bench('Matrix2D.equals', () => {
-  equals(m1, m1);
-});
+  do_not_optimize(equals(m1, m1));
+}).gc('inner');
 
 bench('Matrix2D.exactlyEqual', () => {
-  exactlyEqual(m1, m1);
-});
+  do_not_optimize(exactlyEqual(m1, m1));
+}).gc('inner');
 
 bench('Matrix2D.fromMatrix2D', () => {
-  fromMatrix2D(m1);
-});
+  do_not_optimize(fromMatrix2D(m1));
+}).gc('inner');
 
 bench('Matrix2D.fromRotate', () => {
-  fromRotate(0.707);
-});
+  do_not_optimize(fromRotate(0.707));
+}).gc('inner');
 
 bench('Matrix2D.fromScale', () => {
-  fromScale(2);
-});
+  do_not_optimize(fromScale(2));
+}).gc('inner');
 
 bench('Matrix2D.fromTranslate', () => {
-  fromTranslate(10, 15);
-});
+  do_not_optimize(fromTranslate(10, 15));
+}).gc('inner');
 
 bench('Matrix2D.fromValues identify', () => {
-  fromValues();
-});
+  do_not_optimize(fromValues());
+}).gc('inner');
 
 bench('Matrix2D.fromValues', () => {
-  fromValues(1, 2, 3, 4, 5, 6);
-});
+  do_not_optimize(fromValues(1, 2, 3, 4, 5, 6));
+}).gc('inner');
 
 bench('Matrix2D.identitySelf', () => {
-  identitySelf(m1);
-});
+  do_not_optimize(identitySelf(m1));
+}).gc('inner');
 
 bench('Matrix2D.invert', () => {
-  invert(m1);
-});
+  do_not_optimize(invert(m1));
+}).gc('inner');
 
 bench('Matrix2D.invertSelf', () => {
-  invertSelf(m1);
-});
+  do_not_optimize(invertSelf(m1));
+}).gc('inner');
 
 bench('Matrix2D.lerp', () => {
-  lerp(m1, m2, 0.5);
-});
+  do_not_optimize(lerp(m1, m2, 0.5));
+}).gc('inner');
 
 bench('Matrix2D.multiply', () => {
-  multiply(m1, m2);
-});
+  do_not_optimize(multiply(m1, m2));
+}).gc('inner');
 
 bench('Matrix2D.multiplySelf', () => {
-  multiplySelf(m1, m2);
-});
+  do_not_optimize(multiplySelf(m1, m2));
+}).gc('inner');
 
 bench('Matrix2D.recompose', () => {
-  recompose({ x: 10, y: 10, scaleX: 1.2, scaleY: 5, rotation: 0.707 });
-});
+  do_not_optimize(recompose({ x: 10, y: 10, scaleX: 1.2, scaleY: 5, rotation: 0.707 }));
+}).gc('inner');
 
 bench('Matrix2D.rotate', () => {
-  rotate(m1, 0.707);
-});
+  do_not_optimize(rotate(m1, 0.707));
+}).gc('inner');
 
 bench('Matrix2D.rotateSelf', () => {
-  rotateSelf(m1, 0.707);
-});
+  do_not_optimize(rotateSelf(m1, 0.707));
+}).gc('inner');
 
 bench('Matrix2D.rotation', () => {
-  rotation(m1);
-});
+  do_not_optimize(rotation(m1));
+}).gc('inner');
 
 bench('Matrix2D.scale', () => {
-  scale(m1, 0.5, 0.5);
-});
+  do_not_optimize(scale(m1, 0.5, 0.5));
+}).gc('inner');
 
 bench('Matrix2D.scaleSelf', () => {
-  scaleSelf(m1, 0.1, 0.2);
-});
+  do_not_optimize(scaleSelf(m1, 0.1, 0.2));
+}).gc('inner');
 
 bench('Matrix2D.toCSSString', () => {
-  toCSSString(m1);
-});
+  do_not_optimize(toCSSString(m1));
+}).gc('inner');
 
 bench('Matrix2D.toPoint', () => {
-  toPoint(m1);
-});
+  do_not_optimize(toPoint(m1));
+}).gc('inner');
 
 bench('Matrix2D.translate', () => {
-  translate(m1, 10, 10);
-});
+  do_not_optimize(translate(m1, 10, 10));
+}).gc('inner');
 
 bench('Matrix2D.translateSelf', () => {
-  translateSelf(m1, 10, 10);
-});
+  do_not_optimize(translateSelf(m1, 10, 10));
+}).gc('inner');
 
 bench('Matrix2D multiple transformations', () => {
   const transformOrigin = { x: 5, y: 6 };
@@ -161,6 +161,6 @@ bench('Matrix2D multiple transformations', () => {
   translateSelf(mt, -transformOrigin.x, -transformOrigin.y);
   copy(mi, mt);
   invertSelf(mi);
-});
+}).gc('inner');
 
 await run();
