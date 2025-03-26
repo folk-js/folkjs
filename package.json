@@ -7,7 +7,7 @@
     "website"
   ],
   "scripts": {
-    "bench": "node --experimental-strip-types packages/repo-utils/dist/benchmark.js",
+    "bench": "node --expose-gc --experimental-strip-types __scripts__/benchmark.ts",
     "build": "npm run build --workspaces",
     "dev": "npm run dev -w website --watch",
     "clean": "find . -name 'dist' -o -name 'node_modules' -o -name '.wireit' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
