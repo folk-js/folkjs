@@ -8,7 +8,6 @@ const CONFIG = {
   hiddenPrefix: '_',
   indexFilename: 'index.html',
   htmlExtension: '.html',
-  canvasPath: 'canvas',
   templateMarker: '{{ LINKS }}',
 };
 
@@ -56,8 +55,7 @@ export function getCanvasFiles(baseDir: string): CanvasFile[] {
  * Generate a link for a canvas file
  */
 function formatLink(file: CanvasFile): string {
-  const url = `./${file.relativePath.replace(CONFIG.htmlExtension, '')}`;
-  return `<li><a href="${url}">${file.displayName}</a></li>`;
+  return `<li><a href="/canvas/${file.relativePath}">${file.displayName}</a></li>`;
 }
 
 /**
@@ -86,7 +84,7 @@ export const linkGenerator = (baseDir: string): Plugin => {
     name: 'link-generator',
     transformIndexHtml(html: string, ctx: IndexHtmlTransformContext) {
       // Only process canvas/index.html
-      if (!ctx.filename.includes(join(CONFIG.canvasPath, CONFIG.indexFilename))) {
+      if (!ctx.filename.endsWith('/website/index.html')) {
         return html;
       }
 
