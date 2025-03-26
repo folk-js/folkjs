@@ -88,12 +88,12 @@ const DELIMITERS = {
   PAIRS_ITEM: ';',
 };
 
-interface Header<T extends string> {
+interface StringEncoding<T extends string> {
   decode: (input: string) => HeaderData<T> | null;
   encode: (data: HeaderData<T>) => string;
 }
 
-export function header<T extends string>(pattern: T): Expand<Header<T>> {
+export function encodeString<T extends string>(pattern: T): Expand<StringEncoding<T>> {
   const { staticParts, patterns, hasFixedHeader, hasDollarDelimiter } = parseTemplate(pattern);
 
   // Calculate fixed header length if needed
@@ -235,7 +235,7 @@ export function header<T extends string>(pattern: T): Expand<Header<T>> {
       // Cast back to clean public interface
       return result as HeaderData<T>;
     },
-  } as Expand<Header<T>>;
+  } as Expand<StringEncoding<T>>;
 }
 
 function extractPatternValue(

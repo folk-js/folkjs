@@ -1,6 +1,6 @@
 import EventEmitter from 'eventemitter3';
 import { GGWave } from './ggwave';
-import { header } from './utils/header';
+import { encodeString } from './utils/encodeString';
 
 /**
  * QRTP-B - QR Transfer Protocol with Audio Backchannel
@@ -19,8 +19,8 @@ export class QRTPB extends EventEmitter {
   #currentIndex: number = 0; // Current chunk index being displayed
   #receivedIndices: Set<number> = new Set(); // Indices that have been received
   #acknowledgedIndices: Set<number> = new Set(); // Indices already acknowledged via audio
-  #header = header('QRTPB<index:num>/<total:num>');
-  #ackHeader = header('QB<ranges:numPairs>');
+  #header = encodeString('QRTPB<index:num>/<total:num>');
+  #ackHeader = encodeString('QB<ranges:numPairs>');
   #cycleTimer: ReturnType<typeof setInterval> | null = null;
   #audioWave: GGWave | null = null;
   #audioAckTimer: ReturnType<typeof setInterval> | null = null; // Timer for periodic audio acknowledgments
