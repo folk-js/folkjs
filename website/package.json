@@ -11,7 +11,7 @@
   },
   "wireit": {
     "build": {
-      "command": "tsc --build --pretty && vite build --base /folk-canvas",
+      "command": "tsc --build --pretty && vite build",
       "dependencies": [
         "../packages/canvas:build",
         "../packages/labs:build"
