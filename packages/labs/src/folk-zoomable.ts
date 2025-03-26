@@ -1,4 +1,6 @@
 import { css, CustomAttribute, customAttributes, Matrix, toDOMPrecision } from '@folkjs/canvas';
+import * as BVH from '@folkjs/geometry/BoundingVolumeHierarchy';
+import type { Rect2D } from 'packages/geometry/dist/Rect2D';
 import { FolkShapeAttribute, ShapeConnectedEvent, ShapeDisconnectedEvent } from './folk-shape-attribute';
 
 declare global {
@@ -84,6 +86,22 @@ export class FolkZoomable extends CustomAttribute {
   }
 
   #matrix = new Matrix();
+
+  #bvh: BVH.BVHNode | null = null;
+
+  get bvh(): BVH.BVHNodeReadonly {
+    if (this.#bvh === null) {
+      const bounds: Rect2D[] = [];
+
+      this.#shapes.forEach((shape) => {
+        bounds.push(shape.bounds);
+      });
+
+      this.#bvh = BVH.fromRects(bounds);
+    }
+
+    return this.#bvh;
+  }
 
   get x() {
     return this.#matrix.e;
@@ -235,11 +253,19 @@ export class FolkZoomable extends CustomAttribute {
 
   #onShapeConnected = (event: ShapeConnectedEvent) => {
     this.#shapes.add(event.shape);
+    this.#bvh = null;
+    event.shape.ownerElement.addEventListener('transform', this.#onShapeTransform);
     event.registerSpace(this);
   };
 
   #onShapeDisconnected = (event: ShapeDisconnectedEvent) => {
+    event.shape.ownerElement.removeEventListener('transform', this.#onShapeTransform);
     this.#shapes.delete(event.shape);
+    this.#bvh = null;
+  };
+
+  #onShapeTransform = () => {
+    this.#bvh = null;
   };
 
   applyChange(panX = 0, panY = 0, scaleDiff = 1, originX = 0, originY = 0) {

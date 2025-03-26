@@ -10,6 +10,17 @@ export interface Rect2D {
   height: number;
 }
 
+export function fromValues(x = 0, y = 0, width = 0, height = 0): Rect2D {
+  return { x, y, width, height };
+}
+
+export function center(rect: Rect2D) {
+  return {
+    x: rect.x + rect.width * 0.5,
+    y: rect.y + rect.height * 0.5,
+  };
+}
+
 export type Hit = Readonly<{
   /** The point of contact between the two objects. */
   pos: Vector2;
@@ -21,13 +32,6 @@ export type Hit = Readonly<{
 
 export function fromHit(pos = V.zero(), delta = V.zero(), normal = V.zero()) {
   return { pos, delta, normal };
-}
-
-export function center(rect: Rect2D) {
-  return {
-    x: rect.x + rect.width * 0.5,
-    y: rect.y + rect.height * 0.5,
-  };
 }
 
 export function hitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly): Hit | null {

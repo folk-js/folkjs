@@ -14,6 +14,7 @@
       "command": "tsc --build --pretty && vite build",
       "dependencies": [
         "../packages/canvas:build",
+        "../packages/geometry:build",
         "../packages/labs:build"
       ],
       "files": [
@@ -37,6 +38,10 @@
           "cascade": false
         },
         {
+          "script": "../packages/geometry:build",
+          "cascade": false
+        },
+        {
           "script": "../packages/labs:build",
           "cascade": false
         }
@@ -52,6 +57,7 @@
   },
   "dependencies": {
     "@folkjs/canvas": "^0.0.1",
+    "@folkjs/geometry": "^0.0.1",
     "@folkjs/labs": "^0.0.1",
     "ink-mde": "^0.34.0",
     "remark-html": "^16.0.1",

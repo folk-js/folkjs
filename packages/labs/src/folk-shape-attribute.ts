@@ -1,15 +1,75 @@
-import {
-  css,
-  CustomAttribute,
-  customAttributes,
-  DOMRectTransform,
-  Matrix,
-  type Point,
-  ResizeManager,
-  toDOMPrecision,
-  TransformEvent,
-} from '@folkjs/canvas';
+import { css, CustomAttribute, customAttributes, ResizeManager } from '@folkjs/canvas';
+import type { Shape2DReadonly } from '@folkjs/geometry/Shape2D';
+import * as S from '@folkjs/geometry/Shape2D';
+import type { Vector2 } from '@folkjs/geometry/Vector2';
+import { toDOMPrecision } from '@folkjs/geometry/utilities';
 import { FolkShapeOverlay } from './folk-shape-overlay';
+
+declare global {
+  interface ElementEventMap {
+    transform2: TransformEvent;
+  }
+}
+
+// TODO: expose previous and current rects
+export class TransformEvent extends Event {
+  readonly #current: Shape2DReadonly;
+  readonly #previous: Shape2DReadonly;
+
+  constructor(current: Shape2DReadonly, previous: Shape2DReadonly) {
+    super('transform', { cancelable: true, bubbles: true });
+    this.#current = current;
+    this.#previous = previous;
+  }
+
+  get current() {
+    return this.#current;
+  }
+
+  get previous() {
+    return this.#previous;
+  }
+
+  #xPrevented = false;
+  get xPrevented() {
+    return this.defaultPrevented || this.#xPrevented;
+  }
+  preventX() {
+    this.#xPrevented = true;
+  }
+
+  #yPrevented = false;
+  get yPrevented() {
+    return this.defaultPrevented || this.#yPrevented;
+  }
+  preventY() {
+    this.#yPrevented = true;
+  }
+
+  #heightPrevented = false;
+  get heightPrevented() {
+    return this.defaultPrevented || this.#heightPrevented;
+  }
+  preventHeight() {
+    this.#heightPrevented = true;
+  }
+
+  #widthPrevented = false;
+  get widthPrevented() {
+    return this.defaultPrevented || this.#widthPrevented;
+  }
+  preventWidth() {
+    this.#widthPrevented = true;
+  }
+
+  #rotationPrevented = false;
+  get rotationPrevented() {
+    return this.defaultPrevented || this.#rotationPrevented;
+  }
+  preventRotate() {
+    this.#rotationPrevented = true;
+  }
+}
 
 declare global {
   interface Element {
@@ -119,26 +179,26 @@ export class FolkShapeAttribute extends CustomAttribute {
   #autoPosition = false;
   #autoHeight = false;
   #autoWidth = false;
-  #previousRect = new DOMRectTransform();
-  #rect = new DOMRectTransform();
+  #previousShape = S.fromValues();
+  #shape = S.fromValues();
 
   get x(): number {
-    return this.#rect.x;
+    return this.#shape.x;
   }
   set x(value: number) {
     this.autoPosition = false;
-    this.#previousRect.x = this.#rect.x;
-    this.#rect.x = value;
+    this.#previousShape.x = this.#shape.x;
+    this.#shape.x = value;
     this.#requestUpdate();
   }
 
   get y(): number {
-    return this.#rect.y;
+    return this.#shape.y;
   }
   set y(value: number) {
     this.autoPosition = false;
-    this.#previousRect.y = this.#rect.y;
-    this.#rect.y = value;
+    this.#previousShape.y = this.#shape.y;
+    this.#shape.y = value;
     this.#requestUpdate();
   }
 
@@ -152,19 +212,19 @@ export class FolkShapeAttribute extends CustomAttribute {
     if (this.#autoPosition) {
       const el = this.ownerElement as HTMLElement;
       el.style.display = '';
-      this.#previousRect.x = this.#rect.x;
-      this.#previousRect.y = this.#rect.y;
+      this.#previousShape.x = this.#shape.x;
+      this.#previousShape.y = this.#shape.y;
       // this is broken, we need update the attribute value and relayout before we can apply these values
-      this.#rect.x = el.offsetLeft;
-      this.#rect.y = el.offsetTop;
+      this.#shape.x = el.offsetLeft;
+      this.#shape.y = el.offsetTop;
 
       // Inline elements dont work with the
       if (this.#autoWidth) {
-        this.#rect.width = el.offsetWidth;
+        this.#shape.width = el.offsetWidth;
       }
 
       if (this.#autoHeight) {
-        this.#rect.height = el.offsetHeight;
+        this.#shape.height = el.offsetHeight;
       }
 
       this.#requestUpdate();
@@ -174,12 +234,12 @@ export class FolkShapeAttribute extends CustomAttribute {
   }
 
   get width(): number {
-    return this.#rect.width;
+    return this.#shape.width;
   }
   set width(value: number) {
     this.autoWidth = false;
-    this.#previousRect.width = this.#rect.width;
-    this.#rect.width = value;
+    // this.#previousRect.width = this.#shape.width;
+    this.#shape.width = value;
     this.#requestUpdate();
   }
 
@@ -200,19 +260,19 @@ export class FolkShapeAttribute extends CustomAttribute {
     if (this.#autoWidth) {
       const el = this.ownerElement as HTMLElement;
       el.style.width = '';
-      this.#previousRect.width = this.#rect.width;
-      this.#rect.width = el.offsetWidth;
+      this.#previousShape.width = this.#shape.width;
+      this.#shape.width = el.offsetWidth;
       this.#requestUpdate();
     }
   }
 
   get height(): number {
-    return this.#rect.height;
+    return this.#shape.height;
   }
   set height(value: number) {
     this.autoHeight = false;
-    this.#previousRect.height = this.#rect.height;
-    this.#rect.height = value;
+    this.#previousShape.height = this.#shape.height;
+    this.#shape.height = value;
     this.#requestUpdate();
   }
 
@@ -233,138 +293,77 @@ export class FolkShapeAttribute extends CustomAttribute {
     if (this.#autoHeight) {
       const el = this.ownerElement as HTMLElement;
       el.style.height = '';
-      this.#previousRect.height = this.#rect.height;
-      this.#rect.height = el.offsetWidth;
+      this.#previousShape.height = this.#shape.height;
+      this.#shape.height = el.offsetWidth;
       this.#requestUpdate();
     }
   }
 
   get rotation(): number {
-    return this.#rect.rotation;
+    return this.#shape.rotation;
   }
   set rotation(value: number) {
-    this.#previousRect.rotation = this.#rect.rotation;
-    this.#rect.rotation = value;
+    this.#previousShape.rotation = this.#shape.rotation;
+    this.#shape.rotation = value;
     this.#requestUpdate();
   }
 
-  get transformOrigin(): Point {
-    return this.#rect.transformOrigin;
-  }
-  set transformOrigin(value: Point) {
-    this.#previousRect.transformOrigin = this.#rect.transformOrigin;
-    this.#rect.transformOrigin = value;
-    this.#requestUpdate();
+  get topLeft(): Vector2 {
+    return S.topLeftCorner(this.#shape);
   }
 
-  get rotateOrigin(): Point {
-    return this.#rect.rotateOrigin;
-  }
-  set rotateOrigin(value: Point) {
-    this.#previousRect.rotateOrigin = this.#rect.rotateOrigin;
-    this.#rect.rotateOrigin = value;
-    this.#requestUpdate();
-  }
-
-  get left(): number {
-    return this.#rect.left;
-  }
-
-  get top(): number {
-    return this.#rect.top;
-  }
-
-  get right(): number {
-    return this.#rect.right;
-  }
-
-  get bottom(): number {
-    return this.#rect.bottom;
-  }
-
-  get transformMatrix(): Matrix {
-    return this.#rect.transformMatrix;
-  }
-
-  get inverseMatrix(): Matrix {
-    return this.#rect.inverseMatrix;
-  }
-
-  get topLeft(): Point {
-    return this.#rect.topLeft;
-  }
-  set topLeft(point: Point) {
+  set topLeft(point: Vector2) {
     this.autoWidth = false;
     this.autoHeight = false;
     this.#autoPosition = false;
-    this.#previousRect.topLeft = this.#rect.topLeft;
-    this.#rect.topLeft = point;
+    S.copy(this.#shape, this.#previousShape);
+    S.setTopLeftCorner(this.#shape, point);
     this.#requestUpdate();
   }
 
-  get topRight(): Point {
-    return this.#rect.topRight;
+  get topRight(): Vector2 {
+    return S.topRightCorner(this.#shape);
   }
-  set topRight(point: Point) {
+  set topRight(point: Vector2) {
     this.autoWidth = false;
     this.autoHeight = false;
     this.#autoPosition = false;
-    this.#previousRect.topRight = this.#rect.topRight;
-    this.#rect.topRight = point;
+    S.copy(this.#shape, this.#previousShape);
+    S.setTopRightCorner(this.#shape, point);
     this.#requestUpdate();
   }
 
-  get bottomRight(): Point {
-    return this.#rect.bottomRight;
+  get bottomRight(): Vector2 {
+    return S.bottomRightCorner(this.#shape);
   }
-  set bottomRight(point: Point) {
+  set bottomRight(point: Vector2) {
     this.autoWidth = false;
     this.autoHeight = false;
-    this.#previousRect.bottomRight = this.#rect.bottomRight;
-    this.#rect.bottomRight = point;
+    S.copy(this.#shape, this.#previousShape);
+    S.setBottomRightCorner(this.#shape, point);
     this.#requestUpdate();
   }
 
-  get bottomLeft(): Point {
-    return this.#rect.bottomLeft;
+  get bottomLeft(): Vector2 {
+    return S.bottomLeftCorner(this.#shape);
   }
-  set bottomLeft(point: Point) {
+  set bottomLeft(point: Vector2) {
     this.autoWidth = false;
     this.autoHeight = false;
     this.#autoPosition = false;
-    this.#previousRect.bottomLeft = this.#rect.bottomLeft;
-    this.#rect.bottomLeft = point;
+    S.copy(this.#shape, this.#previousShape);
+    S.setBottomLeftCorner(this.#shape, point);
     this.#requestUpdate();
   }
 
-  get center(): Point {
-    return this.#rect.center;
+  get center(): Vector2 {
+    return S.center(this.#shape);
   }
 
   #shapeOverlay = (this.constructor as typeof FolkShapeAttribute).#overlay;
 
-  toLocalSpace(point: Point): Point {
-    return this.#rect.toLocalSpace(point);
-  }
-
-  toParentSpace(point: Point): Point {
-    return this.#rect.toParentSpace(point);
-  }
-
-  vertices(): Point[] {
-    return this.#rect.vertices();
-  }
-
-  toCssString(): string {
-    return this.#rect.toCssString();
-  }
-
-  toJSON(): { x: number; y: number; width: number; height: number; rotation: number } {
-    return this.#rect.toJSON();
-  }
-
-  getBounds(): Required<DOMRectInit> {
-    return this.#rect.getBounds();
+  get bounds() {
+    return S.bounds(this.#shape);
   }
 
   #spaces: Space[] = [];
@@ -450,8 +449,8 @@ export class FolkShapeAttribute extends CustomAttribute {
       // this is a hack until we observe the position changing
       if (this.autoPosition) {
         const el = this.ownerElement as HTMLElement;
-        this.#rect.x = el.offsetLeft;
-        this.#rect.y = el.offsetTop;
+        this.#shape.x = el.offsetLeft;
+        this.#shape.y = el.offsetTop;
       }
       this.#shapeOverlay.open(this);
     } else if (event.type === 'blur' && event.relatedTarget !== this.#shapeOverlay) {
@@ -473,37 +472,37 @@ export class FolkShapeAttribute extends CustomAttribute {
   #update() {
     const el = this.ownerElement as HTMLElement;
 
-    const event = new TransformEvent(new DOMRectTransform(this.#rect), this.#previousRect);
+    const event = new TransformEvent(S.clone(this.#shape), this.#previousShape);
 
     el.dispatchEvent(event);
 
     if (event.xPrevented) {
-      this.#rect.x = this.#previousRect.x;
+      this.#shape.x = this.#previousShape.x;
     }
     if (event.yPrevented) {
-      this.#rect.y = this.#previousRect.y;
+      this.#shape.y = this.#previousShape.y;
     }
     if (event.widthPrevented) {
-      this.#rect.width = this.#previousRect.width;
+      this.#shape.width = this.#previousShape.width;
     }
     if (event.heightPrevented) {
-      this.#rect.height = this.#previousRect.height;
+      this.#shape.height = this.#previousShape.height;
     }
     if (event.rotationPrevented) {
-      this.#rect.rotation = this.#previousRect.rotation;
+      this.#shape.rotation = this.#previousShape.rotation;
     }
 
-    el.style.setProperty('--folk-x', toDOMPrecision(this.#rect.x) + 'px');
-    el.style.setProperty('--folk-y', toDOMPrecision(this.#rect.y) + 'px');
-    el.style.setProperty('--folk-height', toDOMPrecision(this.#rect.height) + 'px');
-    el.style.setProperty('--folk-width', toDOMPrecision(this.#rect.width) + 'px');
-    el.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation) + 'rad');
+    el.style.setProperty('--folk-x', toDOMPrecision(this.#shape.x) + 'px');
+    el.style.setProperty('--folk-y', toDOMPrecision(this.#shape.y) + 'px');
+    el.style.setProperty('--folk-height', toDOMPrecision(this.#shape.height) + 'px');
+    el.style.setProperty('--folk-width', toDOMPrecision(this.#shape.width) + 'px');
+    el.style.setProperty('--folk-rotation', toDOMPrecision(this.#shape.rotation) + 'rad');
 
     this.value = (
-      (this.#autoPosition ? '' : `x: ${toDOMPrecision(this.#rect.x)}; y: ${toDOMPrecision(this.#rect.y)}; `) +
-      (this.#autoWidth ? '' : `width: ${toDOMPrecision(this.#rect.width)}; `) +
-      (this.#autoHeight ? '' : `height: ${toDOMPrecision(this.#rect.height)}; `) +
-      (this.#rect.rotation === 0 ? '' : `rotation: ${toDOMPrecision(this.#rect.rotation)};`)
+      (this.#autoPosition ? '' : `x: ${toDOMPrecision(this.#shape.x)}; y: ${toDOMPrecision(this.#shape.y)}; `) +
+      (this.#autoWidth ? '' : `width: ${toDOMPrecision(this.#shape.width)}; `) +
+      (this.#autoHeight ? '' : `height: ${toDOMPrecision(this.#shape.height)}; `) +
+      (this.#shape.rotation === 0 ? '' : `rotation: ${toDOMPrecision(this.#shape.rotation)};`)
     ).trim();
   }
 
@@ -518,13 +517,13 @@ export class FolkShapeAttribute extends CustomAttribute {
     }
 
     if (this.#autoHeight) {
-      this.#previousRect.height = this.#rect.height;
-      this.#rect.height = height;
+      this.#previousShape.height = this.#shape.height;
+      this.#shape.height = height;
     }
 
     if (this.#autoWidth) {
-      this.#previousRect.width = this.#rect.width;
-      this.#rect.width = width;
+      this.#previousShape.width = this.#shape.width;
+      this.#shape.width = width;
     }
 
     // any DOM updates should happen in the next frame

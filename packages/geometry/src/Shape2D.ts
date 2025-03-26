@@ -23,6 +23,16 @@ export function clone({ x, y, width, height, rotation }: Shape2D): Shape2D {
   return { x, y, width, height, rotation };
 }
 
+export function copy(s1: Shape2DReadonly, s2: Shape2D): Shape2D {
+  s2.x = s1.x;
+  s2.y = s1.y;
+  s2.width = s1.width;
+  s2.height = s1.height;
+  s2.rotation = s1.rotation;
+
+  return s2;
+}
+
 export function center(shape: Shape2DReadonly): Vector2Readonly {
   return {
     x: shape.x + shape.width * 0.5,

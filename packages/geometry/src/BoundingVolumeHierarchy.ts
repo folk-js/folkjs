@@ -1,11 +1,6 @@
 import * as R from './Rect2D.ts';
 import * as V from './Vector2.ts';
 
-interface MortonItem {
-  mortonCode: number;
-  rect: R.Rect2D;
-}
-
 export type BVHNode =
   | {
       rect: R.Rect2D;
@@ -20,11 +15,10 @@ export type BVHNode =
       right: null;
     };
 
+export type BVHNodeReadonly = Readonly<BVHNode>;
+
 function constructSubTree(rects: readonly R.Rect2D[], start: number, end: number): BVHNode {
-  if (start >= end) {
-    const rect = rects[start];
-    return { rect, isLeaf: true, left: null, right: null };
-  }
+  if (start >= end) return { rect: rects[start], isLeaf: true, left: null, right: null };
 
   const mid = Math.floor((start + end) / 2);
   const left = constructSubTree(rects, start, mid);
@@ -38,29 +32,17 @@ function constructSubTree(rects: readonly R.Rect2D[], start: number, end: number
   };
 }
 
-export function fromRects2(rects: ReadonlyArray<R.Rect2D>): BVHNode {
-  const len = rects.length;
-
-  if (len === 0) throw new Error('Cant create an empty BVH.');
-
-  const mortonCodes: MortonItem[] = [];
-
-  for (let i = 0; i < len; i++) {
-    const rect = rects[i]!;
-    // TODO: we need to normalize this point between [0, 32767]
-    const normalizedCenter = R.center(rect);
-
-    mortonCodes.push({ rect, mortonCode: V.mortonCode(normalizedCenter) });
-  }
-
-  // Rectangles sorted in order of morton codes.
-  const sortedRects = mortonCodes.sort((a, b) => a.mortonCode - b.mortonCode).map((b) => b.rect);
-
-  return constructSubTree(sortedRects, 0, mortonCodes.length - 1);
-}
-
+// The quickest way to construct and query the BVH is to sort the array of rects in-place.
+// It also seems to speed up time to check intersections
 export function fromRects(rects: Array<R.Rect2D>): BVHNode {
-  if (rects.length === 0) throw new Error('Cant create an empty BVH.');
+  if (rects.length === 0) {
+    return {
+      rect: R.fromValues(),
+      isLeaf: true,
+      left: null,
+      right: null,
+    };
+  }
 
   // Rectangles sorted in order of their morton codes.
   rects.sort((a, b) => V.mortonCode(R.center(a)) - V.mortonCode(R.center(b)));
@@ -85,6 +67,20 @@ export function intersections(root: BVHNode, rect: R.Rect2D): R.Rect2D[] {
     }
   }
   return collisions;
+}
+
+export function traverse(root: BVHNode, cb: (node: BVHNode) => boolean | void): void {
+  const stack = [root];
+  let node: BVHNode | undefined;
+
+  while ((node = stack.pop())) {
+    if (cb(node) === false) continue;
+
+    if (!node.isLeaf) {
+      // push right node before left node
+      stack.push(node.right, node.left);
+    }
+  }
 }
 
 export function closestRectLeft(root: BVHNode, point: V.Vector2): R.Rect2D | undefined {

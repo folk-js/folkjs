@@ -1,7 +1,7 @@
 import type { DOMRectTransformReadonly } from './DOMRectTransform';
 
 declare global {
-  interface HTMLElementEventMap {
+  interface ElementEventMap {
     transform: TransformEvent;
   }
 }

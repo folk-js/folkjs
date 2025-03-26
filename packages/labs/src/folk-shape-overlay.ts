@@ -1,8 +1,12 @@
-import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
-import { FolkElement, type Point, round, toDOMPrecision, Vector } from '@folkjs/canvas';
+import { FolkElement } from '@folkjs/canvas';
 import { css } from '@folkjs/canvas/reactive-element';
 import { html } from '@folkjs/canvas/tags';
+import * as S from '@folkjs/geometry/Shape2D';
+import type { Vector2 } from '@folkjs/geometry/Vector2';
+import * as V from '@folkjs/geometry/Vector2';
+import { round, toDOMPrecision } from '@folkjs/geometry/utilities';
 import { type FolkShapeAttribute } from './folk-shape-attribute';
+import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 type ResizeHandle = 'resize-top-left' | 'resize-top-right' | 'resize-bottom-right' | 'resize-bottom-left';
 
@@ -366,13 +370,11 @@ export class FolkShapeOverlay extends FolkElement {
       if (event.type === 'pointerdown') {
         // Setup rotation initial state if needed
         if (handle.startsWith('rotation')) {
-          const parentRotateOrigin = this.#shape.toParentSpace({
-            x: this.#shape.width * this.#shape.rotateOrigin.x,
-            y: this.#shape.height * this.#shape.rotateOrigin.y,
-          });
+          // Polymorphic
+          const rotationOrigin = S.center(this.#shape);
           // Calculate initial angle including current rotation
           const mousePos = { x: event.pageX, y: event.pageY };
-          this.#startAngle = Vector.angleFromOrigin(mousePos, parentRotateOrigin) - this.#shape.rotation;
+          this.#startAngle = V.angleFromOrigin(mousePos, rotationOrigin) - this.#shape.rotation;
         }
 
         // Safari has a rendering bug unless we create a new stacking context
@@ -399,7 +401,7 @@ export class FolkShapeOverlay extends FolkElement {
     }
 
     // Calculate movement delta from either keyboard or pointer
-    let moveDelta: Point | null = null;
+    let moveDelta: Vector2 | null = null;
     if (event instanceof KeyboardEvent) {
       const MOVEMENT_MUL = event.shiftKey ? 20 : 2;
       const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
@@ -445,10 +447,9 @@ export class FolkShapeOverlay extends FolkElement {
         'resize-bottom-left': rect.bottomLeft,
       }[handle as ResizeHandle];
 
-      const currentPos = rect.toParentSpace(corner);
       const mousePos =
         event instanceof KeyboardEvent
-          ? { x: currentPos.x + moveDelta.x, y: currentPos.y + moveDelta.y }
+          ? { x: corner.x + moveDelta.x, y: corner.y + moveDelta.y }
           : { x: event.pageX, y: event.pageY };
 
       this.#handleResize(handle as ResizeHandle, mousePos, target, event instanceof PointerEvent ? event : undefined);
@@ -458,11 +459,10 @@ export class FolkShapeOverlay extends FolkElement {
 
     // Handle pointer rotation
     if (handle.startsWith('rotation') && event instanceof PointerEvent) {
-      const parentRotateOrigin = this.#shape.toParentSpace({
-        x: this.#shape.width * this.#shape.rotateOrigin.x,
-        y: this.#shape.height * this.#shape.rotateOrigin.y,
-      });
-      const currentAngle = Vector.angleFromOrigin({ x: event.pageX, y: event.pageY }, parentRotateOrigin);
+      // polymorphic
+      const rotationOrigin = S.center(this.#shape);
+
+      const currentAngle = V.angleFromOrigin({ x: event.pageX, y: event.pageY }, rotationOrigin);
       // Apply rotation relative to start angle
       this.#shape.rotation = currentAngle - this.#startAngle;
 
@@ -526,15 +526,13 @@ export class FolkShapeOverlay extends FolkElement {
     this.#handles['rotation-bottom-left'].style.setProperty('cursor', getRotateCursorUrl((degrees + 270) % 360));
   }
 
-  #handleResize(handle: ResizeHandle, pointerPos: Point, target: HTMLElement, event?: PointerEvent) {
+  #handleResize(handle: ResizeHandle, pointerPos: Vector2, target: HTMLElement, event?: PointerEvent) {
     if (this.#shape === null) return;
-
-    const localPointer = this.#shape.toLocalSpace(pointerPos);
 
     // FIX: this is a bandaid for sub-pixel jitter that happens in the opposite resize handle
     // It seems like there is sub-pixel imprecision happening in DOMRectTransform, but I haven't figured out where yet.
     // If the coordinates are rounded to 2 decimal places, no jitter happens.
-    this.#shape[getCornerName(handle)] = { x: round(localPointer.x, 2), y: round(localPointer.y, 2) };
+    this.#shape[getCornerName(handle)] = { x: round(pointerPos.x, 2), y: round(pointerPos.y, 2) };
 
     let nextHandle: ResizeHandle = handle;
 
