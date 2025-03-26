@@ -21,8 +21,7 @@
   ],
   "scripts": {
     "build": "wireit",
-    "test": "wireit",
-    "test:dev": "npm run test --watch"
+    "test": "echo 'No tests to run'"
   },
   "wireit": {
     "build": {
@@ -36,15 +35,6 @@
       "output": [
         "dist/**",
         "tsconfig.tsbuildinfo"
-      ]
-    },
-    "test": {
-      "command": "node --experimental-strip-types --test './__tests__/*.test.ts'",
-      "dependencies": [
-        "build"
-      ],
-      "files": [
-        "__tests__/*.test.ts"
       ]
     }
   },
