@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Folk Canvas Benchmarks</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:CASL,MONO,wght@0.5,0,400;0.5,0,500;0.5,0,600;0.5,0,700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-color: #ffffff;
+        --text-color: #1a1a1a;
+        --border-color: #e5e5e5;
+        --hover-color: #f5f5f5;
+        --accent-color: rgb(75, 192, 192);
+        --accent-light: rgba(75, 192, 192, 0.1);
+        --danger-color: rgb(255, 99, 132);
+        --min-color: rgb(34, 197, 94);
+        --avg-color: rgb(0, 0, 0);
+        --max-color: rgb(239, 68, 68);
+        --font-mono: 'Recursive', monospace;
+      }
+
+      body {
+        font-family: 'Recursive', system-ui, sans-serif;
+        font-variation-settings:
+          'CASL' 0.5,
+          'MONO' 0;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem;
+        background: var(--bg-color);
+        color: var(--text-color);
+        line-height: 1.5;
+      }
+
+      h1 {
+        font-variation-settings:
+          'CASL' 0.5,
+          'MONO' 0,
+          'wght' 700;
+        font-size: 2rem;
+        margin-bottom: 0rem;
+        color: var(--text-color);
+      }
+
+      .controls {
+        margin-bottom: 2rem;
+        padding: 1rem;
+        background: var(--hover-color);
+        border-radius: 8px;
+      }
+
+      .top-controls {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .select-group {
+        flex-grow: 1;
+        max-width: 500px;
+      }
+
+      .toggle-group {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .compare-group {
+        width: 100%;
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border-color);
+      }
+
+      label {
+        font-variation-settings:
+          'CASL' 0.5,
+          'MONO' 0,
+          'wght' 500;
+        color: var(--text-color);
+      }
+
+      .toggle-label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+      }
+
+      .toggle-label input {
+        width: 1rem;
+        height: 1rem;
+      }
+
+      button {
+        font-family: 'Recursive', system-ui, sans-serif;
+        font-variation-settings:
+          'CASL' 0.5,
+          'MONO' 0;
+        background: var(--accent-color);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+      }
+
+      button:hover {
+        opacity: 0.9;
+      }
+
+      button:disabled {
+        background: var(--border-color);
+        cursor: not-allowed;
+        opacity: 0.7;
+      }
+
+      select {
+        font-variation-settings:
+          'CASL' 0.5,
+          'MONO' 1;
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--bg-color);
+        font-size: 0.9rem;
+        cursor: pointer;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 0.75rem center;
+        background-size: 1em;
+      }
+
+      select:hover {
+        border-color: var(--accent-color);
+      }
+
+      select:focus {
+        outline: none;
+        border-color: var(--accent-color);
+        box-shadow: 0 0 0 3px var(--accent-light);
+      }
+
+      select option[data-type='package'] {
+        font-variation-settings:
+          'CASL' 0.5,
+          'MONO' 1,
+          'wght' 600;
+        color: var(--text-color);
+        background: var(--hover-color);
+      }
+
+      select option[data-type='file'] {
+        padding-left: 1.5em;
+      }
+
+      .charts-container,
+      .benchmark-row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+      }
+
+      .compare-mode .charts-container,
+      .compare-mode .benchmark-row {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .benchmark-group {
+        margin-bottom: 1rem;
+        border: 1px solid var(--border-color);
+        padding: 1rem;
+        border-radius: 8px;
+        background: var(--bg-color);
+      }
+
+      .chart-wrapper {
+        height: 300px;
+      }
+
+      @media (max-width: 768px) {
+        body {
+          padding: 1rem;
+        }
+
+        .toggle-group {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 0.5rem;
+        }
+
+        .compare-mode .charts-container,
+        .compare-mode .benchmark-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Benchmarks</h1>
+
+    <div class="controls">
+      <div class="top-controls">
+        <div class="select-group">
+          <select id="benchmark-select"></select>
+        </div>
+
+        <div class="toggle-group">
+          <label class="toggle-label">
+            <input type="checkbox" id="toggle-min" checked />
+            <span>Min</span>
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="toggle-avg" checked />
+            <span>Avg</span>
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="toggle-max" checked />
+            <span>Max</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="compare-group">
+        <select id="compare-select">
+          <option value="">Select benchmark to compare...</option>
+        </select>
+        <button id="compare-btn">Compare</button>
+        <button id="clear-compare-btn" disabled>Clear</button>
+      </div>
+    </div>
+
+    <div id="charts-container" class="charts-container"></div>
+
+    <script>
+      async function fetchBenchmarkData() {
+        const response = await fetch(
+          'https://raw.githubusercontent.com/folk-systems/folk-canvas-stats/main/mitata_benchmarks.json',
+        );
+        return await response.json();
+      }
+
+      function processData(data) {
+        // Get unique packages and benchmarks
+        const packages = new Set();
+        const benchmarks = new Map(); // Map of package to its benchmarks
+        const testNames = new Map(); // Map of benchmark file to test names
+
+        Object.values(data).forEach((commit) => {
+          Object.entries(commit.packages).forEach(([pkg, pkgData]) => {
+            packages.add(pkg);
+            if (!benchmarks.has(pkg)) {
+              benchmarks.set(pkg, new Set());
+            }
+            Object.entries(pkgData).forEach(([bench, benchData]) => {
+              benchmarks.get(pkg).add(bench);
+              if (!testNames.has(bench)) {
+                testNames.set(bench, new Set());
+              }
+              benchData.results.forEach((result) => {
+                testNames.get(bench).add(result.name);
+              });
+            });
+          });
+        });
+
+        return {
+          packages: Array.from(packages),
+          benchmarks,
+          testNames,
+          data,
+        };
+      }
+
+      function formatNumber(num) {
+        if (num < 1) return num.toFixed(2) + ' ns';
+        if (num < 1000) return Math.round(num) + ' ns';
+        if (num < 1000000) return (num / 1000).toFixed(2) + ' µs';
+        return (num / 1000000).toFixed(2) + ' ms';
+      }
+
+      function createChart(containerId, label, data) {
+        const ctx = document.getElementById(containerId);
+        const style = getComputedStyle(document.documentElement);
+        const maxColor = style.getPropertyValue('--max-color').trim();
+        const avgColor = style.getPropertyValue('--avg-color').trim();
+        const minColor = style.getPropertyValue('--min-color').trim();
+
+        const chart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            datasets: [
+              {
+                label: 'Maximum',
+                data: data.map((d) => ({ x: d.x, y: d.max })),
+                borderColor: maxColor,
+                backgroundColor: maxColor,
+                borderWidth: 1,
+                pointRadius: 0,
+                fill: {
+                  target: 'origin',
+                  above: 'rgba(0, 0, 0, 0.03)',
+                },
+                hidden: !document.getElementById('toggle-max').checked,
+              },
+              {
+                label: 'Average',
+                data: data.map((d) => ({ x: d.x, y: d.avg })),
+                borderColor: avgColor,
+                backgroundColor: avgColor,
+                borderWidth: 2,
+                pointRadius: 0,
+                fill: {
+                  target: 'origin',
+                  above: 'rgba(0, 0, 0, 0.03)',
+                },
+                hidden: !document.getElementById('toggle-avg').checked,
+              },
+              {
+                label: 'Minimum',
+                data: data.map((d) => ({ x: d.x, y: d.min })),
+                borderColor: minColor,
+                backgroundColor: minColor,
+                borderWidth: 1,
+                pointRadius: 0,
+                fill: {
+                  target: 'origin',
+                  above: 'rgba(0, 0, 0, 0.03)',
+                },
+                hidden: !document.getElementById('toggle-min').checked,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              intersect: false,
+              mode: 'index',
+            },
+            plugins: {
+              title: {
+                display: true,
+                text: label,
+                align: 'start',
+                font: {
+                  family: "'Recursive', system-ui, sans-serif",
+                  size: 14,
+                  weight: '600',
+                },
+                padding: {
+                  top: 0,
+                  bottom: 16,
+                },
+              },
+              tooltip: {
+                callbacks: {
+                  label: function (context) {
+                    return context.dataset.label + ': ' + formatNumber(context.parsed.y);
+                  },
+                },
+              },
+              legend: {
+                align: 'start',
+                labels: {
+                  font: {
+                    family: "'Recursive', system-ui, sans-serif",
+                    size: 12,
+                  },
+                  boxWidth: 12,
+                  padding: 8,
+                  usePointStyle: true,
+                  pointStyle: 'rectRounded',
+                },
+              },
+            },
+            scales: {
+              x: {
+                type: 'time',
+                time: {
+                  unit: 'day',
+                },
+                grid: {
+                  color: 'rgba(0, 0, 0, 0.05)',
+                },
+                ticks: {
+                  font: {
+                    family: "'Recursive', system-ui, sans-serif",
+                    size: 12,
+                  },
+                },
+              },
+              y: {
+                type: 'logarithmic',
+                title: {
+                  display: true,
+                  text: 'Time (ns)',
+                  font: {
+                    family: "'Recursive', system-ui, sans-serif",
+                    size: 12,
+                  },
+                },
+                ticks: {
+                  callback: formatNumber,
+                  font: {
+                    family: "'Recursive', system-ui, sans-serif",
+                    size: 12,
+                  },
+                },
+                grid: {
+                  color: 'rgba(0, 0, 0, 0.05)',
+                },
+              },
+            },
+          },
+        });
+        return chart;
+      }
+
+      function getBenchmarkData(rawData, selectedValue) {
+        const [selectedPackage, selectedBenchmark] = selectedValue.split('::');
+        const commits = Object.entries(rawData).sort(([, a], [, b]) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        // Get all test names for this benchmark
+        const testResults = new Map();
+        commits.forEach(([commit, info]) => {
+          const benchData = info.packages[selectedPackage]?.[selectedBenchmark];
+          if (benchData) {
+            benchData.results.forEach((result) => {
+              if (!testResults.has(result.name)) {
+                testResults.set(result.name, []);
+              }
+              testResults.get(result.name).push({
+                x: new Date(info.timestamp),
+                min: result.min,
+                max: result.max,
+                avg: result.avg,
+              });
+            });
+          }
+        });
+
+        return testResults;
+      }
+
+      function updateCharts(data, selectedValue, compareValue = null) {
+        const container = document.getElementById('charts-container');
+        container.innerHTML = '';
+
+        const isComparing = compareValue !== null;
+
+        if (isComparing) {
+          container.classList.add('compare-mode');
+        } else {
+          container.classList.remove('compare-mode');
+        }
+
+        // Get data for primary benchmark
+        const primaryData = getBenchmarkData(data, selectedValue);
+
+        // Get data for comparison benchmark if provided
+        const compareData = isComparing ? getBenchmarkData(data, compareValue) : null;
+
+        // Get all test names from both benchmarks
+        const allTestNames = new Set([...primaryData.keys()]);
+        if (compareData) {
+          compareData.forEach((_, name) => allTestNames.add(name));
+        }
+
+        // Create charts for each test
+        allTestNames.forEach((testName) => {
+          const row = document.createElement('div');
+          row.className = 'benchmark-row';
+          container.appendChild(row);
+
+          // Primary benchmark
+          if (primaryData.has(testName)) {
+            const group = document.createElement('div');
+            group.className = 'benchmark-group';
+
+            const canvas = document.createElement('canvas');
+            const chartId = `chart-primary-${testName.replace(/\s+/g, '-')}`;
+            canvas.id = chartId;
+
+            group.appendChild(canvas);
+            row.appendChild(group);
+
+            createChart(chartId, testName, primaryData.get(testName));
+          } else if (isComparing) {
+            // Empty placeholder if primary doesn't have this test
+            const placeholder = document.createElement('div');
+            placeholder.className = 'benchmark-group';
+            placeholder.innerHTML = `<div style="height: 300px; display: flex; align-items: center; justify-content: center; color: #888;">No data for '${testName}' in primary benchmark</div>`;
+            row.appendChild(placeholder);
+          }
+
+          // Comparison benchmark
+          if (isComparing && compareData?.has(testName)) {
+            const group = document.createElement('div');
+            group.className = 'benchmark-group';
+
+            const canvas = document.createElement('canvas');
+            const chartId = `chart-compare-${testName.replace(/\s+/g, '-')}`;
+            canvas.id = chartId;
+
+            group.appendChild(canvas);
+            row.appendChild(group);
+
+            createChart(chartId, testName, compareData.get(testName));
+          } else if (isComparing) {
+            // Empty placeholder if comparison doesn't have this test
+            const placeholder = document.createElement('div');
+            placeholder.className = 'benchmark-group';
+            placeholder.innerHTML = `<div style="height: 300px; display: flex; align-items: center; justify-content: center; color: #888;">No data for '${testName}' in comparison benchmark</div>`;
+            row.appendChild(placeholder);
+          }
+        });
+      }
+
+      async function initialize() {
+        const rawData = await fetchBenchmarkData();
+        const { packages, benchmarks, testNames, data } = processData(rawData);
+        let currentSelectedValue = null;
+        let currentCompareValue = null;
+
+        // Populate benchmark select
+        function populateSelect(selectId, includeEmptyOption = false) {
+          const select = document.getElementById(selectId);
+          select.innerHTML = '';
+
+          if (includeEmptyOption) {
+            const emptyOption = document.createElement('option');
+            emptyOption.value = '';
+            emptyOption.textContent = 'Select benchmark to compare...';
+            select.appendChild(emptyOption);
+          }
+
+          packages.forEach((pkg) => {
+            const packageOption = document.createElement('option');
+            packageOption.disabled = true;
+            packageOption.textContent = pkg;
+            packageOption.dataset.type = 'package';
+            select.appendChild(packageOption);
+
+            Array.from(benchmarks.get(pkg)).forEach((bench) => {
+              const option = document.createElement('option');
+              option.value = `${pkg}::${bench}`;
+              option.textContent = `  ${bench}`;
+              option.dataset.type = 'file';
+              select.appendChild(option);
+            });
+          });
+        }
+
+        // Populate both selects
+        populateSelect('benchmark-select');
+        populateSelect('compare-select', true);
+
+        // Set initial value and update charts
+        const benchmarkSelect = document.getElementById('benchmark-select');
+        benchmarkSelect.value = `${packages[0]}::${Array.from(benchmarks.get(packages[0]))[0]}`;
+        currentSelectedValue = benchmarkSelect.value;
+        updateCharts(data, currentSelectedValue);
+
+        // Handle selection changes
+        benchmarkSelect.addEventListener('change', () => {
+          currentSelectedValue = benchmarkSelect.value;
+          updateCharts(data, currentSelectedValue, currentCompareValue);
+        });
+
+        // Handle compare button
+        const compareBtn = document.getElementById('compare-btn');
+        const clearCompareBtn = document.getElementById('clear-compare-btn');
+        const compareSelect = document.getElementById('compare-select');
+
+        compareBtn.addEventListener('click', () => {
+          const compareValue = compareSelect.value;
+          if (compareValue) {
+            currentCompareValue = compareValue;
+            clearCompareBtn.disabled = false;
+            updateCharts(data, currentSelectedValue, currentCompareValue);
+          }
+        });
+
+        clearCompareBtn.addEventListener('click', () => {
+          currentCompareValue = null;
+          compareSelect.value = '';
+          clearCompareBtn.disabled = true;
+          updateCharts(data, currentSelectedValue);
+        });
+
+        // Handle toggle changes
+        ['min', 'avg', 'max'].forEach((type, index) => {
+          document.getElementById(`toggle-${type}`).addEventListener('change', (e) => {
+            document.querySelectorAll('canvas').forEach((canvas) => {
+              const chart = Chart.getChart(canvas);
+              if (chart) {
+                chart.data.datasets[2 - index].hidden = !e.target.checked;
+                chart.update();
+              }
+            });
+          });
+        });
+      }
+
+      initialize().catch(console.error);
+    </script>
+  </body>
+</html>
