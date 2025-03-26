@@ -18,7 +18,7 @@ bench('BVH: instantiate 3 shapes', () => {
 }).gc('inner');
 
 const bvh3 = BVH.fromRects(shapes3);
-bench('BVH: collsion 3 shapes', () => {
+bench('BVH: intersection 3 shapes', () => {
   do_not_optimize(BVH.intersections(bvh3, shapes3[0]));
 }).gc('inner');
 
@@ -29,7 +29,7 @@ bench('BVH: instantiate 100 shapes', () => {
 }).gc('inner');
 
 const bvh100 = BVH.fromRects(shapes100);
-bench('BVH: check collsion 100 shapes', () => {
+bench('BVH: check intersection 100 shapes', () => {
   do_not_optimize(BVH.intersections(bvh100, shapes100[0]));
 }).gc('inner');
 
@@ -40,7 +40,7 @@ bench('BVH: instantiate 1000 shapes', () => {
 }).gc('inner');
 
 const bvh1000 = BVH.fromRects(shapes1000);
-bench('BVH: check collsion 1000 shapes', () => {
+bench('BVH: check intersection 1000 shapes', () => {
   do_not_optimize(BVH.intersections(bvh1000, shapes1000[0]));
 }).gc('inner');
 
@@ -51,7 +51,7 @@ bench('BVH: instantiate 10000 shapes', () => {
 }).gc('inner');
 
 const bvh10000 = BVH.fromRects(shapes10000);
-bench('BVH: check collsion 10000 shapes', () => {
+bench('BVH: check intersection 10000 shapes', () => {
   do_not_optimize(BVH.intersections(bvh10000, shapes10000[0]));
 }).gc('inner');
 

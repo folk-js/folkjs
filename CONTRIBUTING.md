@@ -42,3 +42,7 @@ We are using the [NodeJS test runner](https://nodejs.org/en/learn/test-runner/us
 ## Benchmarking
 
 Performance is a really important to this project and microbenchmarks are one way to quantify and compare performance (while also noting how [careful](https://mrale.ph/blog/2012/12/15/microbenchmarks-fairy-tale.html) you have to be to not mislead yourself). We are using [mitata](https://github.com/evanwashere/mitata) as a benchmark tool. Make sure to read through their docs to understand common pitfalls.
+
+## Performance debugging
+
+Run `npm run deopt <path for JS/TS file>` to generate a log file that can inspected by the [Deopt Explorer VSCode Extension](https://github.com/microsoft/deoptexplorer-vscode). This helps identify polymorphic code path that can be degrading performance. Check out this [post](https://devblogs.microsoft.com/typescript/introducing-deopt-explorer/) for more info.
