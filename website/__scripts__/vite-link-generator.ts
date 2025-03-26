@@ -56,7 +56,7 @@ export function getCanvasFiles(baseDir: string): CanvasFile[] {
  * Generate a link for a canvas file
  */
 function formatLink(file: CanvasFile): string {
-  const url = `./${CONFIG.canvasPath}/${file.relativePath.replace(CONFIG.htmlExtension, '')}`;
+  const url = `./${file.relativePath.replace(CONFIG.htmlExtension, '')}`;
   return `<li><a href="${url}">${file.displayName}</a></li>`;
 }
 
