@@ -380,17 +380,17 @@
           data: {
             datasets: [
               {
-                label: 'Maximum',
-                data: data.map((d) => ({ x: d.x, y: d.max })),
-                borderColor: maxColor,
-                backgroundColor: maxColor,
+                label: 'Minimum',
+                data: data.map((d) => ({ x: d.x, y: d.min })),
+                borderColor: minColor,
+                backgroundColor: minColor,
                 borderWidth: 1,
                 pointRadius: 0,
                 fill: {
                   target: 'origin',
                   above: 'rgba(0, 0, 0, 0.03)',
                 },
-                hidden: !document.getElementById('toggle-max').checked,
+                hidden: !document.getElementById('toggle-min').checked,
               },
               {
                 label: 'Average',
@@ -406,17 +406,17 @@
                 hidden: !document.getElementById('toggle-avg').checked,
               },
               {
-                label: 'Minimum',
-                data: data.map((d) => ({ x: d.x, y: d.min })),
-                borderColor: minColor,
-                backgroundColor: minColor,
+                label: 'Maximum',
+                data: data.map((d) => ({ x: d.x, y: d.max })),
+                borderColor: maxColor,
+                backgroundColor: maxColor,
                 borderWidth: 1,
                 pointRadius: 0,
                 fill: {
                   target: 'origin',
                   above: 'rgba(0, 0, 0, 0.03)',
                 },
-                hidden: !document.getElementById('toggle-min').checked,
+                hidden: !document.getElementById('toggle-max').checked,
               },
             ],
           },
@@ -776,22 +776,22 @@
         });
 
         // Handle toggle changes
-        ['max', 'avg', 'min'].forEach((type, index) => {
+        ['min', 'avg', 'max'].forEach((type, index) => {
           document.getElementById(`toggle-${type}`).addEventListener('change', (e) => {
             document.querySelectorAll('canvas').forEach((canvas) => {
               const chart = Chart.getChart(canvas);
               if (chart) {
                 if (currentTestComparison) {
                   // For test comparison mode:
-                  // First test: datasets 0-2 (max, avg, min)
-                  // Second test: datasets 3-5 (max, avg, min)
+                  // First test: datasets 0-2 (min, avg, max)
+                  // Second test: datasets 3-5 (min, avg, max)
                   const firstTestIndex = index;
                   const secondTestIndex = index + 3;
                   chart.data.datasets[firstTestIndex].hidden = !e.target.checked;
                   chart.data.datasets[secondTestIndex].hidden = !e.target.checked;
                 } else {
                   // For regular mode:
-                  // Datasets are in order: [max, avg, min]
+                  // Datasets are in order: [min, avg, max]
                   chart.data.datasets[index].hidden = !e.target.checked;
                 }
                 chart.update();
@@ -828,8 +828,8 @@
 
         const createDataset = (data, label, color) => [
           {
-            label: `${label} (Max)`,
-            data: data.map((d) => ({ x: d.x, y: d.max })),
+            label: `${label} (Min)`,
+            data: data.map((d) => ({ x: d.x, y: d.min })),
             borderColor: color,
             backgroundColor: color,
             borderWidth: 1,
@@ -838,7 +838,7 @@
               target: 'origin',
               above: 'rgba(0, 0, 0, 0.03)',
             },
-            hidden: !document.getElementById('toggle-max').checked,
+            hidden: !document.getElementById('toggle-min').checked,
           },
           {
             label: `${label} (Avg)`,
@@ -854,8 +854,8 @@
             hidden: !document.getElementById('toggle-avg').checked,
           },
           {
-            label: `${label} (Min)`,
-            data: data.map((d) => ({ x: d.x, y: d.min })),
+            label: `${label} (Max)`,
+            data: data.map((d) => ({ x: d.x, y: d.max })),
             borderColor: color,
             backgroundColor: color,
             borderWidth: 1,
@@ -864,7 +864,7 @@
               target: 'origin',
               above: 'rgba(0, 0, 0, 0.03)',
             },
-            hidden: !document.getElementById('toggle-min').checked,
+            hidden: !document.getElementById('toggle-max').checked,
           },
         ];
 
