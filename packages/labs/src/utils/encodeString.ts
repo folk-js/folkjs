@@ -1,17 +1,17 @@
 /**
- * Header - A utility for encoding/decoding compact text headers
+ * StringEncoder - A utility for encoding/decoding structured text formats
  *
- * This utility provides a DSL for defining structured text headers using
+ * This utility provides a DSL for defining structured text formats using
  * string patterns. It handles basic parsing of structured text
  * formats into JavaScript objects and encoding objects back to strings.
  *
  * Basic usage:
- * const myHeader = header("prefix <field:type> suffix");
- * const result = myHeader.decode("prefix value suffix");
- * const encoded = myHeader.encode({ field: "value" });
+ * const encoder = encodeString("prefix <field:type> suffix");
+ * const result = encoder.decode("prefix value suffix");
+ * const encoded = encoder.encode({ field: "value" });
  *
  * Example:
- * const myHeader = header("QRTPB<index:num>:<hash:text-16><payload>");
+ * const encoder = encodeString("QRTPB<index:num>:<hash:text-16><payload>");
  *
  * Supported types:
  * - text: Default type, represents a text string
@@ -29,7 +29,7 @@
  *
  * End markers:
  * - $: Indicates that everything after this point is payload data
- * - !: Marks a fixed-size header where the header length is determined by the field sizes
+ * - !: Marks a fixed-size encoding where the length is determined by the field sizes
  */
 
 // Type definitions for string parsing
@@ -437,7 +437,7 @@ function parseTemplate(templateString: string): TemplateInfo {
     for (const pattern of patterns) {
       pattern.isFixedHeader = true;
       if (pattern.size === undefined) {
-        throw new Error('Fixed-size header requires a size parameter for all fields');
+        throw new Error('Fixed-size encoding requires a size parameter for all fields');
       }
     }
   }

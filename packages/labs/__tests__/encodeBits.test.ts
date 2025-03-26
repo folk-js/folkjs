@@ -1,23 +1,23 @@
 import { expect } from 'expect';
 import { describe, test } from 'node:test';
-import { encodeBits } from '../src/utils/encodeBits';
+import { encodeBits } from '../src/utils/encodeBits.ts';
 
 describe('encodeBits', () => {
   describe('basic functionality', () => {
-    const bitEncoder = encodeBits('<flag:bool-1><count:num-3><type-4>');
+    const encoder = encodeBits('<flag:bool-1><count:num-3><type-4>');
 
     test('should encode bit fields correctly', () => {
-      const result = bitEncoder.encode({
+      const result = encoder.encode({
         flag: true,
         count: 6, // '110' in binary
         type: '0000',
       });
       expect(result).toEqual(new Uint8Array([0xe0])); // 11100000
-      expect(bitEncoder.toBinaryString(result)).toBe('11100000');
+      expect(encoder.toBinaryString(result)).toBe('11100000');
     });
 
     test('should decode bit fields correctly', () => {
-      const result = bitEncoder.decode(new Uint8Array([0xe0])); // 11100000
+      const result = encoder.decode(new Uint8Array([0xe0])); // 11100000
       expect(result).toEqual({
         flag: true,
         count: 6, // '110' in binary
@@ -27,25 +27,25 @@ describe('encodeBits', () => {
 
     test('should convert between binary string and Uint8Array', () => {
       const binaryStr = '11100000';
-      const bytes = bitEncoder.fromBinaryString(binaryStr);
+      const bytes = encoder.fromBinaryString(binaryStr);
       expect(bytes).toEqual(new Uint8Array([0xe0]));
-      expect(bitEncoder.toBinaryString(bytes)).toBe(binaryStr);
+      expect(encoder.toBinaryString(bytes)).toBe(binaryStr);
     });
   });
 
   describe('validation', () => {
-    const header = encodeBits('<status-2><data-6>');
+    const encoder = encodeBits('<status-2><data-6>');
 
     test('should reject invalid binary strings during encoding', () => {
       expect(() =>
-        header.encode({
+        encoder.encode({
           status: '2', // not binary
           data: '000000',
         }),
       ).toThrow();
 
       expect(() =>
-        header.encode({
+        encoder.encode({
           status: '11',
           data: '12345', // not binary
         }),
@@ -54,14 +54,14 @@ describe('encodeBits', () => {
 
     test('should reject wrong-length binary strings during encoding', () => {
       expect(() =>
-        header.encode({
+        encoder.encode({
           status: '1', // too short
           data: '000000',
         }),
       ).toThrow();
 
       expect(() =>
-        header.encode({
+        encoder.encode({
           status: '111', // too long
           data: '000000',
         }),
@@ -69,57 +69,57 @@ describe('encodeBits', () => {
     });
 
     test('should return null for invalid input during decoding', () => {
-      expect(header.decode(new Uint8Array([]))).toBeNull();
+      expect(encoder.decode(new Uint8Array([]))).toBeNull();
     });
   });
 
   describe('edge cases', () => {
     test('should handle single-bit fields with booleans', () => {
-      const header = encodeBits('<a:bool-1><b:bool-1><c:bool-1>');
-      const encoded = header.encode({
+      const encoder = encodeBits('<a:bool-1><b:bool-1><c:bool-1>');
+      const encoded = encoder.encode({
         a: true,
         b: false,
         c: true,
       });
       expect(encoded).toEqual(new Uint8Array([0xa0])); // 10100000
-      expect(header.toBinaryString(encoded)).toBe('10100000');
+      expect(encoder.toBinaryString(encoded)).toBe('10100000');
     });
 
     test('should handle byte-aligned numeric fields', () => {
-      const header = encodeBits('<byte1:num-8><byte2:num-8>');
-      const encoded = header.encode({
+      const encoder = encodeBits('<byte1:num-8><byte2:num-8>');
+      const encoded = encoder.encode({
         byte1: 255, // 11111111
         byte2: 0, // 00000000
       });
       expect(encoded).toEqual(new Uint8Array([0xff, 0x00]));
-      expect(header.toBinaryString(encoded)).toBe('1111111100000000');
+      expect(encoder.toBinaryString(encoded)).toBe('1111111100000000');
     });
 
     test('should handle non-byte-aligned fields with padding', () => {
-      const header = encodeBits('<field:num-3>');
-      const encoded = header.encode({
+      const encoder = encodeBits('<field:num-3>');
+      const encoded = encoder.encode({
         field: 5, // 101 in binary
       });
       expect(encoded).toEqual(new Uint8Array([0xa0])); // 10100000
-      expect(header.toBinaryString(encoded)).toBe('10100000');
+      expect(encoder.toBinaryString(encoded)).toBe('10100000');
     });
   });
 
   describe('complex patterns', () => {
-    const header = encodeBits('<version:num-3><flags-5><payload-16>');
+    const encoder = encodeBits('<version:num-3><flags-5><payload-16>');
 
     test('should handle multi-byte patterns with mixed types', () => {
-      const encoded = header.encode({
+      const encoded = encoder.encode({
         version: 5, // 101 in binary
         flags: '11000',
         payload: '1111000011110000',
       });
       expect(encoded).toEqual(new Uint8Array([0xb8, 0xf0, 0xf0])); // 101110001111000011110000
-      expect(header.toBinaryString(encoded)).toBe('101110001111000011110000');
+      expect(encoder.toBinaryString(encoded)).toBe('101110001111000011110000');
     });
 
     test('should maintain field positions during decode', () => {
-      const decoded = header.decode(new Uint8Array([0xb8, 0xf0, 0xf0, 0x00]));
+      const decoded = encoder.decode(new Uint8Array([0xb8, 0xf0, 0xf0, 0x00]));
       expect(decoded).toEqual({
         version: 5, // 101 in binary
         flags: '11000',
@@ -130,11 +130,11 @@ describe('encodeBits', () => {
 
   describe('space efficiency', () => {
     test('should efficiently pack multiple small fields with mixed types', () => {
-      const fields = encodeBits('<a:num-2><b:num-3><c:bool-1><d:bool-1><e:num-3><f:num-2><g:bool-1><h:num-3>');
+      const encoder = encodeBits('<a:num-2><b:num-3><c:bool-1><d:bool-1><e:num-3><f:num-2><g:bool-1><h:num-3>');
       // Total bits: 16 bits (2 bytes)
       // As typed values, even more concise than binary strings
 
-      const encoded = fields.encode({
+      const encoded = encoder.encode({
         a: 2, // 10
         b: 5, // 101
         c: true, // 1
@@ -150,7 +150,7 @@ describe('encodeBits', () => {
       expect(encoded).toEqual(new Uint8Array([0xaf, 0x93])); // 10101111 10010011
 
       // Verify we can decode it back correctly
-      const decoded = fields.decode(encoded);
+      const decoded = encoder.decode(encoded);
       expect(decoded).toEqual({
         a: 2,
         b: 5,
@@ -166,18 +166,18 @@ describe('encodeBits', () => {
 
   describe('typed fields', () => {
     test('should handle boolean and numeric fields', () => {
-      const header = encodeBits('<flag:bool-1><count:num-8><type-4>');
+      const encoder = encodeBits('<flag:bool-1><count:num-8><type-4>');
 
-      const encoded = header.encode({
+      const encoded = encoder.encode({
         flag: true,
         count: 123,
         type: '1010',
       });
 
       expect(encoded.length).toBe(2); // 13 bits total = 2 bytes
-      expect(header.toBinaryString(encoded)).toBe('1011110111010000');
+      expect(encoder.toBinaryString(encoded)).toBe('1011110111010000');
 
-      const decoded = header.decode(encoded);
+      const decoded = encoder.decode(encoded);
       expect(decoded).toEqual({
         flag: true,
         count: 123,
@@ -186,15 +186,15 @@ describe('encodeBits', () => {
     });
 
     test('should validate numeric ranges', () => {
-      const header = encodeBits('<value:num-3>');
+      const encoder = encodeBits('<value:num-3>');
 
       // Valid range for 3 bits is 0-7
-      expect(() => header.encode({ value: 8 })).toThrow();
-      expect(() => header.encode({ value: -1 })).toThrow();
+      expect(() => encoder.encode({ value: 8 })).toThrow();
+      expect(() => encoder.encode({ value: -1 })).toThrow();
 
-      const encoded = header.encode({ value: 5 });
-      expect(header.toBinaryString(encoded)).toBe('10100000');
-      expect(header.decode(encoded)).toEqual({ value: 5 });
+      const encoded = encoder.encode({ value: 5 });
+      expect(encoder.toBinaryString(encoded)).toBe('10100000');
+      expect(encoder.decode(encoded)).toEqual({ value: 5 });
     });
 
     test('should validate boolean fields are always 1 bit', () => {
@@ -202,16 +202,16 @@ describe('encodeBits', () => {
       expect(() => encodeBits('<flag:bool-2>')).toThrow();
 
       // This should NOT throw - proper bool field declaration
-      const validHeader = encodeBits('<flag:bool-1>');
-      expect(() => validHeader.encode({ flag: true })).not.toThrow();
-      expect(() => validHeader.encode({ flag: false })).not.toThrow();
+      const encoder = encodeBits('<flag:bool-1>');
+      expect(() => encoder.encode({ flag: true })).not.toThrow();
+      expect(() => encoder.encode({ flag: false })).not.toThrow();
 
       // The encoded result should be correct
-      const encoded = validHeader.encode({ flag: true });
-      expect(validHeader.toBinaryString(encoded)).toBe('10000000');
+      const encoded = encoder.encode({ flag: true });
+      expect(encoder.toBinaryString(encoded)).toBe('10000000');
 
-      const encodedFalse = validHeader.encode({ flag: false });
-      expect(validHeader.toBinaryString(encodedFalse)).toBe('00000000');
+      const encodedFalse = encoder.encode({ flag: false });
+      expect(encoder.toBinaryString(encodedFalse)).toBe('00000000');
     });
 
     test('should validate number fields cannot exceed 8 bits', () => {
@@ -219,8 +219,8 @@ describe('encodeBits', () => {
       expect(() => encodeBits('<value:num-9>')).toThrow();
 
       // This should NOT throw - valid 8-bit number field
-      const validHeader = encodeBits('<value:num-8>');
-      expect(() => validHeader.encode({ value: 255 })).not.toThrow(); // Max 8-bit value
+      const encoder = encodeBits('<value:num-8>');
+      expect(() => encoder.encode({ value: 255 })).not.toThrow(); // Max 8-bit value
     });
 
     test('should validate number values are within range for different bit sizes', () => {
@@ -245,7 +245,7 @@ describe('encodeBits', () => {
     });
 
     test('should combine multiple typed fields in a practical example', () => {
-      // Example: Protocol message with header fields
+      // Example: Protocol message with bit fields
       const protocol = encodeBits(
         '<version:num-3><isRequest:bool-1><hasPayload:bool-1><messageType:num-3><sequenceId:num-8>',
       );
@@ -294,8 +294,6 @@ describe('encodeBits', () => {
         errorCode: 0,
         sequenceId: 12,
       });
-
-      console.log({ message });
 
       expect(message.length).toBe(2);
       expect(protocol.toBinaryString(message)).toBe('1011111010001100');

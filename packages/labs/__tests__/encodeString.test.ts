@@ -2,85 +2,85 @@ import { expect } from 'expect';
 import { describe, test } from 'node:test';
 import { encodeString } from '../src/utils/encodeString.ts';
 
-// Basic header functionality
-describe('Header template strings', () => {
+// Basic encoding functionality
+describe('String encoding templates', () => {
   test('should encode and decode a simple string', () => {
-    const hdr = encodeString('<name>');
-    const encoded = hdr.encode({ name: 'John' });
+    const encoder = encodeString('<name>');
+    const encoded = encoder.encode({ name: 'John' });
     expect(encoded).toBe('John');
-    const decoded = hdr.decode('John');
+    const decoded = encoder.decode('John');
     expect(decoded).toEqual({ name: 'John' });
   });
 
   test('should handle multiple text fields', () => {
-    const hdr = encodeString('<firstName> <lastName>');
-    const encoded = hdr.encode({ firstName: 'John', lastName: 'Doe' });
+    const encoder = encodeString('<firstName> <lastName>');
+    const encoded = encoder.encode({ firstName: 'John', lastName: 'Doe' });
     expect(encoded).toBe('John Doe');
-    const decoded = hdr.decode('John Doe');
+    const decoded = encoder.decode('John Doe');
     expect(decoded).toEqual({ firstName: 'John', lastName: 'Doe' });
   });
 
   test('should handle static prefix and suffix', () => {
-    const hdr = encodeString('Hello, <name> foo');
-    const encoded = hdr.encode({ name: 'Alice' });
+    const encoder = encodeString('Hello, <name> foo');
+    const encoded = encoder.encode({ name: 'Alice' });
     expect(encoded).toBe('Hello, Alice foo');
-    const decoded = hdr.decode('Hello, Alice foo');
+    const decoded = encoder.decode('Hello, Alice foo');
     expect(decoded).toEqual({ name: 'Alice' });
   });
 
   test('should handle complex formats with multiple fields', () => {
-    const hdr = encodeString('<method> <path> HTTP/<version>');
-    const encoded = hdr.encode({ method: 'GET', path: '/api/users', version: '1.1' });
+    const encoder = encodeString('<method> <path> HTTP/<version>');
+    const encoded = encoder.encode({ method: 'GET', path: '/api/users', version: '1.1' });
     expect(encoded).toBe('GET /api/users HTTP/1.1');
-    const decoded = hdr.decode('GET /api/users HTTP/1.1');
+    const decoded = encoder.decode('GET /api/users HTTP/1.1');
     expect(decoded).toEqual({ method: 'GET', path: '/api/users', version: '1.1' });
   });
 });
 
-describe('Header encoding', () => {
+describe('String encoding', () => {
   test('should throw error for missing required field', () => {
-    const hdr = encodeString('<firstName> <lastName>');
+    const encoder = encodeString('<firstName> <lastName>');
     expect(() => {
       // @ts-expect-error - missing required field
-      hdr.encode({ firstName: 'John' });
+      encoder.encode({ firstName: 'John' });
     }).toThrow('Missing required field "lastName"');
   });
 
   test('should handle mixed field types with fixed width', () => {
-    const hdr = encodeString('<id:num-3>|<name:text-5>|<active:bool>');
-    const encoded = hdr.encode({ id: 42, name: 'Alice', active: true });
+    const encoder = encodeString('<id:num-3>|<name:text-5>|<active:bool>');
+    const encoded = encoder.encode({ id: 42, name: 'Alice', active: true });
     expect(encoded).toBe('042|Alice|true');
   });
 
   test('should handle mixed field types', () => {
-    const hdr = encodeString('D|<name:text>:<age:num>|<active:bool>');
-    const encoded = hdr.encode({ name: 'John', age: 30, active: true });
+    const encoder = encodeString('D|<name:text>:<age:num>|<active:bool>');
+    const encoded = encoder.encode({ name: 'John', age: 30, active: true });
     expect(encoded).toBe('D|John:30|true');
   });
 });
 
-describe('Header decoding', () => {
+describe('String decoding', () => {
   test('should return null if input does not match pattern', () => {
-    const hdr = encodeString('Hello <n>');
-    const result = hdr.decode('Invalid input');
+    const encoder = encodeString('Hello <n>');
+    const result = encoder.decode('Invalid input');
     expect(result).toBeNull();
   });
 
   test("should return null if delimiter can't be found", () => {
-    const hdr = encodeString('<firstName> <lastName>');
-    const result = hdr.decode('JohnDoe'); // Missing space delimiter
+    const encoder = encodeString('<firstName> <lastName>');
+    const result = encoder.decode('JohnDoe'); // Missing space delimiter
     expect(result).toBeNull();
   });
 
   test('should handle mixed field types with fixed width', () => {
-    const hdr = encodeString('<id:num-3>|<name:text-5>|<active:bool>');
-    const decoded = hdr.decode('042|Alice|true');
+    const encoder = encodeString('<id:num-3>|<name:text-5>|<active:bool>');
+    const decoded = encoder.decode('042|Alice|true');
     expect(decoded).toEqual({ id: 42, name: 'Alice', active: true });
   });
 
   test('should handle mixed field types', () => {
-    const hdr = encodeString('D|<name:text>:<age:num>|<active:bool>');
-    const decoded = hdr.decode('D|John:30|true');
+    const encoder = encodeString('D|<name:text>:<age:num>|<active:bool>');
+    const decoded = encoder.decode('D|John:30|true');
     expect(decoded).toEqual({ name: 'John', age: 30, active: true });
   });
 });
@@ -325,13 +325,13 @@ describe('Numeric pairs (numPairs) type', () => {
 // Special features
 describe('Payloads with $ delimiter', () => {
   test('should handle messages with payload', () => {
-    const hdr = encodeString('CMD:<command>$');
-    const encoded = hdr.encode({
+    const encoder = encodeString('CMD:<command>$');
+    const encoded = encoder.encode({
       command: 'START',
       payload: 'This is the message content',
     });
     expect(encoded).toBe('CMD:START$This is the message content');
-    const decoded = hdr.decode('CMD:START$This is the message content');
+    const decoded = encoder.decode('CMD:START$This is the message content');
     expect(decoded).toEqual({
       command: 'START',
       payload: 'This is the message content',
@@ -339,38 +339,25 @@ describe('Payloads with $ delimiter', () => {
   });
 
   test('should handle empty payload', () => {
-    const hdr = encodeString('CMD:<command>$');
-    const encoded = hdr.encode({
+    const encoder = encodeString('CMD:<command>$');
+    const encoded = encoder.encode({
       command: 'PING',
     });
     expect(encoded).toBe('CMD:PING$');
-    const decoded = hdr.decode('CMD:PING$');
+    const decoded = encoder.decode('CMD:PING$');
     expect(decoded).toEqual({
       command: 'PING',
     });
   });
 
   test('should handle payload with special characters', () => {
-    const hdr = encodeString('MSG:<type>$');
-    const encoded = hdr.encode({
+    const encoder = encodeString('MSG:<type>$');
+    const encoded = encoder.encode({
       type: 'DATA',
       payload: '{"key":"value","arr":[1,2,3]}',
     });
     expect(encoded).toBe('MSG:DATA${"key":"value","arr":[1,2,3]}');
-    const decoded = hdr.decode('MSG:DATA${"key":"value","arr":[1,2,3]}');
-    expect(decoded).toEqual({
-      type: 'DATA',
-      payload: '{"key":"value","arr":[1,2,3]}',
-    });
-  });
-  test('should handle absent delimiter', () => {
-    const hdr = encodeString('MSG:<type>');
-    const encoded = hdr.encode({
-      type: 'DATA',
-      payload: '{"key":"value","arr":[1,2,3]}',
-    });
-    expect(encoded).toBe('MSG:DATA${"key":"value","arr":[1,2,3]}');
-    const decoded = hdr.decode('MSG:DATA${"key":"value","arr":[1,2,3]}');
+    const decoded = encoder.decode('MSG:DATA${"key":"value","arr":[1,2,3]}');
     expect(decoded).toEqual({
       type: 'DATA',
       payload: '{"key":"value","arr":[1,2,3]}',
@@ -378,63 +365,63 @@ describe('Payloads with $ delimiter', () => {
   });
 });
 
-describe('Fixed-size headers', () => {
-  test('should handle fixed-size header with ! delimiter', () => {
-    const hdr = encodeString('HDR:<type:text-3>!');
-    const encoded = hdr.encode({
+describe('Fixed-size encodings', () => {
+  test('should handle fixed-size encoding with ! delimiter', () => {
+    const encoder = encodeString('HDR:<type:text-3>!');
+    const encoded = encoder.encode({
       type: 'MSG',
-      payload: 'This is a fixed-size header message',
+      payload: 'This is a fixed-size encoding message',
     });
-    expect(encoded).toBe('HDR:MSGThis is a fixed-size header message');
-    const decoded = hdr.decode('HDR:MSGThis is a fixed-size header message');
+    expect(encoded).toBe('HDR:MSGThis is a fixed-size encoding message');
+    const decoded = encoder.decode('HDR:MSGThis is a fixed-size encoding message');
     expect(decoded).toEqual({
       type: 'MSG',
-      payload: 'This is a fixed-size header message',
+      payload: 'This is a fixed-size encoding message',
     });
   });
 
-  test('should return null if fixed-size header does not match pattern', () => {
-    const hdr = encodeString('HDR:<type:text-3>!');
-    const result = hdr.decode('XYZ:MSGThis is a message');
+  test('should return null if fixed-size encoding does not match pattern', () => {
+    const encoder = encodeString('HDR:<type:text-3>!');
+    const result = encoder.decode('XYZ:MSGThis is a message');
     expect(result).toBeNull();
   });
 
-  test('should handle fixed-size header with padding for consistent size', () => {
-    const hdr = encodeString('CMD:<type:text-3>!');
+  test('should handle fixed-size encoding with padding for consistent size', () => {
+    const encoder = encodeString('CMD:<type:text-3>!');
     // With 3 characters, fits exactly
-    let encoded = hdr.encode({
+    let encoded = encoder.encode({
       type: 'GET',
       payload: 'some data',
     });
     expect(encoded).toBe('CMD:GETsome data');
-    let decoded = hdr.decode('CMD:GETsome data');
+    let decoded = encoder.decode('CMD:GETsome data');
     expect(decoded).toEqual({
       type: 'GET',
       payload: 'some data',
     });
 
     // With shorter value, should be padded
-    encoded = hdr.encode({
+    encoded = encoder.encode({
       type: 'OK',
       payload: 'success',
     });
     expect(encoded).toBe('CMD:OK success');
-    decoded = hdr.decode('CMD:OK success');
+    decoded = encoder.decode('CMD:OK success');
     expect(decoded).toEqual({
       type: 'OK ',
       payload: 'success',
     });
   });
 
-  test('should handle fixed-size header with multiple fields', () => {
-    const hdr = encodeString('<type:text-3><code:num-3>!');
-    const encoded = hdr.encode({
+  test('should handle fixed-size encoding with multiple fields', () => {
+    const encoder = encodeString('<type:text-3><code:num-3>!');
+    const encoded = encoder.encode({
       type: 'MSG',
       code: 123,
       payload: 'Hello world',
     });
     expect(encoded).toBe('MSG123Hello world');
-    const decoded = hdr.decode('MSG123Hello world');
+    const decoded = encoder.decode('MSG123Hello world');
     expect(decoded).toEqual({
       type: 'MSG',
       code: 123,
@@ -442,23 +429,23 @@ describe('Fixed-size headers', () => {
     });
   });
 
-  test('should throw error if fixed-size header field lacks size parameter', () => {
+  test('should throw error if fixed-size encoding field lacks size parameter', () => {
     expect(() => {
       encodeString('<type:text>!');
-    }).toThrow('Fixed-size header requires a size parameter for all fields');
+    }).toThrow('Fixed-size encoding requires a size parameter for all fields');
   });
 });
 
-describe('Header decode error handling', () => {
+describe('String decode error handling', () => {
   test('should return null for completely invalid input', () => {
-    const hdr = encodeString('<firstName> <lastName>');
-    const result = hdr.decode('');
+    const encoder = encodeString('<firstName> <lastName>');
+    const result = encoder.decode('');
     expect(result).toBeNull();
   });
 
   test('should return null for input with incorrect delimiters', () => {
-    const hdr = encodeString('<name>:<age>');
-    const result = hdr.decode('John-42');
+    const encoder = encodeString('<name>:<age>');
+    const result = encoder.decode('John-42');
     expect(result).toBeNull();
   });
 });

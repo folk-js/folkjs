@@ -1,14 +1,14 @@
 /**
- * BitHeader - A utility for encoding/decoding bit-level headers
+ * BitEncoder - A utility for encoding/decoding bit-level data
  *
- * This utility provides a DSL for defining fixed-width bit headers using
+ * This utility provides a DSL for defining fixed-width bit encodings using
  * string patterns. It handles parsing of binary strings into objects and
  * encoding objects back to binary data.
  *
  * Basic usage:
- * const myHeader = encodeBits("<flag:bool><count:num-8><type-4>");
- * const result = myHeader.decode(new Uint8Array([0xE0])); // 11100000
- * const encoded = myHeader.encode({ flag: true, count: 6, type: "0000" });
+ * const encoder = encodeBits("<flag:bool><count:num-8><type-4>");
+ * const result = encoder.decode(new Uint8Array([0xE0])); // 11100000
+ * const encoded = encoder.encode({ flag: true, count: 6, type: "0000" });
  *
  * Supported types:
  * - bits: Raw binary string (default type if no type specified)
