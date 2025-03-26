@@ -210,6 +210,53 @@
           grid-template-columns: 1fr;
         }
       }
+
+      .compare-tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border-color);
+      }
+
+      .tab-button {
+        background: none;
+        border: 1px solid var(--border-color);
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        color: var(--text-color);
+        font-family: inherit;
+        font-size: 0.9rem;
+      }
+
+      .tab-button:hover {
+        background: var(--hover-color);
+      }
+
+      .tab-button.active {
+        background: var(--accent-color);
+        border-color: var(--accent-color);
+        color: white;
+      }
+
+      .compare-panel {
+        display: none;
+      }
+
+      .compare-panel.active {
+        display: block;
+      }
+
+      .test-select-group {
+        display: flex;
+        gap: 1rem;
+        flex: 1;
+      }
+
+      .test-select-group select {
+        flex: 1;
+      }
     </style>
   </head>
   <body>
@@ -237,12 +284,38 @@
         </div>
       </div>
 
-      <div class="compare-group">
-        <select id="compare-select">
-          <option value="">Select benchmark to compare...</option>
-        </select>
-        <button id="compare-btn">Compare</button>
-        <button id="clear-compare-btn" disabled>Clear</button>
+      <div class="compare-tabs">
+        <button id="compare-benchmarks-tab" class="tab-button active">Compare Benchmarks</button>
+        <button id="compare-tests-tab" class="tab-button">Compare Tests</button>
+      </div>
+
+      <div id="compare-benchmarks-panel" class="compare-panel active">
+        <div class="compare-group">
+          <select id="compare-select">
+            <option value="">Select benchmark to compare...</option>
+          </select>
+          <button id="compare-btn">Compare</button>
+          <button id="clear-compare-btn" disabled>Clear</button>
+        </div>
+      </div>
+
+      <div id="compare-tests-panel" class="compare-panel">
+        <div class="compare-group">
+          <div class="test-select-group">
+            <select id="test-benchmark-1"></select>
+            <select id="test-select-1" disabled>
+              <option value="">Select test...</option>
+            </select>
+          </div>
+          <div class="test-select-group">
+            <select id="test-benchmark-2"></select>
+            <select id="test-select-2" disabled>
+              <option value="">Select test...</option>
+            </select>
+          </div>
+          <button id="compare-tests-btn">Compare</button>
+          <button id="clear-tests-btn" disabled>Clear</button>
+        </div>
       </div>
     </div>
 
@@ -538,6 +611,7 @@
         const { packages, benchmarks, testNames, data } = processData(rawData);
         let currentSelectedValue = null;
         let currentCompareValue = null;
+        let currentTestComparison = null;
 
         // Populate benchmark select
         function populateSelect(selectId, includeEmptyOption = false) {
@@ -568,23 +642,119 @@
           });
         }
 
-        // Populate both selects
+        // Function to populate test select based on benchmark selection
+        function populateTestSelect(benchmarkSelectId, testSelectId) {
+          const benchmarkSelect = document.getElementById(benchmarkSelectId);
+          const testSelect = document.getElementById(testSelectId);
+          const selectedBenchmark = benchmarkSelect.value;
+
+          testSelect.innerHTML = '<option value="">Select test...</option>';
+          testSelect.disabled = !selectedBenchmark;
+
+          if (selectedBenchmark) {
+            const [pkg, bench] = selectedBenchmark.split('::');
+            const tests = Array.from(testNames.get(bench) || []).sort();
+            tests.forEach((test) => {
+              const option = document.createElement('option');
+              option.value = test;
+              option.textContent = test;
+              testSelect.appendChild(option);
+            });
+          }
+        }
+
+        // Populate all selects
         populateSelect('benchmark-select');
         populateSelect('compare-select', true);
+        populateSelect('test-benchmark-1');
+        populateSelect('test-benchmark-2');
+
+        // Get DOM elements
+        const benchmarkSelect = document.getElementById('benchmark-select');
+        const testBenchmark1 = document.getElementById('test-benchmark-1');
+        const testBenchmark2 = document.getElementById('test-benchmark-2');
+        const testSelect1 = document.getElementById('test-select-1');
+        const testSelect2 = document.getElementById('test-select-2');
+        const compareTestsBtn = document.getElementById('compare-tests-btn');
+        const clearTestsBtn = document.getElementById('clear-tests-btn');
 
         // Set initial value and update charts
-        const benchmarkSelect = document.getElementById('benchmark-select');
         benchmarkSelect.value = `${packages[0]}::${Array.from(benchmarks.get(packages[0]))[0]}`;
         currentSelectedValue = benchmarkSelect.value;
         updateCharts(data, currentSelectedValue);
 
-        // Handle selection changes
-        benchmarkSelect.addEventListener('change', () => {
-          currentSelectedValue = benchmarkSelect.value;
-          updateCharts(data, currentSelectedValue, currentCompareValue);
+        // Initialize test selects with first benchmark
+        testBenchmark1.value = benchmarkSelect.value;
+        testBenchmark2.value = benchmarkSelect.value;
+        populateTestSelect('test-benchmark-1', 'test-select-1');
+        populateTestSelect('test-benchmark-2', 'test-select-2');
+
+        // Handle tab switching
+        const compareBenchmarksTab = document.getElementById('compare-benchmarks-tab');
+        const compareTestsTab = document.getElementById('compare-tests-tab');
+        const compareBenchmarksPanel = document.getElementById('compare-benchmarks-panel');
+        const compareTestsPanel = document.getElementById('compare-tests-panel');
+
+        compareBenchmarksTab.addEventListener('click', () => {
+          compareBenchmarksTab.classList.add('active');
+          compareTestsTab.classList.remove('active');
+          compareBenchmarksPanel.classList.add('active');
+          compareTestsPanel.classList.remove('active');
+          if (currentTestComparison) {
+            currentTestComparison = null;
+            updateCharts(data, currentSelectedValue, currentCompareValue);
+          }
         });
 
-        // Handle compare button
+        compareTestsTab.addEventListener('click', () => {
+          compareTestsTab.classList.add('active');
+          compareBenchmarksTab.classList.remove('active');
+          compareTestsPanel.classList.add('active');
+          compareBenchmarksPanel.classList.remove('active');
+          if (currentCompareValue) {
+            currentCompareValue = null;
+            document.getElementById('compare-select').value = '';
+            document.getElementById('clear-compare-btn').disabled = true;
+            updateCharts(data, currentSelectedValue);
+          }
+        });
+
+        // Handle test comparison
+        testBenchmark1.addEventListener('change', () => populateTestSelect('test-benchmark-1', 'test-select-1'));
+        testBenchmark2.addEventListener('change', () => populateTestSelect('test-benchmark-2', 'test-select-2'));
+
+        compareTestsBtn.addEventListener('click', () => {
+          const benchmark1 = testBenchmark1.value;
+          const test1 = testSelect1.value;
+          const benchmark2 = testBenchmark2.value;
+          const test2 = testSelect2.value;
+
+          if (benchmark1 && test1 && benchmark2 && test2) {
+            currentTestComparison = {
+              test1: { benchmark: benchmark1, test: test1 },
+              test2: { benchmark: benchmark2, test: test2 },
+            };
+            clearTestsBtn.disabled = false;
+            updateTestComparison(data, currentTestComparison);
+          }
+        });
+
+        clearTestsBtn.addEventListener('click', () => {
+          currentTestComparison = null;
+          clearTestsBtn.disabled = true;
+          updateCharts(data, currentSelectedValue);
+        });
+
+        // Existing event listeners...
+        benchmarkSelect.addEventListener('change', () => {
+          currentSelectedValue = benchmarkSelect.value;
+          if (currentTestComparison) {
+            updateTestComparison(data, currentTestComparison);
+          } else {
+            updateCharts(data, currentSelectedValue, currentCompareValue);
+          }
+        });
+
         const compareBtn = document.getElementById('compare-btn');
         const clearCompareBtn = document.getElementById('clear-compare-btn');
         const compareSelect = document.getElementById('compare-select');
@@ -606,16 +776,188 @@
         });
 
         // Handle toggle changes
-        ['min', 'avg', 'max'].forEach((type, index) => {
+        ['max', 'avg', 'min'].forEach((type, index) => {
           document.getElementById(`toggle-${type}`).addEventListener('change', (e) => {
             document.querySelectorAll('canvas').forEach((canvas) => {
               const chart = Chart.getChart(canvas);
               if (chart) {
-                chart.data.datasets[2 - index].hidden = !e.target.checked;
+                if (currentTestComparison) {
+                  // For test comparison mode:
+                  // First test: datasets 0-2 (max, avg, min)
+                  // Second test: datasets 3-5 (max, avg, min)
+                  const firstTestIndex = index;
+                  const secondTestIndex = index + 3;
+                  chart.data.datasets[firstTestIndex].hidden = !e.target.checked;
+                  chart.data.datasets[secondTestIndex].hidden = !e.target.checked;
+                } else {
+                  // For regular mode:
+                  // Datasets are in order: [max, avg, min]
+                  chart.data.datasets[index].hidden = !e.target.checked;
+                }
                 chart.update();
               }
             });
           });
+        });
+      }
+
+      function updateTestComparison(data, comparison) {
+        const container = document.getElementById('charts-container');
+        container.innerHTML = '';
+
+        const test1Data = getBenchmarkData(data, comparison.test1.benchmark).get(comparison.test1.test);
+        const test2Data = getBenchmarkData(data, comparison.test2.benchmark).get(comparison.test2.test);
+
+        if (!test1Data || !test2Data) {
+          container.innerHTML =
+            '<div style="color: #888; text-align: center; padding: 2rem;">No data available for the selected tests</div>';
+          return;
+        }
+
+        const group = document.createElement('div');
+        group.className = 'benchmark-group';
+        const canvas = document.createElement('canvas');
+        canvas.id = 'test-comparison-chart';
+        group.appendChild(canvas);
+        container.appendChild(group);
+
+        const style = getComputedStyle(document.documentElement);
+        const maxColor = style.getPropertyValue('--max-color').trim();
+        const avgColor = style.getPropertyValue('--avg-color').trim();
+        const minColor = style.getPropertyValue('--min-color').trim();
+
+        const createDataset = (data, label, color) => [
+          {
+            label: `${label} (Max)`,
+            data: data.map((d) => ({ x: d.x, y: d.max })),
+            borderColor: color,
+            backgroundColor: color,
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: {
+              target: 'origin',
+              above: 'rgba(0, 0, 0, 0.03)',
+            },
+            hidden: !document.getElementById('toggle-max').checked,
+          },
+          {
+            label: `${label} (Avg)`,
+            data: data.map((d) => ({ x: d.x, y: d.avg })),
+            borderColor: color,
+            backgroundColor: color,
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: {
+              target: 'origin',
+              above: 'rgba(0, 0, 0, 0.03)',
+            },
+            hidden: !document.getElementById('toggle-avg').checked,
+          },
+          {
+            label: `${label} (Min)`,
+            data: data.map((d) => ({ x: d.x, y: d.min })),
+            borderColor: color,
+            backgroundColor: color,
+            borderWidth: 1,
+            pointRadius: 0,
+            fill: {
+              target: 'origin',
+              above: 'rgba(0, 0, 0, 0.03)',
+            },
+            hidden: !document.getElementById('toggle-min').checked,
+          },
+        ];
+
+        const chart = new Chart(canvas, {
+          type: 'line',
+          data: {
+            datasets: [
+              ...createDataset(test1Data, comparison.test1.test, minColor),
+              ...createDataset(test2Data, comparison.test2.test, maxColor),
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              intersect: false,
+              mode: 'index',
+            },
+            plugins: {
+              title: {
+                display: true,
+                text: 'Test Comparison',
+                align: 'start',
+                font: {
+                  family: "'Recursive', system-ui, sans-serif",
+                  size: 14,
+                  weight: '600',
+                },
+                padding: {
+                  top: 0,
+                  bottom: 16,
+                },
+              },
+              tooltip: {
+                callbacks: {
+                  label: function (context) {
+                    return context.dataset.label + ': ' + formatNumber(context.parsed.y);
+                  },
+                },
+              },
+              legend: {
+                align: 'start',
+                labels: {
+                  font: {
+                    family: "'Recursive', system-ui, sans-serif",
+                    size: 12,
+                  },
+                  boxWidth: 12,
+                  padding: 8,
+                  usePointStyle: true,
+                  pointStyle: 'rectRounded',
+                },
+              },
+            },
+            scales: {
+              x: {
+                type: 'time',
+                time: {
+                  unit: 'day',
+                },
+                grid: {
+                  color: 'rgba(0, 0, 0, 0.05)',
+                },
+                ticks: {
+                  font: {
+                    family: "'Recursive', system-ui, sans-serif",
+                    size: 12,
+                  },
+                },
+              },
+              y: {
+                type: 'logarithmic',
+                title: {
+                  display: true,
+                  text: 'Time (ns)',
+                  font: {
+                    family: "'Recursive', system-ui, sans-serif",
+                    size: 12,
+                  },
+                },
+                ticks: {
+                  callback: formatNumber,
+                  font: {
+                    family: "'Recursive', system-ui, sans-serif",
+                    size: 12,
+                  },
+                },
+                grid: {
+                  color: 'rgba(0, 0, 0, 0.05)',
+                },
+              },
+            },
+          },
         });
       }
 
