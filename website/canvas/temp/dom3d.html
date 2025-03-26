@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Search Results</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; }
+      .wrapper { padding: 20px; }
+      .result-item { margin: 10px 0; padding: 10px; }
+      .link { color: blue; text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <div class="page-wrapper">
+      <div class="header-container">
+        <div class="header-inner">
+          <div class="logo-wrapper">
+            <div class="logo-container">
+              <div class="logo-inner">
+                <span class="logo-text">Search Engine</span>
+              </div>
+            </div>
+          </div>
+          <div class="search-container">
+            <div class="search-box-wrapper">
+              <div class="search-box-container">
+                <div class="input-wrapper">
+                  <div class="input-container">
+                    <input type="text" value="search term"/>
+                  </div>
+                </div>
+              </div>
+            </div>
+        </div>
+        </div>
+      </div>
+
+      <div class="content-wrapper">
+        <div class="content-container">
+          <div class="sidebar-wrapper">
+            <div class="filters-container">
+              <div class="filter-section">
+                <div class="filter-header">
+                  <div class="filter-title-wrapper">
+                    <span>Filters</span>
+                  </div>
+                </div>
+                <div class="filter-content">
+                  <div class="filter-list">
+                    <div class="filter-item">
+                      <div class="checkbox-wrapper">
+                        <input type="checkbox"/>
+                        <div class="label-wrapper">
+                          <span>Filter 1</span>
+                        </div>
+                      </div>
+                    </div>
+                    <!-- Repeat 10 more times -->
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="results-wrapper">
+            <div class="results-container">
+              <div class="results-header">
+                <div class="results-count-wrapper">
+                  <div class="count-text">
+                    <span>About 100,000 results</span>
+                  </div>
+                </div>
+              </div>
+              <div class="results-list">
+                <div class="result-item">
+                  <div class="result-content-wrapper">
+                    <div class="result-header">
+                      <div class="title-wrapper">
+                        <div class="link-container">
+                          <a href="#" class="link">
+                            <div class="title-text">
+                              <span>Search Result Title</span>
+                            </div>
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="result-body">
+                      <div class="snippet-wrapper">
+                        <div class="snippet-container">
+                          <div class="snippet-text">
+                            <span>Here is a description of the search result with some highlighted terms and unnecessary nested elements...</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="metadata-wrapper">
+                        <div class="metadata-container">
+                          <div class="date-wrapper">
+                            <span>Oct 10, 2023</span>
+                          </div>
+                          <div class="separator-wrapper">
+                            <span> - </span>
+                          </div>
+                          <div class="author-wrapper">
+                            <span>Author Name</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <!-- Repeat result-item 50 times -->
+              </div>
+
+              <div class="pagination-wrapper">
+                <div class="pagination-container">
+                  <div class="pagination-inner">
+                    <div class="page-numbers">
+                      <div class="page-item">
+                        <div class="page-link-wrapper">
+                          <a href="#" class="link">1</a>
+                        </div>
+                      </div>
+                      <!-- Repeat page-item 10 times -->
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+      </div>
+
+          <div class="sidebar-right-wrapper">
+            <div class="related-searches">
+              <div class="related-header">
+                <div class="related-title-wrapper">
+                  <span>Related Searches</span>
+                </div>
+              </div>
+              <div class="related-list">
+                <div class="related-item">
+                  <div class="related-link-wrapper">
+                    <a href="#" class="link">Related Term 1</a>
+                  </div>
+                </div>
+                <!-- Repeat related-item 20 times -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-wrapper">
+        <div class="footer-container">
+          <div class="footer-content">
+            <div class="footer-links">
+              <div class="link-section">
+                <div class="link-wrapper">
+                  <a href="#" class="link">About</a>
+                </div>
+                <!-- Repeat link-wrapper 10 times -->
+              </div>
+          </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/dom3d.js"></script>
+
+    <script>
+      // Generate lots of search results
+      const resultsList = document.querySelector('.results-list');
+      const resultTemplate = resultsList.children[0].cloneNode(true);
+      
+      for (let i = 0; i < 50; i++) {
+        const newResult = resultTemplate.cloneNode(true);
+        newResult.querySelector('.title-text span').textContent = `Search Result Title ${i + 2}`;
+        newResult.querySelector('.snippet-text span').textContent = `Description for result ${i + 2} with unnecessary nesting...`;
+        resultsList.appendChild(newResult);
+      }
+
+      // Generate related items
+      const relatedList = document.querySelector('.related-list');
+      const relatedTemplate = relatedList.children[0].cloneNode(true);
+      
+      for (let i = 0; i < 5; i++) {
+        const newRelated = relatedTemplate.cloneNode(true);
+        newRelated.querySelector('a').textContent = `Related Term ${i + 2}`;
+        relatedList.appendChild(newRelated);
+      }
+    </script>
+  </body>
+</html>
