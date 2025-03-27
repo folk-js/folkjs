@@ -266,21 +266,30 @@ export class FolkSpreadsheet extends HTMLElement {
     return this.querySelector(`folk-cell[column="${column}"][row="${row}"]`);
   }
 
-  getCells() {
+  get cells() {
     return Array.from(this.querySelectorAll(`folk-cell`));
   }
 
-  getValues() {
-    const cells = this.getCells();
-    const data: Record<string, any> = {};
+  get rows() {
+    return Object.values(Object.groupBy(this.cells, (cell) => cell.row)) as FolkSpreadSheetCell[][];
+  }
 
-    for (const cell of cells) {
-      if (cell.value !== undefined) {
-        data[cell.name] = cell.value;
+  get values() {
+    return this.rows.map((row) => row.map((column) => column.value));
+  }
+
+  set values(value) {
+    console.log(value);
+    const rows = this.rows;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowData = value[i];
+      for (let j = 0; j < rows.length; j++) {
+        const cell = row[j];
+        cell.expression = rowData[j];
       }
     }
-
-    return data;
   }
 
   handleEvent(event: Event) {
@@ -520,6 +529,9 @@ export class FolkSpreadSheetCell extends HTMLElement {
     return this.#expression;
   }
   set expression(expression: any) {
+    if (typeof expression === 'string') {
+      expression = '"' + expression + '"';
+    }
     this.setAttribute('expression', expression);
   }
 

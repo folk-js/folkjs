@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Spreadsheet</title>
+    <title>Spreadsheet Propagator</title>
     <style>
       html {
         height: 100%;
@@ -14,12 +14,46 @@
         position: relative;
         margin: 0;
       }
+
+      folk-map {
+        display: block;
+        height: 100%;
+        width: 100%;
+      }
+
+      folk-event-propagator {
+        z-index: calc(infinity);
+      }
+
+      applet-frame {
+        width: 100%;
+        height: 100%;
+        border: dashed 1px rgba(160, 154, 154, 0.743);
+        border-radius: 5px;
+        box-sizing: border-box;
+      }
     </style>
   </head>
   <body>
-    <folk-shape x="50" y="50" width="500">
+    <script type="module">
+      import 'https://esm.sh/@web-applets/sdk';
+      import 'https://esm.sh/inspector-elements@0.1.0';
+      import '@folkjs/labs/standalone/folk-shape';
+      import '@folkjs/labs/standalone/folk-event-propagator';
+      import '@folkjs/labs/standalone/folk-spreadsheet';
+
+      function parseSearchResults(results) {
+        return results.map(r);
+      }
+
+      // applet-frame has a bug if included in initial HTML.
+      document.body.innerHTML = `
+          <folk-shape x="50" y="50" width="900">
+      <applet-frame src="https://applets.unternet.co/web"></applet-frame>
+    </folk-shape>
+    <folk-shape x="1000" y="100" width="500">
       <folk-spreadsheet>
-        <folk-cell row="1" column="A" expression="1"></folk-cell>
+        <folk-cell row="1" column="A"></folk-cell>
         <folk-cell row="1" column="B"></folk-cell>
         <folk-cell row="1" column="C"></folk-cell>
         <folk-cell row="1" column="D"></folk-cell>
@@ -29,7 +63,7 @@
         <folk-cell row="1" column="H"></folk-cell>
         <folk-cell row="1" column="I"></folk-cell>
         <folk-cell row="1" column="J"></folk-cell>
-        <folk-cell row="2" column="A" expression="$A1 * 2"></folk-cell>
+        <folk-cell row="2" column="A"></folk-cell>
         <folk-cell row="2" column="B"></folk-cell>
         <folk-cell row="2" column="C"></folk-cell>
         <folk-cell row="2" column="D"></folk-cell>
@@ -89,55 +123,16 @@
         <folk-cell row="7" column="H"></folk-cell>
         <folk-cell row="7" column="I"></folk-cell>
         <folk-cell row="7" column="J"></folk-cell>
-        <folk-cell row="8" column="A"></folk-cell>
-        <folk-cell row="8" column="B"></folk-cell>
-        <folk-cell row="8" column="C"></folk-cell>
-        <folk-cell row="8" column="D"></folk-cell>
-        <folk-cell row="8" column="E"></folk-cell>
-        <folk-cell row="8" column="F"></folk-cell>
-        <folk-cell row="8" column="G"></folk-cell>
-        <folk-cell row="8" column="H"></folk-cell>
-        <folk-cell row="8" column="I"></folk-cell>
-        <folk-cell row="8" column="J"></folk-cell>
-        <folk-cell row="9" column="A"></folk-cell>
-        <folk-cell row="9" column="B"></folk-cell>
-        <folk-cell row="9" column="C"></folk-cell>
-        <folk-cell row="9" column="D"></folk-cell>
-        <folk-cell row="9" column="E"></folk-cell>
-        <folk-cell row="9" column="F"></folk-cell>
-        <folk-cell row="9" column="G"></folk-cell>
-        <folk-cell row="9" column="H"></folk-cell>
-        <folk-cell row="9" column="I"></folk-cell>
-        <folk-cell row="9" column="J"></folk-cell>
-        <folk-cell row="10" column="A"></folk-cell>
-        <folk-cell row="10" column="B"></folk-cell>
-        <folk-cell row="10" column="C"></folk-cell>
-        <folk-cell row="10" column="D"></folk-cell>
-        <folk-cell row="10" column="E"></folk-cell>
-        <folk-cell row="10" column="F"></folk-cell>
-        <folk-cell row="10" column="G"></folk-cell>
-        <folk-cell row="10" column="H"></folk-cell>
-        <folk-cell row="10" column="I"></folk-cell>
-        <folk-cell row="10" column="J"></folk-cell>
       </folk-spreadsheet>
     </folk-shape>
 
-    <folk-shape x="50" y="600" width="200">
-      <ix-object-inspector></ix-object-inspector>
-    </folk-shape>
-
     <folk-event-propagator
-      source="folk-spreadsheet"
-      target="ix-object-inspector"
-      trigger="propagate"
-      expression="data: from.values"
+      source="applet-frame"
+      target="folk-spreadsheet"
+      trigger="data"
+      expression="values: from.applet.data.results.map(r => [r.title, r.description, r.url])"
     ></folk-event-propagator>
-
-    <script type="module">
-      import '@folkjs/labs/standalone/folk-shape';
-      import '@folkjs/labs/standalone/folk-spreadsheet';
-      import 'https://esm.sh/inspector-elements@0.1.0';
-      import '@folkjs/labs/standalone/folk-event-propagator';
+        `;
     </script>
   </body>
 </html>
