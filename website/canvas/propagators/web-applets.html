@@ -42,97 +42,93 @@
       import '@folkjs/labs/standalone/folk-event-propagator';
       import '@folkjs/labs/standalone/folk-spreadsheet';
 
-      function parseSearchResults(results) {
-        return results.map(r);
-      }
-
       // applet-frame has a bug if included in initial HTML.
       document.body.innerHTML = `
-          <folk-shape x="50" y="50" width="900">
-      <applet-frame src="https://applets.unternet.co/web"></applet-frame>
-    </folk-shape>
-    <folk-shape x="1000" y="100" width="500">
-      <folk-spreadsheet>
-        <folk-cell row="1" column="A"></folk-cell>
-        <folk-cell row="1" column="B"></folk-cell>
-        <folk-cell row="1" column="C"></folk-cell>
-        <folk-cell row="1" column="D"></folk-cell>
-        <folk-cell row="1" column="E"></folk-cell>
-        <folk-cell row="1" column="F"></folk-cell>
-        <folk-cell row="1" column="G"></folk-cell>
-        <folk-cell row="1" column="H"></folk-cell>
-        <folk-cell row="1" column="I"></folk-cell>
-        <folk-cell row="1" column="J"></folk-cell>
-        <folk-cell row="2" column="A"></folk-cell>
-        <folk-cell row="2" column="B"></folk-cell>
-        <folk-cell row="2" column="C"></folk-cell>
-        <folk-cell row="2" column="D"></folk-cell>
-        <folk-cell row="2" column="E"></folk-cell>
-        <folk-cell row="2" column="F"></folk-cell>
-        <folk-cell row="2" column="G"></folk-cell>
-        <folk-cell row="2" column="H"></folk-cell>
-        <folk-cell row="2" column="I"></folk-cell>
-        <folk-cell row="2" column="J"></folk-cell>
-        <folk-cell row="3" column="A"></folk-cell>
-        <folk-cell row="3" column="B"></folk-cell>
-        <folk-cell row="3" column="C"></folk-cell>
-        <folk-cell row="3" column="D"></folk-cell>
-        <folk-cell row="3" column="E"></folk-cell>
-        <folk-cell row="3" column="F"></folk-cell>
-        <folk-cell row="3" column="G"></folk-cell>
-        <folk-cell row="3" column="H"></folk-cell>
-        <folk-cell row="3" column="I"></folk-cell>
-        <folk-cell row="3" column="J"></folk-cell>
-        <folk-cell row="4" column="A"></folk-cell>
-        <folk-cell row="4" column="B"></folk-cell>
-        <folk-cell row="4" column="C"></folk-cell>
-        <folk-cell row="4" column="D"></folk-cell>
-        <folk-cell row="4" column="E"></folk-cell>
-        <folk-cell row="4" column="F"></folk-cell>
-        <folk-cell row="4" column="G"></folk-cell>
-        <folk-cell row="4" column="H"></folk-cell>
-        <folk-cell row="4" column="I"></folk-cell>
-        <folk-cell row="4" column="J"></folk-cell>
-        <folk-cell row="5" column="A"></folk-cell>
-        <folk-cell row="5" column="B"></folk-cell>
-        <folk-cell row="5" column="C"></folk-cell>
-        <folk-cell row="5" column="D"></folk-cell>
-        <folk-cell row="5" column="E"></folk-cell>
-        <folk-cell row="5" column="F"></folk-cell>
-        <folk-cell row="5" column="G"></folk-cell>
-        <folk-cell row="5" column="H"></folk-cell>
-        <folk-cell row="5" column="I"></folk-cell>
-        <folk-cell row="5" column="J"></folk-cell>
-        <folk-cell row="6" column="A"></folk-cell>
-        <folk-cell row="6" column="B"></folk-cell>
-        <folk-cell row="6" column="C"></folk-cell>
-        <folk-cell row="6" column="D"></folk-cell>
-        <folk-cell row="6" column="E"></folk-cell>
-        <folk-cell row="6" column="F"></folk-cell>
-        <folk-cell row="6" column="G"></folk-cell>
-        <folk-cell row="6" column="H"></folk-cell>
-        <folk-cell row="6" column="I"></folk-cell>
-        <folk-cell row="6" column="J"></folk-cell>
-        <folk-cell row="7" column="A"></folk-cell>
-        <folk-cell row="7" column="B"></folk-cell>
-        <folk-cell row="7" column="C"></folk-cell>
-        <folk-cell row="7" column="D"></folk-cell>
-        <folk-cell row="7" column="E"></folk-cell>
-        <folk-cell row="7" column="F"></folk-cell>
-        <folk-cell row="7" column="G"></folk-cell>
-        <folk-cell row="7" column="H"></folk-cell>
-        <folk-cell row="7" column="I"></folk-cell>
-        <folk-cell row="7" column="J"></folk-cell>
-      </folk-spreadsheet>
-    </folk-shape>
+<folk-shape x="50" y="50" width="500">
+  <applet-frame src="https://applets.unternet.co/web"></applet-frame>
+</folk-shape>
 
-    <folk-event-propagator
-      source="applet-frame"
-      target="folk-spreadsheet"
-      trigger="data"
-      expression="values: from.applet.data.results.map(r => [r.title, r.description, r.url])"
-    ></folk-event-propagator>
-        `;
+<folk-shape x="600" y="100" width="500">
+  <folk-spreadsheet>
+    <folk-cell row="1" column="A"></folk-cell>
+    <folk-cell row="1" column="B"></folk-cell>
+    <folk-cell row="1" column="C"></folk-cell>
+    <folk-cell row="1" column="D"></folk-cell>
+    <folk-cell row="1" column="E"></folk-cell>
+    <folk-cell row="1" column="F"></folk-cell>
+    <folk-cell row="1" column="G"></folk-cell>
+    <folk-cell row="1" column="H"></folk-cell>
+    <folk-cell row="1" column="I"></folk-cell>
+    <folk-cell row="1" column="J"></folk-cell>
+    <folk-cell row="2" column="A"></folk-cell>
+    <folk-cell row="2" column="B"></folk-cell>
+    <folk-cell row="2" column="C"></folk-cell>
+    <folk-cell row="2" column="D"></folk-cell>
+    <folk-cell row="2" column="E"></folk-cell>
+    <folk-cell row="2" column="F"></folk-cell>
+    <folk-cell row="2" column="G"></folk-cell>
+    <folk-cell row="2" column="H"></folk-cell>
+    <folk-cell row="2" column="I"></folk-cell>
+    <folk-cell row="2" column="J"></folk-cell>
+    <folk-cell row="3" column="A"></folk-cell>
+    <folk-cell row="3" column="B"></folk-cell>
+    <folk-cell row="3" column="C"></folk-cell>
+    <folk-cell row="3" column="D"></folk-cell>
+    <folk-cell row="3" column="E"></folk-cell>
+    <folk-cell row="3" column="F"></folk-cell>
+    <folk-cell row="3" column="G"></folk-cell>
+    <folk-cell row="3" column="H"></folk-cell>
+    <folk-cell row="3" column="I"></folk-cell>
+    <folk-cell row="3" column="J"></folk-cell>
+    <folk-cell row="4" column="A"></folk-cell>
+    <folk-cell row="4" column="B"></folk-cell>
+    <folk-cell row="4" column="C"></folk-cell>
+    <folk-cell row="4" column="D"></folk-cell>
+    <folk-cell row="4" column="E"></folk-cell>
+    <folk-cell row="4" column="F"></folk-cell>
+    <folk-cell row="4" column="G"></folk-cell>
+    <folk-cell row="4" column="H"></folk-cell>
+    <folk-cell row="4" column="I"></folk-cell>
+    <folk-cell row="4" column="J"></folk-cell>
+    <folk-cell row="5" column="A"></folk-cell>
+    <folk-cell row="5" column="B"></folk-cell>
+    <folk-cell row="5" column="C"></folk-cell>
+    <folk-cell row="5" column="D"></folk-cell>
+    <folk-cell row="5" column="E"></folk-cell>
+    <folk-cell row="5" column="F"></folk-cell>
+    <folk-cell row="5" column="G"></folk-cell>
+    <folk-cell row="5" column="H"></folk-cell>
+    <folk-cell row="5" column="I"></folk-cell>
+    <folk-cell row="5" column="J"></folk-cell>
+    <folk-cell row="6" column="A"></folk-cell>
+    <folk-cell row="6" column="B"></folk-cell>
+    <folk-cell row="6" column="C"></folk-cell>
+    <folk-cell row="6" column="D"></folk-cell>
+    <folk-cell row="6" column="E"></folk-cell>
+    <folk-cell row="6" column="F"></folk-cell>
+    <folk-cell row="6" column="G"></folk-cell>
+    <folk-cell row="6" column="H"></folk-cell>
+    <folk-cell row="6" column="I"></folk-cell>
+    <folk-cell row="6" column="J"></folk-cell>
+    <folk-cell row="7" column="A"></folk-cell>
+    <folk-cell row="7" column="B"></folk-cell>
+    <folk-cell row="7" column="C"></folk-cell>
+    <folk-cell row="7" column="D"></folk-cell>
+    <folk-cell row="7" column="E"></folk-cell>
+    <folk-cell row="7" column="F"></folk-cell>
+    <folk-cell row="7" column="G"></folk-cell>
+    <folk-cell row="7" column="H"></folk-cell>
+    <folk-cell row="7" column="I"></folk-cell>
+    <folk-cell row="7" column="J"></folk-cell>
+  </folk-spreadsheet>
+</folk-shape>
+
+<folk-event-propagator
+  source="applet-frame"
+  target="folk-spreadsheet"
+  trigger="data"
+  expression="values: from.applet.data.results.map(r => [r.title, r.description, r.url])"
+></folk-event-propagator>`;
     </script>
   </body>
 </html>
