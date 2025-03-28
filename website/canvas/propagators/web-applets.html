@@ -42,6 +42,11 @@
       import '@folkjs/labs/standalone/folk-event-propagator';
       import '@folkjs/labs/standalone/folk-spreadsheet';
 
+      // JSON.stringify a JS string.
+      function str(s) {
+        return '"' + s + '"';
+      }
+
       // applet-frame has a bug if included in initial HTML.
       document.body.innerHTML = `
 <folk-shape x="50" y="50" width="500">
@@ -127,7 +132,7 @@
   source="applet-frame"
   target="folk-spreadsheet"
   trigger="data"
-  expression="values: from.applet.data.results.map(r => [r.title, r.description, r.url])"
+  expression="values: from.applet.data.results.map(r => [str(r.title), str(r.description), str(r.url)])"
 ></folk-event-propagator>`;
     </script>
   </body>

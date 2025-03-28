@@ -529,9 +529,6 @@ export class FolkSpreadSheetCell extends HTMLElement {
     return this.#expression;
   }
   set expression(expression: any) {
-    if (typeof expression === 'string') {
-      expression = '"' + expression + '"';
-    }
     this.setAttribute('expression', expression);
   }
 
