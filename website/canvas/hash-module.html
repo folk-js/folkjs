@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hash modules</title>
+  </head>
+
+  <body>
+    <script type="hash-module" id="sum">
+      export const sum = (a, b) => a + b;
+    </script>
+
+    <script type="hash-module" id="main">
+      import { sum } from '#sum';
+
+      document.body.innerHTML = sum(1, 2);
+    </script>
+
+    <script type="module">
+      import '@folkjs/canvas/hash-modules';
+    </script>
+  </body>
+</html>
