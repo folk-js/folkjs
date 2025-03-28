@@ -84,6 +84,32 @@ export function bounds(rect1: Rect2D, rect2: Rect2D): Rect2D {
   };
 }
 
+export function isPointInsideRect(rect: Rect2D, point: Vector2): boolean {
+  return rect.x <= point.x && point.x <= rect.x + rect.width && rect.y <= point.y && point.y <= rect.y + rect.height;
+}
+
+/**
+ * Given a point, find the nearest point on the perimeter of the rectangle.
+ * @param point
+ * @param rect
+ * @returns
+ */
+export function nearestPointOnRect(rect: Rect2D, point: Vector2): Vector2 {
+  const c = center(rect);
+  let qx = point.x - c.x;
+  let qy = point.y - c.y;
+  const halfWidth = rect.width * 0.5;
+  const halfHeight = rect.height * 0.5;
+
+  if (qx > halfWidth) qx = halfWidth;
+  else if (qx < -halfWidth) qx = -halfWidth;
+
+  if (qy > halfHeight) qy = halfHeight;
+  else if (qy < -halfHeight) qy = -halfHeight;
+
+  return { x: qx + c.x, y: qy + c.y };
+}
+
 /**
  * Checks if a rectangle completely covers a screen/container area, even when transformed.
  *

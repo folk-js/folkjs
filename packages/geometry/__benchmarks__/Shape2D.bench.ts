@@ -2,13 +2,7 @@ import { bench, do_not_optimize, run } from '@folkjs/repo-utils';
 import type { Shape2D } from '../src/Shape2D.ts';
 import * as S from '../src/Shape2D.ts';
 
-const shape: Shape2D = {
-  x: 0,
-  y: 0,
-  width: 100,
-  height: 50,
-  rotation: Math.PI / 2, // 90 degrees
-};
+const shape: Shape2D = S.fromValues(0, 0, 100, 50, Math.PI / 2);
 
 bench('Shape2D: instantiate', () => {
   do_not_optimize(S.fromValues());

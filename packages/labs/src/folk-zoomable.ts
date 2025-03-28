@@ -1,6 +1,6 @@
 import { css, CustomAttribute, customAttributes, Matrix, toDOMPrecision } from '@folkjs/canvas';
 import * as BVH from '@folkjs/geometry/BoundingVolumeHierarchy';
-import type { Rect2D } from 'packages/geometry/dist/Rect2D';
+import * as S from '@folkjs/geometry/Shape2D';
 import { FolkShapeAttribute, ShapeConnectedEvent, ShapeDisconnectedEvent } from './folk-shape-attribute';
 
 declare global {
@@ -86,18 +86,12 @@ export class FolkZoomable extends CustomAttribute {
   }
 
   #matrix = new Matrix();
+  #shapes: FolkShapeAttribute[] = [];
+  #bvh: BVH.BVHNode<S.Shape2D> | null = null;
 
-  #bvh: BVH.BVHNode | null = null;
-
-  get bvh(): BVH.BVHNodeReadonly {
+  get bvh(): BVH.BVHNodeReadonly<S.Shape2D> {
     if (this.#bvh === null) {
-      const bounds: Rect2D[] = [];
-
-      this.#shapes.forEach((shape) => {
-        bounds.push(shape.bounds);
-      });
-
-      this.#bvh = BVH.fromRects(bounds);
+      this.#bvh = BVH.fromShapes(this.#shapes);
     }
 
     return this.#bvh;
@@ -150,8 +144,6 @@ export class FolkZoomable extends CustomAttribute {
     this.#grid = value;
     this.#requestUpdate();
   }
-
-  #shapes = new Set<FolkShapeAttribute>();
 
   override connectedCallback(): void {
     this.ownerElement.addEventListener('shape-connected', this.#onShapeConnected);
@@ -252,7 +244,7 @@ export class FolkZoomable extends CustomAttribute {
   };
 
   #onShapeConnected = (event: ShapeConnectedEvent) => {
-    this.#shapes.add(event.shape);
+    this.#shapes.push(event.shape);
     this.#bvh = null;
     event.shape.ownerElement.addEventListener('transform', this.#onShapeTransform);
     event.registerSpace(this);
@@ -260,7 +252,10 @@ export class FolkZoomable extends CustomAttribute {
 
   #onShapeDisconnected = (event: ShapeDisconnectedEvent) => {
     event.shape.ownerElement.removeEventListener('transform', this.#onShapeTransform);
-    this.#shapes.delete(event.shape);
+    this.#shapes.splice(
+      this.#shapes.findIndex((s) => s === event.shape),
+      1,
+    );
     this.#bvh = null;
   };
 

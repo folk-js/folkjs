@@ -29,22 +29,6 @@
     <script type="module">
       import '@folkjs/labs/standalone/folk-zoomable';
       import '@folkjs/labs/standalone/folk-shape-attribute';
-      import { Gizmos } from '@folkjs/canvas/folk-gizmos';
-      import { traverse } from '@folkjs/geometry/BoundingVolumeHierarchy';
-
-      function loop() {
-        requestAnimationFrame(loop);
-        const zoom = document.body.zoom;
-        Gizmos.clear();
-
-        traverse(document.body.zoom.bvh, (node) => {
-          if (!node.isLeaf) {
-            Gizmos.rect(node.rect, {});
-          }
-        });
-      }
-
-      loop();
     </script>
   </body>
   <folk-gizmos></folk-gizmos>

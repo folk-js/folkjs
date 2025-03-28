@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shape Attribute</title>
+    <style>
+      body {
+        height: 100vh;
+        overscroll-behavior: none;
+        touch-action: none;
+        margin: 0;
+      }
+
+      h1 {
+        width: fit-content;
+        margin-top: 0;
+      }
+
+      [folk-shape] {
+        border: 1px solid black;
+      }
+    </style>
+  </head>
+  <body folk-zoomable="grid:true">
+    <folk-gizmos></folk-gizmos>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-zoomable';
+      import '@folkjs/labs/standalone/folk-shape-attribute';
+      import { Gizmos } from '@folkjs/canvas/folk-gizmos';
+      import { breathFirstTraverse } from '@folkjs/geometry/BoundingVolumeHierarchy';
+
+      for (let i = 0; i < 10000; i++) {
+        const shape = document.createElement('div');
+        shape.setAttribute(
+          'folk-shape',
+          `x: ${Math.random() * 10000}; y: ${Math.random() * 10000}; width: 45; height: 45;`,
+        );
+        document.body.append(shape);
+      }
+
+      function loop() {
+        requestAnimationFrame(loop);
+        const zoom = document.body.zoom.bvh;
+        Gizmos.clear();
+
+        // const now = performance.now();
+        // breathFirstTraverse(document.body.zoom.bvh, (node) => {
+        //   if (!node.isLeaf) {
+        //     Gizmos.rect(node.aabb, {});
+        //   }
+        // });
+        // console.log('traverse and render', performance.now() - now);
+      }
+
+      requestIdleCallback(() => {
+        loop();
+      });
+    </script>
+  </body>
+  <folk-gizmos></folk-gizmos>
+</html>

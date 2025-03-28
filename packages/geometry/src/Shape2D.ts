@@ -4,6 +4,7 @@ import * as V from './Vector2.ts';
 
 export type Shape2D = Rect2D & {
   rotation: number;
+  vertices: ReadonlyArray<V.Vector2Readonly> | null;
 };
 
 export type Shape2DReadonly = Readonly<Shape2D>;
@@ -15,12 +16,12 @@ export type Shape2DCorners = Readonly<{
   bottomLeft: Vector2Readonly;
 }>;
 
-export function fromValues(x = 0, y = 0, width = 0, height = 0, rotation = 0): Shape2D {
-  return { x, y, width, height, rotation };
+export function fromValues(x = 0, y = 0, width = 0, height = 0, rotation = 0, vertices = null): Shape2D {
+  return { x, y, width, height, rotation, vertices };
 }
 
-export function clone({ x, y, width, height, rotation }: Shape2D): Shape2D {
-  return { x, y, width, height, rotation };
+export function clone({ x, y, width, height, rotation, vertices }: Shape2D): Shape2D {
+  return { x, y, width, height, rotation, vertices };
 }
 
 export function copy(s1: Shape2DReadonly, s2: Shape2D): Shape2D {
@@ -29,6 +30,7 @@ export function copy(s1: Shape2DReadonly, s2: Shape2D): Shape2D {
   s2.width = s1.width;
   s2.height = s1.height;
   s2.rotation = s1.rotation;
+  s2.vertices = s1.vertices;
 
   return s2;
 }

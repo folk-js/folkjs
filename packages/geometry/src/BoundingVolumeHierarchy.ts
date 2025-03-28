@@ -1,31 +1,40 @@
 import * as R from './Rect2D.ts';
+import * as S from './Shape2D.ts';
 import * as V from './Vector2.ts';
 
-export type BVHNode =
-  | {
-      rect: R.Rect2D;
-      isLeaf: false;
-      left: BVHNode;
-      right: BVHNode;
-    }
-  | {
-      rect: R.Rect2D;
-      isLeaf: true;
-      left: null;
-      right: null;
-    };
+export interface BVHLeafNode<T> {
+  value: T;
+  aabb: R.Rect2D;
+  mortonCode: number;
+  isLeaf: true;
+  left: null;
+  right: null;
+}
 
-export type BVHNodeReadonly = Readonly<BVHNode>;
+export interface BVHInternalNode<T> {
+  value: null;
+  aabb: R.Rect2D;
+  mortonCode: number;
+  isLeaf: false;
+  left: BVHNode<T>;
+  right: BVHNode<T>;
+}
 
-function constructSubTree(rects: readonly R.Rect2D[], start: number, end: number): BVHNode {
-  if (start >= end) return { rect: rects[start], isLeaf: true, left: null, right: null };
+export type BVHNode<T> = BVHInternalNode<T> | BVHLeafNode<T>;
+
+export type BVHNodeReadonly<T> = Readonly<BVHNode<T>>;
+
+export function constructBVHTree<T>(leafNodes: BVHLeafNode<T>[], start: number, end: number): BVHNode<T> {
+  if (start === end) return leafNodes[start];
 
   const mid = Math.floor((start + end) / 2);
-  const left = constructSubTree(rects, start, mid);
-  const right = constructSubTree(rects, mid + 1, end);
+  const left = constructBVHTree(leafNodes, start, mid);
+  const right = constructBVHTree(leafNodes, mid + 1, end);
 
   return {
-    rect: R.bounds(left.rect, right.rect),
+    value: null,
+    aabb: R.bounds(left.aabb, right.aabb),
+    mortonCode: -1,
     isLeaf: false,
     left,
     right,
@@ -34,33 +43,47 @@ function constructSubTree(rects: readonly R.Rect2D[], start: number, end: number
 
 // The quickest way to construct and query the BVH is to sort the array of rects in-place.
 // It also seems to speed up time to check intersections
-export function fromRects(rects: Array<R.Rect2D>): BVHNode {
-  if (rects.length === 0) {
+export function fromShapes(shapes: Array<S.Shape2D>): BVHNode<S.Shape2D> {
+  if (shapes.length === 0) {
     return {
-      rect: R.fromValues(),
+      value: S.fromValues(),
+      aabb: R.fromValues(),
+      mortonCode: -1,
       isLeaf: true,
       left: null,
       right: null,
     };
   }
 
-  // Rectangles sorted in order of their morton codes.
-  rects.sort((a, b) => V.mortonCode(R.center(a)) - V.mortonCode(R.center(b)));
+  const leafNodes: BVHLeafNode<S.Shape2D>[] = shapes.map((shape) => {
+    const aabb = S.bounds(shape);
 
-  return constructSubTree(rects, 0, rects.length - 1);
+    return {
+      value: shape,
+      aabb,
+      mortonCode: V.mortonCode(R.center(aabb)),
+      isLeaf: true,
+      left: null,
+      right: null,
+    };
+  });
+
+  // Rectangles sorted in order of their morton codes.
+  leafNodes.sort((a, b) => a.mortonCode - b.mortonCode);
+
+  return constructBVHTree(leafNodes, 0, leafNodes.length - 1);
 }
 
-export function intersections(root: BVHNode, rect: R.Rect2D): R.Rect2D[] {
+export function intersections<T>(root: BVHNode<T>, value: T, rect: R.Rect2D): T[] {
   const stack = [root];
-  let node: BVHNode | undefined;
-  const collisions: R.Rect2D[] = [];
+  let node: BVHNode<T> | undefined;
+  const collisions: T[] = [];
 
   while ((node = stack.pop())) {
-    const nodeRect = node.rect;
-    if (rect === nodeRect || !R.intersecting(rect, nodeRect)) continue;
+    if (value === node.value || !R.intersecting(rect, node.aabb)) continue;
 
     if (node.isLeaf) {
-      collisions.push(nodeRect);
+      collisions.push(node.value);
     } else {
       // push right node before left node
       stack.push(node.right, node.left);
@@ -69,33 +92,50 @@ export function intersections(root: BVHNode, rect: R.Rect2D): R.Rect2D[] {
   return collisions;
 }
 
-export function traverse(root: BVHNode, cb: (node: BVHNode) => boolean | void): void {
-  const stack = [root];
-  let node: BVHNode | undefined;
+export function breathFirstTraverse<T>(root: BVHNode<T>, cb: (node: BVHNode<T>) => boolean | void): void {
+  const queue = [root];
+  let node: BVHNode<T> | undefined;
 
-  while ((node = stack.pop())) {
+  while ((node = queue.shift())) {
     if (cb(node) === false) continue;
-
-    if (!node.isLeaf) {
-      // push right node before left node
-      stack.push(node.right, node.left);
-    }
+    if (!node.isLeaf) queue.push(node.right, node.left);
   }
 }
 
-export function closestRectLeft(root: BVHNode, point: V.Vector2): R.Rect2D | undefined {
+export function depthFirstTraverse<T>(root: BVHNode<T>, cb: (node: BVHNode<T>) => boolean | void): void {
   const stack = [root];
-  let node: BVHNode | undefined;
-  let distance = Infinity;
-  let rect: R.Rect2D | undefined;
+  let node: BVHNode<T> | undefined;
 
   while ((node = stack.pop())) {
+    if (cb(node) === false) continue;
+    if (!node.isLeaf) stack.push(node.right, node.left);
+  }
+}
+
+export function closestRectRight<T>(root: BVHNode<T>, rect: R.Rect2D): T | undefined {
+  const stack = [root];
+  let node: BVHNode<T> | undefined;
+
+  const center = R.center(rect);
+  let distance = Infinity;
+  let closestValue: T | undefined;
+
+  while ((node = stack.pop())) {
+    const nodeRect = node.aabb;
+
+    if (!R.isPointInsideRect(nodeRect, center) && nodeRect.x < center.x) continue;
+
     if (node.isLeaf) {
+      const nearestPoint = R.nearestPointOnRect(nodeRect, center);
+      const d = V.distance(center, nearestPoint);
+      if (d > 0 && d < distance) {
+        distance = d;
+        closestValue = node.value;
+      }
     } else {
-      // push right node before left node
       stack.push(node.right, node.left);
     }
   }
 
-  return rect;
+  return closestValue;
 }

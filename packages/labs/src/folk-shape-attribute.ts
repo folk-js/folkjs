@@ -308,6 +308,10 @@ export class FolkShapeAttribute extends CustomAttribute {
     this.#requestUpdate();
   }
 
+  get vertices() {
+    return this.#shape.vertices;
+  }
+
   get topLeft(): Vector2 {
     return S.topLeftCorner(this.#shape);
   }
