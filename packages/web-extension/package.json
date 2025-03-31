@@ -8,20 +8,33 @@
   "author": "Christopher Shank <chris.shank.23@gmail.com>",
   "type": "module",
   "license": "MIT",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./*": {
-      "import": "./dist/*.js",
-      "types": "./dist/*.d.ts"
+  "scripts": {
+    "dev": "npm run build --watch",
+    "build": "wireit",
+    "test": "echo 'No tests to run'"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty && vite build",
+      "clean": "if-file-deleted",
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json",
+        "manifest.json",
+        "options.html",
+        "images/**"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
     }
   },
-  "scripts": {
-    "dev": "vite build --watch",
-    "build": "tsc --build --pretty && vite build",
-    "test": "echo 'No tests to run'"
+  "dependencies": {
+    "@folkjs/canvas": "^0.0.1",
+    "@folkjs/geometry": "^0.0.1",
+    "@folkjs/labs": "^0.0.1"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shape Attribute</title>
+    <title>Bounding Volume Hierarchy</title>
     <style>
       body {
         height: 100vh;
@@ -31,12 +31,12 @@
       import { Gizmos } from '@folkjs/canvas/folk-gizmos';
       import { breathFirstTraverse } from '@folkjs/geometry/BoundingVolumeHierarchy';
 
-      for (let i = 0; i < 10000; i++) {
+      for (let i = 0; i < 100; i++) {
         const shape = document.createElement('div');
 
         shape.setAttribute(
           'folk-shape',
-          `x: ${Math.random() * 10000}; y: ${Math.random() * 10000}; width: 45; height: 45;`,
+          `x: ${Math.random() * 750}; y: ${Math.random() * 750}; width: 45; height: 45;`,
         );
 
         document.body.append(shape);
@@ -47,13 +47,11 @@
         const zoom = document.body.zoom.bvh;
         Gizmos.clear();
 
-        // const now = performance.now();
-        // breathFirstTraverse(document.body.zoom.bvh, (node) => {
-        //   if (!node.isLeaf) {
-        //     Gizmos.rect(node.aabb, {});
-        //   }
-        // });
-        // console.log('traverse and render', performance.now() - now);
+        breathFirstTraverse(document.body.zoom.bvh, (node) => {
+          if (!node.isLeaf) {
+            Gizmos.rect(node.aabb, { color: '#aca0a077' });
+          }
+        });
       }
 
       requestIdleCallback(() => loop());
