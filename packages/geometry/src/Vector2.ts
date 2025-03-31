@@ -7,6 +7,8 @@ export type Vector2 = {
 
 export type Vector2Readonly = Readonly<Vector2>;
 
+export type Point = Vector2;
+
 /**
  * Creates a zero vector (0,0)
  * @returns A Vector2 representing a zero vector

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hash modules</title>
+  </head>
+
+  <body>
+    <script type="hash-module" id="indexeddb">
+      export class KeyValueStore {
+        #db;
+        #storeName;
+
+        constructor(name = 'keyval-store') {
+          this.#storeName = name;
+          const request = indexedDB.open(name);
+          request.onupgradeneeded = () => request.result.createObjectStore(name);
+
+          this.#db = this.#promisifyRequest(request);
+        }
+
+        #promisifyRequest(transaction: IDBRequest<T>) {
+          return new Promise((resolve, reject) => {
+            transaction.onsuccess = () => resolve(transaction.result);
+            transaction.onerror = () => reject(transaction.error);
+          });
+        }
+
+        #promisifyTransaction(transaction: IDBTransaction) {
+          return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onabort = transaction.onerror = () => reject(transaction.error);
+          });
+        }
+
+        #getStore(mode) {
+          return this.#db.then((db) => db.transaction(this.#storeName, mode).objectStore(this.#storeName));
+        }
+
+        get(key) {
+          return this.#getStore('readonly').then((store) => this.#promisifyRequest(store.get(key)));
+        }
+
+        set(key, value) {
+          return this.#getStore('readwrite').then((store) => {
+            store.put(value, key);
+            return this.#promisifyTransaction(store.transaction);
+          });
+        }
+
+        setMany(entries) {
+          return this.#getStore('readwrite').then((store) => {
+            entries.forEach((entry) => store.put(entry[1], entry[0]));
+            return this.#promisifyTransaction(store.transaction);
+          });
+        }
+
+        delete(key) {
+          return this.#getStore('readwrite').then((store) => {
+            store.delete(key);
+            return this.#promisifyTransaction(store.transaction);
+          });
+        }
+
+        clear() {
+          return this.#getStore('readwrite').then((store) => {
+            store.clear();
+            return this.#promisifyTransaction(store.transaction);
+          });
+        }
+
+        keys() {
+          return this.#getStore('readwrite').then((store) => this.#promisifyRequest(store.getAllKeys()));
+        }
+
+        values() {
+          return this.#getStore('readwrite').then((store) => this.#promisifyRequest(store.getAll()));
+        }
+
+        entries() {
+          return this.#getStore('readwrite').then((store) =>
+            Promise.all([this.#promisifyRequest(store.getAllKeys()), this.#promisifyRequest(store.getAll())]).then(
+              ([keys, values]) => keys.map((key, i) => [key, values[i]]),
+            ),
+          );
+        }
+      }
+    </script>
+
+    <script type="hash-module" id="file-picker">
+      import { KeyValueStore } from '#indexeddb';
+
+      export class FilePicker {
+        #id;
+        #fileType;
+        #fileExtension;
+        #mimeType;
+        #store;
+        #fileHandlerPromise;
+
+        // Feature detection. The API needs to be supported and the app not run in an iframe.
+        #supportsFileSystemAccess =
+          'showSaveFilePicker' in window &&
+          (() => {
+            try {
+              return window.self === window.top;
+            } catch {
+              return false;
+            }
+          })();
+
+        constructor(id, fileType, mimeType) {
+          this.#id = id;
+          this.#fileType = fileType;
+          this.#fileExtension = `.${this.#fileType}`;
+          this.#mimeType = mimeType;
+          this.#store = new KeyValueStore(this.#id);
+          this.#fileHandlerPromise = this.#loadFileHandler();
+        }
+
+        async #loadFileHandler() {
+          const file = await this.#store.get('file');
+
+          if (file === undefined) return undefined;
+
+          // We need to request permission since the file handler was persisted.
+          // Calling `queryPermission` seems unnecessary atm since the browser prompts permission for each session
+          const previousPermission = await file.queryPermission({ mode: 'readwrite' });
+          if (previousPermission === 'granted') return file;
+
+          // this requires user interaction
+          // const newPermission = await file.requestPermission({ mode: 'readwrite' });
+          // if (newPermission === 'granted') return file;
+
+          return undefined;
+        }
+
+        async open(showPicker = true) {
+          let fileHandler = await this.#fileHandlerPromise;
+
+          if (showPicker) {
+            fileHandler = await this.#showOpenFilePicker();
+          }
+
+          if (fileHandler === undefined) return '';
+
+          const file = await fileHandler.getFile();
+          const text = await file.text();
+          return text;
+        }
+
+        async save(content, promptNewFile) {
+          // TODO: progressively enhance using anchor downloads?
+          if (!this.#supportsFileSystemAccess) {
+            throw new Error('File System Access API is not supported.');
+          }
+
+          let fileHandler = await this.#fileHandlerPromise;
+
+          if (promptNewFile || fileHandler === undefined) {
+            fileHandler = await this.#showSaveFilePicker();
+          }
+
+          const writer = await fileHandler.createWritable();
+          await writer.write(content);
+          await writer.close();
+        }
+
+        clear() {
+          this.#store.clear();
+        }
+
+        async #showSaveFilePicker() {
+          this.#fileHandlerPromise = window.showSaveFilePicker({
+            id: this.#id,
+            suggestedName: `${this.#id}.${this.#fileType}`,
+            types: [
+              {
+                description: `${this.#fileType.toUpperCase()} document`,
+                accept: { [this.#mimeType]: [this.#fileExtension] } as FilePickerAcceptType['accept'],
+              },
+            ],
+          });
+
+          const fileHandler = (await this.#fileHandlerPromise)!;
+          await this.#store.set('file', fileHandler);
+          return fileHandler;
+        }
+
+        async #showOpenFilePicker() {
+          this.#fileHandlerPromise = window
+            .showOpenFilePicker({
+              id: this.#id,
+              types: [
+                {
+                  description: `${this.#fileType.toUpperCase()} document`,
+                  accept: { [this.#mimeType]: [this.#fileExtension] } as FilePickerAcceptType['accept'],
+                },
+              ],
+            })
+            .then((files) => files[0]);
+
+          const fileHandler = (await this.#fileHandlerPromise)!;
+          await this.#store.set('file', fileHandler);
+          return fileHandler;
+        }
+      }
+    </script>
+
+    <script type="hash-module" id="main">
+      import {FilePicker} from '#file-picker';
+
+      const filePicker = new FilePicker()
+    </script>
+
+    <script type="module">
+      import '@folkjs/canvas/hash-modules';
+    </script>
+  </body>
+</html>

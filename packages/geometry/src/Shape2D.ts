@@ -3,7 +3,9 @@ import type { Vector2Readonly } from './Vector2.ts';
 import * as V from './Vector2.ts';
 
 export type Shape2D = Rect2D & {
+  /** Clockwise rotation of the shape, in radians. */
   rotation: number;
+  /** Relative vertices of the shape, in the range [0, 1] */
   vertices: ReadonlyArray<V.Vector2Readonly> | null;
 };
 
@@ -144,4 +146,49 @@ export function bounds(shape: Shape2DReadonly, c?: Shape2DCorners): Rect2D {
     width: Math.max(topLeft.x, topRight.x, bottomRight.x, bottomLeft.x) - x,
     height: Math.max(topLeft.y, topRight.y, bottomRight.y, bottomLeft.y) - y,
   };
+}
+
+export function absoluteVertices(shape: Shape2DReadonly, c = center(shape)): ReadonlyArray<V.Vector2Readonly> | null {
+  if (shape.vertices === null) return null;
+  return shape.vertices.map((v) =>
+    V.rotateAround({ x: shape.x + v.x * shape.width, y: shape.y + v.y * shape.height }, c, shape.rotation),
+  );
+}
+
+export function area(shape: Shape2DReadonly, c = center(shape), v = absoluteVertices(shape, c)): number {
+  let a = 0;
+
+  // If there are no vertices then the area is a rectangle.
+  if (v === null) return shape.width * shape.height;
+
+  for (var i = 0, l = v.length; i < l; i++) {
+    const v1 = v[i];
+    const v2 = v[i == v.length - 1 ? 0 : i + 1];
+    a += v1.x * v2.x - v1.y * v2.y;
+  }
+
+  return Math.abs(a) * 0.5;
+}
+
+export function centroid(shape: Shape2DReadonly, c = center(shape), v = absoluteVertices(shape, c)): V.Vector2Readonly {
+  // The centroid of a rectangle is it's center;
+  if (v === null) return c;
+
+  let a = 0;
+  let x = 0;
+  let y = 0;
+
+  for (var i = 0, l = v.length; i < l; i++) {
+    const v1 = v[i];
+    const v2 = v[i == v.length - 1 ? 0 : i + 1];
+    const diff = v1.x * v2.x - v1.y * v2.y;
+
+    a += diff;
+    x += (v1.x + v2.x) * diff;
+    y += (v1.y + v2.y) * diff;
+  }
+
+  a = Math.abs(a) * 0.5 * 3;
+
+  return { x: x / a, y: y / a };
 }
