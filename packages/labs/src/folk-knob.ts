@@ -1,32 +1,40 @@
-import { FolkElement, Vector } from '@folkjs/canvas';
+import { FolkElement } from '@folkjs/canvas';
 import { css, property } from '@folkjs/canvas/reactive-element';
+import * as V from '@folkjs/geometry/Vector2';
+import { PI, RADIAN, TAU, toDOMPrecision } from '@folkjs/geometry/utilities';
 
-// Ported from https://github.com/ivanreese/knob
+const wrapAngle = (angle: number) => ((((angle + PI) % TAU) + TAU) % TAU) - PI;
+const angle = (a: V.Vector2, b: V.Vector2) => V.angle(V.subtract(b, a));
+const newPoint = (x = 0, y = 0, a = 0) => ({ x, y, a });
 
-class AngularPoint {
-  x;
-  y;
-  angle;
-
-  constructor(x = 0, y = 0, angle = 0) {
-    this.x = x;
-    this.y = y;
-    this.angle = angle;
-  }
-}
-
+// Ported from https://github.com/ivanreese/knob/tree/main
 export class FolkKnob extends FolkElement {
   static override tagName = 'folk-knob';
 
   static override styles = css`
     :host {
-      display: block;
+      box-sizing: border-box;
+      aspect-ratio: 1;
+      background-color: #efefef;
+      border: solid 1px black;
+      border-radius: 50%;
+      display: inline-block;
+      inline-size: 27px;
+      overflow-clip-margin: 0px !important;
+      overflow: clip !important;
+      position: relative;
+      rotate: var(--folk-rotation, 0deg);
     }
 
     div {
-      background-color:;
-      border-radius: 50%;
-      padding: 1rem;
+      position: absolute;
+      top: 30%;
+      left: 50%;
+      width: 12.5%;
+      height: 35%;
+      background: ButtonText;
+      border-radius: 7px;
+      translate: -50% -50%;
     }
   `;
 
@@ -39,49 +47,77 @@ export class FolkKnob extends FolkElement {
   }
 
   #div = document.createElement('div');
-  #time = 0;
-  #recent = [];
-  #center = new AngularPoint();
-  #usage = new AngularPoint();
-  #activeCenter = new AngularPoint();
-  #last = new AngularPoint();
 
-  constructor() {
-    super();
+  last = newPoint();
+  usage = newPoint();
+  current = newPoint();
+  recent = [newPoint()];
 
-    this.addEventListener('pointerdown', this);
-  }
+  center = V.fromValues();
+  recentSize = V.fromValues();
+  activeCenter = V.fromValues();
+
+  time = 0;
+  squareness = 0;
+  computedValue = 0;
 
   override createRenderRoot() {
     const root = super.createRenderRoot();
+
+    this.addEventListener('pointerdown', this);
 
     root.appendChild(this.#div);
 
     return root;
   }
 
+  protected override willUpdate(): void {
+    this.style.setProperty('--folk-rotation', this.value + 'deg');
+  }
+
   handleEvent(event: PointerEvent) {
     switch (event.type) {
       case 'pointerdown': {
-        const rect = this.getBoundingClientRect();
-        this.#center = new AngularPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-        this.#time = 0;
-        this.#recent = [];
-        this.#activeCenter = this.#center;
-        this.#last = new AngularPoint(event.pageX, event.pageY);
-        this.#last.angle = Vector.angleTo(this.#activeCenter, this.#last);
-
+        this.time = 0;
+        this.recent = [];
+        this.usage = newPoint();
+        this.center = V.fromValues(window.innerWidth / 2, window.innerHeight / 2);
+        this.activeCenter = this.center;
+        this.last = newPoint(event.pageX, event.pageY);
+        this.last.a = angle(this.activeCenter, this.last);
         this.addEventListener('pointermove', this);
         this.addEventListener('lostpointercapture', this);
         this.setPointerCapture(event.pointerId);
         break;
       }
       case 'pointermove': {
-        const newPoint = new AngularPoint(event.pageX, event.pageY);
-        newPoint.angle = Vector.angleTo(this.#activeCenter, newPoint);
+        const p = newPoint(event.pageX, event.pageY);
+        p.a = angle(this.activeCenter, p);
 
-        // update
-        console.log('update');
+        if (V.distance(p, this.last) <= 0) return;
+
+        this.current = p;
+        this.recent.unshift(this.current);
+        // we want roughly 2 full loops around the mouse
+        const radius = V.distance(this.activeCenter, this.current);
+        const desiredLength = TAU * radius * 2;
+
+        while (V.pathLength(this.recent) > desiredLength && this.recent.length > 2) {
+          this.recent.pop();
+        }
+
+        const { min, max } = V.bounds.apply(null, this.recent);
+
+        this.recentSize = V.subtract(max, min);
+
+        const recentCenter = V.center(min, max);
+
+        this.time++;
+        this.activeCenter = V.lerp(this.center, recentCenter, this.time / 100);
+        this.computedValue += this.computedValueIncrement();
+        this.squareness = 1 - Math.abs(Math.log(this.recentSize.x / this.recentSize.y));
+        this.last = this.current;
+        this.value = toDOMPrecision(this.computedValue * TAU * RADIAN);
         break;
       }
       case 'lostpointercapture': {
@@ -89,6 +125,26 @@ export class FolkKnob extends FolkElement {
         this.removeEventListener('lostpointercapture', this);
         break;
       }
+    }
+  }
+
+  computedValueIncrement() {
+    // If usage.x and usage.y are both 0, then useAngularInput will be unfairly biased toward true.
+    // This can happen even when dragging straight if you get 1 usage.a right off the bat.
+    // So, cardinal bias gives us some "free" initial x/y usage.
+    const cardinalBias = 10;
+    const preferAngularInput = this.usage.a > (cardinalBias + this.usage.x + this.usage.y) * 2;
+    const useAngularInput = this.squareness > 0 || preferAngularInput;
+
+    if (useAngularInput) {
+      this.usage.a++;
+      return wrapAngle(this.current.a - this.last.a) / TAU;
+    } else if (this.recentSize.x > this.recentSize.y) {
+      this.usage.x++;
+      return (this.current.x - this.last.x) / (TAU * 20);
+    } else {
+      this.usage.y++;
+      return -(this.current.y - this.last.y) / (TAU * 20);
     }
   }
 }

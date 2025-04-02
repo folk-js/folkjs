@@ -6,13 +6,13 @@ export const DEGREE = PI / 180;
 
 export const RADIAN = 180 / PI;
 
-export const PI2 = PI * 2;
+export const TAU = PI * 2;
 
-export const TAU = PI / 2;
+export const HALF_PI = PI / 2;
 
 export const approximatelyEqual = (a: number, b: number) => abs(a - b) <= EPSILON * Math.max(1.0, abs(a), abs(b));
 
-export const clampRotation = (radians: number) => (PI2 + radians) % PI2;
+export const clampRotation = (radians: number) => (TAU + radians) % TAU;
 
 export const lerpValue = (a: number, b: number, alpha: number): number => a + (b - a) * alpha;
 

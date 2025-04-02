@@ -1,4 +1,4 @@
-import { acos, approximatelyEqual, clampRotation, cos, lerpValue, sin, TAU, toDOMPrecision } from './utilities.ts';
+import { acos, approximatelyEqual, clampRotation, cos, HALF_PI, lerpValue, sin, toDOMPrecision } from './utilities.ts';
 import type { Vector2, Vector2Readonly } from './Vector2.ts';
 
 /** A homogeneous matrix for 2D transformations. */
@@ -314,7 +314,7 @@ export function rotation(m: Matrix2DReadonly): number {
     rotation = Math.acos(m.a / hypotAc) * (m.c > 0 ? -1 : 1);
   } else if (m.b !== 0 || m.d !== 0) {
     const hypotBd = (m.b * m.b + m.d * m.d) ** 0.5;
-    rotation = TAU + Math.acos(m.b / hypotBd) * (m.d > 0 ? -1 : 1);
+    rotation = HALF_PI + Math.acos(m.b / hypotBd) * (m.d > 0 ? -1 : 1);
   } else {
     rotation = 0;
   }
@@ -340,7 +340,7 @@ export function decompose(m: Matrix2DReadonly): DecomposedMatrix2D {
     const hypotBd = (m.b * m.b + m.d * m.d) ** 0.5;
     scaleX = det / hypotBd;
     scaleY = hypotBd;
-    rotation = TAU + acos(m.b / hypotBd) * (m.d > 0 ? -1 : 1);
+    rotation = HALF_PI + acos(m.b / hypotBd) * (m.d > 0 ? -1 : 1);
   } else {
     scaleX = 0;
     scaleY = 0;

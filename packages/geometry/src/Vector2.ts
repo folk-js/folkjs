@@ -9,6 +9,10 @@ export type Vector2Readonly = Readonly<Vector2>;
 
 export type Point = Vector2;
 
+export function fromValues(x = 0, y = 0): Vector2 {
+  return { x, y };
+}
+
 /**
  * Creates a zero vector (0,0)
  * @returns A Vector2 representing a zero vector
@@ -166,6 +170,21 @@ export function distanceSquared(a: Vector2Readonly, b: Vector2Readonly): number 
 }
 
 /**
+ * Sum the Euclidean distances between a set of vectors.
+ * @param vectors List of vectors
+ * @returns the total distance between points
+ */
+export function pathLength(vectors: Vector2Readonly[]): number {
+  let length = 0;
+
+  for (let i = 1; i < vectors.length; i += 1) {
+    length += distance(vectors[i - 1], vectors[i]);
+  }
+
+  return length;
+}
+
+/**
  * Linearly interpolates between two `Vector2`s
  * @param {Vector2} a - The starting Vector2
  * @param {Vector2} b - The ending Vector2
@@ -228,12 +247,7 @@ export function angle(v: Vector2Readonly): number {
  * @returns {number} The angle in radians
  */
 export function angleTo(a: Vector2Readonly, b: Vector2Readonly = { x: 1, y: 0 }): number {
-  // Get the angle of each vector relative to x-axis
-  const angleA = angle(a);
-  const angleB = angle(b);
-
-  // Return the difference
-  return angleA - angleB;
+  return angle(a) - angle(b);
 }
 
 /**
@@ -242,10 +256,10 @@ export function angleTo(a: Vector2Readonly, b: Vector2Readonly = { x: 1, y: 0 })
  * @param {Vector2} origin - The origin Vector2 to measure around
  * @returns {number} The angle in radians
  */
-export function angleFromOrigin(Vector2: Vector2Readonly, origin: Vector2Readonly): number {
+export function angleFromOrigin(v: Vector2Readonly, origin: Vector2Readonly): number {
   return angleTo({
-    x: Vector2.x - origin.x,
-    y: Vector2.y - origin.y,
+    x: v.x - origin.x,
+    y: v.y - origin.y,
   });
 }
 
@@ -263,15 +277,19 @@ export function magSquared(v: Vector2Readonly): number {
  * @param {Vector2[]} Vector2s - Array of Vector2s to find bounds for
  * @returns Object containing min and max Vector2s of the bounds
  */
-export function bounds(vs: ReadonlyArray<Vector2Readonly>) {
-  const x = vs.map((v) => v.x);
-  const y = vs.map((v) => v.y);
+export function bounds(...vectors: Vector2Readonly[]): { min: Vector2; max: Vector2 } {
+  const x = vectors.map((v) => v.x);
+  const y = vectors.map((v) => v.y);
 
   return {
-    minX: Math.min.apply(null, x),
-    maxX: Math.max.apply(null, x),
-    minY: Math.min.apply(null, y),
-    maxY: Math.max.apply(null, y),
+    min: {
+      x: Math.min.apply(null, x),
+      y: Math.min.apply(null, y),
+    },
+    max: {
+      x: Math.max.apply(null, x),
+      y: Math.max.apply(null, y),
+    },
   };
 }
 
@@ -280,11 +298,11 @@ export function bounds(vs: ReadonlyArray<Vector2Readonly>) {
  * @param {Vector2[]} Vector2s - Array of Vector2s to find center for
  * @returns The center Vector2
  */
-export function center(...vs: Vector2Readonly[]): Vector2 {
-  const { minX, maxX, minY, maxY } = bounds(vs);
+export function center(...vectors: Vector2Readonly[]): Vector2 {
+  const { min, max } = bounds.apply(null, vectors);
   return {
-    x: (minX + maxX) / 2,
-    y: (minY + maxY) / 2,
+    x: (min.x + max.x) / 2,
+    y: (min.y + max.y) / 2,
   };
 }
 
