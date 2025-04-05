@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CodeMirror Custom Element Demo</title>
+    <title>AST Gizmos</title>
     <style>
       body {
         margin: 0;
@@ -32,17 +32,17 @@
   </head>
   <body>
     <div class="container">
-      <h1>CodeMirror Gizmos</h1>
+      <h1>AST Gizmos</h1>
       <p>Direct manipulation of the AST via docstring annotations and custom element gizmos.</p>
 
-      <folk-code-editor id="editor"></folk-code-editor>
+      <folk-ast-gizmos id="editor"></folk-ast-gizmos>
 
       <h3>Current Value:</h3>
       <div id="output" class="output"></div>
     </div>
 
     <script type="module">
-      import '@folkjs/labs/standalone/code-editor-gizmos';
+      import '@folkjs/labs/standalone/ast-gizmos';
 
       const editor = document.getElementById('editor');
       const output = document.getElementById('output');

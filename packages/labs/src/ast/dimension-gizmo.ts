@@ -4,7 +4,7 @@ import { ASTGizmo } from './ast-gizmo';
 
 export class DimensionGizmo extends ASTGizmo {
   static override tagName = 'ast-dimension-gizmo';
-  static override displayMode: GizmoDisplayMode = 'block';
+  static override displayMode: GizmoDisplayMode = 'inline';
   #widthInput!: HTMLInputElement;
   #heightInput!: HTMLInputElement;
 

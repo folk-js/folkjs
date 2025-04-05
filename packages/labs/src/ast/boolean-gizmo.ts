@@ -4,7 +4,7 @@ import { ASTGizmo } from './ast-gizmo';
 
 export class BooleanGizmo extends ASTGizmo {
   static override tagName = 'ast-boolean-gizmo';
-  static override displayMode: GizmoDisplayMode = 'block';
+  static override displayMode: GizmoDisplayMode = 'inline';
   #checkbox!: HTMLInputElement;
 
   protected override setupUI() {
