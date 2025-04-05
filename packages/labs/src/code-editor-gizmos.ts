@@ -1,65 +1,55 @@
 import { javascript } from '@codemirror/lang-javascript';
 import { StateEffect, StateField } from '@codemirror/state';
 import type { DecorationSet } from '@codemirror/view';
-import { Decoration } from '@codemirror/view';
+import { Decoration, WidgetType } from '@codemirror/view';
 import { FolkElement } from '@folkjs/canvas/folk-element';
 import { basicSetup, EditorView } from 'codemirror';
-import { parse } from 'recast';
-import { collectLiterals } from './ast/literal-finder';
-import { LineWidget } from './widgets/line-widget';
-import { LiteralWidget } from './widgets/literal-widget';
+import { parse, print } from 'recast';
+import { findGizmoMatches } from './ast/gizmo-visitor';
 
-const addDecoration = StateEffect.define<{ pos: number; content: string }>();
-const removeDecorations = StateEffect.define<null>();
+const addGizmos = StateEffect.define<{ line: number; element: HTMLElement; displayMode: 'inline' | 'block' }[]>();
+const clearGizmos = StateEffect.define<null>();
 
-const decorationField = StateField.define<DecorationSet>({
+class GizmoWidget extends WidgetType {
+  constructor(element: HTMLElement, displayMode: 'inline' | 'block') {
+    super();
+    this.element = element;
+    this.displayMode = displayMode;
+  }
+
+  element: HTMLElement;
+  displayMode: 'inline' | 'block';
+
+  override toDOM() {
+    return this.element;
+  }
+
+  override eq(other: GizmoWidget) {
+    return this.element === other.element;
+  }
+}
+
+const gizmoField = StateField.define<DecorationSet>({
   create() {
     return Decoration.none;
   },
   update(decorations, tr) {
     decorations = decorations.map(tr.changes);
     for (let e of tr.effects) {
-      if (e.is(addDecoration)) {
-        decorations = decorations.update({
-          add: [
-            Decoration.widget({
-              widget: new LineWidget(e.value.content),
-              side: -1,
-            }).range(e.value.pos),
-          ],
-        });
-      } else if (e.is(removeDecorations)) {
-        decorations = Decoration.none;
-      }
-    }
-    return decorations;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
-
-const addLiteralDecorations = StateEffect.define<{ line: number; value: any; type: string }[]>();
-const removeLiteralDecorations = StateEffect.define<null>();
-
-const literalDecorationField = StateField.define<DecorationSet>({
-  create() {
-    return Decoration.none;
-  },
-  update(decorations, tr) {
-    decorations = decorations.map(tr.changes);
-    for (let e of tr.effects) {
-      if (e.is(addLiteralDecorations)) {
-        const newDecorations = e.value.map(({ line, value, type }) => {
+      if (e.is(addGizmos)) {
+        const newDecorations = e.value.map(({ line, element, displayMode }) => {
           const pos = tr.state.doc.line(line).from;
           return Decoration.widget({
-            widget: new LiteralWidget(value, type),
-            side: -1,
+            widget: new GizmoWidget(element, displayMode),
+            side: displayMode === 'block' ? -1 : 1,
+            block: displayMode === 'block',
           }).range(pos);
         });
         decorations = decorations.update({
           add: newDecorations,
           sort: true,
         });
-      } else if (e.is(removeLiteralDecorations)) {
+      } else if (e.is(clearGizmos)) {
         decorations = Decoration.none;
       }
     }
@@ -102,11 +92,6 @@ export class CodeEditorGizmos extends FolkElement {
       .cm-scroller {
         font-family: monospace;
       }
-      .cm-line-widget {
-        padding: 4px 8px;
-        font-family: system-ui, -apple-system, sans-serif;
-        font-size: 14px;
-      }
     `;
     this.shadowRoot?.appendChild(style);
 
@@ -117,8 +102,7 @@ export class CodeEditorGizmos extends FolkElement {
       extensions: [
         basicSetup,
         javascript(),
-        decorationField,
-        literalDecorationField,
+        gizmoField,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             this.dispatchEvent(
@@ -128,15 +112,15 @@ export class CodeEditorGizmos extends FolkElement {
                 },
               }),
             );
-            // Update literal decorations when code changes
-            this.updateLiteralDecorations();
+            // Update gizmos when code changes
+            this.updateGizmos();
           }
         }),
       ],
     });
 
-    // Initial literal decorations
-    this.updateLiteralDecorations();
+    // Initial gizmos
+    this.updateGizmos();
   }
 
   override disconnectedCallback() {
@@ -157,47 +141,54 @@ export class CodeEditorGizmos extends FolkElement {
           insert: newValue,
         },
       });
-      // Update literal decorations after setting new value
-      this.updateLiteralDecorations();
+      // Update gizmos after setting new value
+      this.updateGizmos();
     }
   }
 
-  addLineDecoration(line: number, content: string) {
-    if (!this.#view) return;
-
-    const pos = this.#view.state.doc.line(line).from;
-    this.#view.dispatch({
-      effects: addDecoration.of({ pos, content }),
-    });
-  }
-
-  clearDecorations() {
-    if (!this.#view) return;
-
-    this.#view.dispatch({
-      effects: removeDecorations.of(null),
-    });
-  }
-
-  private updateLiteralDecorations() {
+  private updateGizmos() {
+    console.log('update gizmos');
     if (!this.#view) return;
 
     try {
       const code = this.#view.state.doc.toString();
       const ast = parse(code);
-      const literals = collectLiterals(ast);
+      const matches = findGizmoMatches(ast);
+
+      // Create gizmos for each match
+      const gizmos = matches.map(({ node, line, gizmoClass }) => {
+        const gizmo = new gizmoClass();
+        gizmo.updateNode(node, () => {
+          // When a gizmo changes the AST, update the editor
+          this.updateFromAST(ast);
+        });
+        return {
+          line,
+          element: gizmo,
+          displayMode: gizmoClass.displayMode,
+        };
+      });
 
       this.#view.dispatch({
-        effects: addLiteralDecorations.of(
-          literals.map(({ value, line, type }) => ({
-            line,
-            value,
-            type,
-          })),
-        ),
+        effects: addGizmos.of(gizmos),
       });
     } catch (error) {
-      console.warn('Failed to update literal decorations:', error);
+      console.warn('Failed to update gizmos:', error);
     }
+  }
+
+  private updateFromAST(ast: ReturnType<typeof parse>) {
+    if (!this.#view) return;
+
+    // Use recast to print the modified AST back to code
+    const newCode = print(ast).code;
+
+    this.#view.dispatch({
+      changes: {
+        from: 0,
+        to: this.#view.state.doc.length,
+        insert: newCode,
+      },
+    });
   }
 }

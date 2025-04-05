@@ -271,11 +271,6 @@ const defaultPropertyDeclaration: PropertyDeclaration = {
   hasChanged: notEqual,
 };
 
-/**
- * A string representing one of the supported dev mode warning categories.
- */
-export type WarningKind = 'change-in-update' | 'migration' | 'async-perform-update';
-
 export type Initializer = (element: ReactiveElement) => void;
 
 // Ensure metadata is enabled. TypeScript does not polyfill
@@ -312,55 +307,6 @@ export abstract class ReactiveElement
   extends HTMLElement
   implements ReactiveControllerHost
 {
-  // Note: these are patched in only in DEV_MODE.
-  /**
-   * Read or set all the enabled warning categories for this class.
-   *
-   * This property is only used in development builds.
-   *
-   * @nocollapse
-   * @category dev-mode
-   */
-  static enabledWarnings?: WarningKind[];
-
-  /**
-   * Enable the given warning category for this class.
-   *
-   * This method only exists in development builds, so it should be accessed
-   * with a guard like:
-   *
-   * ```ts
-   * // Enable for all ReactiveElement subclasses
-   * ReactiveElement.enableWarning?.('migration');
-   *
-   * // Enable for only MyElement and subclasses
-   * MyElement.enableWarning?.('migration');
-   * ```
-   *
-   * @nocollapse
-   * @category dev-mode
-   */
-  static enableWarning?: (warningKind: WarningKind) => void;
-
-  /**
-   * Disable the given warning category for this class.
-   *
-   * This method only exists in development builds, so it should be accessed
-   * with a guard like:
-   *
-   * ```ts
-   * // Disable for all ReactiveElement subclasses
-   * ReactiveElement.disableWarning?.('migration');
-   *
-   * // Disable for only MyElement and subclasses
-   * MyElement.disableWarning?.('migration');
-   * ```
-   *
-   * @nocollapse
-   * @category dev-mode
-   */
-  static disableWarning?: (warningKind: WarningKind) => void;
-
   /**
    * Adds an initializer function to the class that is called during instance
    * construction.
@@ -1300,13 +1246,8 @@ export abstract class ReactiveElement
       this.firstUpdated(changedProperties);
     }
     this.updated(changedProperties);
-    if (
-      DEV_MODE &&
-      this.isUpdatePending &&
-      (this.constructor as typeof ReactiveElement).enabledWarnings!.includes('change-in-update')
-    ) {
+    if (DEV_MODE && this.isUpdatePending) {
       console.warn(
-        'change-in-update',
         `Element ${this.localName} scheduled an update ` +
           `(generally because a property was set) ` +
           `after an update completed, causing a new update to be scheduled. ` +
