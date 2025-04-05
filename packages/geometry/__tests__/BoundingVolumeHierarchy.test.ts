@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 import * as BVH from '../src/BoundingVolumeHierarchy.ts';
 import * as R from '../src/Rect2D.ts';
 import * as S from '../src/Shape2D.ts';
+import * as V from '../src/Vector2.ts';
 
 describe('BoundingVolumeHierarchy', () => {
   test('constructor initializes with no rectangles', () => {
@@ -52,7 +53,7 @@ describe('BoundingVolumeHierarchy', () => {
     });
   });
 
-  test('collision', () => {
+  test('intersection', () => {
     const bvh = BVH.fromShapes([...shapes]);
 
     const c1 = BVH.intersections(bvh, shapes[0], S.bounds(shapes[0]));
@@ -63,5 +64,21 @@ describe('BoundingVolumeHierarchy', () => {
     expect(c2.length).toBe(2);
     expect(c2).toContain(shapes[0]);
     expect(c2).toContain(shapes[1]);
+  });
+
+  describe('nearest neighbor', () => {
+    test('nearest right overlap', () => {
+      const bvh = BVH.fromShapes([...shapes]);
+
+      const neighbor = BVH.nearestShape(bvh, shapes[2], V.right());
+      expect(neighbor).toEqual(shapes[1]);
+    });
+
+    test('nearest right inside', () => {
+      const bvh = BVH.fromShapes([...shapes]);
+
+      const neighbor = BVH.nearestShape(bvh, shapes[0], V.right());
+      expect(neighbor).toEqual(shapes[2]);
+    });
   });
 });

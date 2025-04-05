@@ -79,6 +79,13 @@ describe('V', () => {
       expect(rotated.y).toBeCloseTo(1);
     });
 
+    test('flip() flips the vector', () => {
+      const v = { x: 1, y: 0 };
+      const flipped = V.flip(v);
+      expect(flipped.x).toBeCloseTo(-1);
+      expect(flipped.y).toBeCloseTo(0);
+    });
+
     test('rotateAround() rotates point around pivot', () => {
       const point = { x: 2, y: 0 };
       const pivot = { x: 0, y: 0 };

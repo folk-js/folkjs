@@ -112,30 +112,34 @@ export function depthFirstTraverse<T>(root: BVHNode<T>, cb: (node: BVHNode<T>) =
   }
 }
 
-export function closestRectRight<T>(root: BVHNode<T>, rect: R.Rect2D): T | undefined {
+export function nearestShape(root: BVHNode<S.Shape2D>, shape: S.Shape2D, direction?: V.Vector2): S.Shape2D | undefined {
   const stack = [root];
-  let node: BVHNode<T> | undefined;
+  let node: BVHNode<S.Shape2D> | undefined;
 
-  const center = R.center(rect);
+  const bounds = S.bounds(shape);
+  const center = R.center(bounds);
   let distance = Infinity;
-  let closestValue: T | undefined;
+  let closestShape: S.Shape2D | undefined;
 
   while ((node = stack.pop())) {
     const nodeRect = node.aabb;
 
-    if (!R.isPointInsideRect(nodeRect, center) && nodeRect.x < center.x) continue;
+    if (nodeRect.x + nodeRect.width <= center.x) continue;
 
     if (node.isLeaf) {
+      if (node.value === shape) continue;
+
       const nearestPoint = R.nearestPointOnRect(nodeRect, center);
       const d = V.distance(center, nearestPoint);
-      if (d > 0 && d < distance) {
+
+      if (d >= 0 && d < distance) {
         distance = d;
-        closestValue = node.value;
+        closestShape = node.value;
       }
     } else {
       stack.push(node.right, node.left);
     }
   }
 
-  return closestValue;
+  return closestShape;
 }

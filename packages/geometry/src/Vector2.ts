@@ -1,4 +1,4 @@
-import { atan2, cos, hypot, sin } from './utilities.ts';
+import { atan2, cos, hypot, PI, sin } from './utilities.ts';
 
 export type Vector2 = {
   x: number;
@@ -211,6 +211,15 @@ export function rotate(v: Vector2Readonly, angle: number): Vector2 {
     x: v.x * _cos - v.y * _sin,
     y: v.x * _sin + v.y * _cos,
   };
+}
+
+/**
+ * Flip a vector 180 degrees.
+ * @param v Vector to flip
+ * @returns The flipped vector
+ */
+export function flip(v: Vector2Readonly): Vector2 {
+  return rotate(v, PI);
 }
 
 /**
