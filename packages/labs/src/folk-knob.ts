@@ -11,6 +11,8 @@ const newPoint = (x = 0, y = 0, a = 0) => ({ x, y, a });
 export class FolkKnob extends FolkElement {
   static override tagName = 'folk-knob';
 
+  static formAssociated = true;
+
   static override styles = css`
     :host {
       box-sizing: border-box;
@@ -38,12 +40,42 @@ export class FolkKnob extends FolkElement {
     }
   `;
 
+  #internals = this.attachInternals();
+
   /** Unconstrained angle the knob is turned, from -Infinity to Infinity. */
   @property({ type: Number, reflect: true }) value = 0;
 
   /** Normalized angle the knob is turned, from 0 to 359 degrees. */
   get normalizedValue() {
     return this.value % 360;
+  }
+
+  get form() {
+    return this.#internals.form;
+  }
+
+  get name() {
+    return this.getAttribute('name') || '';
+  }
+
+  set name(value: string) {
+    this.setAttribute('name', value);
+  }
+
+  get type() {
+    return this.localName;
+  }
+
+  get validity() {
+    return this.#internals.validity;
+  }
+
+  get validationMessage() {
+    return this.#internals.validationMessage;
+  }
+
+  get willValidate() {
+    return this.#internals.willValidate;
   }
 
   #div = document.createElement('div');
@@ -72,6 +104,7 @@ export class FolkKnob extends FolkElement {
   }
 
   protected override willUpdate(): void {
+    this.#internals.setFormValue(this.value.toString());
     this.style.setProperty('--folk-rotation', this.value + 'deg');
   }
 
@@ -114,7 +147,7 @@ export class FolkKnob extends FolkElement {
 
         this.time++;
         this.activeCenter = V.lerp(this.center, recentCenter, this.time / 100);
-        this.computedValue += this.computedValueIncrement();
+        this.computedValue += this.#computedValueIncrement();
         this.squareness = 1 - Math.abs(Math.log(this.recentSize.x / this.recentSize.y));
         this.last = this.current;
         this.value = toDOMPrecision(this.computedValue * TAU * RADIAN);
@@ -128,7 +161,7 @@ export class FolkKnob extends FolkElement {
     }
   }
 
-  computedValueIncrement() {
+  #computedValueIncrement() {
     // If usage.x and usage.y are both 0, then useAngularInput will be unfairly biased toward true.
     // This can happen even when dragging straight if you get 1 usage.a right off the bat.
     // So, cardinal bias gives us some "free" initial x/y usage.
@@ -146,5 +179,13 @@ export class FolkKnob extends FolkElement {
       this.usage.y++;
       return -(this.current.y - this.last.y) / (TAU * 20);
     }
+  }
+
+  checkValidity() {
+    return this.#internals.checkValidity();
+  }
+
+  reportValidity() {
+    return this.#internals.reportValidity();
   }
 }
