@@ -1,5 +1,5 @@
 import { javascript } from '@codemirror/lang-javascript';
-import { StateEffect, StateField } from '@codemirror/state';
+import { RangeSet, StateEffect, StateField } from '@codemirror/state';
 import type { DecorationSet } from '@codemirror/view';
 import { Decoration, EditorView, WidgetType } from '@codemirror/view';
 import { FolkElement } from '@folkjs/canvas/folk-element';
@@ -11,6 +11,45 @@ import { BooleanGizmo, DimensionGizmo } from './ast/gizmos';
 
 // Registry of available gizmos
 const gizmos: Gizmo[] = [BooleanGizmo, DimensionGizmo];
+
+// State effect for updating gizmo ranges
+const updateGizmoRanges = StateEffect.define<Array<{ from: number; to: number }>>();
+
+// State field to track gizmo ranges
+const gizmoRangesField = StateField.define<Array<{ from: number; to: number }>>({
+  create() {
+    return [];
+  },
+  update(ranges, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(updateGizmoRanges)) {
+        return effect.value;
+      }
+    }
+    return ranges;
+  },
+});
+
+// Extension to make gizmos atomic
+const atomicGizmos = EditorView.atomicRanges.of((view) => {
+  const ranges = view.state.field(gizmoRangesField);
+  return RangeSet.of(
+    ranges.map((range) => {
+      const value = {
+        eq: () => true,
+        startSide: -1,
+        endSide: 1,
+        mapMode: 0,
+        point: false,
+        range(from: number, to: number) {
+          return { from, to, value: this };
+        },
+      };
+      return { from: range.from, to: range.to, value };
+    }),
+    true,
+  );
+});
 
 // Single state effect for all gizmo updates
 const updateGizmos = StateEffect.define<
@@ -63,7 +102,6 @@ class GizmoWidget extends WidgetType {
           height: ${Math.floor(lineHeight)}px;
           box-sizing: border-box;
           margin: 0;
-          padding: 0;
         `;
       }
     }
@@ -89,14 +127,16 @@ const gizmoField = StateField.define<DecorationSet>({
           const widget = new GizmoWidget(node, gizmo, ast, view);
 
           if (gizmo.style === 'inline') {
-            return Decoration.replace({ widget }).range(position.from, position.to);
+            return Decoration.replace({
+              widget,
+              side: -1, // Place cursor before the widget by default
+            }).range(position.from, position.to);
           } else {
             // For block gizmos, find the start of the line containing the node
             const line = view.state.doc.lineAt(position.from);
             return Decoration.widget({
               widget,
               block: true,
-              side: -1, // Place above the line
             }).range(line.from); // Place at start of line instead of at node position
           }
         });
@@ -144,6 +184,8 @@ export class ASTGizmos extends FolkElement {
       extensions: [
         basicSetup,
         javascript(),
+        gizmoRangesField,
+        atomicGizmos,
         gizmoField,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -188,6 +230,8 @@ export class ASTGizmos extends FolkElement {
         view: EditorView;
       }> = [];
 
+      const ranges: Array<{ from: number; to: number }> = [];
+
       visit(ast, {
         visitNode(path) {
           const node = path.node;
@@ -199,16 +243,20 @@ export class ASTGizmos extends FolkElement {
             if (gizmo.match(node)) {
               const fromLine = view.state.doc.line(node.loc.start.line);
               const toLine = view.state.doc.line(node.loc.end.line);
+              const position = {
+                from: fromLine.from + node.loc.start.column,
+                to: toLine.from + node.loc.end.column,
+              };
+
               matches.push({
                 node,
                 gizmo,
                 ast,
-                position: {
-                  from: fromLine.from + node.loc.start.column,
-                  to: toLine.from + node.loc.end.column,
-                },
+                position,
                 view,
               });
+
+              ranges.push(position);
               break;
             }
           }
@@ -217,10 +265,13 @@ export class ASTGizmos extends FolkElement {
         },
       });
 
-      this.view.dispatch({ effects: updateGizmos.of(matches) });
+      this.view.dispatch({
+        effects: [updateGizmos.of(matches), updateGizmoRanges.of(ranges)],
+      });
     } catch (error) {
-      console.error('Failed to update gizmos:', error);
-      this.view.dispatch({ effects: updateGizmos.of([]) });
+      this.view.dispatch({
+        effects: [updateGizmos.of([]), updateGizmoRanges.of([])],
+      });
     }
   }
 }

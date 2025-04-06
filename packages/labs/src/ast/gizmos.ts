@@ -35,7 +35,7 @@ export const BooleanGizmo: Gizmo = {
 };
 
 export const DimensionGizmo: Gizmo = {
-  style: 'block',
+  style: 'inline',
 
   match(node: t.Node): boolean {
     if (!t.ObjectExpression.check(node)) return false;
