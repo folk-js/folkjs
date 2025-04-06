@@ -6,11 +6,10 @@ import { FolkElement } from '@folkjs/canvas/folk-element';
 import type { namedTypes } from 'ast-types';
 import { basicSetup } from 'codemirror';
 import { parse, print, visit } from 'recast';
-import type { Gizmo } from './ast/gizmos';
-import { BooleanGizmo, DimensionGizmo } from './ast/gizmos';
+import { BooleanGizmo, DimensionGizmo, type Gizmo } from './ast/gizmos';
 
 // Registry of available gizmos
-const gizmos: Gizmo[] = [BooleanGizmo, DimensionGizmo];
+const gizmos: Array<Gizmo<any>> = [BooleanGizmo, DimensionGizmo];
 
 // State effect for updating gizmo ranges
 const updateGizmoRanges = StateEffect.define<Array<{ from: number; to: number }>>();
@@ -55,7 +54,7 @@ const atomicGizmos = EditorView.atomicRanges.of((view) => {
 const updateGizmos = StateEffect.define<
   Array<{
     node: namedTypes.Node;
-    gizmo: Gizmo;
+    gizmo: Gizmo<any>;
     ast: namedTypes.File;
     position: {
       from: number;
@@ -68,11 +67,11 @@ const updateGizmos = StateEffect.define<
 class GizmoWidget extends WidgetType {
   element: HTMLElement | null;
   node: namedTypes.Node;
-  gizmo: Gizmo;
+  gizmo: Gizmo<any>;
   ast: namedTypes.File;
   view: EditorView;
 
-  constructor(node: namedTypes.Node, gizmo: Gizmo, ast: namedTypes.File, view: EditorView) {
+  constructor(node: namedTypes.Node, gizmo: Gizmo<any>, ast: namedTypes.File, view: EditorView) {
     super();
     this.element = null;
     this.node = node;
@@ -224,7 +223,7 @@ export class ASTGizmos extends FolkElement {
       const ast = parse(this.value);
       const matches: Array<{
         node: namedTypes.Node;
-        gizmo: Gizmo;
+        gizmo: Gizmo<any>;
         ast: namedTypes.File;
         position: { from: number; to: number };
         view: EditorView;
