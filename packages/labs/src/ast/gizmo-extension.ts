@@ -98,9 +98,14 @@ export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
   // Extension to make gizmos atomic
   const atomicGizmos = EditorView.atomicRanges.of((view) => {
     const ranges = view.state.field(gizmoRangesField);
+    const matches = view.state.field(gizmoMatchesField).matches;
     return RangeSet.of(
       ranges
-        .filter((range) => range.enabled)
+        .filter((range) => {
+          // Only make inline gizmos atomic
+          const match = matches.find((m) => m.position.from === range.from && m.position.to === range.to);
+          return range.enabled && match && match.gizmo.style === 'inline';
+        })
         .map((range) => {
           const value = {
             eq: () => true,
