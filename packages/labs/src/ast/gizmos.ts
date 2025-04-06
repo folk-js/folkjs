@@ -319,6 +319,7 @@ export const Point2DArrayGizmo: Gizmo<Point2DArrayNode> = {
       ): number => {
         if (!prop) return 0;
         const value = prop.value;
+        // @ts-expect-error will fix later
         if (t.Literal.check(value)) return value.value as number;
         if (t.UnaryExpression.check(value) && t.Literal.check(value.argument)) {
           return -(value.argument.value as number);
@@ -334,27 +335,6 @@ export const Point2DArrayGizmo: Gizmo<Point2DArrayNode> = {
 
     const canvas = document.createElement('canvas');
 
-    // Create a container div to hold both canvas and controls
-    const container = document.createElement('div');
-    container.style.position = 'relative';
-
-    // Create toggle button
-    const toggleButton = document.createElement('button');
-    toggleButton.style.position = 'absolute';
-    toggleButton.style.left = '8px';
-    toggleButton.style.top = '8px';
-    toggleButton.style.padding = '4px 8px';
-    toggleButton.style.fontSize = '12px';
-    toggleButton.style.border = '1px solid #ccc';
-    toggleButton.style.borderRadius = '4px';
-    toggleButton.style.background = '#fff';
-    toggleButton.style.cursor = 'pointer';
-    toggleButton.style.opacity = '0.9';
-    toggleButton.style.zIndex = '1';
-
-    // Get state or initialize with default
-    let isClosedPath = state.get('isClosedPath') ?? true;
-
     // Find bounds
     const minX = Math.min(...points.map((p) => p.x));
     const maxX = Math.max(...points.map((p) => p.x));
@@ -364,7 +344,7 @@ export const Point2DArrayGizmo: Gizmo<Point2DArrayNode> = {
     const rangeY = maxY - minY || 1;
 
     // Calculate appropriate width based on the data's aspect ratio
-    const padding = 20;
+    const padding = 10;
     const contentHeight = dimensions.height - padding * 2;
     const contentWidth = (rangeX / rangeY) * contentHeight;
     const totalWidth = contentWidth + padding * 2;
@@ -416,24 +396,6 @@ export const Point2DArrayGizmo: Gizmo<Point2DArrayNode> = {
     function draw() {
       ctx.clearRect(0, 0, rect.width, rect.height);
 
-      // Draw grid
-      ctx.strokeStyle = '#eee';
-      ctx.lineWidth = 1;
-      for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
-        const { x: canvasX } = toCanvasCoords(x, 0);
-        ctx.beginPath();
-        ctx.moveTo(canvasX, 0);
-        ctx.lineTo(canvasX, rect.height);
-        ctx.stroke();
-      }
-      for (let y = Math.floor(minY); y <= Math.ceil(maxY); y++) {
-        const { y: canvasY } = toCanvasCoords(0, y);
-        ctx.beginPath();
-        ctx.moveTo(0, canvasY);
-        ctx.lineTo(rect.width, canvasY);
-        ctx.stroke();
-      }
-
       // Draw axes
       ctx.strokeStyle = '#666';
       if (minX <= 0 && maxX >= 0) {
@@ -466,8 +428,8 @@ export const Point2DArrayGizmo: Gizmo<Point2DArrayNode> = {
           ctx.lineTo(x, y);
         }
 
-        // Close the path if in closed mode and we have at least 3 points
-        if (isClosedPath && points.length > 2) {
+        // Always close the path if we have at least 3 points
+        if (points.length > 2) {
           ctx.lineTo(firstPoint.x, firstPoint.y);
         }
 
@@ -554,27 +516,8 @@ export const Point2DArrayGizmo: Gizmo<Point2DArrayNode> = {
       }
     });
 
-    function updateToggleButton() {
-      toggleButton.textContent = isClosedPath ? '⭕ Closed' : '↪️ Open';
-      toggleButton.title = isClosedPath ? 'Click to make path open' : 'Click to make path closed';
-      draw();
-    }
-
-    toggleButton.addEventListener('click', () => {
-      isClosedPath = !isClosedPath;
-      state.set('isClosedPath', isClosedPath);
-      updateToggleButton();
-    });
-
-    // Initialize toggle button state
-    updateToggleButton();
-
-    // Add elements to container
-    container.appendChild(canvas);
-    container.appendChild(toggleButton);
-
     draw();
-    return container;
+    return canvas;
   },
 };
 
