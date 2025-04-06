@@ -76,12 +76,32 @@
       const output = document.getElementById('output');
 
       // Set initial content with various literal types
-      editor.value = `// Example with different types of literals
+      editor.value = `// Example with different types of pattern-matched AST gizmos
 const message = "Hello, World!";
 const count = 42;
 const enabled = true;
 const coordinates = [10, 20, 30];
 const createdAt = "2024-03-20T15:30:00.000Z";  // ISO datetime string
+
+// Simple dimension object
+const dims = { width: 100, height: 100 };
+
+// Square path (unclosed)
+const points = [
+    { x: 0, y: 0 },    // Origin
+    { x: 100, y: 0 },  // Right
+    { x: 100, y: 100 },// Corner
+    { x: 0, y: 100 },  // Up
+];
+
+// Triangle path (closed)
+const triangle = [
+    { x: 50, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+    { x: 50, y: 0 }
+];
+
 const config = {
     name: "test",
     values: [1, 2, 3],
@@ -90,8 +110,6 @@ const config = {
         mode: "development"
     }
 };
-
-const dims = { width: 100, height: 100 };
 `;
 
       // Listen for changes

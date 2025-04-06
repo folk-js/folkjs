@@ -5,7 +5,12 @@ export type GizmoStyle = 'inline' | 'block';
 
 export interface Gizmo<T extends t.Node = t.Node> {
   match: (node: t.Node) => node is T;
-  render: (node: T, onChange: () => void, dimensions: { width: number; height: number }) => HTMLElement;
+  render: (
+    node: T,
+    onChange: () => void,
+    dimensions: { width: number; height: number },
+    state: Map<string, unknown>,
+  ) => HTMLElement;
   style: GizmoStyle;
   lines?: number; // Number of lines for block gizmos (defaults to 1)
 }
@@ -17,7 +22,7 @@ export const BooleanGizmo: Gizmo<t.BooleanLiteral> = {
     return t.Literal.check(node) && typeof node.value === 'boolean';
   },
 
-  render(node, onChange): HTMLElement {
+  render(node, onChange, dimensions, state): HTMLElement {
     return uhtml`<input 
       type="checkbox" 
       .checked=${node.value}
@@ -43,7 +48,7 @@ export const DateTimeGizmo: Gizmo<t.StringLiteral> = {
     return !isNaN(date.getTime());
   },
 
-  render(node, onChange): HTMLElement {
+  render(node, onChange, dimensions, state): HTMLElement {
     const input = document.createElement('input');
     input.type = 'datetime-local';
 
@@ -80,7 +85,7 @@ export const DimensionGizmo: Gizmo<DimensionObject> = {
     );
   },
 
-  render(node, onChange): HTMLElement {
+  render(node, onChange, dimensions, state): HTMLElement {
     const width = getProperty(node, 'width', 'number');
     const height = getProperty(node, 'height', 'number');
 
@@ -132,7 +137,7 @@ export const NumberArrayGizmo: Gizmo<NumberArrayNode> = {
     );
   },
 
-  render(node, onChange, dimensions): HTMLElement {
+  render(node, onChange, dimensions, state): HTMLElement {
     const values = node.elements.map((n) => {
       if (t.UnaryExpression.check(n) && isNumericLiteral(n.argument)) {
         return -n.argument.value;
@@ -256,6 +261,320 @@ export const NumberArrayGizmo: Gizmo<NumberArrayNode> = {
 
     draw();
     return canvas;
+  },
+};
+
+interface Point2DObject extends t.ObjectExpression {
+  properties: Array<
+    t.Property & {
+      key: t.Identifier;
+      value: t.NumericLiteral | t.UnaryExpression;
+    }
+  >;
+}
+
+interface Point2DArrayNode extends t.ArrayExpression {
+  elements: Array<Point2DObject>;
+}
+
+export const Point2DArrayGizmo: Gizmo<Point2DArrayNode> = {
+  style: 'block',
+  lines: 5,
+
+  match(node): node is Point2DArrayNode {
+    return (
+      t.ArrayExpression.check(node) &&
+      node.elements.length > 0 &&
+      node.elements.every(
+        (elem): elem is Point2DObject =>
+          t.ObjectExpression.check(elem) &&
+          elem.properties.length >= 2 &&
+          elem.properties.every(
+            (prop): prop is Point2DObject['properties'][0] =>
+              t.Property.check(prop) &&
+              t.Identifier.check(prop.key) &&
+              (prop.key.name === 'x' || prop.key.name === 'y') &&
+              ((t.Literal.check(prop.value) && typeof prop.value.value === 'number') ||
+                (t.UnaryExpression.check(prop.value) &&
+                  prop.value.operator === '-' &&
+                  t.Literal.check(prop.value.argument) &&
+                  typeof prop.value.argument.value === 'number')),
+          ),
+      )
+    );
+  },
+
+  render(node, onChange, dimensions, state): HTMLElement {
+    const points = node.elements.map((n) => {
+      const xProp = n.properties.find((p) => t.Identifier.check(p.key) && p.key.name === 'x');
+      const yProp = n.properties.find((p) => t.Identifier.check(p.key) && p.key.name === 'y');
+
+      const getValue = (
+        prop:
+          | (t.Property & {
+              key: t.Identifier;
+              value: t.NumericLiteral | t.UnaryExpression;
+            })
+          | undefined,
+      ): number => {
+        if (!prop) return 0;
+        const value = prop.value;
+        if (t.Literal.check(value)) return value.value as number;
+        if (t.UnaryExpression.check(value) && t.Literal.check(value.argument)) {
+          return -(value.argument.value as number);
+        }
+        return 0;
+      };
+
+      return {
+        x: getValue(xProp),
+        y: getValue(yProp),
+      };
+    });
+
+    const canvas = document.createElement('canvas');
+
+    // Create a container div to hold both canvas and controls
+    const container = document.createElement('div');
+    container.style.position = 'relative';
+
+    // Create toggle button
+    const toggleButton = document.createElement('button');
+    toggleButton.style.position = 'absolute';
+    toggleButton.style.left = '8px';
+    toggleButton.style.top = '8px';
+    toggleButton.style.padding = '4px 8px';
+    toggleButton.style.fontSize = '12px';
+    toggleButton.style.border = '1px solid #ccc';
+    toggleButton.style.borderRadius = '4px';
+    toggleButton.style.background = '#fff';
+    toggleButton.style.cursor = 'pointer';
+    toggleButton.style.opacity = '0.9';
+    toggleButton.style.zIndex = '1';
+
+    // Get state or initialize with default
+    let isClosedPath = state.get('isClosedPath') ?? true;
+
+    // Find bounds
+    const minX = Math.min(...points.map((p) => p.x));
+    const maxX = Math.max(...points.map((p) => p.x));
+    const minY = Math.min(...points.map((p) => p.y));
+    const maxY = Math.max(...points.map((p) => p.y));
+    const rangeX = maxX - minX || 1;
+    const rangeY = maxY - minY || 1;
+
+    // Calculate appropriate width based on the data's aspect ratio
+    const padding = 20;
+    const contentHeight = dimensions.height - padding * 2;
+    const contentWidth = (rangeX / rangeY) * contentHeight;
+    const totalWidth = contentWidth + padding * 2;
+
+    // Set canvas size (capped at available width)
+    canvas.width = Math.min(dimensions.width, totalWidth);
+    canvas.height = dimensions.height;
+
+    // Handle high DPI displays
+    const dpr = window.devicePixelRatio || 1;
+    const rect = { width: canvas.width, height: canvas.height };
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
+    canvas.style.border = '1px solid #ccc';
+    canvas.style.borderRadius = '4px';
+
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+
+    // Calculate scale factors based on available space
+    const scaleX = (rect.width - padding * 2) / rangeX;
+    const scaleY = (rect.height - padding * 2) / rangeY;
+
+    // Use the same scale factor for both axes to maintain aspect ratio
+    const scale = Math.min(scaleX, scaleY);
+
+    // Center the content if there's extra space
+    const extraWidth = rect.width - (rangeX * scale + padding * 2);
+    const extraHeight = rect.height - (rangeY * scale + padding * 2);
+    const offsetX = padding + extraWidth / 2;
+    const offsetY = padding + extraHeight / 2;
+
+    function toCanvasCoords(x: number, y: number) {
+      return {
+        x: offsetX + (x - minX) * scale,
+        y: rect.height - (offsetY + (y - minY) * scale),
+      };
+    }
+
+    function fromCanvasCoords(x: number, y: number) {
+      return {
+        x: (x - offsetX) / scale + minX,
+        y: (rect.height - y - offsetY) / scale + minY,
+      };
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      // Draw grid
+      ctx.strokeStyle = '#eee';
+      ctx.lineWidth = 1;
+      for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
+        const { x: canvasX } = toCanvasCoords(x, 0);
+        ctx.beginPath();
+        ctx.moveTo(canvasX, 0);
+        ctx.lineTo(canvasX, rect.height);
+        ctx.stroke();
+      }
+      for (let y = Math.floor(minY); y <= Math.ceil(maxY); y++) {
+        const { y: canvasY } = toCanvasCoords(0, y);
+        ctx.beginPath();
+        ctx.moveTo(0, canvasY);
+        ctx.lineTo(rect.width, canvasY);
+        ctx.stroke();
+      }
+
+      // Draw axes
+      ctx.strokeStyle = '#666';
+      if (minX <= 0 && maxX >= 0) {
+        const { x } = toCanvasCoords(0, 0);
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, rect.height);
+        ctx.stroke();
+      }
+      if (minY <= 0 && maxY >= 0) {
+        const { y } = toCanvasCoords(0, 0);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(rect.width, y);
+        ctx.stroke();
+      }
+
+      // Draw points and lines
+      if (points.length > 0) {
+        ctx.strokeStyle = '#4a9eff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+
+        // Draw main path
+        const firstPoint = toCanvasCoords(points[0].x, points[0].y);
+        ctx.moveTo(firstPoint.x, firstPoint.y);
+
+        for (let i = 1; i < points.length; i++) {
+          const { x, y } = toCanvasCoords(points[i].x, points[i].y);
+          ctx.lineTo(x, y);
+        }
+
+        // Close the path if in closed mode and we have at least 3 points
+        if (isClosedPath && points.length > 2) {
+          ctx.lineTo(firstPoint.x, firstPoint.y);
+        }
+
+        ctx.stroke();
+
+        // Draw point handles
+        ctx.fillStyle = '#4a9eff';
+        points.forEach((point) => {
+          const { x, y } = toCanvasCoords(point.x, point.y);
+          ctx.beginPath();
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+    }
+
+    function updatePoint(index: number, x: number, y: number, isShiftKey: boolean) {
+      const point = fromCanvasCoords(x, y);
+      const roundedX = isShiftKey ? Math.round(point.x) : Math.round(point.x * 100) / 100;
+      const roundedY = isShiftKey ? Math.round(point.y) : Math.round(point.y * 100) / 100;
+
+      const element = node.elements[index];
+      const xProp = element.properties.find((p) => t.Identifier.check(p.key) && p.key.name === 'x');
+      const yProp = element.properties.find((p) => t.Identifier.check(p.key) && p.key.name === 'y');
+
+      function updateValue(prop: typeof xProp, value: number) {
+        if (!prop) return;
+
+        if (value >= 0) {
+          // Convert to positive numeric literal
+          prop.value = { type: 'NumericLiteral', value };
+        } else {
+          // Convert to negative unary expression
+          prop.value = {
+            type: 'UnaryExpression',
+            operator: '-',
+            argument: { type: 'NumericLiteral', value: -value },
+            prefix: true,
+          };
+        }
+      }
+
+      updateValue(xProp, roundedX);
+      updateValue(yProp, roundedY);
+
+      points[index] = { x: roundedX, y: roundedY };
+      draw();
+      onChange();
+    }
+
+    let activePointIndex = -1;
+
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // Find closest point
+      points.forEach((point, index) => {
+        const { x: px, y: py } = toCanvasCoords(point.x, point.y);
+        const dist = Math.hypot(x - px, y - py);
+        if (dist < 10) {
+          activePointIndex = index;
+        }
+      });
+
+      if (activePointIndex >= 0) {
+        updatePoint(activePointIndex, x, y, e.shiftKey);
+
+        const onMove = (e: MouseEvent) => {
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          updatePoint(activePointIndex, x, y, e.shiftKey);
+        };
+
+        const onUp = () => {
+          activePointIndex = -1;
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      }
+    });
+
+    function updateToggleButton() {
+      toggleButton.textContent = isClosedPath ? '⭕ Closed' : '↪️ Open';
+      toggleButton.title = isClosedPath ? 'Click to make path open' : 'Click to make path closed';
+      draw();
+    }
+
+    toggleButton.addEventListener('click', () => {
+      isClosedPath = !isClosedPath;
+      state.set('isClosedPath', isClosedPath);
+      updateToggleButton();
+    });
+
+    // Initialize toggle button state
+    updateToggleButton();
+
+    // Add elements to container
+    container.appendChild(canvas);
+    container.appendChild(toggleButton);
+
+    draw();
+    return container;
   },
 };
 

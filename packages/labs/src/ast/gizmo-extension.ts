@@ -26,6 +26,11 @@ interface GizmoMatch {
   view: EditorView;
 }
 
+interface GizmoState {
+  id: string;
+  value: Map<string, unknown>;
+}
+
 export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
   let editorView: EditorView | null = null;
 
@@ -34,6 +39,7 @@ export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
   const updateGizmoRanges = StateEffect.define<Array<Omit<GizmoRange, 'enabled'> & { enabled?: boolean }>>();
   const toggleAllGizmosEffect = StateEffect.define<boolean>();
   const toggleGizmoEffect = StateEffect.define<Omit<GizmoRange, 'from' | 'to'>>();
+  const updateGizmoState = StateEffect.define<GizmoState>();
 
   // State field to track gizmo ranges and their enabled state
   const gizmoRangesField = StateField.define<GizmoRange[]>({
@@ -95,6 +101,23 @@ export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
     },
   });
 
+  const gizmoStatesField = StateField.define<Map<string, unknown>>({
+    create() {
+      return new Map();
+    },
+    update(states, tr) {
+      const newStates = new Map(states);
+
+      for (const effect of tr.effects) {
+        if (effect.is(updateGizmoState)) {
+          newStates.set(effect.value.id, effect.value.value);
+        }
+      }
+
+      return newStates;
+    },
+  });
+
   // Extension to make gizmos atomic
   const atomicGizmos = EditorView.atomicRanges.of((view) => {
     const ranges = view.state.field(gizmoRangesField);
@@ -146,9 +169,11 @@ export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
     override toDOM(): HTMLElement {
       if (!this.element) {
         const lineHeight = this.view.defaultLineHeight;
-        const lines = this.gizmo.lines || 1; // Default to 1 if not specified
+        const lines = this.gizmo.lines || 1;
         const height = Math.floor(lineHeight * lines);
         const width = this.view.contentDOM.clientWidth;
+
+        const stateMap = this.view.state.field(gizmoStatesField);
 
         this.element = this.gizmo.render(
           this.node,
@@ -159,6 +184,7 @@ export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
             });
           },
           { width, height },
+          stateMap,
         );
 
         // Add styling to ensure proper sizing and prevent overflow
@@ -365,6 +391,7 @@ export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
         ],
       });
     } catch (error) {
+      console.error(error);
       // On error, preserve existing ranges but clear decorations
       // This ensures ranges and their enabled states persist through parse errors
       view.dispatch({
@@ -380,6 +407,7 @@ export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
   return [
     gizmoRangesField,
     gizmoMatchesField,
+    gizmoStatesField, // Add the new state field
     atomicGizmos,
     gizmoField,
     toggleGizmoKeymap,
