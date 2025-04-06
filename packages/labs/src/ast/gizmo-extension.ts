@@ -140,21 +140,35 @@ export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
 
     override toDOM(): HTMLElement {
       if (!this.element) {
-        this.element = this.gizmo.render(this.node, () => {
-          const newCode = print(this.ast).code;
-          this.view.dispatch({
-            changes: { from: 0, to: this.view.state.doc.length, insert: newCode },
-          });
-        });
+        const lineHeight = this.view.defaultLineHeight;
+        const lines = this.gizmo.lines || 1; // Default to 1 if not specified
+        const height = Math.floor(lineHeight * lines);
+        const width = this.view.contentDOM.clientWidth;
+
+        this.element = this.gizmo.render(
+          this.node,
+          () => {
+            const newCode = print(this.ast).code;
+            this.view.dispatch({
+              changes: { from: 0, to: this.view.state.doc.length, insert: newCode },
+            });
+          },
+          { width, height },
+        );
 
         // Add styling to ensure proper sizing and prevent overflow
         if (this.gizmo.style === 'block') {
-          const lineHeight = this.view.defaultLineHeight;
+          const leftEditorPadding = this.view.defaultCharacterWidth;
+          const leftMargin = this.node.loc!.start.column * this.view.defaultCharacterWidth + leftEditorPadding;
+          const existingStyles = this.element.style.cssText;
           this.element.style.cssText = `
             display: block;
-            height: ${Math.floor(lineHeight)}px;
+            height: ${height}px;
             box-sizing: border-box;
+            overflow: hidden;
             margin: 0;
+            margin-left: ${leftMargin}px;
+            ${existingStyles}
           `;
         }
       }

@@ -3,7 +3,7 @@ import { EditorView } from '@codemirror/view';
 import { FolkElement } from '@folkjs/canvas/folk-element';
 import { basicSetup } from 'codemirror';
 import { gizmoExtension } from './ast/gizmo-extension';
-import { BooleanGizmo, DateTimeGizmo, DimensionGizmo } from './ast/gizmos';
+import { BooleanGizmo, DateTimeGizmo, DimensionGizmo, NumberArrayGizmo } from './ast/gizmos';
 
 /**
  * A custom element that displays a CodeMirror editor with AST gizmos.
@@ -46,7 +46,7 @@ export class ASTGizmos extends FolkElement {
       extensions: [
         basicSetup,
         javascript(),
-        gizmoExtension([BooleanGizmo, DimensionGizmo, DateTimeGizmo]),
+        gizmoExtension([BooleanGizmo, DimensionGizmo, DateTimeGizmo, NumberArrayGizmo]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             this.dispatchEvent(new CustomEvent('change', { detail: { value: this.value } }));
