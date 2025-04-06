@@ -1,4 +1,5 @@
 import { namedTypes as t } from 'ast-types';
+import { uhtml } from '../tags';
 
 export type GizmoStyle = 'inline' | 'block';
 
@@ -16,18 +17,16 @@ export const BooleanGizmo: Gizmo<t.BooleanLiteral> = {
   },
 
   render(node: t.BooleanLiteral, onChange: () => void): HTMLElement {
-    const container = document.createElement('span');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = node.value;
-
-    checkbox.addEventListener('change', () => {
-      node.value = checkbox.checked;
-      onChange();
-    });
-
-    container.appendChild(checkbox);
-    return container;
+    return uhtml`<input 
+      type="checkbox" 
+      .checked=${node.value}
+      @change=${(e: Event) => {
+        if (e.target instanceof HTMLInputElement) {
+          node.value = e.target.checked;
+          onChange();
+        }
+      }}
+    />`;
   },
 };
 
@@ -50,47 +49,30 @@ export const DimensionGizmo: Gizmo<DimensionObject> = {
   },
 
   render(node: DimensionObject, onChange: () => void): HTMLElement {
-    const container = document.createElement('span');
-    const widthInput = document.createElement('input');
-    const heightInput = document.createElement('input');
-    const separator = document.createElement('span');
-
-    widthInput.type = 'number';
-    heightInput.type = 'number';
-    widthInput.style.width = '4em';
-    heightInput.style.width = '4em';
-    widthInput.style.margin = '0 2px';
-    heightInput.style.margin = '0 2px';
-    separator.textContent = '×';
-
     const width = getProperty(node, 'width', 'number');
     const height = getProperty(node, 'height', 'number');
 
-    if (width) {
-      widthInput.value = width.value.toString();
-    }
-    if (height) {
-      heightInput.value = height.value.toString();
-    }
-
-    widthInput.addEventListener('change', () => {
-      if (width) {
-        width.value = parseFloat(widthInput.value);
-        onChange();
-      }
-    });
-
-    heightInput.addEventListener('change', () => {
-      if (height) {
-        height.value = parseFloat(heightInput.value);
-        onChange();
-      }
-    });
-
-    container.appendChild(widthInput);
-    container.appendChild(separator);
-    container.appendChild(heightInput);
-    return container;
+    return uhtml`<span style="display: inline-flex; align-items: center; gap: 2px"><input
+        type="number"
+        style="width: 4em; margin: 0"
+        value=${width?.value ?? ''}
+        @change=${(e: Event) => {
+          if (width && e.target instanceof HTMLInputElement) {
+            width.value = parseFloat(e.target.value);
+            onChange();
+          }
+        }}
+      /><span>×</span><input
+        type="number"
+        style="width: 4em; margin: 0"
+        value=${height?.value ?? ''}
+        @change=${(e: Event) => {
+          if (height && e.target instanceof HTMLInputElement) {
+            height.value = parseFloat(e.target.value);
+            onChange();
+          }
+        }}
+      /></span>`;
   },
 };
 

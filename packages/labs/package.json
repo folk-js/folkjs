@@ -75,6 +75,7 @@
     "perfect-arrows": "^0.3.7",
     "perfect-freehand": "^1.2.2",
     "recast": "^0.23.11",
+    "uhtml": "^4.5.11",
     "webcola": "^3.4.0"
   },
   "devDependencies": {
