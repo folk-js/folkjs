@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AST Gizmos</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      main {
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      pre {
+        padding: 10px;
+        background: #f5f5f5;
+        border-radius: 4px;
+      }
+      h3 {
+        margin-bottom: 0;
+      }
+      ul {
+        margin: 0;
+        padding: 0.1em 0.1em 0.5em 1em;
+        font-size: 0.9em;
+      }
+      kbd {
+        background: #eee;
+        border-radius: 3px;
+        border: 1px solid #b4b4b4;
+        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+        color: #333;
+        display: inline-block;
+        font-size: 0.85em;
+        font-family: monospace;
+        padding: 2px 4px;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>AST Gizmos</h1>
+      <p>Direct manipulation of the AST via custom element that pattern match on AST structure</p>
+      <p><kbd>Ctrl/Cmd + E</kbd> to toggle gizmo at cursor</p>
+
+      <h3>Todo</h3>
+      <ul>
+        <li>Fix scrolling in Firefox</li>
+        <li>Separate AST gizmos from CodeMirror</li>
+      </ul>
+
+      <folk-ast-gizmos id="editor"></folk-ast-gizmos>
+
+      <h3>Plaintext</h3>
+      <pre id="output"></pre>
+    </main>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/ast-gizmos';
+
+      const editor = document.getElementById('editor');
+      const output = document.getElementById('output');
+
+      // Set initial content with various literal types
+      editor.value = `// Example with different types of pattern-matched AST gizmos
+const message = "Hello, World!";
+const count = 42;
+const enabled = true;
+const coordinates = [10, 20, 30];
+const createdAt = "2024-03-20T15:30:00.000Z";  // ISO datetime string
+
+// Simple dimension object
+const dims = { width: 100, height: 100 };
+
+// Square path
+const points = [
+    { x: 0, y: 0 },    // Origin
+    { x: 100, y: 0 },  // Right
+    { x: 100, y: 100 },// Corner
+    { x: 0, y: 100 },  // Up
+];
+
+// Triangle path
+const triangle = [
+    { x: 50, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+];
+
+const config = {
+    name: "test",
+    values: [1, 2, 3],
+    settings: {
+        debug: true,
+        mode: "development"
+    }
+};
+
+// Matrix2D object
+const matrix = {
+      a: 1,
+      b: 0,
+      c: 0,
+      d: 1,
+      e: 0,
+      f: 0,
+    };
+`;
+
+      // Listen for changes
+      editor.addEventListener('change', (e) => {
+        output.textContent = e.detail.value;
+      });
+
+      // Initial output
+      output.textContent = editor.value;
+    </script>
+  </body>
+</html>
