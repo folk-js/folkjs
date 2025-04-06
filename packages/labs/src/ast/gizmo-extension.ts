@@ -3,10 +3,7 @@ import type { DecorationSet } from '@codemirror/view';
 import { Decoration, EditorView, WidgetType, keymap } from '@codemirror/view';
 import type { namedTypes } from 'ast-types';
 import { parse, print, visit } from 'recast';
-import { BooleanGizmo, DateTimeGizmo, DimensionGizmo, type Gizmo } from './gizmos';
-
-// Registry of available gizmos
-const gizmos: Array<Gizmo<any>> = [BooleanGizmo, DimensionGizmo, DateTimeGizmo];
+import { type Gizmo } from './gizmos';
 
 interface GizmoPosition {
   line: number;
@@ -29,7 +26,7 @@ interface GizmoMatch {
   view: EditorView;
 }
 
-export function gizmoExtension(): Extension {
+export function gizmoExtension(gizmos: Array<Gizmo<any>>): Extension {
   let editorView: EditorView | null = null;
 
   // State effects for gizmo operations
