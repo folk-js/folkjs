@@ -521,6 +521,287 @@ export const Point2DArrayGizmo: Gizmo<Point2DArrayNode> = {
   },
 };
 
+interface Matrix2DNode extends t.ObjectExpression {
+  properties: Array<
+    t.Property & {
+      key: t.Identifier;
+      value: t.NumericLiteral | t.UnaryExpression;
+    }
+  >;
+}
+
+export const Matrix2DGizmo: Gizmo<Matrix2DNode> = {
+  style: 'block',
+  lines: 5,
+
+  match(node): node is Matrix2DNode {
+    return (
+      t.ObjectExpression.check(node) &&
+      node.properties.length === 6 &&
+      node.properties.every(
+        (prop): prop is Matrix2DNode['properties'][0] =>
+          t.Property.check(prop) &&
+          t.Identifier.check(prop.key) &&
+          ['a', 'b', 'c', 'd', 'e', 'f'].includes(prop.key.name) &&
+          ((t.Literal.check(prop.value) && typeof prop.value.value === 'number') ||
+            (t.UnaryExpression.check(prop.value) &&
+              prop.value.operator === '-' &&
+              t.Literal.check(prop.value.argument) &&
+              typeof prop.value.argument.value === 'number')),
+      )
+    );
+  },
+
+  render(node, onChange, dimensions, state): HTMLElement {
+    const matrix = {
+      a: 1,
+      b: 0,
+      c: 0,
+      d: 1,
+      e: 0,
+      f: 0,
+    };
+
+    // Extract values from node
+    node.properties.forEach((prop) => {
+      if (t.Identifier.check(prop.key)) {
+        const key = prop.key.name as keyof typeof matrix;
+        if (t.Literal.check(prop.value)) {
+          // @ts-expect-error will fix later
+          matrix[key] = prop.value.value as number;
+        } else if (t.UnaryExpression.check(prop.value) && t.Literal.check(prop.value.argument)) {
+          matrix[key] = -(prop.value.argument.value as number);
+        }
+      }
+    });
+
+    const canvas = document.createElement('canvas');
+    // Make it square based on height
+    canvas.width = dimensions.height;
+    canvas.height = dimensions.height;
+
+    // Handle high DPI displays
+    const dpr = window.devicePixelRatio || 1;
+    const rect = { width: canvas.width, height: canvas.height };
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
+    canvas.style.border = '1px solid #ccc';
+    canvas.style.borderRadius = '4px';
+
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+
+    // Set up the coordinate system
+    const padding = 20;
+    const scale = Math.min((rect.width - padding * 2) / 2, (rect.height - padding * 2) / 2);
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+
+    function draw() {
+      ctx.clearRect(0, 0, rect.width, rect.height);
+
+      // Draw grid
+      ctx.strokeStyle = '#eee';
+      ctx.lineWidth = 1;
+
+      // Vertical grid lines
+      for (let x = -2; x <= 2; x += 0.5) {
+        ctx.beginPath();
+        const startPoint = transformPoint(x, -2);
+        const endPoint = transformPoint(x, 2);
+        ctx.moveTo(startPoint.x, startPoint.y);
+        ctx.lineTo(endPoint.x, endPoint.y);
+        ctx.stroke();
+      }
+
+      // Horizontal grid lines
+      for (let y = -2; y <= 2; y += 0.5) {
+        ctx.beginPath();
+        const startPoint = transformPoint(-2, y);
+        const endPoint = transformPoint(2, y);
+        ctx.moveTo(startPoint.x, startPoint.y);
+        ctx.lineTo(endPoint.x, endPoint.y);
+        ctx.stroke();
+      }
+
+      // Draw axes
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 2;
+
+      // X axis
+      ctx.beginPath();
+      const xStart = transformPoint(-2, 0);
+      const xEnd = transformPoint(2, 0);
+      ctx.moveTo(xStart.x, xStart.y);
+      ctx.lineTo(xEnd.x, xEnd.y);
+      ctx.stroke();
+
+      // Y axis
+      ctx.beginPath();
+      const yStart = transformPoint(0, -2);
+      const yEnd = transformPoint(0, 2);
+      ctx.moveTo(yStart.x, yStart.y);
+      ctx.lineTo(yEnd.x, yEnd.y);
+      ctx.stroke();
+
+      // Draw unit vectors
+      ctx.strokeStyle = '#4a9eff';
+      ctx.lineWidth = 3;
+
+      // Unit vector i (1,0)
+      const origin = transformPoint(0, 0);
+      const unitI = transformPoint(1, 0);
+      ctx.beginPath();
+      ctx.moveTo(origin.x, origin.y);
+      ctx.lineTo(unitI.x, unitI.y);
+      ctx.stroke();
+
+      // Unit vector j (0,1)
+      const unitJ = transformPoint(0, 1);
+      ctx.beginPath();
+      ctx.moveTo(origin.x, origin.y);
+      ctx.lineTo(unitJ.x, unitJ.y);
+      ctx.stroke();
+
+      // Draw handles
+      ctx.fillStyle = '#4a9eff';
+      [origin, unitI, unitJ].forEach((point) => {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    function transformPoint(x: number, y: number) {
+      return {
+        x: centerX + scale * (matrix.a * x + matrix.c * y + matrix.e),
+        y: centerY + scale * (matrix.b * x + matrix.d * y + matrix.f),
+      };
+    }
+
+    function inverseTransformPoint(x: number, y: number) {
+      // Transform to local coordinates
+      x = (x - centerX) / scale;
+      y = (y - centerY) / scale;
+
+      // Calculate determinant
+      const det = matrix.a * matrix.d - matrix.b * matrix.c;
+      if (Math.abs(det) < 1e-6) return { x: 0, y: 0 };
+
+      // Apply inverse transform
+      const ix = (matrix.d * (x - matrix.e) - matrix.c * (y - matrix.f)) / det;
+      const iy = (-matrix.b * (x - matrix.e) + matrix.a * (y - matrix.f)) / det;
+
+      return { x: ix, y: iy };
+    }
+
+    function updateMatrix(newMatrix: typeof matrix) {
+      Object.assign(matrix, newMatrix);
+
+      // Update the AST node
+      node.properties.forEach((prop) => {
+        if (t.Identifier.check(prop.key)) {
+          const key = prop.key.name as keyof typeof matrix;
+          const value = matrix[key];
+
+          if (value >= 0) {
+            prop.value = { type: 'NumericLiteral', value };
+          } else {
+            prop.value = {
+              type: 'UnaryExpression',
+              operator: '-',
+              argument: { type: 'NumericLiteral', value: -value },
+              prefix: true,
+            };
+          }
+        }
+      });
+
+      draw();
+      onChange();
+    }
+
+    let activeHandle: 'origin' | 'i' | 'j' | null = null;
+    let lastPoint = { x: 0, y: 0 };
+
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // Check which handle was clicked
+      const origin = transformPoint(0, 0);
+      const unitI = transformPoint(1, 0);
+      const unitJ = transformPoint(0, 1);
+
+      const points = [
+        { name: 'origin' as const, point: origin },
+        { name: 'i' as const, point: unitI },
+        { name: 'j' as const, point: unitJ },
+      ];
+
+      for (const { name, point } of points) {
+        const dist = Math.hypot(x - point.x, y - point.y);
+        if (dist < 10) {
+          activeHandle = name;
+          lastPoint = { x, y };
+          break;
+        }
+      }
+
+      if (activeHandle) {
+        const onMove = (e: MouseEvent) => {
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+
+          if (activeHandle === 'origin') {
+            // Update translation
+            const dx = (x - lastPoint.x) / scale;
+            const dy = (y - lastPoint.y) / scale;
+            updateMatrix({
+              ...matrix,
+              e: matrix.e + dx,
+              f: matrix.f + dy,
+            });
+          } else {
+            // Update transformation matrix based on new unit vector positions
+            const currentPoint = inverseTransformPoint(x, y);
+            if (activeHandle === 'i') {
+              updateMatrix({
+                ...matrix,
+                a: currentPoint.x,
+                b: currentPoint.y,
+              });
+            } else if (activeHandle === 'j') {
+              updateMatrix({
+                ...matrix,
+                c: currentPoint.x,
+                d: currentPoint.y,
+              });
+            }
+          }
+
+          lastPoint = { x, y };
+        };
+
+        const onUp = () => {
+          activeHandle = null;
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      }
+    });
+
+    draw();
+    return canvas;
+  },
+};
+
 /* Gizmo Utils */
 
 type TypeCheck<T> = ((value: any) => value is T) | string;
