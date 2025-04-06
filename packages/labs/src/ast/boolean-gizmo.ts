@@ -5,19 +5,22 @@ import { ASTGizmo } from './ast-gizmo';
 export class BooleanGizmo extends ASTGizmo {
   static override tagName = 'ast-boolean-gizmo';
   static override displayMode: GizmoDisplayMode = 'inline';
-  #checkbox!: HTMLInputElement;
+  #checkbox?: HTMLInputElement;
 
   protected override setupUI() {
     this.#checkbox = document.createElement('input');
     this.#checkbox.type = 'checkbox';
 
-    this.#checkbox.addEventListener('change', () => {
+    // We know checkbox exists since we just created it
+    const checkbox = this.#checkbox;
+    checkbox.addEventListener('change', () => {
       const node = this.node as t.BooleanLiteral;
-      node.value = this.#checkbox.checked;
+      node.value = checkbox.checked;
+      console.log(node.value);
       this.changed();
     });
 
-    this.shadowRoot?.appendChild(this.#checkbox);
+    this.shadowRoot?.appendChild(checkbox);
   }
 
   static override match(node: t.Node): boolean {
@@ -25,7 +28,7 @@ export class BooleanGizmo extends ASTGizmo {
   }
 
   protected override update() {
-    console.log('updating boolean gizmo');
+    if (!this.#checkbox) return;
     const node = this.node as t.BooleanLiteral;
     this.#checkbox.checked = node.value;
   }

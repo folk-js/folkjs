@@ -5,8 +5,8 @@ import { ASTGizmo } from './ast-gizmo';
 export class DimensionGizmo extends ASTGizmo {
   static override tagName = 'ast-dimension-gizmo';
   static override displayMode: GizmoDisplayMode = 'inline';
-  #widthInput!: HTMLInputElement;
-  #heightInput!: HTMLInputElement;
+  #widthInput?: HTMLInputElement;
+  #heightInput?: HTMLInputElement;
 
   protected override setupUI() {
     this.#widthInput = document.createElement('input');
@@ -22,26 +22,29 @@ export class DimensionGizmo extends ASTGizmo {
     const separator = document.createElement('span');
     separator.textContent = '×';
 
-    this.#widthInput.addEventListener('change', () => {
+    // We know inputs exist since we just created them
+    const widthInput = this.#widthInput;
+    const heightInput = this.#heightInput;
+
+    widthInput.addEventListener('input', () => {
       const prop = this.getProperty('width');
       if (prop?.value && t.Literal.check(prop.value) && typeof prop.value.value === 'number') {
-        prop.value.value = parseFloat(this.#widthInput.value);
+        prop.value.value = parseFloat(widthInput.value);
         this.changed();
       }
     });
 
-    this.#heightInput.addEventListener('change', () => {
+    heightInput.addEventListener('input', () => {
       const prop = this.getProperty('height');
       if (prop?.value && t.Literal.check(prop.value) && typeof prop.value.value === 'number') {
-        prop.value.value = parseFloat(this.#heightInput.value);
-        console.log('height', prop.value.value);
+        prop.value.value = parseFloat(heightInput.value);
         this.changed();
       }
     });
 
-    this.shadowRoot?.appendChild(this.#widthInput);
+    this.shadowRoot?.appendChild(widthInput);
     this.shadowRoot?.appendChild(separator);
-    this.shadowRoot?.appendChild(this.#heightInput);
+    this.shadowRoot?.appendChild(heightInput);
   }
 
   static override match(node: t.Node): boolean {
@@ -62,6 +65,8 @@ export class DimensionGizmo extends ASTGizmo {
   }
 
   protected override update() {
+    if (!this.#widthInput || !this.#heightInput) return;
+
     const widthProp = this.getProperty('width');
     const heightProp = this.getProperty('height');
 
@@ -75,7 +80,6 @@ export class DimensionGizmo extends ASTGizmo {
 
   private getProperty(name: string): t.Property | undefined {
     const obj = this.node as t.ObjectExpression;
-    console.log(obj);
     return obj.properties.find(
       (p) => t.Property.check(p) && t.Identifier.check(p.key) && p.key.name === name,
     ) as t.Property;

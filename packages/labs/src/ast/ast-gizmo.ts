@@ -5,10 +5,9 @@ export type GizmoDisplayMode = 'inline' | 'block';
 
 export class ASTGizmo extends FolkElement {
   #onChange?: () => void;
-  #pendingNode?: t.Node;
   protected node!: t.Node;
   static displayMode: GizmoDisplayMode = 'inline';
-  #isConnected = false;
+  #isSetup = false;
 
   constructor() {
     super();
@@ -38,33 +37,43 @@ export class ASTGizmo extends FolkElement {
     }
   }
 
+  // Ensure UI is set up
+  private ensureUI() {
+    if (!this.#isSetup && this.isConnected) {
+      this.setupUI();
+      this.#isSetup = true;
+    }
+  }
+
   // Update with new AST node and onChange handler
   updateNode(node: t.Node, onChange: () => void) {
     this.node = node;
     this.#onChange = onChange;
 
-    if (this.#isConnected) {
+    // Ensure UI is set up before updating
+    this.ensureUI();
+
+    // Only update if UI is ready
+    if (this.#isSetup) {
       this.update();
-    } else {
-      // Save the node for when we connect
-      this.#pendingNode = node;
     }
   }
 
   // Called when the element is connected to the DOM
   public override connectedCallback() {
     super.connectedCallback?.();
-    this.setupUI();
-    this.#isConnected = true;
 
-    // If we had a pending update, apply it now
-    if (this.#pendingNode) {
-      this.update();
-      this.#pendingNode = undefined;
+    // Set up UI if we have a node
+    if (this.node) {
+      this.ensureUI();
+      if (this.#isSetup) {
+        this.update();
+      }
     }
   }
 
-  // Subclasses implement this to set up their UI elements
+
+  // Subclasses implement this to set up their UI elements - should only be called once
   protected setupUI() {}
 
   // Subclasses implement this to update their UI with node data

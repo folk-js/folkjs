@@ -3,29 +3,37 @@ import { StateEffect, StateField } from '@codemirror/state';
 import type { DecorationSet } from '@codemirror/view';
 import { Decoration, WidgetType } from '@codemirror/view';
 import { FolkElement } from '@folkjs/canvas/folk-element';
+import type { namedTypes } from 'ast-types';
 import { basicSetup, EditorView } from 'codemirror';
 import { parse, print } from 'recast';
+import type { ASTGizmo } from './ast/ast-gizmo';
 import { findGizmoMatches } from './ast/gizmo-visitor';
 
-const addGizmos =
-  StateEffect.define<{ from: number; to: number; element: HTMLElement; displayMode: 'inline' | 'block' }[]>();
-const clearGizmos = StateEffect.define<null>();
+interface GizmoDecoration {
+  from: number;
+  to: number;
+  element: ASTGizmo;
+  displayMode: 'inline' | 'block';
+}
+
+const setGizmoDecorations = StateEffect.define<GizmoDecoration[]>();
 
 class GizmoWidget extends WidgetType {
-  constructor(element: HTMLElement, displayMode: 'inline' | 'block') {
+  element: ASTGizmo;
+  displayMode: 'inline' | 'block';
+
+  constructor(element: ASTGizmo, displayMode: 'inline' | 'block') {
     super();
     this.element = element;
     this.displayMode = displayMode;
   }
-
-  element: HTMLElement;
-  displayMode: 'inline' | 'block';
 
   override toDOM() {
     return this.element;
   }
 
   override eq(other: GizmoWidget) {
+    // Two widgets are equal if they represent the same gizmo element
     return this.element === other.element;
   }
 }
@@ -36,29 +44,17 @@ const gizmoField = StateField.define<DecorationSet>({
   },
   update(decorations, tr) {
     decorations = decorations.map(tr.changes);
-    for (let e of tr.effects) {
-      if (e.is(addGizmos)) {
+    for (const e of tr.effects) {
+      if (e.is(setGizmoDecorations)) {
         const newDecorations = e.value.map(({ from, to, element, displayMode }) => {
-          if (displayMode === 'inline') {
-            // For inline gizmos, replace the text with the widget
-            return Decoration.replace({
-              widget: new GizmoWidget(element, displayMode),
-            }).range(from, to);
-          } else {
-            // For block gizmos, keep the original behavior
-            return Decoration.widget({
-              widget: new GizmoWidget(element, displayMode),
-              side: -1,
-              block: true,
-            }).range(from);
-          }
+          const widget = new GizmoWidget(element, displayMode);
+          return displayMode === 'inline'
+            ? Decoration.replace({ widget }).range(from, to)
+            : Decoration.widget({ widget, side: -1, block: true }).range(from);
         });
-        decorations = decorations.update({
-          add: newDecorations,
-          sort: true,
-        });
-      } else if (e.is(clearGizmos)) {
-        decorations = Decoration.none;
+
+        // Replace all decorations with the new set
+        decorations = Decoration.set(newDecorations, true);
       }
     }
     return decorations;
@@ -70,6 +66,7 @@ export class ASTGizmos extends FolkElement {
   static override tagName = 'folk-ast-gizmos';
 
   #view: EditorView | null = null;
+  #gizmoElements = new Map<string, ASTGizmo>();
 
   constructor() {
     super();
@@ -79,13 +76,11 @@ export class ASTGizmos extends FolkElement {
   override connectedCallback() {
     super.connectedCallback?.();
 
-    // Create a container for the editor
     const container = document.createElement('div');
     container.style.width = '100%';
     container.style.height = '100%';
     this.shadowRoot?.appendChild(container);
 
-    // Add some basic styles
     const style = document.createElement('style');
     style.textContent = `
       :host {
@@ -94,16 +89,11 @@ export class ASTGizmos extends FolkElement {
         border-radius: 4px;
         overflow: hidden;
       }
-      .cm-editor {
-        height: 100%;
-      }
-      .cm-scroller {
-        font-family: monospace;
-      }
+      .cm-editor { height: 100%; }
+      .cm-scroller { font-family: monospace; }
     `;
     this.shadowRoot?.appendChild(style);
 
-    // Initialize CodeMirror
     this.#view = new EditorView({
       doc: this.getAttribute('value') || '',
       parent: container,
@@ -113,27 +103,21 @@ export class ASTGizmos extends FolkElement {
         gizmoField,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
-            this.dispatchEvent(
-              new CustomEvent('change', {
-                detail: {
-                  value: update.state.doc.toString(),
-                },
-              }),
-            );
-            // Update gizmos when code changes
             this.updateGizmos();
+            this.dispatchEvent(new CustomEvent('change', { detail: { value: this.value } }));
           }
         }),
       ],
     });
 
-    // Initial gizmos
     this.updateGizmos();
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback?.();
+    this.#gizmoElements.clear();
     this.#view?.destroy();
+    this.#view = null;
   }
 
   get value(): string {
@@ -141,97 +125,99 @@ export class ASTGizmos extends FolkElement {
   }
 
   set value(newValue: string) {
-    if (this.#view) {
-      this.#view.dispatch({
-        changes: {
-          from: 0,
-          to: this.#view.state.doc.length,
-          insert: newValue,
-        },
-      });
-      // Update gizmos after setting new value
-      this.updateGizmos();
+    if (!this.#view) return;
+    this.#view.dispatch({
+      changes: { from: 0, to: this.#view.state.doc.length, insert: newValue },
+    });
+  }
+
+  private getNodePosition(view: EditorView, node: namedTypes.Node, fallbackLine: number): { from: number; to: number } {
+    if (!node.loc) {
+      const linePos = view.state.doc.line(fallbackLine);
+      return { from: linePos.from, to: linePos.from };
     }
+
+    const fromLine = view.state.doc.line(node.loc.start.line);
+    const toLine = view.state.doc.line(node.loc.end.line);
+    return {
+      from: fromLine.from + node.loc.start.column,
+      to: toLine.from + node.loc.end.column,
+    };
   }
 
   private updateGizmos() {
-    console.log('update gizmos');
     if (!this.#view) return;
 
     try {
-      // Clear existing gizmos first
-      this.#view.dispatch({
-        effects: clearGizmos.of(null),
-      });
-
-      const code = this.#view.state.doc.toString();
-      // Skip adding new gizmos if there are syntax errors
+      // Try to parse the code
       let ast;
       try {
-        ast = parse(code);
-      } catch (e) {
-        // If we can't parse the code, just return without adding gizmos
+        ast = parse(this.#view.state.doc.toString());
+      } catch {
+        // If we can't parse, remove all gizmos
+        this.#gizmoElements.clear();
+        this.#view.dispatch({ effects: setGizmoDecorations.of([]) });
         return;
       }
 
       const matches = findGizmoMatches(ast);
-
-      // Only add new gizmos if we found matches
-      if (matches.length > 0) {
-        // Create gizmos for each match
-        const gizmos = matches.map(({ node, line, gizmoClass }) => {
-          const gizmo = new gizmoClass();
-          gizmo.updateNode(node, () => {
-            // When a gizmo changes the AST, update the editor
-            this.updateFromAST(ast);
-          });
-
-          // Calculate the actual character positions from the node's location
-          if (!node.loc) {
-            // Fallback to line-based positioning if no location info
-            const linePos = this.#view!.state.doc.line(line);
-            return {
-              from: linePos.from,
-              to: linePos.from,
-              element: gizmo,
-              displayMode: gizmoClass.displayMode,
-            };
-          }
-
-          const fromLine = this.#view!.state.doc.line(node.loc.start.line);
-          const toLine = this.#view!.state.doc.line(node.loc.end.line);
-          const from = fromLine.from + node.loc.start.column;
-          const to = toLine.from + node.loc.end.column;
-
-          return {
-            from,
-            to,
-            element: gizmo,
-            displayMode: gizmoClass.displayMode,
-          };
-        });
-
-        this.#view.dispatch({
-          effects: addGizmos.of(gizmos),
-        });
+      if (matches.length === 0) {
+        // No matches, remove all gizmos
+        this.#gizmoElements.clear();
+        this.#view.dispatch({ effects: setGizmoDecorations.of([]) });
+        return;
       }
+
+      // Track which gizmos are still in use
+      const currentPathIds = new Set<string>();
+
+      // Create or update gizmos and collect their decorations
+      const decorations = matches.map(({ node, line, gizmoClass, pathId }) => {
+        currentPathIds.add(pathId);
+
+        // Reuse or create gizmo element
+        let gizmo = this.#gizmoElements.get(pathId) as ASTGizmo;
+        if (!gizmo) {
+          gizmo = new gizmoClass();
+          this.#gizmoElements.set(pathId, gizmo);
+        }
+
+        // Update the gizmo with new node
+        gizmo.updateNode(node, () => this.updateFromAST(ast));
+
+        // Calculate position
+        const { from, to } = this.getNodePosition(this.#view!, node, line);
+
+        return {
+          from,
+          to,
+          element: gizmo,
+          displayMode: gizmoClass.displayMode,
+        };
+      });
+
+      // Clean up unused gizmos
+      for (const [pathId, _] of this.#gizmoElements) {
+        if (!currentPathIds.has(pathId)) {
+          this.#gizmoElements.delete(pathId);
+        }
+      }
+
+      // Update decorations with gizmo elements
+      this.#view.dispatch({ effects: setGizmoDecorations.of(decorations) });
     } catch (error) {
       console.warn('Failed to update gizmos:', error);
+      // On error, remove all gizmos
+      this.#gizmoElements.clear();
+      this.#view.dispatch({ effects: setGizmoDecorations.of([]) });
     }
   }
 
   private updateFromAST(ast: ReturnType<typeof parse>) {
     if (!this.#view) return;
-
-    // Use recast to print the modified AST back to code
     const newCode = print(ast).code;
-
     this.#view.dispatch({
-      changes: {
-        from: 0,
-        to: this.#view.state.doc.length,
-        insert: newCode,
-      },
+      changes: { from: 0, to: this.#view.state.doc.length, insert: newCode },
     });
   }
 }
