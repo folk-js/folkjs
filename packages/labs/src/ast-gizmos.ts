@@ -6,10 +6,10 @@ import { FolkElement } from '@folkjs/canvas/folk-element';
 import type { namedTypes } from 'ast-types';
 import { basicSetup } from 'codemirror';
 import { parse, print, visit } from 'recast';
-import { BooleanGizmo, DimensionGizmo, type Gizmo } from './ast/gizmos';
+import { BooleanGizmo, DateTimeGizmo, DimensionGizmo, type Gizmo } from './ast/gizmos';
 
 // Registry of available gizmos
-const gizmos: Array<Gizmo<any>> = [BooleanGizmo, DimensionGizmo];
+const gizmos: Array<Gizmo<any>> = [BooleanGizmo, DimensionGizmo, DateTimeGizmo];
 
 // State effect for updating gizmo ranges
 const updateGizmoRanges = StateEffect.define<Array<{ from: number; to: number }>>();

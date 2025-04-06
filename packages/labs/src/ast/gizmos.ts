@@ -30,6 +30,37 @@ export const BooleanGizmo: Gizmo<t.BooleanLiteral> = {
   },
 };
 
+export const DateTimeGizmo: Gizmo<t.StringLiteral> = {
+  style: 'inline',
+
+  match(node: t.Node): node is t.StringLiteral {
+    if (!t.Literal.check(node) || typeof node.value !== 'string') {
+      return false;
+    }
+    // Try to parse the string as a date
+    const date = new Date(node.value);
+    return !isNaN(date.getTime());
+  },
+
+  render(node: t.StringLiteral, onChange: () => void): HTMLElement {
+    const input = document.createElement('input');
+    input.type = 'datetime-local';
+
+    // Convert the string to a datetime-local compatible format
+    const date = new Date(node.value);
+    input.value = date.toISOString().slice(0, 16); // Format: YYYY-MM-DDThh:mm
+
+    input.addEventListener('change', () => {
+      if (input.value) {
+        node.value = new Date(input.value).toISOString();
+        onChange();
+      }
+    });
+
+    return input;
+  },
+};
+
 interface DimensionObject extends t.ObjectExpression {
   properties: Array<
     t.Property & {
