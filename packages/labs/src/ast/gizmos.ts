@@ -12,11 +12,11 @@ export interface Gizmo<T extends t.Node = t.Node> {
 export const BooleanGizmo: Gizmo<t.BooleanLiteral> = {
   style: 'inline',
 
-  match(node: t.Node): node is t.BooleanLiteral {
+  match(node): node is t.BooleanLiteral {
     return t.Literal.check(node) && typeof node.value === 'boolean';
   },
 
-  render(node: t.BooleanLiteral, onChange: () => void): HTMLElement {
+  render(node, onChange): HTMLElement {
     return uhtml`<input 
       type="checkbox" 
       .checked=${node.value}
@@ -33,7 +33,7 @@ export const BooleanGizmo: Gizmo<t.BooleanLiteral> = {
 export const DateTimeGizmo: Gizmo<t.StringLiteral> = {
   style: 'inline',
 
-  match(node: t.Node): node is t.StringLiteral {
+  match(node): node is t.StringLiteral {
     if (!t.Literal.check(node) || typeof node.value !== 'string') {
       return false;
     }
@@ -42,7 +42,7 @@ export const DateTimeGizmo: Gizmo<t.StringLiteral> = {
     return !isNaN(date.getTime());
   },
 
-  render(node: t.StringLiteral, onChange: () => void): HTMLElement {
+  render(node, onChange): HTMLElement {
     const input = document.createElement('input');
     input.type = 'datetime-local';
 
@@ -73,13 +73,13 @@ interface DimensionObject extends t.ObjectExpression {
 export const DimensionGizmo: Gizmo<DimensionObject> = {
   style: 'inline',
 
-  match(node: t.Node): node is DimensionObject {
+  match(node): node is DimensionObject {
     return (
       t.ObjectExpression.check(node) && hasProperty(node, 'width', 'number') && hasProperty(node, 'height', 'number')
     );
   },
 
-  render(node: DimensionObject, onChange: () => void): HTMLElement {
+  render(node, onChange): HTMLElement {
     const width = getProperty(node, 'width', 'number');
     const height = getProperty(node, 'height', 'number');
 

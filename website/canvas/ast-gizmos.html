@@ -24,12 +24,45 @@
         white-space: pre-wrap;
         font-family: monospace;
       }
+      .controls {
+        margin: 1em 0;
+        display: flex;
+        gap: 0.5em;
+        align-items: center;
+      }
+      button {
+        padding: 0.5em 1em;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #f0f0f0;
+      }
+      kbd {
+        background: #eee;
+        border-radius: 3px;
+        border: 1px solid #b4b4b4;
+        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+        color: #333;
+        display: inline-block;
+        font-size: 0.85em;
+        font-family: monospace;
+        padding: 2px 4px;
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
     <div class="container">
       <h1>AST Gizmos</h1>
       <p>Direct manipulation of the AST via custom element that pattern match on AST structure</p>
+
+      <div class="controls">
+        <button id="toggleAll">Toggle All Gizmos</button>
+        <span>Toggle gizmo at cursor: <kbd>Ctrl/Cmd + G</kbd></span>
+      </div>
 
       <folk-ast-gizmos id="editor"></folk-ast-gizmos>
 
@@ -42,6 +75,7 @@
 
       const editor = document.getElementById('editor');
       const output = document.getElementById('output');
+      const toggleAllBtn = document.getElementById('toggleAll');
 
       // Set initial content with various literal types
       editor.value = `// Example with different types of literals
@@ -66,6 +100,15 @@ const dims = { width: 100, height: 100 };
       editor.addEventListener('change', (e) => {
         output.textContent = e.detail.value;
       });
+
+      // Toggle all gizmos button
+      let gizmosEnabled = false;
+      toggleAllBtn.addEventListener('click', () => {
+        gizmosEnabled = !gizmosEnabled;
+        editor.setAllGizmosEnabled(gizmosEnabled);
+        toggleAllBtn.textContent = gizmosEnabled ? 'Disable All Gizmos' : 'Enable All Gizmos';
+      });
+      toggleAllBtn.click(); // Initialize button text
 
       // Initial output
       output.textContent = editor.value;
