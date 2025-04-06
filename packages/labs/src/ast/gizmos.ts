@@ -9,7 +9,7 @@ export interface Gizmo {
 }
 
 export const BooleanGizmo: Gizmo = {
-  style: 'block',
+  style: 'inline',
 
   match(node: t.Node): boolean {
     return t.Literal.check(node) && typeof node.value === 'boolean';
