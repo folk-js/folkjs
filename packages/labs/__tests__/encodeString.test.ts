@@ -449,3 +449,40 @@ describe('String decode error handling', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('Enum type', () => {
+  test('should handle basic enum field', () => {
+    const encoder = encodeString('<type:enum[read,write,delete]>');
+    const encoded = encoder.encode({ type: 'write' });
+    expect(encoded).toBe('b'); // 'write' is second in list, so gets 'b'
+    const decoded = encoder.decode('b');
+    expect(decoded).toEqual({ type: 'write' });
+  });
+
+  test('should handle multiple enum fields', () => {
+    const encoder = encodeString('<priority:enum[low,high]>:<status:enum[pending,active,done]>');
+    const encoded = encoder.encode({ priority: 'high', status: 'active' });
+    expect(encoded).toBe('b:b'); // high=b (second), active=b (second)
+    const decoded = encoder.decode('b:b');
+    expect(decoded).toEqual({ priority: 'high', status: 'active' });
+  });
+
+  test('should throw error for invalid enum value', () => {
+    const encoder = encodeString('<type:enum[draft,published]>');
+    expect(() => {
+      encoder.encode({ type: 'invalid' as any });
+    }).toThrow('Invalid enum value "invalid". Must be one of: draft, published');
+  });
+
+  test('should throw error for empty enum values list', () => {
+    expect(() => {
+      encodeString('<type:enum[]>');
+    }).toThrow('Empty enum values list');
+  });
+
+  test('should throw error for duplicate enum values', () => {
+    expect(() => {
+      encodeString('<type:enum[a,b,a]>');
+    }).toThrow('Duplicate enum value: a');
+  });
+});

@@ -21,6 +21,8 @@
  * - nums: A list of numeric values
  * - pairs: A list of tuple arrays where each tuple is [key, value] (format is 'key;value;key;value')
  * - numPairs: A list of number tuple arrays where each tuple is [number, number] (format is 'num;num;num;num')
+ * - enum: A fixed set of values, encoded using the minimum number of bits needed
+ *   Format: <field:enum-[value1,value2,value3]>
  *
  * Fixed-width fields:
  * You can specify a fixed width for a field using dash notation:
@@ -33,9 +35,20 @@
  */
 
 // Type definitions for string parsing
-type PatternType = 'text' | 'num' | 'bool' | 'list' | 'nums' | 'pairs' | 'numPairs';
+type PatternType = 'text' | 'num' | 'bool' | 'list' | 'nums' | 'pairs' | 'numPairs' | 'enum';
 
-// Parse basic types
+// Helper type to extract enum values from pattern
+type ExtractEnumValues<T extends string> = T extends `enum[${infer Values}]`
+  ? Values extends string
+    ? Values extends ''
+      ? never
+      : Values extends `${infer First},${infer Rest}`
+        ? First | ExtractEnumValues<`enum[${Rest}]`>
+        : Values
+    : never
+  : never;
+
+// Parse basic types including enums
 type ParseType<T extends string> = T extends `${infer Base}-${string}`
   ? ParseType<Base>
   : T extends 'text'
@@ -52,7 +65,9 @@ type ParseType<T extends string> = T extends `${infer Base}-${string}`
               ? Array<[string, string]>
               : T extends 'numPairs'
                 ? Array<[number, number]>
-                : string;
+                : T extends `enum[${string}]`
+                  ? ExtractEnumValues<T>
+                  : string;
 
 // Extract field definitions from string pattern
 type ExtractFields<T extends string> = T extends `${string}<${infer Field}:${infer Type}>${infer Rest}`
@@ -79,6 +94,7 @@ interface Pattern {
   type: PatternType;
   size?: number;
   isFixedHeader?: boolean;
+  enumValues?: string[]; // Add enum values
 }
 
 const DELIMITERS = {
@@ -116,27 +132,34 @@ export function encodeString<T extends string>(pattern: T): Expand<StringEncodin
         }
 
         // Format value and add to result according to pattern type
+        const value = internalData[pattern.name];
         switch (pattern.type) {
           case 'num':
-            result += formatNum(internalData[pattern.name] as number, pattern.size);
+            result += formatNum(value as number, pattern.size);
             break;
           case 'bool':
-            result += formatBool(internalData[pattern.name] as boolean);
+            result += formatBool(value as boolean);
             break;
           case 'list':
-            result += formatList(internalData[pattern.name] as string[], pattern.size);
+            result += formatList(value as string[], pattern.size);
             break;
           case 'nums':
-            result += formatNums(internalData[pattern.name] as number[], pattern.size);
+            result += formatNums(value as number[], pattern.size);
             break;
           case 'pairs':
-            result += formatPairs(internalData[pattern.name] as string[][]);
+            result += formatPairs(value as string[][]);
             break;
           case 'numPairs':
-            result += formatNumPairs(internalData[pattern.name] as number[][]);
+            result += formatNumPairs(value as number[][]);
+            break;
+          case 'enum':
+            if (!pattern.enumValues) {
+              throw new Error(`Missing enum values for field "${pattern.name}"`);
+            }
+            result += formatEnum(value as string, pattern.enumValues);
             break;
           default: // text
-            result += formatText(internalData[pattern.name], pattern.size);
+            result += formatText(value, pattern.size);
             break;
         }
 
@@ -217,6 +240,12 @@ export function encodeString<T extends string>(pattern: T): Expand<StringEncodin
             break;
           case 'numPairs':
             result[pattern.name] = parseNumPairs(value);
+            break;
+          case 'enum':
+            if (!pattern.enumValues) {
+              throw new Error(`Missing enum values for field "${pattern.name}"`);
+            }
+            result[pattern.name] = parseEnum(value, pattern.enumValues);
             break;
           default: // text
             result[pattern.name] = parseText(value, pattern.size);
@@ -401,6 +430,14 @@ function parseNumPairs(text: string): number[][] {
   return pairs;
 }
 
+function parseEnum(text: string, enumValues: string[]): string {
+  const index = text.charCodeAt(0) - 97; // 'a' starts at 97
+  if (index < 0 || index >= enumValues.length) {
+    throw new Error(`Invalid enum value "${text}". Must be one of: ${enumValues.join(', ')}`);
+  }
+  return enumValues[index];
+}
+
 interface TemplateInfo {
   staticParts: string[];
   patterns: Pattern[];
@@ -412,17 +449,48 @@ function parseTemplate(templateString: string): TemplateInfo {
   // Extract patterns
   const staticParts: string[] = [];
   const patterns: Pattern[] = [];
-  const placeholderRegex = /<([^:>]+)(?::([^>-]+)(?:-([0-9]+))?)?>/g;
+  const placeholderRegex = /<([^:>]+)(?::([^>]+))?>/g;
   let lastIndex = 0;
   let match;
 
   while ((match = placeholderRegex.exec(templateString)) !== null) {
     staticParts.push(templateString.substring(lastIndex, match.index));
 
-    const [, name, type = 'text', sizeStr] = match;
-    const size = sizeStr ? parseInt(sizeStr) : undefined;
+    const [, name, typeAndSize = 'text'] = match;
+    let type = typeAndSize;
+    let size: number | undefined;
+    let enumValues: string[] | undefined;
 
-    patterns.push({ name, type: type as PatternType, size });
+    // Handle enum type with values
+    if (type.startsWith('enum[')) {
+      const enumMatch = type.match(/enum\[(.*)\]/);
+      if (!enumMatch) {
+        throw new Error(`Invalid enum format. Expected [value1,value2,...] but got: ${typeAndSize}`);
+      }
+      type = 'enum';
+      enumValues = enumMatch[1].split(',').filter((v) => v.trim().length > 0);
+      // Check for empty enum values list
+      if (enumValues.length === 0) {
+        throw new Error('Empty enum values list');
+      }
+      // Check for duplicate enum values
+      const seen = new Set<string>();
+      for (const value of enumValues) {
+        if (seen.has(value)) {
+          throw new Error(`Duplicate enum value: ${value}`);
+        }
+        seen.add(value);
+      }
+    } else {
+      // Handle size parameter for other types
+      const sizeMatch = type.match(/^([^-]+)-(\d+)$/);
+      if (sizeMatch) {
+        type = sizeMatch[1];
+        size = parseInt(sizeMatch[2]);
+      }
+    }
+
+    patterns.push({ name, type: type as PatternType, size, enumValues });
     lastIndex = match.index + match[0].length;
   }
 
@@ -524,6 +592,14 @@ function formatPairs(pairs: string[][]): string {
 function formatNumPairs(pairs: number[][]): string {
   if (!Array.isArray(pairs)) return String(pairs);
   return pairs.flatMap((pair) => pair.map(String)).join(DELIMITERS.PAIRS_ITEM);
+}
+
+function formatEnum(value: string, enumValues: string[]): string {
+  const index = enumValues.indexOf(value);
+  if (index === -1) {
+    throw new Error(`Invalid enum value "${value}". Must be one of: ${enumValues.join(', ')}`);
+  }
+  return String.fromCharCode(97 + index); // Convert to a,b,c,etc
 }
 
 interface HeaderPayload {
