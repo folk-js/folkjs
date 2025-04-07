@@ -25,18 +25,12 @@ export class FolkZoomable extends CustomAttribute {
     @layer folk {
       [folk-zoomable] {
         display: block;
+        position: relative;
         overflow: visible;
         touch-action: none;
         --folk-x: 0px;
         --folk-y: 0px;
         --folk-scale: 1;
-        scale: var(--folk-scale);
-        translate: var(--folk-x) var(--folk-y);
-        transform-origin: 0 0;
-
-        :first-child {
-          margin-top: 0;
-        }
       }
 
       [folk-zoomable*='grid: true'] {
@@ -78,13 +72,19 @@ export class FolkZoomable extends CustomAttribute {
         background-position: var(--folk-x) var(--folk-y);
       }
     }
+
+    div {
+      position: absolute;
+      inset: 0;
+      scale: var(--folk-scale);
+      translate: var(--folk-x) var(--folk-y);
+      transform-origin: 0 0;
+    }
   `;
 
-  static {
-    // TODO: detect how to inject styles into shadowroot
-    document.adoptedStyleSheets.push(this.styles);
-  }
-
+  #shadow!: ShadowRoot;
+  #slot = document.createElement('slot');
+  #container = document.createElement('div');
   #matrix = new Matrix();
   #shapes: FolkShapeAttribute[] = [];
   #bvh: BVH.BVHNode<S.Shape2D> | null = null;
@@ -146,9 +146,25 @@ export class FolkZoomable extends CustomAttribute {
   }
 
   override connectedCallback(): void {
+    // If we apply the CSS transforms to the ownerElement then we miss out on wheel events the originate from the original bounding box of ownerElement
+    // Unless there is a good way around that (which I haven't figured out) then this attribute can only be added on elements without an existing shadowDOM.
+    // This make sense for some stuff like leaf elements (<input>). Hopefully it's not to restrictive of a constraint.
+    try {
+      this.#shadow = this.ownerElement.attachShadow({ mode: 'open' });
+    } catch (error) {
+      console.warn("folk-zoomable attribute can't work with an element that already has a shadow root.");
+      return;
+    }
+
+    this.#shadow.adoptedStyleSheets.push((this.constructor as typeof FolkZoomable).styles);
+
+    this.#container.appendChild(this.#slot);
+
+    this.#shadow.append(this.#container);
+
     this.ownerElement.addEventListener('shape-connected', this.#onShapeConnected);
     this.ownerElement.addEventListener('shape-disconnected', this.#onShapeDisconnected);
-    window.addEventListener('wheel', this.#onWheel, { passive: false });
+    (this.ownerElement as HTMLElement).addEventListener('wheel', this.#onWheel, { passive: false });
   }
 
   override changedCallback(_oldValue: string, newValue: string): void {
@@ -180,7 +196,7 @@ export class FolkZoomable extends CustomAttribute {
   override disconnectedCallback(): void {
     this.ownerElement.removeEventListener('shape-connected', this.#onShapeConnected);
     this.ownerElement.removeEventListener('shape-disconnected', this.#onShapeDisconnected);
-    window.removeEventListener('wheel', this.#onWheel);
+    (this.ownerElement as HTMLElement).removeEventListener('wheel', this.#onWheel);
     // this.#pointerTracker.stop();
   }
 
@@ -213,18 +229,9 @@ export class FolkZoomable extends CustomAttribute {
 
   // We are using event delegation to capture wheel events that don't happen in the transformed rect of the zoomable element.
   #onWheel = (event: WheelEvent) => {
-    const {} = event;
-    // Check that this wheel event is happening inside of the zoomable element, accounting for the transformed rect.
-    // TODO: add another check for children that are scrollable.
-    if (!isZoomableElementBeingScrolled(event, this.ownerElement as HTMLElement)) {
-      console.log('out of bounds ');
-      return;
-    }
-
     event.preventDefault();
-    console.log('wheel prevented');
 
-    const { left, top } = this.ownerElement.getBoundingClientRect();
+    const { left, top } = this.#container.getBoundingClientRect();
 
     let { clientX, clientY, deltaX, deltaY } = event;
 
@@ -277,25 +284,4 @@ export class FolkZoomable extends CustomAttribute {
 
     this.#requestUpdate();
   }
-}
-
-function isZoomableElementBeingScrolled(wheelEvent: WheelEvent, zoomableElement: HTMLElement): boolean {
-  let el = wheelEvent.target as Element | null;
-
-  while (el) {
-    if (
-      el === zoomableElement &&
-      zoomableElement.offsetLeft < wheelEvent.clientX &&
-      wheelEvent.clientX < zoomableElement.offsetLeft + zoomableElement.offsetWidth &&
-      zoomableElement.offsetTop < wheelEvent.clientY &&
-      wheelEvent.clientY < zoomableElement.offsetTop + zoomableElement.offsetHeight
-    )
-      return true;
-
-    if (el.scrollHeight > el.clientHeight) return false;
-
-    el = el.parentElement;
-  }
-
-  return false;
 }
