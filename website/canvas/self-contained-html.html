@@ -208,6 +208,12 @@
       }
     </script>
 
+    <script type="hash-module" id="main">
+      import { FilePicker } from '#file-picker';
+
+      const filePicker = new FilePicker();
+    </script>
+
     <script>
       class HashModules extends HTMLElement {
         #importmap;
@@ -259,12 +265,6 @@
           this.#importmap?.remove();
         }
       }
-    </script>
-
-    <script type="module">
-      import { FilePicker } from '#file-picker';
-
-      const filePicker = new FilePicker();
     </script>
   </body>
 </html>

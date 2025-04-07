@@ -22,55 +22,53 @@ export class FolkZoomable extends CustomAttribute {
   static override attributeName = 'folk-zoomable';
 
   static styles = css`
-    @layer folk {
-      [folk-zoomable] {
-        display: block;
-        position: relative;
-        overflow: visible;
-        touch-action: none;
-        --folk-x: 0px;
-        --folk-y: 0px;
-        --folk-scale: 1;
-      }
+    :host([folk-zoomable]) {
+      display: block;
+      position: relative;
+      overflow: visible;
+      touch-action: none;
+      --folk-x: 0px;
+      --folk-y: 0px;
+      --folk-scale: 1;
+    }
 
-      [folk-zoomable*='grid: true'] {
-        --circle-width: 1px;
-        --circle: circle at var(--circle-width) var(--circle-width);
-        /* Map color transparency to --folk-scale for each level of the grid */
-        --bg-color-1: rgba(0, 0, 0, 1);
-        --bg-color-2: rgba(0, 0, 0, clamp(0, var(--folk-scale), 1));
-        --bg-color-3: rgba(0, 0, 0, clamp(0, calc(var(--folk-scale) - 0.1), 1));
-        --bg-color-4: rgba(0, 0, 0, clamp(0, calc(var(--folk-scale) - 1), 1));
-        --bg-color-5: rgba(0, 0, 0, clamp(0, calc(0.5 * var(--folk-scale) - 2), 1));
+    :host([folk-zoomable*='grid: true']) {
+      --circle-width: 1px;
+      --circle: circle at var(--circle-width) var(--circle-width);
+      /* Map color transparency to --folk-scale for each level of the grid */
+      --bg-color-1: rgba(0, 0, 0, 1);
+      --bg-color-2: rgba(0, 0, 0, clamp(0, var(--folk-scale), 1));
+      --bg-color-3: rgba(0, 0, 0, clamp(0, calc(var(--folk-scale) - 0.1), 1));
+      --bg-color-4: rgba(0, 0, 0, clamp(0, calc(var(--folk-scale) - 1), 1));
+      --bg-color-5: rgba(0, 0, 0, clamp(0, calc(0.5 * var(--folk-scale) - 2), 1));
 
-        /* Draw points for each level of grid as set of a background image. First background is on top.*/
-        background-image:
-          radial-gradient(var(--circle), var(--bg-color-1) var(--circle-width), transparent 0),
-          radial-gradient(var(--circle), var(--bg-color-2) var(--circle-width), transparent 0),
-          radial-gradient(var(--circle), var(--bg-color-3) var(--circle-width), transparent 0),
-          radial-gradient(var(--circle), var(--bg-color-4) var(--circle-width), transparent 0),
-          radial-gradient(var(--circle), var(--bg-color-5) var(--circle-width), transparent 0);
+      /* Draw points for each level of grid as set of a background image. First background is on top.*/
+      background-image:
+        radial-gradient(var(--circle), var(--bg-color-1) var(--circle-width), transparent 0),
+        radial-gradient(var(--circle), var(--bg-color-2) var(--circle-width), transparent 0),
+        radial-gradient(var(--circle), var(--bg-color-3) var(--circle-width), transparent 0),
+        radial-gradient(var(--circle), var(--bg-color-4) var(--circle-width), transparent 0),
+        radial-gradient(var(--circle), var(--bg-color-5) var(--circle-width), transparent 0);
 
-        /* Each level of the grid should be a factor of --size. */
-        --bg-size: calc(var(--size, 100px) / pow(2, 6) * var(--folk-scale));
+      /* Each level of the grid should be a factor of --size. */
+      --bg-size: calc(var(--size, 100px) / pow(2, 6) * var(--folk-scale));
 
-        /* Divide each part of grid into 4 sections. */
-        --bg-size-1: calc(var(--bg-size) * pow(var(--sections, 4), 5));
-        --bg-size-2: calc(var(--bg-size) * pow(var(--sections, 4), 4));
-        --bg-size-3: calc(var(--bg-size) * pow(var(--sections, 4), 3));
-        --bg-size-4: calc(var(--bg-size) * pow(var(--sections, 4), 2));
-        --bg-size-5: calc(var(--bg-size) * var(--sections, 4));
+      /* Divide each part of grid into 4 sections. */
+      --bg-size-1: calc(var(--bg-size) * pow(var(--sections, 4), 5));
+      --bg-size-2: calc(var(--bg-size) * pow(var(--sections, 4), 4));
+      --bg-size-3: calc(var(--bg-size) * pow(var(--sections, 4), 3));
+      --bg-size-4: calc(var(--bg-size) * pow(var(--sections, 4), 2));
+      --bg-size-5: calc(var(--bg-size) * var(--sections, 4));
 
-        background-size:
-          var(--bg-size-1) var(--bg-size-1),
-          var(--bg-size-2) var(--bg-size-2),
-          var(--bg-size-3) var(--bg-size-3),
-          var(--bg-size-4) var(--bg-size-4),
-          var(--bg-size-5) var(--bg-size-5);
+      background-size:
+        var(--bg-size-1) var(--bg-size-1),
+        var(--bg-size-2) var(--bg-size-2),
+        var(--bg-size-3) var(--bg-size-3),
+        var(--bg-size-4) var(--bg-size-4),
+        var(--bg-size-5) var(--bg-size-5);
 
-        /* Pan each background position to each point in the underlay. */
-        background-position: var(--folk-x) var(--folk-y);
-      }
+      /* Pan each background position to each point in the underlay. */
+      background-position: var(--folk-x) var(--folk-y);
     }
 
     div {
@@ -149,6 +147,8 @@ export class FolkZoomable extends CustomAttribute {
     // If we apply the CSS transforms to the ownerElement then we miss out on wheel events the originate from the original bounding box of ownerElement
     // Unless there is a good way around that (which I haven't figured out) then this attribute can only be added on elements without an existing shadowDOM.
     // This make sense for some stuff like leaf elements (<input>). Hopefully it's not to restrictive of a constraint.
+
+    // If this attribute is removed then reapplied then it will error out. Is there a way to handle that?
     try {
       this.#shadow = this.ownerElement.attachShadow({ mode: 'open' });
     } catch (error) {
@@ -194,6 +194,11 @@ export class FolkZoomable extends CustomAttribute {
   }
 
   override disconnectedCallback(): void {
+    const styles = (this.constructor as typeof FolkZoomable).styles;
+    this.#shadow.adoptedStyleSheets.splice(
+      this.#shadow.adoptedStyleSheets.findIndex((s) => s === styles),
+      1,
+    );
     this.ownerElement.removeEventListener('shape-connected', this.#onShapeConnected);
     this.ownerElement.removeEventListener('shape-disconnected', this.#onShapeDisconnected);
     (this.ownerElement as HTMLElement).removeEventListener('wheel', this.#onWheel);
