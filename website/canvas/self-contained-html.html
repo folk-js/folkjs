@@ -208,16 +208,63 @@
       }
     </script>
 
-    <script type="hash-module" id="main">
-      import {FilePicker} from '#file-picker';
+    <script>
+      class HashModules extends HTMLElement {
+        #importmap;
+        #mainScript;
+        #scripts = new Map();
 
-      const filePicker = new FilePicker()
+        #shadow = this.attachShadow({ mode: 'open' });
+        #slot = document.createElement('slot');
+
+        constructor() {
+          this.#slot.addEventListener('slotchange', this.#onSlotChange);
+          this.#shadow.appendChild(this.#slot);
+        }
+
+        #onSlotChange = () => {
+          this.#scripts.clear();
+          this.querySelectorAll('script[type=hash-module]').forEach((module) => {
+            this.#scripts.set(module.id, module);
+          });
+          this.execute();
+        };
+
+        execute() {
+          cleanup();
+
+          const imports = {};
+
+          this.#scripts.forEach((module) => {
+            imports['#' + module.id] = URL.createObjectURL(new Blob([module.text], { type: 'application/javascript' }));
+            module.remove();
+          });
+
+          importmap = document.createElement('script');
+          importmap.type = 'importmap';
+          importmap.text = JSON.stringify({ imports }, null, 2);
+          document.head.appendChild(importmap);
+
+          // We need the entry point of all JS modules that import hash modules to also be a hash module in order to guarantee this importmap is generated before the other modules run.
+          if (imports['#main']) {
+            mainScript = document.createElement('script');
+            mainScript.type = 'module';
+            mainScript.text = 'import "#main"';
+            document.head.appendChild(mainScript);
+          }
+        }
+
+        cleanup() {
+          this.#mainScript?.remove();
+          this.#importmap?.remove();
+        }
+      }
     </script>
 
     <script type="module">
-      import { execute } from '@folkjs/canvas/hash-modules';
+      import { FilePicker } from '#file-picker';
 
-      execute();
+      const filePicker = new FilePicker();
     </script>
   </body>
 </html>
