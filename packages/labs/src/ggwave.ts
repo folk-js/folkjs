@@ -13,6 +13,7 @@ interface GGWaveProtocolId {
 interface GGWaveParameters {
   sampleRateInp: number;
   sampleRateOut: number;
+  payloadLength: number; // Add support for fixed payload length
   // Add more parameters as we discover them
 }
 
@@ -71,6 +72,13 @@ export class GGWave {
   // Fixed sample rate for consistency
   static readonly SAMPLE_RATE = 48000;
 
+  // Maximum size for variable-length messages from C++ implementation
+  static readonly MAX_VARIABLE_LENGTH = 140;
+
+  // Message framing sequences
+  static readonly MSG_START = '<<!';
+  static readonly MSG_END = '!>>';
+
   #context: AudioContext | null = null;
   #ggwave: iGGWave | null = null;
   #instance: any = null;
@@ -82,8 +90,11 @@ export class GGWave {
   #ready: Promise<void>;
   #gainNode: GainNode | null = null;
   #stream: MediaStream | null = null;
+  #fixedPayloadLength: number = -1; // -1 means variable length
+  #currentMessage: string[] = [];
 
-  constructor() {
+  constructor(fixedPayloadLength: number = -1) {
+    this.#fixedPayloadLength = fixedPayloadLength;
     this.#ready = this.#initGGWave();
   }
 
@@ -116,6 +127,7 @@ export class GGWave {
     const parameters = this.#ggwave.getDefaultParameters();
     parameters.sampleRateInp = this.#context.sampleRate;
     parameters.sampleRateOut = this.#context.sampleRate;
+    parameters.payloadLength = this.#fixedPayloadLength; // Set fixed payload length if specified
     this.#instance = this.#ggwave.init(parameters);
   }
 
@@ -138,7 +150,7 @@ export class GGWave {
   }
 
   /**
-   * Send data over audio
+   * Send data over audio, handling chunking if necessary
    * @param text The text to send
    * @param volume Volume level from 1-100
    * @returns Promise that resolves when the audio finishes playing
@@ -152,6 +164,53 @@ export class GGWave {
       await this.#context.resume();
     }
 
+    // If using fixed payload length, validate the message size
+    if (this.#fixedPayloadLength > 0) {
+      if (text.length > this.#fixedPayloadLength) {
+        throw new Error(`Message length ${text.length} exceeds fixed payload length ${this.#fixedPayloadLength}`);
+      }
+    }
+    // For variable length, chunk if needed
+    else if (text.length > GGWave.MAX_VARIABLE_LENGTH) {
+      const chunks = this.#chunkMessage(text);
+      for (const chunk of chunks) {
+        await this.#sendChunk(chunk, volume);
+      }
+      return;
+    }
+
+    await this.#sendChunk(text, volume);
+  }
+
+  /**
+   * Split a message into chunks for transmission
+   */
+  #chunkMessage(text: string): string[] {
+    const maxChunkSize = GGWave.MAX_VARIABLE_LENGTH - 4; // Leave minimal room for framing
+    const chunks: string[] = [];
+
+    for (let i = 0; i < text.length; i += maxChunkSize) {
+      const chunk = text.slice(i, i + maxChunkSize);
+      const isFirst = i === 0;
+      const isLast = i + maxChunkSize >= text.length;
+
+      // Format:
+      // First chunk starts with <<!
+      // Last chunk ends with !>>
+      // Middle chunks are raw data
+      chunks.push(`${isFirst ? GGWave.MSG_START : ''}${chunk}${isLast ? GGWave.MSG_END : ''}`);
+    }
+
+    return chunks;
+  }
+
+  /**
+   * Send a single chunk of data
+   */
+  async #sendChunk(text: string, volume: number): Promise<void> {
+    if (!this.#context) throw new Error('Audio context not initialized');
+    if (!this.#ggwave) throw new Error('GGWave not initialized');
+
     const waveform = this.#ggwave.encode(this.#instance, text, this.#currentProtocol, volume);
     const buf = this.#convertTypedArray(waveform, Float32Array);
     const buffer = this.#context.createBuffer(1, buf.length, this.#context.sampleRate);
@@ -160,24 +219,20 @@ export class GGWave {
     const source = this.#context.createBufferSource();
     source.buffer = buffer;
 
-    // Create a gain node for volume control
     this.#gainNode = this.#context.createGain();
     this.#gainNode.gain.value = volume / 100;
     source.connect(this.#gainNode);
     this.#gainNode.connect(this.#context.destination);
 
-    console.log(`Playing audio message with volume ${volume}%`);
-
-    // Connect to visualizer if set
-    if (this.#visualizer) {
+    if (this.#visualizer && this.#context) {
       this.#visualizer(this.#gainNode, this.#context);
     }
 
     return new Promise((resolve) => {
       source.onended = () => {
         resolve();
-        if (this.#visualizer) {
-          this.#visualizer(null, this.#context!);
+        if (this.#visualizer && this.#context) {
+          this.#visualizer(null, this.#context);
         }
         source.disconnect();
         if (this.#gainNode) {
@@ -187,6 +242,37 @@ export class GGWave {
       };
       source.start(0);
     });
+  }
+
+  /**
+   * Process received data, handling chunked messages if necessary
+   */
+  #processReceivedData(text: string): void {
+    if (text.startsWith(GGWave.MSG_START)) {
+      // Start of a new message
+      const chunk = text.slice(GGWave.MSG_START.length);
+      this.#currentMessage = [chunk];
+
+      // Check if this is a single-chunk message
+      if (text.endsWith(GGWave.MSG_END)) {
+        const message = chunk.slice(0, -GGWave.MSG_END.length);
+        this.#onDataReceived?.(message);
+        this.#currentMessage = [];
+      }
+    } else if (text.endsWith(GGWave.MSG_END)) {
+      // End of a multi-chunk message
+      const chunk = text.slice(0, -GGWave.MSG_END.length);
+      this.#currentMessage.push(chunk);
+      const completeMessage = this.#currentMessage.join('');
+      this.#onDataReceived?.(completeMessage);
+      this.#currentMessage = [];
+    } else if (this.#currentMessage.length > 0) {
+      // Middle of a multi-chunk message
+      this.#currentMessage.push(text);
+    } else {
+      // Not a chunked message
+      this.#onDataReceived?.(text);
+    }
   }
 
   /**
@@ -241,7 +327,7 @@ export class GGWave {
 
       if (res && res.length > 0) {
         const text = new TextDecoder('utf-8').decode(res);
-        this.#onDataReceived?.(text);
+        this.#processReceivedData(text);
       }
     };
 

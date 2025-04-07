@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>Folk Sync Audio</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans',
+          'Helvetica Neue', sans-serif;
+        background-color: #f2f2f2;
+      }
+
+      folk-shape {
+        background: #ffffff;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        padding: 16px;
+        border: 1px solid #e5e5e5;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 12px;
+        color: #111;
+        display: inline-block;
+        letter-spacing: 0.3px;
+      }
+
+      .status {
+        color: #0066cc;
+        font-weight: 600;
+        display: block;
+        margin-top: 8px;
+        font-size: 14px;
+      }
+
+      .connection-state {
+        font-size: 13px;
+        font-weight: 500;
+        margin-left: 10px;
+        padding: 3px 10px;
+        border-radius: 3px;
+        display: inline-block;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .state-waiting {
+        background-color: #9e9e9e;
+        color: white;
+      }
+
+      .state-connecting {
+        background-color: #ff9500;
+        color: white;
+      }
+
+      .state-connected {
+        background-color: #00a854;
+        color: white;
+      }
+
+      .state-failed {
+        background-color: #e50000;
+        color: white;
+      }
+
+      .status.error {
+        color: #e50000;
+      }
+
+      .status.success {
+        color: #00a854;
+      }
+
+      .status.warning {
+        color: #ff9500;
+      }
+
+      textarea {
+        width: 100%;
+        border-radius: 3px;
+        border: 1px solid #d1d1d1;
+        padding: 8px;
+        margin-bottom: 8px;
+        resize: none;
+        font-family: inherit;
+      }
+
+      button {
+        padding: 6px 14px;
+        background-color: #0066cc;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-weight: 500;
+        letter-spacing: 0.3px;
+        transition: background-color 0.15s ease;
+      }
+
+      button:hover {
+        background-color: #0052a3;
+      }
+
+      button:disabled {
+        background-color: #d1d1d1;
+        cursor: not-allowed;
+        color: #666;
+      }
+
+      .log-container {
+        height: 200px;
+        overflow-y: auto;
+        border: 1px solid #d1d1d1;
+        border-radius: 3px;
+        padding: 8px;
+        font-family: 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
+        font-size: 12px;
+        background-color: #ffffff;
+      }
+
+      .log-entry {
+        margin-bottom: 4px;
+        line-height: 1.4;
+        color: #333;
+      }
+
+      .log-entry.audio {
+        color: #0066cc;
+      }
+
+      .log-entry.rtc {
+        color: #00a854;
+      }
+
+      .log-entry.error {
+        color: #e50000;
+      }
+
+      .chat-container {
+        height: 120px;
+        overflow-y: auto;
+        border: 1px solid #d1d1d1;
+        border-radius: 3px;
+        padding: 8px;
+        margin-bottom: 8px;
+        background-color: #fff;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .chat-message {
+        margin-bottom: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        border-radius: 3px;
+        max-width: 85%;
+        word-break: break-word;
+        display: block;
+        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+      }
+
+      .chat-message.sent {
+        background-color: #f0f7ff;
+        color: #004c99;
+        border: 1px solid #d6e4ff;
+        align-self: flex-end;
+      }
+
+      .chat-message.received {
+        background-color: #f5f5f5;
+        color: #222222;
+        border: 1px solid #e0e0e0;
+        align-self: flex-start;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      .controls {
+        display: flex;
+        gap: 8px;
+      }
+
+      .toggle {
+        background: transparent;
+        color: #222;
+        border: 1px solid #222;
+      }
+
+      .toggle:hover {
+        background: #fafafa;
+      }
+
+      .toggle.active {
+        background: #222;
+        color: #fff;
+      }
+
+      .toggle.active:hover {
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Connection Controls Shape -->
+    <folk-shape x="50" y="50" width="350">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px">
+        <div class="title">Folk Sync Audio</div>
+        <div style="display: flex; align-items: center">
+          <div id="connectionStateIndicator" class="connection-state state-waiting">waiting</div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="createOfferBtn">Create Offer</button>
+        <button id="listenBtn" class="toggle">Start Listening</button>
+        <button id="modeToggle" class="toggle">Ultrasonic: Off</button>
+      </div>
+    </folk-shape>
+
+    <!-- Connection Log Shape -->
+    <folk-shape x="50" y="200" width="350">
+      <div class="title">Connection Log</div>
+      <div id="connectionLog" class="log-container"></div>
+    </folk-shape>
+
+    <!-- Chat Shape -->
+    <folk-shape x="420" y="50" width="350">
+      <div class="title">Chat</div>
+      <div id="chatContainer" class="chat-container"></div>
+      <textarea id="testMessageInput" style="height: 60px" placeholder="Type a message here to send..."></textarea>
+      <button id="sendTestBtn" disabled>Send Message</button>
+    </folk-shape>
+
+    <!-- Spectrogram Shape -->
+    <folk-shape x="420" y="280" width="350">
+      <div class="title">Spectrogram</div>
+      <folk-spectrogram id="spectrogram" scaling="log"></folk-spectrogram>
+    </folk-shape>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-shape';
+      import '@folkjs/labs/standalone/folk-spectrogram';
+      import { FolkRTC } from '@folkjs/labs/FolkRTC';
+      import { GGWave } from '@folkjs/labs/ggwave';
+
+      // DOM Elements
+      const connectionStateIndicator = document.getElementById('connectionStateIndicator');
+      const createOfferBtn = document.getElementById('createOfferBtn');
+      const listenBtn = document.getElementById('listenBtn');
+      const modeToggle = document.getElementById('modeToggle');
+      const connectionLog = document.getElementById('connectionLog');
+      const chatContainer = document.getElementById('chatContainer');
+      const testMessageInput = document.getElementById('testMessageInput');
+      const sendTestBtn = document.getElementById('sendTestBtn');
+      const spectrogram = document.getElementById('spectrogram');
+
+      // Core state
+      let rtcConnection = null;
+      let clientId = generateClientId();
+      let wave = null;
+      let isUltrasonic = false;
+
+      // Connection states
+      const CONNECTION_STATES = {
+        WAITING: 'waiting',
+        CONNECTING: 'connecting',
+        CONNECTED: 'connected',
+        FAILED: 'failed',
+      };
+
+      // Generate a unique client ID
+      function generateClientId() {
+        return Math.random().toString(36).substring(2, 7);
+      }
+
+      // Log function
+      function log(message, type = 'system') {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.textContent = message;
+        connectionLog.appendChild(entry);
+        connectionLog.scrollTop = connectionLog.scrollHeight;
+        console.log(`[${type}] ${message}`);
+      }
+
+      // Update connection state
+      function updateConnectionState(state) {
+        connectionStateIndicator.textContent = state;
+        connectionStateIndicator.className = `connection-state state-${state}`;
+      }
+
+      // Add message to chat container
+      function addChatMessage(message, senderId) {
+        const entry = document.createElement('div');
+        entry.className = `chat-message ${senderId === 'self' ? 'sent' : 'received'}`;
+        entry.textContent = message;
+        chatContainer.appendChild(entry);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      }
+
+      // Initialize GGWave
+      async function initGGWave() {
+        wave = new GGWave();
+        await wave.ready();
+
+        // Configure iOS audio session to prevent muting
+        if (navigator.audioSession) {
+          try {
+            // iOS 17+ solution
+            // navigator.audioSession.type = 'playback';
+            log('Set iOS audio session to playback mode', 'system');
+          } catch (error) {
+            log('Could not set iOS audio session type (older iOS version)', 'system');
+
+            // Fallback for older iOS: play silent audio to keep audio session active
+            const silentAudio = new Audio();
+            silentAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+            silentAudio.loop = true;
+
+            // Only play after user interaction
+            document.addEventListener(
+              'touchstart',
+              () => {
+                silentAudio.play().catch((e) => log('Failed to play silent audio', 'error'));
+              },
+              { once: true },
+            );
+          }
+        }
+
+        // Set up audio visualization
+        wave.setVisualizer((node, context) => {
+          if (node) {
+            spectrogram.connect(node, context);
+            spectrogram.start();
+          } else {
+            spectrogram.stop();
+          }
+        });
+
+        // Set initial protocol
+        wave.setProtocol(GGWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
+      }
+
+      // Create and send WebRTC offer
+      async function createAndSendOffer() {
+        try {
+          // Create RTC connection if it doesn't exist
+          if (!rtcConnection) {
+            rtcConnection = new FolkRTC();
+            setupRTCCallbacks();
+          }
+
+          log('Creating WebRTC offer...', 'rtc');
+          const encodedOffer = await rtcConnection.createOffer();
+
+          // Send offer over audio
+          log(`Sending offer over audio... ${encodedOffer}`, 'audio');
+          await wave.send(encodedOffer);
+          log('Offer sent, waiting for answer...', 'audio');
+          updateConnectionState(CONNECTION_STATES.CONNECTING);
+        } catch (error) {
+          log(`Error creating offer: ${error.message}`, 'error');
+          updateConnectionState(CONNECTION_STATES.FAILED);
+        }
+      }
+
+      // Handle incoming WebRTC messages over audio
+      async function handleAudioMessage(message) {
+        try {
+          log(`Received audio message: ${message}`, 'audio');
+          // Skip our own messages by checking the first character
+          // 'o' = offer, 'a' = answer
+          const messageType = message.charAt(0);
+
+          if (messageType === 'o') {
+            log('Received WebRTC offer', 'audio');
+
+            // Create RTC connection if it doesn't exist
+            if (!rtcConnection) {
+              rtcConnection = new FolkRTC();
+              setupRTCCallbacks();
+            }
+
+            // Create and send answer
+            log('Creating answer...', 'rtc');
+            const encodedAnswer = await rtcConnection.createAnswer(message);
+
+            log('Sending answer over audio...', 'audio');
+            await wave.send(encodedAnswer);
+            updateConnectionState(CONNECTION_STATES.CONNECTING);
+          } else if (messageType === 'a') {
+            log('Received WebRTC answer', 'audio');
+
+            if (!rtcConnection) {
+              log('No RTC connection exists to handle answer', 'error');
+              return;
+            }
+
+            // Set the answer to complete the connection
+            log('Setting answer...', 'rtc');
+            await rtcConnection.setAnswer(message);
+            log('Answer set, connection should establish', 'rtc');
+          }
+        } catch (error) {
+          log(`Error handling audio message: ${error.message}`, 'error');
+        }
+      }
+
+      // Set up RTC callbacks
+      function setupRTCCallbacks() {
+        rtcConnection.onStatusChange = (status) => {
+          log(`RTC status: ${status}`, 'rtc');
+
+          // Update UI based on connection status
+          if (status === 'connected') {
+            updateConnectionState(CONNECTION_STATES.CONNECTED);
+            sendTestBtn.disabled = false;
+          } else if (status === 'disconnected' || status === 'failed') {
+            updateConnectionState(CONNECTION_STATES.FAILED);
+            sendTestBtn.disabled = true;
+          }
+        };
+
+        rtcConnection.onMessage = (message) => {
+          log(`Received RTC message: ${message}`, 'rtc');
+          addChatMessage(message, 'peer');
+        };
+      }
+
+      // Send a test message over RTC
+      function sendTestMessage() {
+        const message = testMessageInput.value.trim();
+        if (!message || !rtcConnection || !rtcConnection.isConnected()) return;
+
+        rtcConnection.sendMessage(message);
+        addChatMessage(message, 'self');
+        testMessageInput.value = '';
+      }
+
+      // Event listeners
+      createOfferBtn.addEventListener('click', createAndSendOffer);
+
+      listenBtn.addEventListener('click', async () => {
+        const isListening = listenBtn.classList.contains('active');
+
+        if (isListening) {
+          wave.stopListening();
+          listenBtn.textContent = 'Start Listening';
+          listenBtn.classList.remove('active');
+        } else {
+          listenBtn.textContent = 'Stop Listening';
+          listenBtn.classList.add('active');
+          await wave.startListening(handleAudioMessage);
+          log('Started listening for audio messages', 'audio');
+        }
+      });
+
+      modeToggle.addEventListener('click', () => {
+        isUltrasonic = !isUltrasonic;
+        modeToggle.textContent = `Ultrasonic: ${isUltrasonic ? 'On' : 'Off'}`;
+        modeToggle.classList.toggle('active', isUltrasonic);
+        wave.setProtocol(
+          isUltrasonic ? GGWave.GGWAVE_PROTOCOL_ULTRASOUND_FASTEST : GGWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST,
+        );
+      });
+
+      sendTestBtn.addEventListener('click', sendTestMessage);
+
+      testMessageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendTestMessage();
+        }
+      });
+
+      // Initialize
+      window.addEventListener('load', async () => {
+        await initGGWave();
+        log('Ready to create or receive WebRTC connections', 'system');
+        log(`Your client ID: ${clientId}`, 'system');
+      });
+    </script>
+  </body>
+</html>

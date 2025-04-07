@@ -296,7 +296,7 @@ export class FolkRTC {
       icePwd: this.extractValue(lines, 'a=ice-pwd:'),
 
       // Process the fingerprint (convert from colon-separated hex to base64)
-      fingerprint: this.encodeFingerprint(this.extractValue(lines, 'a=fingerprint:sha-256 ')),
+      fingerprint: this.encodeFingerprint(this.extractFingerprint(lines)),
 
       // Will be populated with selected candidates
       candidates: [],
@@ -496,6 +496,18 @@ export class FolkRTC {
   private extractValue(sdpLines: string[], prefix: string): string {
     const line = sdpLines.find((line) => line.startsWith(prefix));
     return line ? line.substring(prefix.length) : '';
+  }
+
+  /**
+   * Extract fingerprint from SDP lines
+   * @param sdpLines Array of SDP lines
+   * @returns The fingerprint string without the algorithm prefix
+   */
+  private extractFingerprint(sdpLines: string[]): string {
+    const line = sdpLines.find((line) => line.startsWith('a=fingerprint:'));
+    if (!line) return '';
+    // Remove 'a=fingerprint:sha-256 ' prefix and return just the hex string
+    return line.substring('a=fingerprint:sha-256 '.length);
   }
 
   /**
