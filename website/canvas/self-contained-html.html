@@ -11,7 +11,10 @@
   }
 }</script>
     
-<script id="boot-loader" type="module" contenteditable="true">const imports = {};
+<script id="boot-loader" type="module" contenteditable="true">// The boot loader initializes a self-contained JS module system, called hash modules.
+// Hash modules are scripts of `type="hash-module"` and have an `id` attribute. They can refer to each other using their ids like `import foo from '#foo'`.
+// This script must be of `type="module"` so it can run after all of the hash modules have loaded in. 
+const imports = {};
 
 document.querySelectorAll('script[type=hash-module]').forEach((module) => {
   imports['#' + module.id] = URL.createObjectURL(new Blob([module.text], { type: 'application/javascript' }));
@@ -33,79 +36,79 @@ if (imports['#main']) {
 }</script>
     
   <style id="styles" contenteditable="true">head {
+  &:popover-open {
+    /* override popover styles */
+    background: transparent;
+    inset: 0;
+    height: unset;
+    margin: 3rem;
+    padding: 0.5rem 1rem;
+    width: unset;
 
-    &:popover-open {
-      /* override popover styles */
-      background: transparent;
-      inset: 0;
-      height: unset;
-      margin: 3rem;
-      padding: 0.5rem 1rem;
-      width: unset;
+    border-radius: 5px;
+    box-shadow: 0px 1px 1px rgba(3, 7, 18, 0.02),
+      0px 5px 4px rgba(3, 7, 18, 0.03),
+      0px 12px 9px rgba(3, 7, 18, 0.05),
+      0px 20px 15px rgba(3, 7, 18, 0.06),
+      0px 32px 24px rgba(3, 7, 18, 0.08);
 
-      border-radius: 5px;
-      box-shadow: 0px 1px 1px rgba(3, 7, 18, 0.02),
-        0px 5px 4px rgba(3, 7, 18, 0.03),
-        0px 12px 9px rgba(3, 7, 18, 0.05),
-        0px 20px 15px rgba(3, 7, 18, 0.06),
-        0px 32px 24px rgba(3, 7, 18, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    overflow: scroll;
+  }
 
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-      overflow: scroll;
-    }
-  
-    style:not([src]), script:not([src]) {
-      background-color: black;
-      border-radius: 5px;
-      color: #f1f1f1;
+  style:not([src]), script:not([src]) {
+    background-color: black;
+    border-radius: 5px;
+    color: #f1f1f1;
+    display: block;
+    font-family: 'FontWithASyntaxHighlighter', monospace;
+    font-feature-settings: 'colr', 'calt';
+    font-size: 0.75rem;
+    padding: 1.5rem 0.5rem 0.5rem;
+    position: relative;
+    white-space: pre-wrap;
+
+    &::after {
+      color: inherit;
+      content: attr(id);
+      content: attr(id);
       display: block;
-      font-family: 'FontWithASyntaxHighlighter', monospace;
-      font-feature-settings: 'colr', 'calt';
-      font-size: 0.75rem;
-      padding: 1.5rem 0.5rem 0.5rem;
-      position: relative;
-      white-space: pre-wrap;
-  
-      &::after {
-        color: inherit;
-        content: attr(id);
-        content: attr(id);
-        display: block;
-        font-size: inherit;
-        font-weight: bold;
-        position: absolute;
-        padding: 0.5rem;
-        top: 0;
-        right: 0;
-      }
+      font-size: inherit;
+      font-weight: bold;
+      position: absolute;
+      padding: 0.5rem;
+      top: 0;
+      right: 0;
     }
-  
-    style:not([src])::after {
-      content: attr(id) '.css';
-    }
-  
-    script:not([src])::after {
-      content: attr(id) '.js';
-    }
-  
-    script[type="hash-module"]::after {
-      content: '#' attr(id) '.js';
-    }
-  
-    script[type="importmap"]::after {
-      content: attr(id) ' (importmap)';
-    }
-  }</style>
+  }
+
+  style:not([src])::after {
+    content: attr(id) '.css';
+  }
+
+  script:not([src])::after {
+    content: attr(id) '.js';
+  }
+
+  script[type="hash-module"]::after {
+    content: '#' attr(id) '.js';
+  }
+
+  script[type="importmap"]::after {
+    content: attr(id) ' (importmap)';
+  }
+}</style>
   
   <script type="hash-module" id="file-picker" contenteditable="true">export async function saveSelf() {}</script>
       
   <script type="hash-module" id="main" contenteditable="true">import { saveSelf } from '#file-picker';
-  console.log(saveSelf)</script>
+console.log(saveSelf)</script>
 </head>
   <body>
     <button popovertarget="head">Edit Source</button>
+
   <!-- Load this base 64 encoded font after everything else so it doesn't block initial render and doesn't get in the way of authoring. -->
   <style>
     @font-face {
