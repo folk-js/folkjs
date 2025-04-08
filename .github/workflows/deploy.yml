@@ -1,4 +1,4 @@
-name: Test, Build, and Deploy
+name: CI
 
 on:
   # Runs on pushes targeting the default branch
@@ -7,6 +7,11 @@ on:
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Grant GITHUB_TOKEN the permissions required to make a Pages deployment
 permissions:
@@ -62,3 +67,39 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4 # or specific "vX.X.X" version tag for this action
 
+  benchmark:
+    # Add a dependency to the build job
+    needs: build_and_test
+    
+    steps: 
+      # Checkout the benchmark results repository
+      - name: Checkout stats repository
+          uses: actions/checkout@v3
+          with:
+            repository: folk-systems/folk-canvas-stats
+            path: folk-canvas-stats
+            token: ${{ secrets.BENCHMARK_REPO_TOKEN }}
+      # Run benchmarks with path to existing results
+      - name: Run benchmarks
+        run: npm run bench
+        env:
+          BENCHMARK_HISTORY_PATH: folk-canvas-stats/mitata_benchmarks.json
+
+      # Commit and push updates if there are changes
+      - name: Update benchmark results
+        run: |
+          cd folk-canvas-stats
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Pull latest changes before pushing
+          git pull origin main
+
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Changes detected in benchmark results"
+            git add mitata_benchmarks.json
+            git commit -m "Update benchmark results for ${{ github.sha }}"
+            git push
+          else
+            echo "No changes in benchmark results"
+          fi
