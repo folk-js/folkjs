@@ -76,6 +76,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22
+          cache: npm
+
+      #- name: wireit caching
+      #  uses: google/wireit@setup-github-actions-caching/v2
+
+      - name: Install NPM dependencies.
+        run: npm ci
+
       # Checkout the benchmark results repository
       - name: Checkout stats repository
         uses: actions/checkout@v3
