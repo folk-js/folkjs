@@ -70,15 +70,16 @@ jobs:
   benchmark:
     # Add a dependency to the build job
     needs: build_and_test
-    
-    steps: 
+
+    steps:
       # Checkout the benchmark results repository
       - name: Checkout stats repository
-          uses: actions/checkout@v3
-          with:
-            repository: folk-systems/folk-canvas-stats
-            path: folk-canvas-stats
-            token: ${{ secrets.BENCHMARK_REPO_TOKEN }}
+        uses: actions/checkout@v3
+        with:
+          repository: folk-systems/folk-canvas-stats
+          path: folk-canvas-stats
+          token: ${{ secrets.BENCHMARK_REPO_TOKEN }}
+
       # Run benchmarks with path to existing results
       - name: Run benchmarks
         run: npm run bench
