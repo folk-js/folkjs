@@ -5,13 +5,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hash modules</title>
-    <script type="importmap" id="dependencies" contenteditable="true">{
+    <script type="importmap" id="dependencies" contenteditable="plaintext-only">{
   "imports": {
     
   }
 }</script>
     
-<script id="boot-loader" type="module" contenteditable="true">// The boot loader initializes a self-contained JS module system, called hash modules.
+<script id="boot-loader" type="module" contenteditable="plaintext-only">// The boot loader initializes a self-contained JS module system, called hash modules.
 // Hash modules are scripts of `type="hash-module"` and have an `id` attribute. They can refer to each other using their ids like `import foo from '#foo'`.
 // This script must be of `type="module"` so it can run after all of the hash modules have loaded in. 
 const imports = {};
@@ -35,7 +35,7 @@ if (imports['#main']) {
   mainScript.remove();
 }</script>
     
-  <style id="styles" contenteditable="true">head {
+  <style id="editor" contenteditable="plaintext-only">head {
   &:popover-open {
     /* override popover styles */
     background: transparent;
@@ -101,9 +101,9 @@ if (imports['#main']) {
   }
 }</style>
   
-  <script type="hash-module" id="file-picker" contenteditable="true">export async function saveSelf() {}</script>
+  <script type="hash-module" id="file-picker" contenteditable="plaintext-only">export async function saveSelf() {}</script>
       
-  <script type="hash-module" id="main" contenteditable="true">import { saveSelf } from '#file-picker';
+  <script type="hash-module" id="main" contenteditable="plaintext-only">import { saveSelf } from '#file-picker';
 console.log(saveSelf)</script>
 </head>
   <body>
