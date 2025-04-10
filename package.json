@@ -35,6 +35,6 @@
   "devDependencies": {
     "prettier": "^3.5.3",
     "prettier-plugin-organize-imports": "^4.1.0",
-    "wireit": "^0.14.11"
+    "wireit": "^0.14.12"
   }
 }

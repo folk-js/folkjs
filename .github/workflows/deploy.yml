@@ -32,8 +32,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      #- name: wireit caching
-      #  uses: google/wireit@setup-github-actions-caching/v2
+      - name: wireit caching
+        uses: google/wireit@setup-github-actions-caching/v2
 
       - name: Install NPM dependencies.
         run: npm ci
@@ -84,8 +84,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      #- name: wireit caching
-      #  uses: google/wireit@setup-github-actions-caching/v2
+      - name: wireit caching
+        uses: google/wireit@setup-github-actions-caching/v2
 
       - name: Install NPM dependencies.
         run: npm ci
