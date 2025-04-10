@@ -1,5 +1,6 @@
 <!doctype html>
-<html lang="en"><!-- prettier-ignore --><head id="head" popover="">
+<html lang="en"
+  ><!-- prettier-ignore --><head popover="manual">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Self editting HTML file</title>
@@ -9,46 +10,152 @@
   }
 }</script>
     
-<script id="boot-loader" contenteditable="plaintext-only">// The boot loader initializes a self-contained JS module system, called hash modules.
+<script id="boot-loader" type="module" contenteditable="plaintext-only">// The boot loader initializes a self-contained JS module system, called hash modules.
 // Hash modules are scripts of `type="hash-module"` and have an `id` attribute. 
 // They can refer to each other using their ids like `import foo from '#foo'`.
-// Make sure to run it after the 
+// Make sure to run it after the document finishes loading
 
-window.addEventListener('load', () => { 
-  const imports = {};
+import { get, set } from 'idb-keyval';
 
-  document.querySelectorAll('script[type=hash-module]').forEach((module) => {
-    imports['#' + module.id] = URL.createObjectURL(new Blob([module.text], { type: 'application/javascript' }));
-  });
+const imports = {};
 
-  const importmap = document.createElement('script');
-  importmap.type = 'importmap';
-  importmap.text = JSON.stringify({ imports }, null, 2);
-  document.head.appendChild(importmap);
-  importmap.remove();
+document.querySelectorAll('script[type=hash-module]').forEach((module) => {
+  imports['#' + module.id] = URL.createObjectURL(new Blob([module.text], { type: 'application/javascript' }));
+});
 
-  // We need the entry point of all JS modules that import hash modules.
-  // This guarantees the importmap is generated before the other modules run.
-  if (imports['#main']) {
-    const mainScript = document.createElement('script');
-    mainScript.type = 'module';
-    mainScript.text = 'import "#main"';
-    document.head.appendChild(mainScript);
-    mainScript.remove();
+const importmap = document.createElement('script');
+importmap.type = 'importmap';
+importmap.text = JSON.stringify({ imports }, null, 2);
+document.head.appendChild(importmap);
+importmap.remove();
+
+// We need an entry point of all JS modules that import hash modules.
+// This guarantees the importmap is generated before the other modules run.
+if (imports['#main']) {
+  const mainScript = document.createElement('script');
+  mainScript.type = 'module';
+  mainScript.text = 'import "#main"';
+  document.head.appendChild(mainScript);
+  mainScript.remove();
+}
+
+const getHTML = () => '<!doctype html>\n' + document.documentElement.outerHTML;
+
+// Observe any changes to 
+let htmlSnapshot = getHTML();
+
+window.addEventListener("beforeunload", (e) => {
+  const now = performance.now()
+  if (htmlSnapshot === getHTML()) return;
+  console.log(performance.now() - now)
+  event.preventDefault();
+  event.returnValue = true;
+});
+
+let reload = false;
+
+document.head.addEventListener('input', (e) => {
+  if (e.target.matches('script')) reload = true;
+});
+
+// Set up file saving using the File System Access API (Chromium only) and if it's not available fallback to anchor downloads.
+const ID = 'selfContainedFile';
+
+async function save(promptNewFile = false) {
+  const suggestedName = document.title + '.html';
+  const content = getHTML();
+  
+  if (!('showSaveFilePicker' in window)) {
+    const blob = new Blob([content], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = suggestedName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
-}, {once: true});</script>
+
+  let fileHandle = await get(ID);
+
+  if (promptNewFile || fileHandle === undefined) {
+    fileHandle = await window.showSaveFilePicker({
+      id: ID,
+      suggestedName,
+      types: [{ accept: { 'text/plain': ['.html'], 'text/html': ['.html'] } }],
+    });
+    await set(ID, fileHandle);
+  }
+
+  const writer = await fileHandle.createWritable();
+  await writer.write(content);
+  await writer.close();
+  htmlSnapshot = content;
+  
+  if (reload && window.reloadOnSave.checked) {
+    location.reload();
+    return;
+  }
+  
+  reload = false;
+}
+
+window.save.addEventListener('click', () => save());
+
+window.saveAs.addEventListener('click', () => save(true));
+
+document.head.addEventListener('focusin', (event) => {
+  const url = new URL(window.location);
+  url.searchParams.set('editing', document.activeElement.id);
+  history.pushState(null, '', url);
+});
+
+document.head.addEventListener('beforetoggle', (event) => {
+  if (event.newState === "open") {
+    const value = new URLSearchParams(window.location.search).get('editing');
+    
+    if (value === null) return;
+
+    setTimeout(() => document.head.querySelector(`#${value}`)?.focus())
+  } else {
+    const url = new URL(window.location);
+    url.searchParams.delete('editing');
+    history.pushState(null, '', url);
+  }
+});
+
+document.head.addEventListener('keydown', (event) => {
+  console.log(event)
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    document.execCommand('insertHTML', false, '&nbsp;&nbsp;')
+  }
+})
+
+// Emulate popover="auto" without losing focus 
+document.documentElement.addEventListener("click",(e) => {
+  if(document.head.matches(':popover-open') && e.target === document.documentElement ) {
+    document.head.hidePopover();
+  }
+});
+
+if (new URLSearchParams(window.location.search).has('editing')) {
+  document.head.showPopover();
+}</script>
     
   <style id="editor" contenteditable="plaintext-only">head {
   box-sizing: border-box;
 
   &:popover-open {
     /* override popover styles */
-    background: transparent;
-    inset: 3rem 3rem auto;
-    max-height: calc(100% - 6rem);
+    background: rgba(0,0,0,0.2);
+    inset: 3rem;
     margin: 0;
     padding: 1rem;
     width: unset;
+    height: unset;
+    overflow: hidden;
 
     border-radius: 5px;
     box-shadow: 
@@ -58,9 +165,10 @@ window.addEventListener('load', () => {
       0px 20px 15px rgba(3, 7, 18, 0.06),
       0px 32px 24px rgba(3, 7, 18, 0.08);
     display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    overflow: scroll;
+    flex-wrap: wrap;
+    align-content: start;
+    gap: 0.5rem;
+    overflow-y: scroll;
   }
 
   style:not([src]), script:not([src]) {
@@ -73,13 +181,16 @@ window.addEventListener('load', () => {
     font-feature-settings: 'colr', 'calt';
     font-size: 0;
     position: relative;
-    white-space: pre-wrap;
+    white-space: pre;
     width: fit-content;
 
     &:focus-visible {
       font-size: 0.9rem;
       padding: 2rem 0.5rem 0.5rem;
-      width: auto;
+      order: calc(Infinity);
+      flex: 0 0 100%;
+      min-width: 0;
+      overflow-x: scroll;
 
       &::after {
         position: absolute;
@@ -113,54 +224,36 @@ window.addEventListener('load', () => {
   script[type="importmap"]::after {
     content: attr(id) ' (importmap)';
   }
+}
+
+source-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.25rem;
+  position: fixed;
+  top: 0;
+  right: 0;
+
+  input {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
 }</style>
   
-  <script type="hash-module" id="file-saver" contenteditable="plaintext-only">import { get, set } from 'idb-keyval';
-
-const ID = 'selfContainedFile';
-
-export async function save(promptNewFile = false) {
-  const suggestedName = document.title + '.html';
-  const content = '<!doctype html>\n' + document.documentElement.outerHTML;
-  
-  if (!('showSaveFilePicker' in window)) {
-    const blob = new Blob([content], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = suggestedName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  let fileHandle = await get(ID);
-  console.log(fileHandle)
-  if (promptNewFile || fileHandle === undefined) {
-    fileHandle = await window.showSaveFilePicker({
-      id: ID,
-      suggestedName,
-      types: [{ accept: { 'text/plain': ['.html'], 'text/html': ['.html'] } }],
-    });
-    await set(ID, fileHandle);
-  }
-
-  const writer = await fileHandle.createWritable();
-  await writer.write(content);
-  await writer.close();
-}</script>
+  <script type="hash-module" id="sum" contenteditable="plaintext-only">export const sum = (a, b) => a + b;</script>
       
-  <script type="hash-module" id="main" contenteditable="plaintext-only">import { save } from '#file-saver';
-window.save.addEventListener('click', () => save());
-window.saveAs.addEventListener('click', () => save(true));</script>
-  </head>
-
-  <!-- prettier-ignore -->
-  <body>
-    <button popovertarget="head">Edit Source</button>
-    <button id="save">Save</button>
-    <button id="saveAs">Save As</button>
+  <script type="hash-module" id="main" contenteditable="plaintext-only">import { sum } from '#sum';
+console.log(sum(1, 2))
+</script>
+  </head
+  ><!-- prettier-ignore --><body>
+    <source-actions>
+      <button id="save">Save</button>
+      <button id="saveAs">Save As</button>
+      <button onclick="document.head.togglePopover()">Edit Source</button>
+      <label><input id="reloadOnSave" type="checkbox" checked="">Reload as Save</label>
+    </source-actions>
 
     <!-- Load this base 64 encoded font after everything else so it doesn't block initial render and doesn't get in the way of authoring. -->
     <style>
@@ -170,7 +263,5 @@ window.saveAs.addEventListener('click', () => save(true));</script>
           format('woff2');
       }
     </style>
-  
-
-
-</body></html>
+  </body></html
+>
