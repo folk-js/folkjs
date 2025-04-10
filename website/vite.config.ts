@@ -39,6 +39,7 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       input: getEntryPoints(),
+      external: ['idb-keyval'],
     },
     outDir: './dist',
     emptyOutDir: true,
