@@ -1,42 +1,121 @@
 <!doctype html>
-<html lang="en"><!-- prettier-ignore --><head popover="manual">
+<html lang="en"
+  ><!-- prettier-ignore --><head popover="manual">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Self editting HTML file</title>
-    <script type="importmap" id="dependencies" contenteditable="plaintext-only">{
+    <title>Self-modifying HTML file</title>
+    
+  <style id="editor" contenteditable="plaintext-only">/* For now let's externalize this font instead of inlining it. */
+@font-face {
+  font-family: FontWithASyntaxHighlighter;
+  src: url('https://folk.systems/FontWithASyntaxHighlighter.woff2') format('woff2');
+}
+
+/* Be careful editing the styles of the editor itself, it could visually break the editor. */
+head {
+  box-sizing: border-box;
+
+  &:popover-open {
+    /* override popover styles */
+    background: rgba(0,0,0,0.2);
+    inset: 3rem;
+    margin: 0;
+    padding: 1rem;
+    width: unset;
+    height: unset;
+    overflow: hidden;
+
+    border-radius: 5px;
+    box-shadow: 
+      0px 1px 1px rgba(3, 7, 18, 0.02),
+      0px 5px 4px rgba(3, 7, 18, 0.03),
+      0px 12px 9px rgba(3, 7, 18, 0.05),
+      0px 20px 15px rgba(3, 7, 18, 0.06),
+      0px 32px 24px rgba(3, 7, 18, 0.08);
+    display: flex;
+    flex-wrap: wrap;
+    align-content: start;
+    gap: 0.5rem;
+    overflow-y: scroll;
+  }
+
+  style:not([src]), script:not([src]) {
+    background-color: black;
+    border-radius: 5px;
+    box-sizing: border-box;
+    color: #f1f1f1;
+    display: block;
+    font-family: 'FontWithASyntaxHighlighter', monospace;
+    font-feature-settings: 'colr', 'calt';
+    font-size: 0;
+    position: relative;
+    white-space: pre;
+    width: fit-content;
+
+    &:focus-visible {
+      font-size: 0.9rem;
+      padding: 2rem 0.5rem 0.5rem;
+      order: calc(Infinity);
+      flex: 0 0 100%;
+      min-width: 0;
+      overflow-x: scroll;
+
+      &::after {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+    }
+
+    &::after {
+      color: inherit;
+      content: attr(id);
+      display: block;
+      font-size: 0.9rem;
+      font-weight: bold;
+      padding: 0.5rem;
+    }
+  }
+
+  style:not([src])::after {
+    content: attr(id) '.css';
+  }
+
+  script:not([src])::after {
+    content: attr(id) '.js';
+  }
+
+  script[type="hash-module"]::after {
+    content: '#' attr(id) '.js';
+  }
+
+  script[type="importmap"]::after {
+    content: attr(id) ' (importmap)';
+  }
+}
+
+source-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.25rem;
+  position: fixed;
+  top: 0;
+  right: 0;
+
+  input {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+}</style>
+
+  <script type="importmap" id="dependencies" contenteditable="plaintext-only">{
   "imports": {
     "idb-keyval": "https://unpkg.com/idb-keyval@5.0.2/dist/esm/index.js"
   }
 }</script>
-    
-<script id="boot-loader" type="module" contenteditable="plaintext-only">// The boot loader initializes a self-contained JS module system, called hash modules.
-// Hash modules are scripts of `type="hash-module"` and have an `id` attribute. 
-// They can refer to each other using their ids like `import foo from '#foo'`.
-// Make sure to run it after the document finishes loading
 
-import { get, set } from 'idb-keyval';
-
-const imports = {};
-
-document.querySelectorAll('script[type=hash-module]').forEach((module) => {
-  imports['#' + module.id] = URL.createObjectURL(new Blob([module.text], { type: 'application/javascript' }));
-});
-
-const importmap = document.createElement('script');
-importmap.type = 'importmap';
-importmap.text = JSON.stringify({ imports }, null, 2);
-document.head.appendChild(importmap);
-importmap.remove();
-
-// We need an entry point of all JS modules that import hash modules.
-// This guarantees the importmap is generated before the other modules run.
-if (imports['#main']) {
-  const mainScript = document.createElement('script');
-  mainScript.type = 'module';
-  mainScript.text = 'import "#main"';
-  document.head.appendChild(mainScript);
-  mainScript.remove();
-}
+  <script type="hash-module" id="editor" contenteditable="plaintext-only">import { get, set } from 'idb-keyval';
 
 const getHTML = () => '<!doctype html>\n' + document.documentElement.outerHTML;
 
@@ -137,120 +216,43 @@ document.documentElement.addEventListener("click",(e) => {
 if (new URLSearchParams(window.location.search).has('editing')) {
   document.head.showPopover();
 }</script>
-    
-  <style id="editor" contenteditable="plaintext-only">/* For now let's externalize this font instead of inlining it. */
-@font-face {
-  font-family: FontWithASyntaxHighlighter;
-  src: url('https://folk.systems/FontWithASyntaxHighlighter.woff2') format('woff2');
-}
-
-head {
-  box-sizing: border-box;
-
-  &:popover-open {
-    /* override popover styles */
-    background: rgba(0,0,0,0.2);
-    inset: 3rem;
-    margin: 0;
-    padding: 1rem;
-    width: unset;
-    height: unset;
-    overflow: hidden;
-
-    border-radius: 5px;
-    box-shadow: 
-      0px 1px 1px rgba(3, 7, 18, 0.02),
-      0px 5px 4px rgba(3, 7, 18, 0.03),
-      0px 12px 9px rgba(3, 7, 18, 0.05),
-      0px 20px 15px rgba(3, 7, 18, 0.06),
-      0px 32px 24px rgba(3, 7, 18, 0.08);
-    display: flex;
-    flex-wrap: wrap;
-    align-content: start;
-    gap: 0.5rem;
-    overflow-y: scroll;
-  }
-
-  style:not([src]), script:not([src]) {
-    background-color: black;
-    border-radius: 5px;
-    box-sizing: border-box;
-    color: #f1f1f1;
-    display: block;
-    font-family: 'FontWithASyntaxHighlighter', monospace;
-    font-feature-settings: 'colr', 'calt';
-    font-size: 0;
-    position: relative;
-    white-space: pre;
-    width: fit-content;
-
-    &:focus-visible {
-      font-size: 0.9rem;
-      padding: 2rem 0.5rem 0.5rem;
-      order: calc(Infinity);
-      flex: 0 0 100%;
-      min-width: 0;
-      overflow-x: scroll;
-
-      &::after {
-        position: absolute;
-        top: 0;
-        left: 0;
-      }
-    }
-
-    &::after {
-      color: inherit;
-      content: attr(id);
-      display: block;
-      font-size: 0.9rem;
-      font-weight: bold;
-      padding: 0.5rem;
-    }
-  }
-
-  style:not([src])::after {
-    content: attr(id) '.css';
-  }
-
-  script:not([src])::after {
-    content: attr(id) '.js';
-  }
-
-  script[type="hash-module"]::after {
-    content: '#' attr(id) '.js';
-  }
-
-  script[type="importmap"]::after {
-    content: attr(id) ' (importmap)';
-  }
-}
-
-source-actions {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  padding: 0.25rem;
-  position: fixed;
-  top: 0;
-  right: 0;
-
-  input {
-    margin-top: 0;
-    margin-bottom: 0;
-  }
-}</style>
   
   <script type="hash-module" id="sum" contenteditable="plaintext-only">export const sum = (a, b) => a + b;</script>
       
   <script type="hash-module" id="main" contenteditable="plaintext-only">import { sum } from '#sum';
 console.log(sum(1, 2))
 </script>
-  </head><!-- prettier-ignore --><body>
+
+<script id="boot-loader" contenteditable="plaintext-only">// The boot loader initializes a self-contained JS module system, called hash modules.
+// Hash modules are scripts of `type="hash-module"` and have an `id` attribute. 
+// They can refer to each other using their ids like `import foo from '#foo'`.
+// Make sure to run it after the document finishes loading
+
+const imports = {};
+
+document.querySelectorAll('script[type=hash-module]').forEach((module) => {
+  imports['#' + module.id] = URL.createObjectURL(new Blob([module.text], { type: 'application/javascript' }));
+});
+
+const importmap = document.createElement('script');
+importmap.type = 'importmap';
+importmap.text = JSON.stringify({ imports }, null, 2);
+document.head.appendChild(importmap);
+importmap.remove();
+
+const mainScript = document.createElement('script');
+mainScript.type = 'module';
+mainScript.text = `import "#editor";
+${imports['#main'] ? 'import "#main"' : ''}`;
+document.head.appendChild(mainScript);
+mainScript.remove();</script>
+  </head
+  ><!-- prettier-ignore --><body>
     <source-actions>
       <button onclick="saveSelf()">Save</button>
       <button onclick="saveSelf(true)">Save As</button>
       <button onclick="document.head.togglePopover()">Edit Source</button>
       <label><input id="reloadOnSave" type="checkbox" checked="">Reload as Save</label>
     </source-actions>
-</body></html>
+</body></html
+>
