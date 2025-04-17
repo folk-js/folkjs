@@ -41,6 +41,9 @@ export default defineConfig({
       input: getEntryPoints(),
       external: ['idb-keyval'],
     },
+    modulePreload: {
+      polyfill: false,
+    },
     outDir: './dist',
     emptyOutDir: true,
   },
