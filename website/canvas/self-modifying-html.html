@@ -86,6 +86,10 @@ head script:not([src])::after {
   content: attr(id) '.js';
 }
 
+head script:not([src]):not([type])::after {
+  content: attr(id) '.js (inline)';
+}
+
 head script[type="hash-module"]::after {
   content: '#' attr(id) '.js';
 }
