@@ -1,6 +1,6 @@
 <!doctype html>
-<html lang="en"
-  ><!-- prettier-ignore --><head popover="manual">
+<html lang="en">
+  <head popover="manual">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Self-modifying HTML file</title>
@@ -225,13 +225,16 @@ if (new URLSearchParams(window.location.search).has('editing')) {
       
   <script type="hash-module" id="main" contenteditable="plaintext-only">import "#editor";
 import { sum } from '#sum';
+
 console.log(sum(1, 2))
 </script>
 
 <script id="boot-loader" contenteditable="plaintext-only">// The boot loader initializes a self-contained JS module system, called hash modules.
 // Hash modules are scripts of `type="hash-module"` and have an `id` attribute. 
 // They can refer to each other using their ids like `import foo from '#foo'`.
-// Make sure to run it after the document finishes loading
+// The execution timing of this script is important.
+//   - all hash modules should be defined before this script
+//   - this script should not be a module so it runs synchronously. 
 
 const imports = {};
 
@@ -250,13 +253,13 @@ mainScript.type = 'module';
 mainScript.text = 'import "#main"';
 document.head.appendChild(mainScript);
 mainScript.remove();</script>
-  </head
-  ><!-- prettier-ignore --><body>
+  </head>
+  <body>
     <source-actions>
       <button onclick="saveSelf()">Save</button>
       <button onclick="saveSelf(true)">Save As</button>
       <button onclick="document.head.togglePopover()">Edit Source</button>
       <label><input id="reloadOnSave" type="checkbox" checked="">Reload as Save</label>
     </source-actions>
-</body></html
->
+</body>
+</html>
