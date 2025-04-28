@@ -9,7 +9,7 @@
   "scripts": {
     "bench": "node --expose-gc --experimental-strip-types __scripts__/benchmark.ts",
     "build": "npm run build --workspaces",
-    "dev": "npm run dev -w website --watch",
+    "dev": "cd website && npm run dev --watch",
     "deopt": "node --experimental-strip-types --prof --log-deopt --log-ic --log-maps --log-maps-details --log-internal-timer-events --log-code --log-source-code --detailed-line-info",
     "clean": "find . -name 'dist' -o -name 'node_modules' -o -name '.wireit' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
     "clean:wireit": "find . -name '.wireit' | xargs rm -rf",

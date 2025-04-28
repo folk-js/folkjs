@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bidirectional Markdown</title>
+    <style>
+      body {
+        display: flex;
+        height: 100vh;
+      }
+
+      textarea {
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <textarea id="markdown">## Bi-directional Markdown</textarea>
+    <textarea id="html"></textarea>
+
+    <script type="module">
+      import { parse, marshal } from '@folkjs/labs/markdown';
+
+      function format(html) {
+        const tab = '\t';
+        let result = '';
+        let indent = '';
+
+        html.split(/>\s*</).forEach(function (element) {
+          if (element.match(/^\/\w/)) {
+            indent = indent.substring(tab.length);
+          }
+
+          result += indent + '<' + element + '>\r\n';
+
+          if (element.match(/^<?\w[^>]*[^\/]$/) && !element.startsWith('input')) {
+            indent += tab;
+          }
+        });
+
+        return result.substring(1, result.length - 3);
+      }
+
+      function parseMarkdown() {
+        html.value = format(parse(markdown.value));
+      }
+
+      markdown.addEventListener('input', parseMarkdown);
+
+      html.addEventListener('input', () => {
+        markdown.value = marshal(html.value);
+        console.log('"' + markdown.value + '"');
+      });
+
+      parseMarkdown();
+    </script>
+  </body>
+  <folk-gizmos></folk-gizmos>
+</html>

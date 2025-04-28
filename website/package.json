@@ -52,15 +52,8 @@
         }
       ],
       "files": [
-        "index.html",
-        "canvas/**",
-        "public/**",
-        "file-space/**",
-        "hyperzoom/**",
-        "public/**",
         "package.json",
         "tsconfig.json",
-        "vite.config.ts",
         "__scripts__/**"
       ]
     }
