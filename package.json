@@ -1,5 +1,5 @@
 {
-  "name": "folk-canvas",
+  "name": "@folkjs/monorepo",
   "private": true,
   "type": "module",
   "workspaces": [

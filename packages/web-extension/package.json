@@ -1,7 +1,7 @@
 {
   "name": "@folkjs/web-extension",
   "version": "0.0.0",
-  "description": "Folk Canvas web extension",
+  "description": "folkjs web extension",
   "keywords": [
     "web extension"
   ],

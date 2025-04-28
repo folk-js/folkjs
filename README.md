@@ -1,4 +1,4 @@
-# Folk Canvas
+# folkjs
 
 > ⚠️ This project is in an _active_ research phase. It hasn't been published to NPM yet, but our work is open and you're more than welcome to take a look, poke around, and try things out.
 
