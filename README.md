@@ -13,4 +13,4 @@
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](https://github.com/folk-systems/folk-canvas/blob/main/CONTRIBUTING.md).
+See [`CONTRIBUTING.md`](https://github.com/folk-js/folkjs/blob/main/CONTRIBUTING.md).

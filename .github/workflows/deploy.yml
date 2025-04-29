@@ -97,7 +97,7 @@ jobs:
       - name: Checkout stats repository
         uses: actions/checkout@v3
         with:
-          repository: folk-systems/folk-canvas-stats
+          repository: folk-js/folk-canvas-stats
           path: folk-canvas-stats
           token: ${{ secrets.BENCHMARK_REPO_TOKEN }}
 

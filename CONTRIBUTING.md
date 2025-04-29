@@ -7,8 +7,8 @@ Here are the steps you need to do to get started:
 2. Setup
 
 ```bash
-# Clone the repository (https://github.com/folk-systems/folk-canvas).
-git clone https://github.com/folk-systems/folk-canvas.git
+# Clone the repository.
+git clone https://github.com/folk-js/folkjs.git
 
 cd folk-canvas
 
