@@ -31,6 +31,7 @@
       "command": "tsc --build --pretty",
       "clean": "if-file-deleted",
       "dependencies": [
+        "../dom:build",
         "../canvas:build",
         "../geometry:build",
         "../propagators:build"
@@ -64,6 +65,7 @@
     "@codemirror/view": "^6.36.5",
     "@dimforge/rapier2d": "^0.15.0",
     "@folkjs/canvas": "^0.0.1",
+    "@folkjs/dom": "^0.0.1",
     "@folkjs/geometry": "^0.0.1",
     "@folkjs/propagators": "^0.0.1",
     "@mlc-ai/web-llm": "^0.2.78",

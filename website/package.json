@@ -14,6 +14,7 @@
       "command": "tsc --build --pretty && vite build",
       "dependencies": [
         "../packages/canvas:build",
+        "../packages/dom:build",
         "../packages/geometry:build",
         "../packages/labs:build"
       ],
@@ -60,6 +61,7 @@
   },
   "dependencies": {
     "@folkjs/canvas": "^0.0.1",
+    "@folkjs/dom": "^0.0.1",
     "@folkjs/geometry": "^0.0.1",
     "@folkjs/labs": "^0.0.1",
     "ink-mde": "^0.34.0",

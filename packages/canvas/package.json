@@ -37,6 +37,9 @@
     "build": {
       "command": "tsc --build --pretty",
       "clean": "if-file-deleted",
+      "dependencies": [
+        "../dom:build"
+      ],
       "files": [
         "src/**",
         "package.json",
@@ -57,6 +60,9 @@
       ],
       "output": []
     }
+  },
+  "dependencies": {
+    "@folkjs/dom": "^0.0.1"
   },
   "devDependencies": {
     "expect": "^29.7.0",

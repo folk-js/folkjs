@@ -17,6 +17,12 @@
     "build": {
       "command": "tsc --build --pretty && vite build",
       "clean": "if-file-deleted",
+      "dependencies": [
+        "../dom:build",
+        "../canvas:build",
+        "../geometry:build",
+        "../labs:build"
+      ],
       "files": [
         "src/**",
         "package.json",
@@ -33,6 +39,7 @@
   },
   "dependencies": {
     "@folkjs/canvas": "^0.0.1",
+    "@folkjs/dom": "^0.0.1",
     "@folkjs/geometry": "^0.0.1",
     "@folkjs/labs": "^0.0.1"
   },
