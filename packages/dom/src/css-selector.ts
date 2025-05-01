@@ -20,10 +20,12 @@ function isSelectorUnique(selector: string): boolean {
  *   - document.querySelectorAll(selector).length === 1
  */
 export function findCssSelector(el: Element): string {
-  const id = '#' + CSS.escape(el.id);
+  if (el.id) {
+    const id = '#' + CSS.escape(el.id);
 
-  // Check that the id is unique.
-  if (id && isSelectorUnique(id)) return id;
+    // Check that the id is unique.
+    if (id && isSelectorUnique(id)) return id;
+  }
 
   const tagName = CSS.escape(el.localName);
 
@@ -31,7 +33,6 @@ export function findCssSelector(el: Element): string {
   if (tagName === 'html' || tagName === 'head' || tagName === 'body') return tagName;
 
   let selector;
-
   // We might be able to find a unique class name
   for (let i = 0; i < el.classList.length; i++) {
     // Is this className unique by itself?
@@ -48,7 +49,7 @@ export function findCssSelector(el: Element): string {
   }
 
   // No guarantee of uniqueness so append unique parent selector
-  selector = tagName + `${tagName}:nth-child(${getElementIndex(el) + 1})`;
+  selector = `${tagName}:nth-child(${getElementIndex(el) + 1})`;
 
   if (el.parentElement) {
     selector = findCssSelector(el.parentElement) + ' > ' + selector;
