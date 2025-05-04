@@ -5,70 +5,66 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LSP Attribute</title>
 
-    <style id="editor" contenteditable="plaintext-only">
-      /* For now let's externalize this font instead of inlining it. */
-      @font-face {
-        font-family: FontWithASyntaxHighlighter;
-        src: url('https://folk.systems/FontWithASyntaxHighlighter.woff2') format('woff2');
-      }
+    <style id="editor" contenteditable="plaintext-only">/* For now let's externalize this font instead of inlining it. */
+@font-face {
+  font-family: FontWithASyntaxHighlighter;
+  src: url('/FontWithASyntaxHighlighter.woff2') format('woff2');
+}
 
-      head {
-        display: block;
-      }
+head {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
 
-      head style:not([src]),
-      head script:not([src]) {
-        display: block;
-        background-color: black;
-        border-radius: 5px;
-        box-sizing: border-box;
-        color: #f1f1f1;
-        display: block;
-        font-family: 'FontWithASyntaxHighlighter', monospace;
-        font-feature-settings: 'colr', 'calt';
-        position: relative;
-        white-space: pre;
-        width: fit-content;
-        font-size: 0.9rem;
-        padding: 2rem 0.5rem 0.5rem;
+head style:not([src]),
+head script:not([src]) {
+  display: block;
+  background-color: black;
+  border-radius: 5px;
+  box-sizing: border-box;
+  color: #f1f1f1;
+  display: block;
+  font-family: 'FontWithASyntaxHighlighter', monospace;
+  font-feature-settings: 'colr', 'calt';
+  position: relative;
+  white-space: pre;
+  width: fit-content;
+  font-size: 0.9rem;
+  padding: 2rem 0.5rem 0.5rem;
 
-        &::after {
-          position: absolute;
-          top: 0;
-          left: 0;
-          color: inherit;
-          content: attr(id);
-          display: block;
-          font-size: 0.9rem;
-          font-weight: bold;
-          padding: 0.5rem;
-        }
-      }
+  &::after {
+    position: absolute;
+    top: 0;
+    left: 0;
+    color: inherit;
+    content: attr(id);
+    display: block;
+    font-size: 0.9rem;
+    font-weight: bold;
+    padding: 0.5rem;
+  }
+}
 
-      head style:not([src])::after {
-        content: attr(id) '.css';
-      }
+head style:not([src])::after {
+  content: attr(id) '.css';
+}
 
-      head script:not([src])::after {
-        content: attr(id) '.js';
-      }
+head script:not([src])::after {
+  content: attr(id) '.js';
+}
 
-      head script:not([src]):not([type])::after {
-        content: attr(id) '.js (inline)';
-      }
-    </style>
+head script:not([src]):not([type])::after {
+  content: attr(id) '.js (inline)';
+}</style>
 
-    <script type="importmap" id="dependencies" contenteditable="plaintext-only">
-      {
-        "imports": {
-          "idb-keyval": "https://unpkg.com/idb-keyval@5.0.2/dist/esm/index.js"
-        }
-      }
-    </script>
+    <script type="importmap" id="dependencies" contenteditable="plaintext-only">{
+  "imports": {
+    "idb-keyval": "https://unpkg.com/idb-keyval@5.0.2/dist/esm/index.js"
+  }
+}</script>
 
-    <script>
-      console.log('Hello World');
-    </script>
+    <script>console.log('Hello World');</script>
   </head>
 
   <body></body>
