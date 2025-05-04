@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-  <head popover="manual">
+  <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LSP Attribute</title>
@@ -15,6 +15,9 @@ head {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
 }
 
 head style:not([src]),
@@ -58,14 +61,17 @@ head script:not([src]):not([type])::after {
   content: attr(id) '.js (inline)';
 }</style>
 
-    <script type="importmap" id="dependencies" contenteditable="plaintext-only">{
+    <script type="importmap" id="dependencies" contenteditable="plaintext-only" folk-lsp="json">{
   "imports": {
     "idb-keyval": "https://unpkg.com/idb-keyval@5.0.2/dist/esm/index.js"
   }
 }</script>
 
-    <script>console.log('Hello World');</script>
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-lsp-attribute';
+    </script>
   </head>
 
-  <body></body>
+  <body>
+  </body>
 </html>
