@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LSP Attribute</title>
 
-    <style id="editor" contenteditable="plaintext-only">/* For now let's externalize this font instead of inlining it. */
+    <style id="editor" contenteditable="plaintext-only" folk-lsp>/* For now let's externalize this font instead of inlining it. */
 @font-face {
   font-family: FontWithASyntaxHighlighter;
   src: url('/FontWithASyntaxHighlighter.woff2') format('woff2');
@@ -30,7 +30,7 @@ body {
 
 pre {
   padding: 1rem;
-  font-size: 1.5rem; 
+  font-size: 1.25rem; 
 }
 
 head style:not([src]),
@@ -46,7 +46,7 @@ head script:not([src]) {
   position: relative;
   white-space: pre;
   width: fit-content;
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   padding: 2rem 0.5rem 0.5rem;
 
   &::after {
@@ -74,7 +74,7 @@ head script:not([src]):not([type])::after {
   content: attr(id) '.js (inline)';
 }</style>
 
-    <script type="importmap" id="dependencies" contenteditable="plaintext-only" folk-lsp="json">{
+    <script type="importmap" id="dependencies" contenteditable="plaintext-only" folk-lsp>{
   "imports": {
     "idb-keyval": "https://unpkg.com/idb-keyval@5.0.2/dist/esm/index.js"
   }
