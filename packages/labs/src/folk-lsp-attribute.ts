@@ -10,6 +10,20 @@ import {
 } from 'vscode-languageserver-protocol';
 import { LanguageClient } from './lsp/LanguageClient';
 
+// TODOs
+// add HTML, CSS, JS work
+// hover tooltip thingy
+// incremental updates
+//  - input event only tells us what text is added.
+// Capabilities to look into
+// - completionProvider
+// - renameProvider
+// - color provider
+// - semanticTokensProvider
+// - documentFormattingProvider
+// - definitionProvider
+// - codeActionProvider
+
 Object.defineProperty(Element.prototype, 'lsp', {
   get() {
     return customAttributes.get(this, FolkLSPAttribute.attributeName) as FolkLSPAttribute | undefined;
@@ -58,7 +72,7 @@ export class FolkLSPAttribute extends CustomAttribute {
   constructor(ownerElement: Element, name: string, value: LSPLanguage) {
     super(ownerElement, name, value);
     this.#language = value;
-    this.#worker = new Worker(new URL('./lsp/worker.js', import.meta.url), { type: 'module' });
+    this.#worker = new Worker(new URL('./lsp/json.worker.js', import.meta.url), { type: 'module' });
     this.#languageClient = new LanguageClient(this.#worker, {
       clientCapabilities: {
         textDocument: {
@@ -151,12 +165,11 @@ export class FolkLSPAttribute extends CustomAttribute {
         uri: this.#fileUri,
       },
     })) as unknown as any[];
-    console.log('[diagnostics]', diagnostics);
-    console.log('[current]', this.ownerElement.textContent);
 
     this.#highlightDiagnostics(diagnostics);
   }
 
+  // TODO: handle multiple lines
   #highlightDiagnostics(diagnostics: any[]) {
     // Clear existing highlights
     for (const highlight of Object.values(this.#highlights)) {
@@ -169,15 +182,10 @@ export class FolkLSPAttribute extends CustomAttribute {
       const textNode = this.ownerElement.firstChild;
       if (!textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
       const domRange = new Range();
-      const length = textNode.textContent?.length ?? 0;
-      const startOffset = Math.max(range.start.character, 0);
-      const endOffset = Math.min(range.end.character, length);
-
       // Set the range
       try {
-        domRange.setStart(textNode, startOffset);
-        domRange.setEnd(textNode, endOffset);
-        console.log('[domRange]', domRange);
+        domRange.setStart(textNode, range.start.character);
+        domRange.setEnd(textNode, range.end.character);
         this.#highlights['folk-lsp-error'].add(domRange);
       } catch (e) {
         console.warn('Failed to set diagnostic highlight range:', e);
@@ -185,6 +193,7 @@ export class FolkLSPAttribute extends CustomAttribute {
     }
   }
 
+  // TODO: handle request
   async #requestCompletion() {
     const position = this.#getSelectionPosition();
     if (!position) {
@@ -197,12 +206,10 @@ export class FolkLSPAttribute extends CustomAttribute {
       },
       position,
     });
+  }
 
-    console.log('[completions]', completions);
-  }
-  override changedCallback(_oldLanguage: string, _newLanguage: string): void {
-    // TODO: change language
-  }
+  // TODO: Handle languages changes and auto detection and plaintext, and loading other workers
+  override changedCallback(_oldLanguage: string, _newLanguage: string): void {}
 
   override async disconnectedCallback() {
     try {
