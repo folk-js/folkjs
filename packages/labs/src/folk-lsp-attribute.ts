@@ -1,6 +1,8 @@
 import { css, CustomAttribute, customAttributes } from '@folkjs/canvas';
 import {
   CompletionRequest,
+  Diagnostic,
+  DiagnosticSeverity,
   DidChangeTextDocumentNotification,
   DidOpenTextDocumentNotification,
   DocumentDiagnosticRequest,
@@ -45,8 +47,26 @@ export class FolkLSPAttribute extends CustomAttribute {
   static styles = css`
     @layer folk {
       ::highlight(folk-lsp-error) {
-        background-color: green;
-        color: red;
+        text-decoration: wavy underline red 1.5px;
+        background-color: rgba(255, 0, 0, 0.1);
+      }
+
+      ::highlight(folk-lsp-warning) {
+        text-decoration: wavy underline orange 1.5px;
+        background-color: rgba(255, 165, 0, 0.1);
+      }
+
+      .folk-lsp-tooltip {
+        position: fixed;
+        background: #333;
+        color: white;
+        padding: 8px;
+        border-radius: 4px;
+        font-size: 14px;
+        max-width: 300px;
+        z-index: 1000;
+        pointer-events: none;
+        font-family: sans-serif;
       }
     }
   `;
@@ -64,6 +84,7 @@ export class FolkLSPAttribute extends CustomAttribute {
   #language: LSPLanguage = 'plaintext';
   #worker: Worker;
   #languageClient: LanguageClient;
+  #activeTooltips = new Map<string, HTMLElement>();
 
   get #highlights() {
     return (this.constructor as typeof FolkLSPAttribute).#highlightRegistry;
@@ -164,29 +185,138 @@ export class FolkLSPAttribute extends CustomAttribute {
       textDocument: {
         uri: this.#fileUri,
       },
-    })) as unknown as any[];
+    })) as unknown as Diagnostic[];
 
     this.#highlightDiagnostics(diagnostics);
   }
 
-  // TODO: handle multiple lines
-  #highlightDiagnostics(diagnostics: any[]) {
-    // Clear existing highlights
+  #getRangeKey(range: Range): string {
+    const start = range.startOffset;
+    const end = range.endOffset;
+    return `${start}-${end}`;
+  }
+
+  #createTooltip(message: string, rect: DOMRect, range: Range) {
+    const key = this.#getRangeKey(range);
+    let tooltip = this.#activeTooltips.get(key);
+    if (tooltip) {
+      return; // Tooltip already exists for this range
+    }
+
+    tooltip = document.createElement('div');
+    tooltip.className = 'folk-lsp-tooltip';
+    tooltip.textContent = message;
+
+    // Position tooltip above the highlight if there's room, otherwise below
+    document.body.appendChild(tooltip);
+    const tooltipHeight = tooltip.offsetHeight;
+    const spaceAbove = rect.top;
+    const viewportHeight = window.innerHeight;
+    const spaceBelow = viewportHeight - rect.bottom;
+
+    if (spaceAbove > tooltipHeight || spaceAbove > spaceBelow) {
+      // Position above
+      tooltip.style.top = `${rect.top - tooltipHeight - 5}px`;
+    } else {
+      // Position below
+      tooltip.style.top = `${rect.bottom + 5}px`;
+    }
+
+    // Center horizontally over the highlight
+    tooltip.style.left = `${rect.left + rect.width / 2 - tooltip.offsetWidth / 2}px`;
+
+    this.#activeTooltips.set(key, tooltip);
+  }
+
+  #removeTooltip(range: Range) {
+    const key = this.#getRangeKey(range);
+    const tooltip = this.#activeTooltips.get(key);
+    if (tooltip) {
+      tooltip.remove();
+      this.#activeTooltips.delete(key);
+    }
+  }
+
+  #removeAllTooltips() {
+    for (const tooltip of this.#activeTooltips.values()) {
+      tooltip.remove();
+    }
+    this.#activeTooltips.clear();
+  }
+
+  // TODO: fix the obvious memory leak here
+  #setupTooltipListeners(range: Range, diagnostic: Diagnostic) {
+    const rects = range.getClientRects();
+    if (!rects.length) return;
+
+    // Create a single rect that encompasses all the range's rects
+    const boundingRect = range.getBoundingClientRect();
+    const rangeKey = this.#getRangeKey(range);
+
+    const checkMousePosition = (event: MouseEvent) => {
+      const { clientX, clientY } = event;
+      // Check if mouse is within any of the range's rectangles
+      // TODO: use geo utils here
+      for (let i = 0; i < rects.length; i++) {
+        const rect = rects[i];
+        if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    (this.ownerElement as HTMLElement).addEventListener('mousemove', (event) => {
+      const isOverRange = checkMousePosition(event);
+
+      if (isOverRange && !this.#activeTooltips.has(rangeKey)) {
+        this.#createTooltip(diagnostic.message, boundingRect, range);
+      } else if (!isOverRange && this.#activeTooltips.has(rangeKey)) {
+        this.#removeTooltip(range);
+      }
+    });
+
+    // Also remove tooltip when leaving the element entirely
+    this.ownerElement.addEventListener('mouseleave', () => {
+      this.#removeTooltip(range);
+    });
+  }
+
+  #highlightDiagnostics(diagnostics: Diagnostic[]) {
     for (const highlight of Object.values(this.#highlights)) {
       highlight.clear();
     }
+    this.#removeAllTooltips();
 
-    // Process each diagnostic
     for (const diagnostic of diagnostics) {
       const { range } = diagnostic;
       const textNode = this.ownerElement.firstChild;
       if (!textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
       const domRange = new Range();
-      // Set the range
+
+      // TODO: handle multiple lines
+      const startOffset = range.start.character;
+      const endOffset = range.end.character;
+
       try {
-        domRange.setStart(textNode, range.start.character);
-        domRange.setEnd(textNode, range.end.character);
-        this.#highlights['folk-lsp-error'].add(domRange);
+        domRange.setStart(textNode, startOffset);
+        domRange.setEnd(textNode, endOffset);
+        console.log('[domRange]', domRange);
+        switch (diagnostic.severity) {
+          case DiagnosticSeverity.Error:
+            this.#highlights['folk-lsp-error'].add(domRange);
+            break;
+          case DiagnosticSeverity.Warning:
+            this.#highlights['folk-lsp-warning'].add(domRange);
+            break;
+          case DiagnosticSeverity.Information:
+            this.#highlights['folk-lsp-info'].add(domRange);
+            break;
+          case DiagnosticSeverity.Hint:
+            this.#highlights['folk-lsp-hint'].add(domRange);
+            break;
+        }
+        this.#setupTooltipListeners(domRange, diagnostic);
       } catch (e) {
         console.warn('Failed to set diagnostic highlight range:', e);
       }
