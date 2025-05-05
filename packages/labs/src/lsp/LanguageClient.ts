@@ -50,10 +50,11 @@ export interface AbstractLanguageClient {
 }
 
 export class LanguageClient extends EventTarget implements AbstractLanguageClient {
-  public readonly clientCapabilities: ClientCapabilities;
-  public readonly initializationOptions: any;
-  public serverCapabilities: ServerCapabilities | null;
-  public serverInfo: any;
+  readonly clientCapabilities: ClientCapabilities;
+  readonly initializationOptions: any;
+  serverCapabilities: ServerCapabilities | null;
+  serverInfo: any;
+  readonly worker;
 
   private requestId: number;
   private requests: Map<string, PromiseCompletion>;
@@ -61,11 +62,9 @@ export class LanguageClient extends EventTarget implements AbstractLanguageClien
   private disposables: Disposable[];
   private log: Dependencies['log'];
 
-  constructor(
-    public readonly worker: Worker,
-    dependencies: Dependencies,
-  ) {
+  constructor(worker: Worker, dependencies: Dependencies) {
     super();
+    this.worker = worker;
     this.requests = new Map();
     this.requestId = 0;
     this.dispose = () => {};

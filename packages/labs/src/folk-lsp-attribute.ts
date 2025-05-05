@@ -21,12 +21,7 @@ type LSPLanguage = 'json' | 'js' | 'css' | 'html' | 'md' | 'plaintext';
 export class FolkLSPAttribute extends CustomAttribute {
   static override attributeName = 'folk-lsp';
 
-  #fileUri = 'folk://foobar';
-  #fileVersion = 1;
-  #language: LSPLanguage = 'plaintext';
-  #worker: Worker;
-  #languageClient: LanguageClient;
-  #highlightRegistry = {
+  static #highlightRegistry = {
     'folk-lsp-error': new Highlight(),
     'folk-lsp-warning': new Highlight(),
     'folk-lsp-info': new Highlight(),
@@ -44,6 +39,20 @@ export class FolkLSPAttribute extends CustomAttribute {
 
   static {
     document.adoptedStyleSheets.push(this.styles);
+
+    for (const [key, highlight] of Object.entries(this.#highlightRegistry)) {
+      CSS.highlights.set(key, highlight);
+    }
+  }
+
+  #fileUri = 'folk://foobar';
+  #fileVersion = 1;
+  #language: LSPLanguage = 'plaintext';
+  #worker: Worker;
+  #languageClient: LanguageClient;
+
+  get #highlights() {
+    return (this.constructor as typeof FolkLSPAttribute).#highlightRegistry;
   }
 
   constructor(ownerElement: Element, name: string, value: LSPLanguage) {
@@ -73,8 +82,6 @@ export class FolkLSPAttribute extends CustomAttribute {
       },
       log: console.log,
     });
-
-    this.#initializeHighlights();
   }
 
   override connectedCallback(): void {
@@ -88,7 +95,7 @@ export class FolkLSPAttribute extends CustomAttribute {
         text: el.textContent ?? '',
       },
     });
-    (this.ownerElement as HTMLElement).addEventListener('keydown', (e) => {
+    (this.ownerElement as HTMLElement).addEventListener('input', (e) => {
       // TODO: this feels flaky... how to version properly?
       this.#fileVersion++;
       this.#languageClient.sendNotification(DidChangeTextDocumentNotification.type, {
@@ -146,18 +153,13 @@ export class FolkLSPAttribute extends CustomAttribute {
     })) as unknown as any[];
     console.log('[diagnostics]', diagnostics);
     console.log('[current]', this.ownerElement.textContent);
-    this.#highlightDiagnostics(diagnostics);
-  }
 
-  #initializeHighlights() {
-    for (const [key, highlight] of Object.entries(this.#highlightRegistry)) {
-      CSS.highlights.set(key, highlight);
-    }
+    this.#highlightDiagnostics(diagnostics);
   }
 
   #highlightDiagnostics(diagnostics: any[]) {
     // Clear existing highlights
-    for (const highlight of Object.values(this.#highlightRegistry)) {
+    for (const highlight of Object.values(this.#highlights)) {
       highlight.clear();
     }
 
@@ -168,7 +170,6 @@ export class FolkLSPAttribute extends CustomAttribute {
       if (!textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
       const domRange = new Range();
       const length = textNode.textContent?.length ?? 0;
-
       const startOffset = Math.max(range.start.character, 0);
       const endOffset = Math.min(range.end.character, length);
 
@@ -177,7 +178,7 @@ export class FolkLSPAttribute extends CustomAttribute {
         domRange.setStart(textNode, startOffset);
         domRange.setEnd(textNode, endOffset);
         console.log('[domRange]', domRange);
-        this.#highlightRegistry['folk-lsp-error'].add(domRange);
+        this.#highlights['folk-lsp-error'].add(domRange);
       } catch (e) {
         console.warn('Failed to set diagnostic highlight range:', e);
       }
