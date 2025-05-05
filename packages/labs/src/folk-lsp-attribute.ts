@@ -8,13 +8,11 @@ import {
   DocumentDiagnosticRequest,
   MarkupKind,
   Position,
-  type DocumentDiagnosticReport,
 } from 'vscode-languageserver-protocol';
 import { LanguageClient } from './lsp/LanguageClient';
 
 // TODOs
 // add HTML, CSS, JS work
-// hover tooltip thingy
 // incremental updates
 //  - input event only tells us what text is added.
 // Capabilities to look into
@@ -292,11 +290,28 @@ export class FolkLSPAttribute extends CustomAttribute {
       const { range } = diagnostic;
       const textNode = this.ownerElement.firstChild;
       if (!textNode || textNode.nodeType !== Node.TEXT_NODE) continue;
-      const domRange = new Range();
 
-      // TODO: handle multiple lines
-      const startOffset = range.start.character;
-      const endOffset = range.end.character;
+      // Split text into lines and count up to offset to get line/char
+      const lines = textNode.nodeValue?.split('\n') || '';
+      let lineCount = 0;
+      let offset = 0;
+      let startOffset = 0;
+      let endOffset = 0;
+
+      for (const lineText of lines) {
+        if (range.start.line === lineCount) {
+          startOffset = offset + range.start.character;
+        }
+
+        if (range.end.line === lineCount) {
+          endOffset = offset + range.end.character;
+        }
+
+        lineCount += 1;
+        offset += lineText.length + 1;
+      }
+
+      const domRange = new Range();
 
       try {
         domRange.setStart(textNode, startOffset);
