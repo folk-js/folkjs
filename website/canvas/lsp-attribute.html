@@ -20,6 +20,18 @@ head {
   padding: 2rem;
 }
 
+body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+}
+
+pre {
+  padding: 1rem;
+}
+
 head style:not([src]),
 head script:not([src]) {
   display: block;
@@ -73,5 +85,6 @@ head script:not([src]):not([type])::after {
   </head>
 
   <body>
+    <pre contenteditable="plaintext-only" folk-lsp="json">{"hello": "world"}</pre>
   </body>
 </html>
