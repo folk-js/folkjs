@@ -1,6 +1,6 @@
 // Simple JSON LS in Web Worker that provides completion and hover.
 // Includes a schema for `tsconfig.json`.
-import { getCSSLanguageService, TextDocument } from 'vscode-css-languageservice';
+import { getLanguageService, TextDocument } from 'vscode-html-languageservice';
 import {
   BrowserMessageReader,
   BrowserMessageWriter,
@@ -8,15 +8,13 @@ import {
   createProtocolConnection,
   DidChangeTextDocumentNotification,
   DidOpenTextDocumentNotification,
-  DocumentDiagnosticRequest,
   HoverRequest,
   InitializeRequest,
   type InitializeResult,
   TextDocumentSyncKind,
 } from 'vscode-languageserver-protocol/browser';
 
-const cssService = getCSSLanguageService({});
-cssService.configure({});
+const htmlService = getLanguageService({});
 
 const docs: Map<string, TextDocument> = new Map();
 
@@ -56,18 +54,14 @@ conn.onRequest(CompletionRequest.method, async ({ textDocument, position }) => {
   const doc = docs.get(textDocument.uri);
   if (!doc) return null;
 
-  const completions = cssService.doComplete(doc, position, cssService.parseStylesheet(doc));
+  const completions = htmlService.doComplete(doc, position, htmlService.parseHTMLDocument(doc));
   return completions;
 });
 conn.onRequest(HoverRequest.method, async ({ textDocument, position }) => {
   const doc = docs.get(textDocument.uri);
   if (!doc) return null;
 
-  return cssService.doHover(doc, position, cssService.parseStylesheet(doc));
+  return htmlService.doHover(doc, position, htmlService.parseHTMLDocument(doc));
 });
-conn.onRequest(DocumentDiagnosticRequest.method, async ({ textDocument }) => {
-  const doc = docs.get(textDocument.uri);
-  if (!doc) return null;
-  return cssService.doValidation(doc, cssService.parseStylesheet(doc));
-});
+
 conn.listen();

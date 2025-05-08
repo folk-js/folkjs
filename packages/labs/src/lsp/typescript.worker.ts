@@ -1,6 +1,5 @@
 // Simple JSON LS in Web Worker that provides completion and hover.
 // Includes a schema for `tsconfig.json`.
-import { getCSSLanguageService, TextDocument } from 'vscode-css-languageservice';
 import {
   BrowserMessageReader,
   BrowserMessageWriter,
@@ -14,9 +13,10 @@ import {
   type InitializeResult,
   TextDocumentSyncKind,
 } from 'vscode-languageserver-protocol/browser';
+import { createLanguageService } from 'vscode-typescript-languageservice';
 
-const cssService = getCSSLanguageService({});
-cssService.configure({});
+const cssService = createLanguageService({});
+// cssService.configure({});
 
 const docs: Map<string, TextDocument> = new Map();
 

@@ -79,8 +79,10 @@
     "recast": "^0.23.11",
     "uhtml": "^4.5.11",
     "vscode-css-languageservice": "^6.3.5",
+    "vscode-html-languageservice": "^5.4.0",
     "vscode-json-languageservice": "^5.5.0",
     "vscode-languageserver-protocol": "^3.17.5",
+    "vscode-markdown-languageservice": "^0.5.0-alpha.9",
     "webcola": "^3.4.0"
   },
   "devDependencies": {

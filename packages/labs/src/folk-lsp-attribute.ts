@@ -12,7 +12,6 @@ import {
 import { LanguageClient } from './lsp/LanguageClient';
 
 // TODOs
-// add HTML, CSS, JS work
 // incremental updates
 //  - input event only tells us what text is added.
 // Capabilities to look into
@@ -91,7 +90,7 @@ export class FolkLSPAttribute extends CustomAttribute {
   constructor(ownerElement: Element, name: string, value: LSPLanguage) {
     super(ownerElement, name, value);
     this.#language = value;
-    this.#worker = new Worker(new URL('./lsp/css.worker.js', import.meta.url), { type: 'module' });
+    this.#worker = new Worker(new URL('./lsp/json.worker.js', import.meta.url), { type: 'module' });
     this.#languageClient = new LanguageClient(this.#worker, {
       clientCapabilities: {
         textDocument: {

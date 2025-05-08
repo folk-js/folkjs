@@ -32,7 +32,6 @@ jsonService.configure({
   ],
 });
 
-// TODO: use a map
 const docs: Map<string, TextDocument> = new Map();
 
 const worker: Worker = self as any;
