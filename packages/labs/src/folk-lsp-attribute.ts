@@ -23,13 +23,46 @@ import { LanguageClient } from './lsp/LanguageClient';
 // - definitionProvider
 // - codeActionProvider
 
+// TODO: stop worker when there are no files for that language server
+class LanguageServerPool {
+  #urls = new Map<string, URL>();
+  #workerCache = new Map<URL, Worker>();
+
+  constructor() {
+    this.setURL(new URL('./lsp/json.worker.js', import.meta.url), ['json']);
+    this.setURL(new URL('./lsp/css.worker.js', import.meta.url), ['css']);
+    this.setURL(new URL('./lsp/typescript.worker.js', import.meta.url), ['ts', 'js']);
+    // this.setURL(new URL('./lsp/markdown.worker.js', import.meta.url), ['md']);
+  }
+
+  getWorker(language: string) {
+    const url = this.#urls.get(language);
+
+    if (url === undefined) throw new Error(`name '${language}' has no registered LSP.`);
+
+    let worker = this.#workerCache.get(url);
+
+    if (worker === undefined) {
+      worker = new Worker(url, { type: 'module' });
+      this.#workerCache.set(url, worker);
+    }
+
+    return worker;
+  }
+
+  setURL(workerURL: URL, languages: string[]) {
+    for (const language of languages) {
+      // Should we let someone override an existing language server.
+      this.#urls.set(language, workerURL);
+    }
+  }
+}
+
 Object.defineProperty(Element.prototype, 'lsp', {
   get() {
     return customAttributes.get(this, FolkLSPAttribute.attributeName) as FolkLSPAttribute | undefined;
   },
 });
-
-type LSPLanguage = 'json' | 'js' | 'css' | 'html' | 'md' | 'plaintext';
 
 export class FolkLSPAttribute extends CustomAttribute {
   static override attributeName = 'folk-lsp';
@@ -41,6 +74,12 @@ export class FolkLSPAttribute extends CustomAttribute {
     'folk-lsp-hint': new Highlight(),
   } as const;
 
+  static #workers = new LanguageServerPool();
+
+  static addLanguageServer(workerURL: URL, names: string[]) {
+    this.#workers.setURL(workerURL, names);
+  }
+
   static styles = css`
     @layer folk {
       ::highlight(folk-lsp-error) {
@@ -51,6 +90,12 @@ export class FolkLSPAttribute extends CustomAttribute {
       ::highlight(folk-lsp-warning) {
         text-decoration: wavy underline orange 1.5px;
         background-color: rgba(255, 165, 0, 0.1);
+      }
+
+      ::highlight(folk-lsp-info) {
+      }
+
+      ::highlight(folk-lsp-hint) {
       }
 
       .folk-lsp-tooltip {
@@ -76,75 +121,43 @@ export class FolkLSPAttribute extends CustomAttribute {
     }
   }
 
-  #fileUri = 'folk://foobar';
+  #fileUri = 'folk://';
   #fileVersion = 1;
-  #language: LSPLanguage = 'plaintext';
-  #worker: Worker;
-  #languageClient: LanguageClient;
+  #languageClient: LanguageClient | undefined;
   #activeTooltips = new Map<string, HTMLElement>();
 
   get #highlights() {
     return (this.constructor as typeof FolkLSPAttribute).#highlightRegistry;
   }
 
-  constructor(ownerElement: Element, name: string, value: LSPLanguage) {
-    super(ownerElement, name, value);
-    this.#language = value;
-    this.#worker = new Worker(new URL('./lsp/json.worker.js', import.meta.url), { type: 'module' });
-    this.#languageClient = new LanguageClient(this.#worker, {
-      clientCapabilities: {
-        textDocument: {
-          documentHighlight: {
-            dynamicRegistration: false,
-          },
-          publishDiagnostics: {
-            relatedInformation: true,
-          },
-          completion: {
-            // We send the completion context to the server
-            contextSupport: true,
-            completionItem: {
-              snippetSupport: true,
-              insertReplaceSupport: true,
-              documentationFormat: [MarkupKind.PlainText, MarkupKind.Markdown],
-              commitCharactersSupport: false,
-            },
-          },
-        },
-      },
-      log: console.log,
-    });
+  override connectedCallback(): void {
+    (this.ownerElement as HTMLElement).addEventListener('input', this.#onInput);
   }
 
-  override connectedCallback(): void {
-    const el = this.ownerElement as HTMLElement;
-    this.#languageClient.start();
-    this.#languageClient.sendNotification(DidOpenTextDocumentNotification.type, {
+  override async disconnectedCallback() {
+    (this.ownerElement as HTMLElement).removeEventListener('input', this.#onInput);
+    this.#languageClient?.stop();
+  }
+
+  #onInput = () => {
+    if (this.#languageClient === undefined) return;
+
+    // TODO: this feels flaky... how to version properly?
+    this.#fileVersion++;
+    this.#languageClient.sendNotification(DidChangeTextDocumentNotification.type, {
       textDocument: {
         uri: this.#fileUri,
         version: this.#fileVersion,
-        languageId: this.#language,
-        text: el.textContent ?? '',
       },
-    });
-    (this.ownerElement as HTMLElement).addEventListener('input', (e) => {
-      // TODO: this feels flaky... how to version properly?
-      this.#fileVersion++;
-      this.#languageClient.sendNotification(DidChangeTextDocumentNotification.type, {
-        textDocument: {
-          uri: this.#fileUri,
-          version: this.#fileVersion,
+      contentChanges: [
+        {
+          text: this.ownerElement.textContent ?? '',
         },
-        contentChanges: [
-          {
-            text: el.textContent ?? '',
-          },
-        ],
-      });
-      this.#requestCompletion();
-      this.#requestDiagnostics();
+      ],
     });
-  }
+    this.#requestCompletion();
+    this.#requestDiagnostics();
+  };
 
   #getSelectionPosition(): Position | null {
     const selection = document.getSelection();
@@ -178,6 +191,8 @@ export class FolkLSPAttribute extends CustomAttribute {
   }
 
   async #requestDiagnostics() {
+    if (this.#languageClient === undefined) return;
+
     const diagnostics = (await this.#languageClient.sendRequest(DocumentDiagnosticRequest.type, {
       textDocument: {
         uri: this.#fileUri,
@@ -339,10 +354,10 @@ export class FolkLSPAttribute extends CustomAttribute {
 
   // TODO: handle request
   async #requestCompletion() {
+    if (this.#languageClient === undefined) return;
+
     const position = this.#getSelectionPosition();
-    if (!position) {
-      return;
-    }
+    if (!position) return;
 
     const completions = await this.#languageClient.sendRequest(CompletionRequest.type, {
       textDocument: {
@@ -352,14 +367,62 @@ export class FolkLSPAttribute extends CustomAttribute {
     });
   }
 
-  // TODO: Handle languages changes and auto detection and plaintext, and loading other workers
-  override changedCallback(_oldLanguage: string, _newLanguage: string): void {}
+  #getWorker(language: string) {
+    return (this.constructor as typeof FolkLSPAttribute).#workers.getWorker(language);
+  }
 
-  override async disconnectedCallback() {
-    try {
-      await this.#languageClient.stop();
-    } finally {
-      this.#worker.terminate();
+  override async changedCallback(_oldLanguage: string, newLanguage: string) {
+    await this.#languageClient?.stop();
+
+    if (newLanguage === '') {
+      if (this.ownerElement.localName === 'style') {
+        newLanguage = 'css';
+      } else if (this.ownerElement.localName === 'script') {
+        if ((this.ownerElement as HTMLScriptElement).type === 'importmap') {
+          newLanguage = 'json';
+        } else {
+          newLanguage = 'js';
+        }
+      } else {
+        // we cant infer the new language so don't create a language client
+        return;
+      }
     }
+
+    const worker = this.#getWorker(newLanguage);
+    this.#languageClient = new LanguageClient(worker, {
+      clientCapabilities: {
+        textDocument: {
+          documentHighlight: {
+            dynamicRegistration: false,
+          },
+          publishDiagnostics: {
+            relatedInformation: true,
+          },
+          completion: {
+            // We send the completion context to the server
+            contextSupport: true,
+            completionItem: {
+              snippetSupport: true,
+              insertReplaceSupport: true,
+              documentationFormat: [MarkupKind.PlainText, MarkupKind.Markdown],
+              commitCharactersSupport: false,
+            },
+          },
+        },
+      },
+      log: console.log,
+    });
+
+    this.#languageClient.start();
+    console.log('start', this.ownerElement);
+    this.#languageClient.sendNotification(DidOpenTextDocumentNotification.type, {
+      textDocument: {
+        uri: this.#fileUri,
+        version: this.#fileVersion,
+        languageId: this.value,
+        text: this.ownerElement.textContent ?? '',
+      },
+    });
   }
 }
