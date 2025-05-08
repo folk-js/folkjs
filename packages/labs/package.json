@@ -69,6 +69,7 @@
     "@folkjs/geometry": "^0.0.1",
     "@folkjs/propagators": "^0.0.1",
     "@mlc-ai/web-llm": "^0.2.78",
+    "@volar/typescript-language-service": "^1.0.1",
     "codemirror": "^6.0.1",
     "eventemitter3": "^5.0.1",
     "gun": "^0.2020.1240",
