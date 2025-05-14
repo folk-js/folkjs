@@ -96,6 +96,7 @@ export class FolkKnob extends FolkElement {
   override createRenderRoot() {
     const root = super.createRenderRoot();
 
+    this.addEventListener('touchmove', this);
     this.addEventListener('pointerdown', this);
 
     root.appendChild(this.#div);
@@ -110,6 +111,10 @@ export class FolkKnob extends FolkElement {
 
   handleEvent(event: PointerEvent) {
     switch (event.type) {
+      case 'touchmove': {
+        event.preventDefault();
+        return;
+      }
       case 'pointerdown': {
         this.time = 0;
         this.recent = [];
