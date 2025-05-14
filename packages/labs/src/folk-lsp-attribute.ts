@@ -83,12 +83,18 @@ export class FolkLSPAttribute extends CustomAttribute {
   static styles = css`
     @layer folk {
       ::highlight(folk-lsp-error) {
-        text-decoration: wavy underline red 1.5px;
+        text-decoration: underline;
+        text-decoration-color: red;
+        text-decoration-style: wavy;
+        text-decoration-thickness: 1.5px;
         background-color: rgba(255, 0, 0, 0.1);
       }
 
       ::highlight(folk-lsp-warning) {
-        text-decoration: wavy underline orange 1.5px;
+        text-decoration: underline;
+        text-decoration-color: orange;
+        text-decoration-style: wavy;
+        text-decoration-thickness: 1.5px;
         background-color: rgba(255, 165, 0, 0.1);
       }
 
@@ -236,7 +242,6 @@ export class FolkLSPAttribute extends CustomAttribute {
 
     // Center horizontally over the highlight
     tooltip.style.left = `${rect.left + rect.width / 2 - tooltip.offsetWidth / 2}px`;
-
     this.#activeTooltips.set(key, tooltip);
   }
 
@@ -298,6 +303,7 @@ export class FolkLSPAttribute extends CustomAttribute {
     for (const highlight of Object.values(this.#highlights)) {
       highlight.clear();
     }
+
     this.#removeAllTooltips();
 
     for (const diagnostic of diagnostics) {

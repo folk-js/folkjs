@@ -279,10 +279,16 @@ export class LanguageClient extends EventTarget implements AbstractLanguageClien
     if (isResponse(message)) {
       this.log(`Server->Client response [${message.id}]`, message);
       const id = message.id!.toString();
+      const promise = this.requests.get(id);
+
+      if (promise === undefined) {
+        console.warn('Response already handled');
+        return;
+      }
       if ('result' in message) {
-        this.requests.get(id)!.resolve(message.result!);
+        promise.resolve(message.result!);
       } else {
-        this.requests.get(id)!.reject(message.error);
+        promise.reject(message.error);
       }
       this.requests.delete(id);
     } else if (isRequest(message)) {
