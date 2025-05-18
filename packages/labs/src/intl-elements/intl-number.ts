@@ -9,6 +9,7 @@ declare global {
 
 type NumberFormatOptions = Intl.NumberFormatOptions;
 
+// // TODO: support ranges
 // Ported from https://github.com/elematic/heximal/blob/main/packages/components/src/lib/num.ts
 export class IntlNumber extends FolkElement {
   static override tagName = 'intl-number';
@@ -19,8 +20,8 @@ export class IntlNumber extends FolkElement {
     }
   `;
 
-  // `lang` is a global attribute, should be navigate up the DOM tree to find it?
-  @property({ reflect: true }) locale: string | undefined;
+  // `lang` is a global attribute, should we navigate up the DOM tree to find it?
+  @property({ reflect: true }) locale: Intl.UnicodeBCP47LocaleIdentifier | undefined;
 
   // Locale options
   @property({ reflect: true }) localeMatcher: NumberFormatOptions['localeMatcher'];
@@ -90,10 +91,10 @@ export class IntlNumber extends FolkElement {
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
 
-    this.#span.part.add('number');
+    this.#span.part.add('value');
 
     this.#slot.addEventListener('slotchange', () => {
-      this.value = parseFloat(this.textContent?.trim() || '');
+      this.value = Number(this.textContent?.trim() || '');
     });
 
     root.append(this.#slot, this.#span);
@@ -120,7 +121,7 @@ export class IntlNumber extends FolkElement {
 
     // Default locale to navigator.language since it's the browsers language setting
     // Passing undefined seems to reflect the OS's language setting.
-    this.#format = new Intl.NumberFormat(this.locale || navigator.language, {
+    this.#format = new Intl.NumberFormat(this.locale ? this.locale.split(',') : navigator.language, {
       localeMatcher: this.localeMatcher,
       numberingSystem: this.numberingSystem,
 
@@ -151,11 +152,11 @@ export class IntlNumber extends FolkElement {
     this.#updateValue();
   }
 
-  #updateValue = () => {
+  #updateValue() {
     if (Number.isNaN(this.#value)) {
       this.#span.textContent = '';
     } else if (this.#format) {
       this.#span.textContent = this.#format.format(this.#value);
     }
-  };
+  }
 }
