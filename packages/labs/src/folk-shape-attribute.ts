@@ -383,7 +383,8 @@ export class FolkShapeAttribute extends CustomAttribute {
     const el = this.ownerElement as HTMLElement;
 
     // We need to make this element focusable if it isn't already
-    if (el.tabIndex === -1) {
+    // Edge case: <video> tabIndex property is 0, but we need a tab index attribute to focus it.
+    if (!el.hasAttribute('tab-index')) {
       el.tabIndex = 0;
     }
 
