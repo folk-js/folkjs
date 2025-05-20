@@ -1,20 +1,14 @@
 import { defineConfig } from 'vite';
-
-import { resolve } from 'node:path';
+import webExtension from 'vite-plugin-web-extension';
 
 export default defineConfig({
   build: {
-    target: 'esnext',
-    lib: {
-      entry: [
-        resolve(__dirname, './src/background.ts'),
-        resolve(__dirname, './src/content-script.ts'),
-        resolve(__dirname, './src/injected.ts'),
-      ],
-      formats: ['es'],
-    },
-    outDir: './dist',
     emptyOutDir: true,
-    minify: false,
   },
+  plugins: [
+    webExtension({
+      manifest: 'src/manifest.json',
+      additionalInputs: ['src/content-script.ts', 'src/injected.ts'],
+    }),
+  ],
 });

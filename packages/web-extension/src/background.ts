@@ -1,6 +1,8 @@
-chrome.action.onClicked.addListener((tab: any) => {
-  chrome.scripting.executeScript({
+import browser from 'webextension-polyfill';
+
+browser.action.onClicked.addListener((tab: any) => {
+  browser.scripting.executeScript({
     target: { tabId: tab.id },
-    files: ['dist/content-script.js'],
+    files: ['src/content-script.js'],
   });
 });

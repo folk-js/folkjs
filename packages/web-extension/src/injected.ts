@@ -4,7 +4,7 @@ import { FolkZoomable } from '@folkjs/labs/folk-zoomable';
 FolkShapeAttribute.define();
 FolkZoomable.define();
 
-document.documentElement.setAttribute('folk-zoomable', '');
+document.body.setAttribute('folk-zoomable', '');
 
 document.body.addEventListener('dblclick', (e) => {
   const el = e.target as HTMLElement;

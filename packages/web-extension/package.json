@@ -28,8 +28,8 @@
         "package.json",
         "tsconfig.json",
         "manifest.json",
-        "options.html",
-        "images/**"
+        "public/**",
+        "vite.config.ts"
       ],
       "output": [
         "dist/**",
@@ -41,11 +41,13 @@
     "@folkjs/canvas": "^0.0.1",
     "@folkjs/dom": "^0.0.1",
     "@folkjs/geometry": "^0.0.1",
-    "@folkjs/labs": "^0.0.1"
+    "@folkjs/labs": "^0.0.1",
+    "webextension-polyfill": "^0.12.0"
   },
   "devDependencies": {
+    "@types/webextension-polyfill": "^0.12.3",
     "typescript": "^5.8.2",
     "vite": "^6.0.3",
-    "@types/chrome": "^0.0.310"
+    "vite-plugin-web-extension": "^4.4.3"
   }
 }
