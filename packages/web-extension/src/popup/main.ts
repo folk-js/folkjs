@@ -1,10 +1,17 @@
 import browser from 'webextension-polyfill';
 
 document.addEventListener('input', async (e) => {
-  const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-
-  browser.tabs.sendMessage(tabs[0].id!, {
-    type: 'prototype-selected',
-    prototype: (e.target as HTMLInputElement).value,
-  });
+  browser.storage.local.set({ prototype: (e.target as HTMLInputElement).value });
 });
+
+async function loadSelectedPrototype() {
+  const { prototype = 'none' } = await browser.storage.local.get('prototype');
+
+  const el = document.querySelector<HTMLInputElement>(`input[value="${prototype}"]`);
+
+  if (el) {
+    el.checked = true;
+  }
+}
+
+loadSelectedPrototype();

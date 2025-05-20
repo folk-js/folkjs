@@ -2,7 +2,7 @@
   "name": "FolkJS",
   "version": "1.0.0",
   "manifest_version": 3,
-  "permissions": ["activeTab", "scripting"],
+  "permissions": ["scripting", "storage"],
   "action": {
     "default_icon": {
       "32": "/icon32.png"

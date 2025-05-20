@@ -7,11 +7,8 @@ function injectScript(src: string) {
   document.documentElement.append(s);
 }
 
-// Wait until a selection is made to inject the script
-browser.runtime.onMessage.addListener((message: any) => {
-  if (message.type !== 'prototype-selected') return;
-
-  switch (message.prototype) {
+function selectScript(prototype: string) {
+  switch (prototype) {
     case 'canvasify': {
       injectScript('src/injected/canvasify.js');
       return;
@@ -25,4 +22,17 @@ browser.runtime.onMessage.addListener((message: any) => {
       return;
     }
   }
+}
+
+browser.storage.local.onChanged.addListener(({ prototype }) => {
+  if (prototype) {
+    selectScript(prototype.newValue as string);
+  }
 });
+
+async function loadSelectedPrototype() {
+  const { prototype = 'none' } = await browser.storage.local.get('prototype');
+  selectScript(prototype as string);
+}
+
+loadSelectedPrototype();
