@@ -10,9 +10,9 @@
     "default_icon": {
       "32": "/icon32.png"
     },
-    "default_title": "folkjs"
+    "default_title": "folkjs",
+    "default_popup": "src/popup/index.html"
   },
-
   "web_accessible_resources": [
     {
       "resources": ["src/injected.js"],

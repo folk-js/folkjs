@@ -25,10 +25,9 @@
       ],
       "files": [
         "src/**",
+        "public/**",
         "package.json",
         "tsconfig.json",
-        "manifest.json",
-        "public/**",
         "vite.config.ts"
       ],
       "output": [

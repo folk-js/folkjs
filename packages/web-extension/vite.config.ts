@@ -4,6 +4,9 @@ import webExtension from 'vite-plugin-web-extension';
 export default defineConfig({
   build: {
     emptyOutDir: true,
+    modulePreload: {
+      polyfill: false,
+    },
   },
   plugins: [
     webExtension({
