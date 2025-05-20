@@ -11,7 +11,7 @@ export default defineConfig({
   plugins: [
     webExtension({
       manifest: 'src/manifest.json',
-      additionalInputs: ['src/content-script.ts', 'src/injected.ts'],
+      additionalInputs: ['src/injected/canvasify.ts', 'src/injected/copy-and-paste.ts', 'src/injected/presence.ts'],
     }),
   ],
 });

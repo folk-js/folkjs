@@ -7,4 +7,22 @@ function injectScript(src: string) {
   document.documentElement.append(s);
 }
 
-injectScript('src/injected.js');
+// Wait until a selection is made to inject the script
+browser.runtime.onMessage.addListener((message: any) => {
+  if (message.type !== 'prototype-selected') return;
+
+  switch (message.prototype) {
+    case 'canvasify': {
+      injectScript('src/injected/canvasify.js');
+      return;
+    }
+    case 'copyAndPaste': {
+      injectScript('src/injected/copy-and-paste.js');
+      return;
+    }
+    case 'presence': {
+      injectScript('src/injected/presence.js');
+      return;
+    }
+  }
+});
