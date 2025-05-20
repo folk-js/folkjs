@@ -26,6 +26,17 @@
         /* margins cause infinite resize loops */
         box-sizing: border-box;
       }
+
+      aside {
+        position: fixed;
+        bottom: 0.5rem;
+        right: 0.5rem;
+        background: rgba(0, 0, 0, 0.25);
+        width: 15rem;
+        font-size: 0.75rem;
+        border-radius: 5px;
+        padding: 0.5rem;
+      }
     </style>
   </head>
   <body>
@@ -38,6 +49,10 @@
 
     <folk-rope source="iframe#frame1 #box1" target="iframe#frame2 #box2"></folk-rope>
 
+    <aside
+      >This demo only works when you use the folkjs web extension and select the "Cross-iframe relationships"
+      prototype</aside
+    >
     <script type="module">
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-rope';

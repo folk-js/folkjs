@@ -13,20 +13,18 @@
   "content_scripts": [
     {
       "matches": ["*://*/*"],
-      "js": ["src/content-script.ts"]
+      "js": ["src/content-script.ts"],
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/injected/canvasify.js"],
-      "matches": ["<all_urls>"]
-    },
-    {
-      "resources": ["src/injected/copy-and-paste.js"],
-      "matches": ["<all_urls>"]
-    },
-    {
-      "resources": ["src/injected/presence.js"],
+      "resources": [
+        "src/injected/canvasify.js",
+        "src/injected/copy-and-paste.js",
+        "src/injected/presence.js",
+        "src/injected/cross-iframe-relationships.js"
+      ],
       "matches": ["<all_urls>"]
     }
   ]

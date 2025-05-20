@@ -21,6 +21,10 @@ function selectScript(prototype: string) {
       injectScript('src/injected/presence.js');
       return;
     }
+    case 'cross-iframe-relationships': {
+      injectScript('src/injected/cross-iframe-relationships.js');
+      return;
+    }
   }
 }
 

@@ -1,10 +1,9 @@
-// this needs to move to the web extension once that's set up.
-
 import type { ClientRectObserverEntry } from '@folkjs/canvas';
-import { FolkObserver } from './folk-observer';
+import { FolkObserver } from '@folkjs/labs/folk-observer';
 
 const folkObserver = new FolkObserver();
 
+console.log('iframe protocol');
 // If this page is framed in then mock inject the following post message script
 if (window.parent !== window) {
   // keep track of count of elements being observed
