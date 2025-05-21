@@ -77,12 +77,6 @@ declare global {
   }
 }
 
-Object.defineProperty(Element.prototype, 'shape', {
-  get() {
-    return customAttributes.get(this, FolkShapeAttribute.attributeName) as FolkShapeAttribute | undefined;
-  },
-});
-
 const resizeManager = new ResizeManager();
 
 interface Space {}
@@ -137,8 +131,17 @@ export class FolkShapeAttribute extends CustomAttribute {
   static override attributeName = 'folk-shape';
 
   static override define() {
-    FolkShapeOverlay.define();
     super.define();
+
+    if (customAttributes.isDefined(this.attributeName)) return;
+
+    FolkShapeOverlay.define();
+
+    Object.defineProperty(Element.prototype, 'shape', {
+      get() {
+        return customAttributes.get(this, FolkShapeAttribute.attributeName) as FolkShapeAttribute | undefined;
+      },
+    });
   }
 
   static #overlay = document.createElement('folk-shape-overlay');

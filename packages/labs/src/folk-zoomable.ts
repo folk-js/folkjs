@@ -9,17 +9,23 @@ declare global {
   }
 }
 
-Object.defineProperty(Element.prototype, 'zoom', {
-  get() {
-    return customAttributes.get(this, FolkZoomable.attributeName) as FolkZoomable | undefined;
-  },
-});
-
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;
 
 export class FolkZoomable extends CustomAttribute {
   static override attributeName = 'folk-zoomable';
+
+  static override define() {
+    super.define();
+
+    if (customAttributes.isDefined(this.attributeName)) return;
+
+    Object.defineProperty(Element.prototype, 'zoom', {
+      get() {
+        return customAttributes.get(this, FolkZoomable.attributeName) as FolkZoomable | undefined;
+      },
+    });
+  }
 
   static styles = css`
     :host([folk-zoomable]) {
