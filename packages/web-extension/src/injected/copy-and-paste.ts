@@ -7,7 +7,6 @@ document.addEventListener('copy', (e) => {
     'text/html': e.target.outerHTML,
   });
 
-  console.log('copy shape', clipboardItem);
   navigator.clipboard.write([clipboardItem]);
 });
 
@@ -15,7 +14,6 @@ document.addEventListener('paste', (e) => {
   const folkData = e.clipboardData?.getData('text/html');
 
   if (folkData === undefined) return;
-  console.log('paste shape', folkData);
 
   e.preventDefault();
 
