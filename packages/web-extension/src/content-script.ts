@@ -25,6 +25,10 @@ function selectScript(prototype: string) {
       injectScript('src/injected/cross-iframe-relationships.js');
       return;
     }
+    case 'dom3D': {
+      injectScript('src/injected/dom3d.js');
+      return;
+    }
   }
 }
 

@@ -23,7 +23,8 @@
         "src/injected/canvasify.js",
         "src/injected/copy-and-paste.js",
         "src/injected/presence.js",
-        "src/injected/cross-iframe-relationships.js"
+        "src/injected/cross-iframe-relationships.js",
+        "src/injected/dom3d.js"
       ],
       "matches": ["<all_urls>"]
     }
