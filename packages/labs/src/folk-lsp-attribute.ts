@@ -62,15 +62,15 @@ export class FolkLSPAttribute extends CustomAttribute {
   static override attributeName = 'folk-lsp';
 
   static override define() {
+    if (!customAttributes.isDefined(this.attributeName)) {
+      Object.defineProperty(Element.prototype, 'lsp', {
+        get() {
+          return customAttributes.get(this, FolkLSPAttribute.attributeName) as FolkLSPAttribute | undefined;
+        },
+      });
+    }
+
     super.define();
-
-    if (customAttributes.isDefined(this.attributeName)) return;
-
-    Object.defineProperty(Element.prototype, 'lsp', {
-      get() {
-        return customAttributes.get(this, FolkLSPAttribute.attributeName) as FolkLSPAttribute | undefined;
-      },
-    });
   }
 
   static #highlightRegistry = {

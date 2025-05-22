@@ -16,15 +16,15 @@ export class FolkZoomable extends CustomAttribute {
   static override attributeName = 'folk-zoomable';
 
   static override define() {
+    if (!customAttributes.isDefined(this.attributeName)) {
+      Object.defineProperty(Element.prototype, 'zoom', {
+        get() {
+          return customAttributes.get(this, FolkZoomable.attributeName) as FolkZoomable | undefined;
+        },
+      });
+    }
+
     super.define();
-
-    if (customAttributes.isDefined(this.attributeName)) return;
-
-    Object.defineProperty(Element.prototype, 'zoom', {
-      get() {
-        return customAttributes.get(this, FolkZoomable.attributeName) as FolkZoomable | undefined;
-      },
-    });
   }
 
   static styles = css`

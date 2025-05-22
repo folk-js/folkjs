@@ -131,17 +131,17 @@ export class FolkShapeAttribute extends CustomAttribute {
   static override attributeName = 'folk-shape';
 
   static override define() {
+    if (!customAttributes.isDefined(this.attributeName)) {
+      FolkShapeOverlay.define();
+
+      Object.defineProperty(Element.prototype, 'shape', {
+        get() {
+          return customAttributes.get(this, FolkShapeAttribute.attributeName) as FolkShapeAttribute | undefined;
+        },
+      });
+    }
+
     super.define();
-
-    if (customAttributes.isDefined(this.attributeName)) return;
-
-    FolkShapeOverlay.define();
-
-    Object.defineProperty(Element.prototype, 'shape', {
-      get() {
-        return customAttributes.get(this, FolkShapeAttribute.attributeName) as FolkShapeAttribute | undefined;
-      },
-    });
   }
 
   static #overlay = document.createElement('folk-shape-overlay');
