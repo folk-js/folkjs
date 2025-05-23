@@ -212,12 +212,14 @@ export class FolkShapeAttribute extends CustomAttribute {
     if (value === this.#autoPosition) return;
 
     this.#autoPosition = value;
+
     if (this.#autoPosition) {
       const el = this.ownerElement as HTMLElement;
       el.style.display = '';
       this.#previousShape.x = this.#shape.x;
       this.#previousShape.y = this.#shape.y;
-      // this is broken, we need update the attribute value and relayout before we can apply these values
+      // we need to update the attribute to cause a relayout
+      this.#updateValue();
       this.#shape.x = el.offsetLeft;
       this.#shape.y = el.offsetTop;
 
@@ -506,6 +508,10 @@ export class FolkShapeAttribute extends CustomAttribute {
     el.style.setProperty('--folk-width', toDOMPrecision(this.#shape.width) + 'px');
     el.style.setProperty('--folk-rotation', toDOMPrecision(this.#shape.rotation) + 'rad');
 
+    this.#updateValue();
+  }
+
+  #updateValue() {
     this.value = (
       (this.#autoPosition ? '' : `x: ${toDOMPrecision(this.#shape.x)}; y: ${toDOMPrecision(this.#shape.y)}; `) +
       (this.#autoWidth ? '' : `width: ${toDOMPrecision(this.#shape.width)}; `) +
