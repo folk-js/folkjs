@@ -1,20 +1,24 @@
-import { satisfies } from "./interfaces/InterfaceKey";
-import { IPointTransform } from "./interfaces/IPointTransform";
-import type { Point } from "./types";
+import { satisfies } from './interfaces/InterfaceKey';
+import { IPointTransform } from './interfaces/IPointTransform';
+import type { Point } from './types';
 
 /**
  * A class that manages a stack of transformations and provides methods
  * to convert coordinates between different spaces.
  */
 export class TransformStack {
-  private transforms: IPointTransform[] = [];
+  #transforms: IPointTransform[] = [];
 
   /**
    * Creates a new TransformStack with the given transforms
    * @param transforms The transforms to include, ordered from parent to child
    */
   constructor(transforms: IPointTransform[] = []) {
-    this.transforms = [...transforms];
+    this.#transforms = [...transforms];
+  }
+
+  get transforms(): readonly IPointTransform[] {
+    return this.#transforms;
   }
 
   /**
@@ -26,8 +30,8 @@ export class TransformStack {
     let result = { ...point };
 
     // Apply transforms in reverse order (from parent to local)
-    for (let i = this.transforms.length - 1; i >= 0; i--) {
-      result = this.transforms[i].mapPointFromParent(result);
+    for (let i = this.#transforms.length - 1; i >= 0; i--) {
+      result = this.#transforms[i].mapPointFromParent(result);
     }
 
     return result;
@@ -42,8 +46,8 @@ export class TransformStack {
     let result = { ...point };
 
     // Apply transforms in order (from local to parent)
-    for (let i = 0; i < this.transforms.length; i++) {
-      result = this.transforms[i].mapPointToParent(result);
+    for (let i = 0; i < this.#transforms.length; i++) {
+      result = this.#transforms[i].mapPointToParent(result);
     }
 
     return result;
@@ -58,8 +62,8 @@ export class TransformStack {
     let result = { ...vector };
 
     // Apply transforms in reverse order (from parent to local)
-    for (let i = this.transforms.length - 1; i >= 0; i--) {
-      result = this.transforms[i].mapVectorFromParent(result);
+    for (let i = this.#transforms.length - 1; i >= 0; i--) {
+      result = this.#transforms[i].mapVectorFromParent(result);
     }
 
     return result;
@@ -74,8 +78,8 @@ export class TransformStack {
     let result = { ...vector };
 
     // Apply transforms in order (from local to parent)
-    for (let i = 0; i < this.transforms.length; i++) {
-      result = this.transforms[i].mapVectorToParent(result);
+    for (let i = 0; i < this.#transforms.length; i++) {
+      result = this.#transforms[i].mapVectorToParent(result);
     }
 
     return result;

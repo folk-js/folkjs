@@ -1,5 +1,5 @@
-import { FolkZoomable } from '../folk-zoomable';
+import { FolkSpaceAttribute } from '../folk-zoomable';
 
-FolkZoomable.define();
+FolkSpaceAttribute.define();
 
-export { FolkZoomable };
+export { FolkSpaceAttribute as FolkZoomable };

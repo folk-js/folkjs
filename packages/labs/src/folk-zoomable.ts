@@ -1,25 +1,46 @@
-import { css, CustomAttribute, customAttributes, Matrix, toDOMPrecision } from '@folkjs/canvas';
+import { css, CustomAttribute, customAttributes, IPointTransform, toDOMPrecision, type Point } from '@folkjs/canvas';
 import * as BVH from '@folkjs/geometry/BoundingVolumeHierarchy';
+import * as M from '@folkjs/geometry/Matrix2D';
 import * as S from '@folkjs/geometry/Shape2D';
 import { FolkShapeAttribute, ShapeConnectedEvent, ShapeDisconnectedEvent } from './folk-shape-attribute';
 
 declare global {
   interface Element {
-    zoom: FolkZoomable | undefined;
+    zoom: FolkSpaceAttribute | undefined;
   }
 }
 
 const MIN_SCALE = 0.05;
-const MAX_SCALE = 8;
+const MAX_SCALE = 10;
 
-export class FolkZoomable extends CustomAttribute {
+export class SpaceTransformEvent extends Event {
+  #space;
+
+  get space() {
+    return this.#space;
+  }
+
+  constructor(space: FolkSpaceAttribute) {
+    super('space-transform', { bubbles: true });
+
+    this.#space = space;
+  }
+}
+
+declare global {
+  interface ElementEventMap {
+    'space-transform': SpaceTransformEvent;
+  }
+}
+
+export class FolkSpaceAttribute extends CustomAttribute implements IPointTransform {
   static override attributeName = 'folk-zoomable';
 
   static override define() {
     if (!customAttributes.isDefined(this.attributeName)) {
       Object.defineProperty(Element.prototype, 'zoom', {
         get() {
-          return customAttributes.get(this, FolkZoomable.attributeName) as FolkZoomable | undefined;
+          return customAttributes.get(this, FolkSpaceAttribute.attributeName) as FolkSpaceAttribute | undefined;
         },
       });
     }
@@ -89,7 +110,7 @@ export class FolkZoomable extends CustomAttribute {
   #shadow!: ShadowRoot;
   #slot = document.createElement('slot');
   #container = document.createElement('div');
-  #matrix = new Matrix();
+  #matrix = M.fromValues();
   #shapes: FolkShapeAttribute[] = [];
   #bvh: BVH.BVHNode<S.Shape2D> | null = null;
 
@@ -105,6 +126,7 @@ export class FolkZoomable extends CustomAttribute {
     return this.#matrix.e;
   }
   set x(value) {
+    this.#matrix.e = value;
     this.#requestUpdate();
   }
 
@@ -112,6 +134,7 @@ export class FolkZoomable extends CustomAttribute {
     return this.#matrix.f;
   }
   set y(value) {
+    this.#matrix.f = value;
     this.#requestUpdate();
   }
 
@@ -119,6 +142,7 @@ export class FolkZoomable extends CustomAttribute {
     return this.#matrix.a;
   }
   set scale(value) {
+    this.#matrix.a = value;
     this.#requestUpdate();
   }
 
@@ -149,6 +173,62 @@ export class FolkZoomable extends CustomAttribute {
     this.#requestUpdate();
   }
 
+  /**
+   * Converts a point from parent coordinates to local space coordinates.
+   *
+   * @param point The point in parent coordinates
+   * @returns The point in local space coordinates
+   */
+  mapPointFromParent(point: Point): Point {
+    // Create an inverse of the current transformation matrix
+    const inverseMatrix = M.invert(this.#matrix);
+
+    // Apply the inverse transformation to convert from parent to space coordinates
+    return M.applyToPoint(inverseMatrix, point);
+  }
+
+  /**
+   * Converts a vector from parent coordinates to local space coordinates.
+   * Vectors are affected by scale and rotation, but not by translation.
+   *
+   * @param vector The vector in parent coordinates
+   * @returns The vector in local space coordinates
+   */
+  mapVectorFromParent(vector: Point): Point {
+    // For vectors, we only need to apply scale (and rotation if present)
+    // Create a matrix with just the scale component
+    const scaleMatrix = M.fromValues(this.scale, 0, 0, this.scale, 0, 0);
+
+    // Apply the inverse transformation to the vector
+    return M.applyToPoint(M.invertSelf(scaleMatrix), vector);
+  }
+
+  /**
+   * Converts a point from local space coordinates to parent coordinates.
+   *
+   * @param point The point in local space coordinates
+   * @returns The point in parent coordinates
+   */
+  mapPointToParent(point: Point): Point {
+    // Apply the space's transformation matrix directly
+    return M.applyToPoint(this.#matrix, point);
+  }
+
+  /**
+   * Converts a point from local space coordinates to parent coordinates.
+   *
+   * @param vector The point in local space coordinates
+   * @returns The point in parent coordinates
+   */
+  mapVectorToParent(point: Point): Point {
+    // For vectors, we only need to apply scale (and rotation if present)
+    // Create a matrix with just the scale component
+    const scaleMatrix = M.fromValues(this.scale, 0, 0, this.scale, 0, 0);
+
+    // Apply the transformation to the vector
+    return M.applyToPoint(scaleMatrix, point);
+  }
+
   override connectedCallback(): void {
     // If we apply the CSS transforms to the ownerElement then we miss out on wheel events the originate from the original bounding box of ownerElement
     // Unless there is a good way around that (which I haven't figured out) then this attribute can only be added on elements without an existing shadowDOM.
@@ -162,7 +242,7 @@ export class FolkZoomable extends CustomAttribute {
       return;
     }
 
-    this.#shadow.adoptedStyleSheets.push((this.constructor as typeof FolkZoomable).styles);
+    this.#shadow.adoptedStyleSheets.push((this.constructor as typeof FolkSpaceAttribute).styles);
 
     this.#container.appendChild(this.#slot);
 
@@ -200,7 +280,7 @@ export class FolkZoomable extends CustomAttribute {
   }
 
   override disconnectedCallback(): void {
-    const styles = (this.constructor as typeof FolkZoomable).styles;
+    const styles = (this.constructor as typeof FolkSpaceAttribute).styles;
     this.#shadow.adoptedStyleSheets.splice(
       this.#shadow.adoptedStyleSheets.findIndex((s) => s === styles),
       1,
@@ -236,6 +316,8 @@ export class FolkZoomable extends CustomAttribute {
       (this.#minScale === MIN_SCALE ? '' : ` minScale: ${toDOMPrecision(this.#minScale)};`) +
       (this.#maxScale === MAX_SCALE ? '' : `maxScale: ${toDOMPrecision(this.#maxScale)};`) +
       (this.#grid ? ' grid: true;' : '');
+
+    this.ownerElement.dispatchEvent(new SpaceTransformEvent(this));
   }
 
   // We are using event delegation to capture wheel events that don't happen in the transformed rect of the zoomable element.
@@ -284,14 +366,13 @@ export class FolkZoomable extends CustomAttribute {
   applyChange(panX = 0, panY = 0, scaleDiff = 1, originX = 0, originY = 0) {
     const { x, y, scale } = this;
 
-    this.#matrix
-      .identity()
-      .translate(panX, panY) // Translate according to panning.
-      .translate(originX, originY) // Scale about the origin.
-      .translate(x, y)
-      .scale(scaleDiff, scaleDiff)
-      .translate(-originX, -originY)
-      .scale(scale, scale);
+    M.identitySelf(this.#matrix);
+    M.translateSelf(this.#matrix, panX, panY); // Translate according to panning.
+    M.translateSelf(this.#matrix, originX, originY); // Scale about the origin.
+    M.translateSelf(this.#matrix, x, y);
+    M.scaleSelf(this.#matrix, scaleDiff, scaleDiff);
+    M.translateSelf(this.#matrix, -originX, -originY);
+    M.scaleSelf(this.#matrix, scale, scale);
 
     this.#requestUpdate();
   }

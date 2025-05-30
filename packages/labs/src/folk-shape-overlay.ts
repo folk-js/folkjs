@@ -6,13 +6,14 @@ import type { Vector2 } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 import { round, toDOMPrecision } from '@folkjs/geometry/utilities';
 import { type FolkShapeAttribute } from './folk-shape-attribute';
+import type { FolkSpaceAttribute } from './folk-zoomable';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 type ResizeHandle = 'resize-top-left' | 'resize-top-right' | 'resize-bottom-right' | 'resize-bottom-left';
 
 type RotateHandle = 'rotation-top-left' | 'rotation-top-right' | 'rotation-bottom-right' | 'rotation-bottom-left';
 
-type MoveHandle = 'move-top' | 'move-right' | 'movebottom' | 'move-left' | 'move';
+type MoveHandle = 'move-top' | 'move-right' | 'move-bottom' | 'move-left' | 'move';
 
 type Handle = ResizeHandle | RotateHandle | MoveHandle;
 
@@ -373,7 +374,7 @@ export class FolkShapeOverlay extends FolkElement {
           // Polymorphic
           const rotationOrigin = S.center(this.#shape);
           // Calculate initial angle including current rotation
-          const mousePos = { x: event.pageX, y: event.pageY };
+          const mousePos = this.#shape.transformStack.mapPointToLocal({ x: event.pageX, y: event.pageY });
           this.#startAngle = V.angleFromOrigin(mousePos, rotationOrigin) - this.#shape.rotation;
         }
 
@@ -407,17 +408,17 @@ export class FolkShapeOverlay extends FolkElement {
       const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
       if (!arrowKeys.includes(event.key)) return;
 
-      moveDelta = {
+      moveDelta = this.#shape.transformStack.mapVectorToLocal({
         x: (event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0) * MOVEMENT_MUL,
         y: (event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0) * MOVEMENT_MUL,
-      };
+      });
     } else if (event.type === 'pointermove') {
       if (!target) return;
       const zoom = window.visualViewport?.scale ?? 1;
-      moveDelta = {
+      moveDelta = this.#shape.transformStack.mapVectorToLocal({
         x: event.movementX / zoom,
         y: event.movementY / zoom,
-      };
+      });
     }
 
     if (!moveDelta) return;
@@ -450,7 +451,7 @@ export class FolkShapeOverlay extends FolkElement {
       const mousePos =
         event instanceof KeyboardEvent
           ? { x: corner.x + moveDelta.x, y: corner.y + moveDelta.y }
-          : { x: event.pageX, y: event.pageY };
+          : this.#shape.transformStack.mapPointToLocal({ x: event.pageX, y: event.pageY });
 
       this.#handleResize(handle as ResizeHandle, mousePos, target, event instanceof PointerEvent ? event : undefined);
       event.preventDefault();
@@ -461,8 +462,8 @@ export class FolkShapeOverlay extends FolkElement {
     if (handle.startsWith('rotation') && event instanceof PointerEvent) {
       // polymorphic
       const rotationOrigin = S.center(this.#shape);
-
-      const currentAngle = V.angleFromOrigin({ x: event.pageX, y: event.pageY }, rotationOrigin);
+      const point = this.#shape.transformStack.mapPointToLocal({ x: event.pageX, y: event.pageY });
+      const currentAngle = V.angleFromOrigin(point, rotationOrigin);
       // Apply rotation relative to start angle
       this.#shape.rotation = currentAngle - this.#startAngle;
 
@@ -484,15 +485,21 @@ export class FolkShapeOverlay extends FolkElement {
 
     this.#shape = shape;
     this.#shape.ownerElement.addEventListener('transform', this.#update);
+    this.#shape.transformStack.transforms.forEach((transform) => {
+      (transform as FolkSpaceAttribute).ownerElement.addEventListener('space-transform', this.#update);
+    });
     this.#update();
     this.#updateCursors();
     this.showPopover();
   }
 
   close() {
-    if (!this.isOpen) return;
+    if (!this.isOpen || !this.#shape) return;
 
-    this.#shape?.ownerElement.removeEventListener('transform', this.#update);
+    this.#shape.ownerElement.removeEventListener('transform', this.#update);
+    this.#shape.transformStack.transforms.forEach((transform) => {
+      (transform as FolkSpaceAttribute).ownerElement.removeEventListener('space-transform', this.#update);
+    });
     this.#shape = null;
     this.hidePopover();
   }
@@ -500,10 +507,14 @@ export class FolkShapeOverlay extends FolkElement {
   #update = () => {
     if (this.#shape === null) return;
 
-    this.style.top = `${toDOMPrecision(this.#shape.y)}px`;
-    this.style.left = `${toDOMPrecision(this.#shape.x)}px`;
-    this.style.width = `${toDOMPrecision(this.#shape.width)}px`;
-    this.style.height = `${toDOMPrecision(this.#shape.height)}px`;
+    const { x, y, width, height } = this.#shape;
+    let min = this.#shape.transformStack.mapPointToParent({ x: x, y: y });
+    let max = this.#shape.transformStack.mapPointToParent({ x: x + width, y: y + height });
+
+    this.style.left = `${toDOMPrecision(min.x)}px`;
+    this.style.top = `${toDOMPrecision(min.y)}px`;
+    this.style.width = `${toDOMPrecision(max.x - min.x)}px`;
+    this.style.height = `${toDOMPrecision(max.y - min.y)}px`;
     this.style.rotate = `${toDOMPrecision(this.#shape.rotation)}rad`;
   };
 

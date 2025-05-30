@@ -16,7 +16,7 @@ import { FolkSpace } from '../folk-space';
 import { FolkSpectrogram } from '../folk-spectrogram';
 import { FolkSpreadsheet, FolkSpreadSheetCell, FolkSpreadsheetHeader } from '../folk-spreadsheet';
 import { FolkWebLLM } from '../folk-webllm';
-import { FolkZoomable } from '../folk-zoomable';
+import { FolkSpaceAttribute } from '../folk-zoomable';
 import { IntlNumber } from '../intl-elements/intl-number';
 
 declare global {
@@ -44,7 +44,7 @@ declare global {
 
   interface ElementAttributesMap {
     shape: FolkShapeAttribute | undefined;
-    zoom: FolkZoomable | undefined;
+    zoom: FolkSpaceAttribute | undefined;
   }
 
   interface ElementEventMap {

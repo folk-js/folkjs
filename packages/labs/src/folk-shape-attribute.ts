@@ -1,4 +1,4 @@
-import { css, CustomAttribute, customAttributes, ResizeManager } from '@folkjs/canvas';
+import { css, CustomAttribute, customAttributes, IPointTransform, ResizeManager, TransformStack } from '@folkjs/canvas';
 import type { Shape2DReadonly } from '@folkjs/geometry/Shape2D';
 import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';
@@ -17,7 +17,7 @@ export class TransformEvent extends Event {
   readonly #previous: Shape2DReadonly;
 
   constructor(current: Shape2DReadonly, previous: Shape2DReadonly) {
-    super('transform', { cancelable: true, bubbles: true });
+    super('transform', { cancelable: true, bubbles: true, composed: true });
     this.#current = current;
     this.#previous = previous;
   }
@@ -79,10 +79,8 @@ declare global {
 
 const resizeManager = new ResizeManager();
 
-interface Space {}
-
 export class ShapeConnectedEvent extends Event {
-  #spaces: Space[] = [];
+  #spaces: IPointTransform[] = [];
 
   get spaces() {
     return this.#spaces;
@@ -100,8 +98,9 @@ export class ShapeConnectedEvent extends Event {
     this.#shape = shape;
   }
 
-  registerSpace(space: Space) {
-    this.#spaces.unshift(space);
+  // order top-most parent space to the bottom-most local space
+  registerSpace(space: IPointTransform) {
+    this.#spaces.push(space);
   }
 }
 
@@ -375,7 +374,11 @@ export class FolkShapeAttribute extends CustomAttribute {
     return S.bounds(this.#shape);
   }
 
-  #spaces: Space[] = [];
+  #transformStack = new TransformStack();
+
+  get transformStack() {
+    return this.#transformStack;
+  }
 
   constructor(ownerElement: Element, name: string, value: string) {
     super(ownerElement, name, value);
@@ -395,7 +398,7 @@ export class FolkShapeAttribute extends CustomAttribute {
 
     const event = new ShapeConnectedEvent(this);
     this.ownerElement.dispatchEvent(event);
-    this.#spaces = Array.from(event.spaces);
+    this.#transformStack = new TransformStack(event.spaces);
   }
 
   override changedCallback(_oldValue: string, newValue: string): void {
@@ -403,6 +406,7 @@ export class FolkShapeAttribute extends CustomAttribute {
     let autoY = true;
     let autoHeight = true;
     let autoWidth = true;
+
     for (const property of newValue.split(';')) {
       const [name, value] = property.split(':').map((str) => str.trim());
       const parsedValue = Number(value);
