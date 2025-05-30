@@ -1,8 +1,5 @@
-import { FolkShapeAttribute } from '@folkjs/labs/folk-shape-attribute';
-import { FolkZoomable } from '@folkjs/labs/folk-zoomable';
-
-FolkShapeAttribute.define();
-FolkZoomable.define();
+import '@folkjs/labs/standalone/folk-shape-attribute';
+import '@folkjs/labs/standalone/folk-zoomable';
 
 document.body.setAttribute('folk-zoomable', '');
 
