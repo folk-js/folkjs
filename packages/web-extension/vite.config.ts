@@ -1,5 +1,5 @@
+import tla from 'rollup-plugin-tla';
 import { defineConfig } from 'vite';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import wasm from 'vite-plugin-wasm';
 import webExtension from 'vite-plugin-web-extension';
 
@@ -13,7 +13,9 @@ export default defineConfig({
   },
   plugins: [
     wasm(),
-    topLevelAwait(),
+    // the vite-plugin-top-level-await doesnt work with iife outputs
+
+    tla(),
     webExtension({
       manifest: 'src/manifest.json',
       additionalInputs: [

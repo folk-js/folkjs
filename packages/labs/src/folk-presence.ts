@@ -301,8 +301,6 @@ export class FolkPresence extends FolkElement {
     // Check if the container is a FolkSpace
     if (this.#container instanceof FolkSpace) {
       this.#folkSpace = this.#container;
-    } else {
-      console.error('FolkMultiplayerPointers must be a child of FolkSpace');
     }
 
     // Initialize Automerge with initial state
