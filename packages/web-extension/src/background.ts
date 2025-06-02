@@ -4,7 +4,7 @@ let activeTabId: number | null = null;
 let activeRequests = 0;
 
 function onBeforeRequest() {
-  if (activeRequests === 0 && activeTabId) {
+  if (activeRequests === 0 && activeTabId !== null) {
     browser.tabs.sendMessage(activeTabId, { networkMonitor: true });
   }
 
@@ -14,7 +14,7 @@ function onBeforeRequest() {
 function onRequestCompleted() {
   activeRequests -= 1;
 
-  if (activeRequests === 0 && activeTabId) {
+  if (activeRequests === 0 && activeTabId !== null) {
     browser.tabs.sendMessage(activeTabId, { networkMonitor: false });
   }
 }

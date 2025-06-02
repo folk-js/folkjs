@@ -41,6 +41,9 @@ function selectScript(prototype: string) {
             networkMonitor.removeAttribute('active');
           }
         }
+        // make sure to send a response back
+        // due to a race condition we might see an error or two since this listener isnt set up before the background script
+        return Promise.resolve(true);
       });
       break;
     }
