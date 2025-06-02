@@ -11,23 +11,38 @@ function selectScript(prototype: string) {
   switch (prototype) {
     case 'canvasify': {
       injectScript('src/injected/canvasify.js');
-      return;
+      break;
     }
     case 'copyAndPaste': {
       injectScript('src/injected/copy-and-paste.js');
-      return;
+      break;
     }
     case 'presence': {
       injectScript('src/injected/presence.js');
-      return;
+      break;
     }
     case 'cross-iframe-relationships': {
       injectScript('src/injected/cross-iframe-relationships.js');
-      return;
+      break;
     }
-    case 'dom3D': {
+    case 'dom3d': {
       injectScript('src/injected/dom3d.js');
-      return;
+      break;
+    }
+    case 'network-indicator': {
+      injectScript('src/injected/network-indicator.js');
+
+      browser.runtime.onMessage.addListener((event: unknown) => {
+        if (event && typeof event === 'object' && 'networkMonitor' in event) {
+          const networkMonitor = document.documentElement.querySelector('#folk-network-indicator')!;
+          if (event.networkMonitor) {
+            networkMonitor.setAttribute('active', '');
+          } else {
+            networkMonitor.removeAttribute('active');
+          }
+        }
+      });
+      break;
     }
   }
 }

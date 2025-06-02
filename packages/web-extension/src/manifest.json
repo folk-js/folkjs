@@ -2,13 +2,17 @@
   "name": "FolkJS",
   "version": "1.0.0",
   "manifest_version": 3,
-  "permissions": ["scripting", "storage"],
+  "permissions": ["scripting", "storage", "webRequest"],
+  "host_permissions": ["<all_urls>"],
   "action": {
     "default_icon": {
       "32": "/icon32.png"
     },
     "default_title": "folkjs",
     "default_popup": "src/popup/index.html"
+  },
+  "background": {
+    "service_worker": "src/background.ts"
   },
   "content_scripts": [
     {
@@ -24,7 +28,8 @@
         "src/injected/copy-and-paste.js",
         "src/injected/presence.js",
         "src/injected/cross-iframe-relationships.js",
-        "src/injected/dom3d.js"
+        "src/injected/dom3d.js",
+        "src/injected/network-indicator.js"
       ],
       "matches": ["<all_urls>"]
     }

@@ -22,6 +22,7 @@ export default defineConfig({
         'src/injected/presence.ts',
         'src/injected/cross-iframe-relationships.ts',
         'src/injected/dom3d.ts',
+        'src/injected/network-indicator.ts',
       ],
     }),
   ],
