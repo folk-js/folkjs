@@ -55,9 +55,17 @@
         }
       });
 
+      window.range.addEventListener('click', (e) => {
+        const clipboardItem = new ClipboardItem({
+          'text/plain': e.target.textContent,
+        });
+
+        navigator.clipboard.write([clipboardItem]);
+      });
+
       function init() {
         const rangeString = localStorage.getItem('range');
-        console.log(rangeString);
+
         if (rangeString === null) return;
 
         const range = decodeRange(rangeString);
