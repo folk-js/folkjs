@@ -11,7 +11,7 @@ const styles = css`
   }
 `;
 
-export function selectDOMElement(signal: AbortSignal, selectorFilter?: string): Promise<Element> {
+export function selectDOMElement(signal: AbortSignal, selectorFilter: string = '*'): Promise<Element> {
   document.adoptedStyleSheets.push(styles);
 
   const { resolve, reject, promise } = Promise.withResolvers<Element>();
@@ -20,8 +20,8 @@ export function selectDOMElement(signal: AbortSignal, selectorFilter?: string): 
 
   function onPointerOver(event: PointerEvent) {
     el?.removeAttribute('folk-hovered-element');
-    el = event.target as HTMLElement;
-    el.setAttribute('folk-hovered-element', '');
+    el = (event.target as HTMLElement).closest(selectorFilter);
+    el?.setAttribute('folk-hovered-element', '');
   }
 
   function cleanUp() {

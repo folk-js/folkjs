@@ -459,7 +459,7 @@
       window.select = async () => {
         const c = new AbortController();
         // setTimeout(() => c.abort(), 2000)
-        const el = await selectDOMElement(c.signal);
+        const el = await selectDOMElement(c.signal, 'a');
         console.log(el)
       }
     </script>
