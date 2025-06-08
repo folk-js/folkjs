@@ -11,10 +11,8 @@ const styles = css`
   }
 `;
 
-export function selectDOMElement(signal: AbortSignal, selectorFilter: string = '*'): Promise<Element> {
-  document.adoptedStyleSheets.push(styles);
-
-  const { resolve, reject, promise } = Promise.withResolvers<Element>();
+export function selectDOMElement(signal: AbortSignal, selectorFilter: string = '*') {
+  const { resolve, promise } = Promise.withResolvers<Element | null>();
 
   let el: HTMLElement | null = null;
 
@@ -29,12 +27,24 @@ export function selectDOMElement(signal: AbortSignal, selectorFilter: string = '
     signal.removeEventListener('abort', onAbort);
     window.removeEventListener('pointerover', onPointerOver, { capture: true });
     window.removeEventListener('click', onSelection, { capture: true });
+    window.removeEventListener('keydown', onKeyDown, { capture: true });
     document.adoptedStyleSheets.splice(document.adoptedStyleSheets.indexOf(styles), 1);
   }
 
   function onAbort() {
     cleanUp();
-    reject(new DOMException(signal.reason || 'signal is aborted without reason', 'AbortError'));
+    resolve(null);
+  }
+
+  // don't preventDefault so
+  function onKeyDown(event: KeyboardEvent) {
+    if (event.key !== 'Escape') return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    onAbort();
   }
 
   function onSelection(event: MouseEvent) {
@@ -51,6 +61,8 @@ export function selectDOMElement(signal: AbortSignal, selectorFilter: string = '
   signal.addEventListener('abort', onAbort);
   window.addEventListener('pointerover', onPointerOver, { capture: true });
   window.addEventListener('click', onSelection, { capture: true });
+  window.addEventListener('keydown', onKeyDown, { capture: true });
+  document.adoptedStyleSheets.push(styles);
 
   return promise;
 }

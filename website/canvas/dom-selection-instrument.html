@@ -449,17 +449,20 @@
        </div>
     </div>
 
-    <button style="position: fixed; top: 1rem; right: 1rem;" onclick="select()">
-      Select Element
-    </button>
-
+    <div style="position: fixed; top: 1rem; right: 1rem;">
+      <label>Selector: <input id="selectorInput" type="text"/> </label>
+      <button  onclick="select()">
+        Select Element
+      </button>
+    </div>
+    
     <script type="module">
       
       import {selectDOMElement} from '@folkjs/labs/instruments/dom-selection'
       window.select = async () => {
         const c = new AbortController();
         // setTimeout(() => c.abort(), 2000)
-        const el = await selectDOMElement(c.signal, 'a');
+        const el = await selectDOMElement(c.signal, window.selectorInput.value || undefined);
         console.log(el)
       }
     </script>

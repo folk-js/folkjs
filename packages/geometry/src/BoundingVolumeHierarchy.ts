@@ -2,6 +2,8 @@ import * as R from './Rect2D.ts';
 import * as S from './Shape2D.ts';
 import * as V from './Vector2.ts';
 
+// Look into https://github.com/mourner/rbush
+
 export interface BVHLeafNode<T> {
   value: T;
   aabb: R.Rect2D;
