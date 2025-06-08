@@ -1,42 +1,40 @@
 import { css } from '@folkjs/dom/tags';
 
 const styles = css`
-  body:has([folk-hovered-element]) {
-    cursor: default !important;
+  html:has([folk-hovered-element]) * {
+    cursor: default;
   }
 
   [folk-hovered-element] {
     outline: solid 1px blue !important;
+  }
+
+  [folk-hovered-element],
+  [folk-hovered-element] * {
     cursor: pointer !important;
   }
 `;
 
-export function selectDOMElement(signal: AbortSignal, selectorFilter: string = '*') {
+export function selectDOMElement(cancellationSignal: AbortSignal, filter?: (el: Element) => Element | null) {
   const { resolve, promise } = Promise.withResolvers<Element | null>();
 
-  let el: HTMLElement | null = null;
+  let el: Element | null = null;
 
   function onPointerOver(event: PointerEvent) {
     el?.removeAttribute('folk-hovered-element');
-    el = (event.target as HTMLElement).closest(selectorFilter);
+    if (filter !== undefined) {
+      el = filter(event.target as Element);
+    } else {
+      el = event.target as Element;
+    }
     el?.setAttribute('folk-hovered-element', '');
   }
 
-  function cleanUp() {
-    el?.removeAttribute('folk-hovered-element');
-    signal.removeEventListener('abort', onAbort);
-    window.removeEventListener('pointerover', onPointerOver, { capture: true });
-    window.removeEventListener('click', onSelection, { capture: true });
-    window.removeEventListener('keydown', onKeyDown, { capture: true });
-    document.adoptedStyleSheets.splice(document.adoptedStyleSheets.indexOf(styles), 1);
-  }
-
-  function onAbort() {
+  function onCancel() {
     cleanUp();
     resolve(null);
   }
 
-  // don't preventDefault so
   function onKeyDown(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
 
@@ -44,21 +42,37 @@ export function selectDOMElement(signal: AbortSignal, selectorFilter: string = '
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    onAbort();
+    onCancel();
   }
 
   function onSelection(event: MouseEvent) {
-    if (!(event.target instanceof Element)) return;
-
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    cleanUp();
-    resolve(event.target);
+    if (filter !== undefined) {
+      const el = filter(event.target as Element);
+
+      if (el) {
+        cleanUp();
+        resolve(el);
+      }
+    } else {
+      cleanUp();
+      resolve(event.target as Element);
+    }
   }
 
-  signal.addEventListener('abort', onAbort);
+  function cleanUp() {
+    el?.removeAttribute('folk-hovered-element');
+    cancellationSignal.removeEventListener('abort', onCancel);
+    window.removeEventListener('pointerover', onPointerOver, { capture: true });
+    window.removeEventListener('click', onSelection, { capture: true });
+    window.removeEventListener('keydown', onKeyDown, { capture: true });
+    document.adoptedStyleSheets.splice(document.adoptedStyleSheets.indexOf(styles), 1);
+  }
+
+  cancellationSignal.addEventListener('abort', onCancel);
   window.addEventListener('pointerover', onPointerOver, { capture: true });
   window.addEventListener('click', onSelection, { capture: true });
   window.addEventListener('keydown', onKeyDown, { capture: true });

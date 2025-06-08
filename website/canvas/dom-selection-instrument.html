@@ -29,6 +29,15 @@
         position: fixed;
         right: 0.5rem;
       }
+
+      #instruments {
+        position: fixed; 
+        top: 1rem; 
+        right: 1rem;
+        background: rgba(0, 0, 0, 0.25);
+        border-radius: 5px;
+        padding: 1rem
+      }
     </style>
   </head>
   <body>
@@ -449,21 +458,39 @@
        </div>
     </div>
 
-    <div style="position: fixed; top: 1rem; right: 1rem;">
+    <div id="instruments">
       <label>Selector: <input id="selectorInput" type="text"/> </label>
       <button  onclick="select()">
         Select Element
+      </button>
+      <button  onclick="selectMany()">
+        Select Elements
       </button>
     </div>
     
     <script type="module">
       
       import {selectDOMElement} from '@folkjs/labs/instruments/dom-selection'
+      import {selectDOMElements} from '@folkjs/labs/instruments/dom-multi-selection'
+
+      function filter(el) {
+        const value = window.selectorInput.value;
+        return value === '' ? el : el.closest(value)
+      }
+     
       window.select = async () => {
-        const c = new AbortController();
+        const cancel = new AbortController();
         // setTimeout(() => c.abort(), 2000)
-        const el = await selectDOMElement(c.signal, window.selectorInput.value || undefined);
+        const el = await selectDOMElement(cancel.signal, filter);
         console.log(el)
+      }
+
+      window.selectMany = async () => {
+        const complete = AbortSignal.timeout(5000);
+        const cancel = new AbortController();
+        // setTimeout(() => c.abort(), 2000)
+        const elements = await selectDOMElements(complete, cancel.signal, filter);
+        console.log(elements)
       }
     </script>
  </body>
