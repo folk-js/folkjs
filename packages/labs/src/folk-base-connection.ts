@@ -1,6 +1,26 @@
-import { type ClientRectObserverEntry, FolkElement, parseVertex } from '@folkjs/canvas';
+import { type ClientRectObserverEntry, FolkElement } from '@folkjs/canvas';
 import { css, type CSSResultGroup, property, type PropertyValues, state } from '@folkjs/canvas/reactive-element';
+import type { Point, Vector2 } from '@folkjs/geometry/Vector2';
 import { FolkObserver, parseDeepCSSSelector } from './folk-observer';
+
+const vertexRegex = /\:\:point\((?<x>-?([0-9]*[.])?[0-9]+),\s*(?<y>-?([0-9]*[.])?[0-9]+)\)/;
+
+export function decodePointToPseudoElement(str: string): Vector2 | null {
+  const results = vertexRegex.exec(str);
+
+  if (results === null || results.groups === undefined) return null;
+
+  const { x, y } = results.groups;
+
+  return {
+    x: Number(x),
+    y: Number(y),
+  };
+}
+
+export function encodeToPseudoElement(v: Point): string {
+  return `::point(${v.x}, ${v.y})`;
+}
 
 const folkObserver = new FolkObserver();
 
@@ -20,15 +40,29 @@ export class FolkBaseConnection extends FolkElement {
 
   @state() sourceElement: Element | null = null;
 
+  @state() sourceRange: Range | null = null;
+
+  @state() sourcePoint: Point | null = null;
+
   @state() sourceRect: DOMRectReadOnly | null = null;
 
   @property({ reflect: true }) target?: string;
 
   #targetIframeSelector: string | undefined = undefined;
 
+  @state() targetElement: Element | null = null;
+
+  @state() targetRange: Range | null = null;
+
+  @state() targetPoint: Point | null = null;
+
   @state() targetRect: DOMRectReadOnly | null = null;
 
-  @state() targetElement: Element | null = null;
+  override createRenderRoot() {
+    const root = super.createRenderRoot();
+
+    return root;
+  }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
@@ -42,10 +76,10 @@ export class FolkBaseConnection extends FolkElement {
 
       if (!this.source) return;
 
-      const vertex = parseVertex(this.source);
+      const point = decodePointToPseudoElement(this.source);
 
-      if (vertex) {
-        this.sourceRect = DOMRectReadOnly.fromRect(vertex);
+      if (point) {
+        this.sourceRect = DOMRectReadOnly.fromRect(point);
       } else {
         const [el] = parseDeepCSSSelector(this.source);
 
@@ -69,10 +103,10 @@ export class FolkBaseConnection extends FolkElement {
 
       if (!this.target) return;
 
-      const vertex = parseVertex(this.target);
+      const point = decodePointToPseudoElement(this.target);
 
-      if (vertex) {
-        this.targetRect = DOMRectReadOnly.fromRect(vertex);
+      if (point) {
+        this.targetRect = DOMRectReadOnly.fromRect(point);
       } else {
         const [el] = parseDeepCSSSelector(this.target);
 
