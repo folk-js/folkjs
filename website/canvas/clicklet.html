@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Clicklet Builder</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: monospace;
+        margin: 0;
+        padding: 20px;
+        background: #fff;
+        color: #000;
+        line-height: 1.5;
+      }
+
+      .container {
+        max-width: 600px;
+        margin: 0 auto;
+        border: 2px solid #000;
+        padding: 20px;
+      }
+
+      h1 {
+        margin: 0 0 20px 0;
+        font-size: 24px;
+        font-weight: normal;
+        text-align: center;
+        border-bottom: 1px solid #000;
+        padding-bottom: 10px;
+      }
+
+      .section {
+        margin-bottom: 20px;
+        padding: 15px;
+        border: 1px solid #000;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #000;
+        background: #fff;
+        font-family: monospace;
+        font-size: 14px;
+      }
+
+      input:focus,
+      textarea:focus {
+        outline: 2px solid #000;
+        outline-offset: -2px;
+      }
+
+      textarea {
+        resize: vertical;
+        min-height: 80px;
+      }
+
+      button {
+        padding: 10px 20px;
+        background: #000;
+        color: #fff;
+        border: none;
+        font-family: monospace;
+        font-size: 14px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+
+      button:hover {
+        background: #333;
+      }
+
+      button:active {
+        background: #666;
+      }
+
+      .output {
+        background: #f8f8f8;
+        border: 1px dashed #000;
+        padding: 15px;
+        margin: 10px 0;
+        font-family: monospace;
+        font-size: 12px;
+        word-break: break-all;
+        display: none;
+      }
+
+      .bookmarklet-link {
+        display: inline-block;
+        padding: 10px;
+        background: #000;
+        color: #fff;
+        text-decoration: none;
+        margin: 10px 0;
+      }
+
+      .bookmarklet-link:hover {
+        background: #333;
+      }
+
+      .test-area {
+        border: 1px solid #000;
+        padding: 15px;
+        margin: 10px 0;
+      }
+
+      .test-area > div {
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px dashed #ccc;
+      }
+
+      .test-area > div:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+      }
+
+      .image-gallery img {
+        margin-right: 10px;
+        border: 1px solid #ccc;
+      }
+
+      .test-area h4,
+      .test-area h5 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+      }
+
+      .test-area p {
+        margin: 5px 0;
+        font-size: 13px;
+      }
+
+      .instructions {
+        font-size: 12px;
+        margin: 10px 0;
+        padding: 10px;
+        background: #f0f0f0;
+        border-left: 3px solid #000;
+      }
+
+      .code {
+        font-family: monospace;
+        background: #f8f8f8;
+        padding: 2px 4px;
+        border: 1px solid #ccc;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Clicklet Builder</h1>
+
+      <p style="text-align: center; margin: 0 0 20px 0; color: #666; font-style: italic">
+        A clicklet is a bookmarklet that lets you click any element on a webpage to extract data from its descendants.
+        It's a 'micro-tool' of sorts.
+      </p>
+
+      <div class="section">
+        <label for="selector">CSS Selector:</label>
+        <input type="text" id="selector" placeholder="img" value="img" />
+        <div class="instructions"> CSS selector to find elements within the clicked target </div>
+      </div>
+
+      <div class="section">
+        <label for="action">JavaScript Action:</label>
+        <textarea id="action" placeholder="return el.src || el.href">return el.src || el.href</textarea>
+        <div class="instructions">
+          JavaScript expression that takes an element <span class="code">el</span> and returns a value
+        </div>
+      </div>
+
+      <div class="section">
+        <label for="separator">Separator:</label>
+        <input type="text" id="separator" placeholder="\n" value="\n" />
+        <div class="instructions"> How to join multiple results</div>
+      </div>
+
+      <div class="section">
+        <button onclick="generate()">Generate Clicklet</button>
+        <button onclick="test()">Test</button>
+
+        <div id="output" class="output">
+          <!-- Generated bookmarklet will appear here -->
+        </div>
+      </div>
+
+      <div class="section">
+        <strong>Test Area:</strong>
+        <div class="test-area">
+          <div class="image-gallery">
+            <img src="https://picsum.photos/120/80?random=1" alt="Random 1" data-id="img1" />
+            <img src="https://picsum.photos/120/80?random=2" alt="Random 2" data-id="img2" />
+            <img src="https://picsum.photos/120/80?random=3" alt="Random 3" data-src="lazy-loaded.jpg" />
+          </div>
+
+          <div class="links-section">
+            <p
+              >Links: <a href="https://github.com">GitHub</a> |
+              <a href="https://stackoverflow.com">Stack Overflow</a></p
+            >
+            <a href="mailto:test@example.com" data-type="email">Email Link</a>
+          </div>
+
+          <div class="content-section">
+            <h4>Sample Heading</h4>
+            <p class="description">This paragraph has some text content to extract.</p>
+            <span data-price="29.99" data-currency="USD">Price: $29.99</span>
+          </div>
+
+          <div class="nested-content">
+            <article>
+              <h5>Article Title</h5>
+              <img src="https://picsum.photos/80/60?random=4" alt="Article thumb" />
+              <p>Article content with <strong>bold text</strong> and <em>italic text</em>.</p>
+            </article>
+          </div>
+        </div>
+        <div id="testResult"></div>
+      </div>
+
+      <div class="instructions">
+        <strong>Usage:</strong><br />
+        1. Enter CSS selector and action<br />
+        2. Generate clicklet<br />
+        3. Drag link to bookmarks<br />
+        4. On any page: click bookmark → click target element
+      </div>
+    </div>
+
+    <script>
+      let isActive = false;
+
+      function generate() {
+        const selector = document.getElementById('selector').value.trim();
+        const action = document.getElementById('action').value.trim();
+        const separator = document.getElementById('separator').value.replace('\\n', '\n');
+
+        if (!selector || !action) {
+          alert('Please fill in selector and action');
+          return;
+        }
+
+        const code = generateCode(selector, action, separator);
+        const url = `javascript:${encodeURIComponent(code)}`;
+
+        const output = document.getElementById('output');
+        output.style.display = 'block';
+        output.innerHTML = `
+          <div>Drag this link to bookmarks:</div>
+          <a href="${url}" class="bookmarklet-link">Clicklet</a>
+          <div style="margin-top: 10px; font-size: 11px; word-break: break-all;">
+            ${url}
+          </div>
+        `;
+      }
+
+      function generateCode(selector, action, separator) {
+        return `
+(function() {
+  if (window.clickletActive) {
+    document.body.style.cursor = '';
+    window.clickletActive = false;
+    return;
+  }
+  
+  window.clickletActive = true;
+  document.body.style.cursor = 'crosshair';
+  
+  let hoveredElement = null;
+  
+  function handleMouseOver(e) {
+    if (hoveredElement) {
+      hoveredElement.style.outline = '';
+    }
+    hoveredElement = e.target;
+    e.target.style.outline = '2px solid #ff4444';
+  }
+  
+  function handleMouseOut(e) {
+    e.target.style.outline = '';
+  }
+  
+  function handleClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const elements = e.target.querySelectorAll(${JSON.stringify(selector)});
+    if (!elements.length) {
+      alert('No elements found');
+      cleanup();
+      return;
+    }
+    
+    const results = [];
+    const actionCode = ${JSON.stringify(action)};
+    const actionFn = new Function('el', actionCode);
+    
+    elements.forEach(el => {
+      try {
+        const value = actionFn(el);
+        if (value) results.push(value);
+      } catch (err) {
+        console.error('Action error:', err);
+      }
+    });
+    
+    if (results.length) {
+      const text = results.join(${JSON.stringify(separator)});
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Copied ' + results.length + ' items');
+      }).catch(() => {
+        prompt('Copy:', text);
+      });
+    } else {
+      alert('No results');
+    }
+    
+    cleanup();
+  }
+  
+  function cleanup() {
+    document.body.style.cursor = '';
+    document.removeEventListener('click', handleClick, true);
+    document.removeEventListener('mouseover', handleMouseOver, true);
+    document.removeEventListener('mouseout', handleMouseOut, true);
+    if (hoveredElement) {
+      hoveredElement.style.outline = '';
+    }
+    window.clickletActive = false;
+  }
+  
+  document.addEventListener('click', handleClick, true);
+  document.addEventListener('mouseover', handleMouseOver, true);
+  document.addEventListener('mouseout', handleMouseOut, true);
+})();
+        `.trim();
+      }
+
+      function test() {
+        const selector = document.getElementById('selector').value.trim();
+        const action = document.getElementById('action').value.trim();
+
+        if (!selector || !action) {
+          alert('Please fill in selector and action');
+          return;
+        }
+
+        const code = generateCode(selector, action, '\n');
+
+        try {
+          eval(code);
+          document.getElementById('testResult').innerHTML =
+            '<div style="border: 1px solid #000; padding: 10px; margin-top: 10px;">Test active - click an element above</div>';
+        } catch (error) {
+          alert('Error: ' + error.message);
+        }
+      }
+    </script>
+  </body>
+</html>
