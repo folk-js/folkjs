@@ -107,6 +107,31 @@ export function dragToCreateElement<T extends Element = Element>(
   });
 }
 
+export async function dragToCreateShape<T extends Element = Element>(
+  container: HTMLElement,
+  cancellationSignal: AbortSignal,
+  createElement: () => T,
+): Promise<T | null> {
+  const el = await dragToCreateElement(
+    container,
+    cancellationSignal,
+    (point) => {
+      const element = createElement();
+      element.setAttribute('folk-shape', `x: ${point.x}; y: ${point.y}; width: 0; height: 0`);
+      return element;
+    },
+    (el, point) => {
+      const shape = el.shape;
+
+      if (shape === undefined) return;
+
+      shape.width = point.x - shape.x;
+      shape.height = point.y - shape.y;
+    },
+  );
+  return el;
+}
+
 export function dragToCreateConnection<T extends FolkBaseConnection = FolkBaseConnection>(
   container: Element,
   cancellationSignal: AbortSignal,
