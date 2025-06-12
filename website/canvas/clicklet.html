@@ -241,22 +241,51 @@
       </div>
     </div>
 
-    <script>
-      let isActive = false;
+    <script type="module">
+      import { selectElement } from '@folkjs/labs/interactions/dom-selection';
+      import selectElementCode from '@folkjs/labs/interactions/dom-selection?raw';
 
-      function generate() {
+      async function select(selector, action, separator) {
+        const cancel = new AbortController();
+
+        const el = await selectElement(cancel.signal, (el) => (!!el.querySelector(selector) ? el : null));
+
+        if (!el) return;
+
+        const results = [];
+        const actionFn = new Function('el', action);
+
+        el.querySelectorAll(selector).forEach((el) => {
+          try {
+            const value = actionFn(el);
+            if (value) results.push(value);
+          } catch (err) {
+            console.error('Action error:', err);
+          }
+        });
+
+        if (results.length === 0) return alert('No results');
+
+        const text = results.join(separator);
+
+        console.log(text);
+
+        await navigator.clipboard.writeText(text);
+        alert('Copied ' + results.length + ' items');
+      }
+
+      window.generate = function generate() {
         const selector = document.getElementById('selector').value.trim();
         const action = document.getElementById('action').value.trim();
         const separator = document.getElementById('separator').value.replace('\\n', '\n');
 
-        if (!selector || !action) {
-          alert('Please fill in selector and action');
-          return;
-        }
+        if (!selector || !action || !separator) return alert('Please fill in selector and action');
 
-        const code = generateCode(selector, action, separator);
+        const code = `${selectElementCode.replace('export ', '')}
+${select.toString()}
+await select('${selector}', ${JSON.stringify(action)}, ${JSON.stringify(separator)});`;
         const url = `javascript:${encodeURIComponent(code)}`;
-
+        console.log(code);
         const output = document.getElementById('output');
         output.style.display = 'block';
         output.innerHTML = `
@@ -266,109 +295,17 @@
             ${url}
           </div>
         `;
-      }
+      };
 
-      function generateCode(selector, action, separator) {
-        return `
-(function() {
-  if (window.clickletActive) {
-    document.body.style.cursor = '';
-    window.clickletActive = false;
-    return;
-  }
-  
-  window.clickletActive = true;
-  document.body.style.cursor = 'crosshair';
-  
-  let hoveredElement = null;
-  
-  function handleMouseOver(e) {
-    if (hoveredElement) {
-      hoveredElement.style.outline = '';
-    }
-    hoveredElement = e.target;
-    e.target.style.outline = '2px solid #ff4444';
-  }
-  
-  function handleMouseOut(e) {
-    e.target.style.outline = '';
-  }
-  
-  function handleClick(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const elements = e.target.querySelectorAll(${JSON.stringify(selector)});
-    if (!elements.length) {
-      alert('No elements found');
-      cleanup();
-      return;
-    }
-    
-    const results = [];
-    const actionCode = ${JSON.stringify(action)};
-    const actionFn = new Function('el', actionCode);
-    
-    elements.forEach(el => {
-      try {
-        const value = actionFn(el);
-        if (value) results.push(value);
-      } catch (err) {
-        console.error('Action error:', err);
-      }
-    });
-    
-    if (results.length) {
-      const text = results.join(${JSON.stringify(separator)});
-      navigator.clipboard.writeText(text).then(() => {
-        alert('Copied ' + results.length + ' items');
-      }).catch(() => {
-        prompt('Copy:', text);
-      });
-    } else {
-      alert('No results');
-    }
-    
-    cleanup();
-  }
-  
-  function cleanup() {
-    document.body.style.cursor = '';
-    document.removeEventListener('click', handleClick, true);
-    document.removeEventListener('mouseover', handleMouseOver, true);
-    document.removeEventListener('mouseout', handleMouseOut, true);
-    if (hoveredElement) {
-      hoveredElement.style.outline = '';
-    }
-    window.clickletActive = false;
-  }
-  
-  document.addEventListener('click', handleClick, true);
-  document.addEventListener('mouseover', handleMouseOver, true);
-  document.addEventListener('mouseout', handleMouseOut, true);
-})();
-        `.trim();
-      }
-
-      function test() {
+      window.test = async function test() {
         const selector = document.getElementById('selector').value.trim();
         const action = document.getElementById('action').value.trim();
+        const separator = document.getElementById('separator').value.replace('\\n', '\n');
 
-        if (!selector || !action) {
-          alert('Please fill in selector and action');
-          return;
-        }
+        if (!selector || !action || !separator) return alert('Please fill in selector and action');
 
-        const code = generateCode(selector, action, '\n');
-
-        try {
-          eval(code);
-          document.getElementById('testResult').innerHTML =
-            '<div style="border: 1px solid #000; padding: 10px; margin-top: 10px;">Test active - click an element above</div>';
-        } catch (error) {
-          alert('Error: ' + error.message);
-        }
-      }
+        await select(selector, action, separator);
+      };
     </script>
   </body>
 </html>

@@ -1,6 +1,5 @@
-import { css } from '@folkjs/dom/tags';
-
-const styles = css`
+const styles = new CSSStyleSheet();
+styles.replaceSync(`
   html:has([folk-hovered-element]) * {
     cursor: default;
   }
@@ -13,7 +12,7 @@ const styles = css`
   [folk-hovered-element] * {
     cursor: pointer !important;
   }
-`;
+`);
 
 export function selectElement(cancellationSignal: AbortSignal, filter?: (el: Element) => Element | null) {
   return new Promise<Element | null>((resolve) => {
