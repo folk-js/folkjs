@@ -15,7 +15,7 @@ const styles = css`
   }
 `;
 
-export function selectDOMElement(cancellationSignal: AbortSignal, filter?: (el: Element) => Element | null) {
+export function selectElement(cancellationSignal: AbortSignal, filter?: (el: Element) => Element | null) {
   return new Promise<Element | null>((resolve) => {
     let el: Element | null = null;
 

@@ -1,5 +1,5 @@
 import { css } from '@folkjs/dom/tags';
-import { selectDOMElement } from './dom-selection';
+import { selectElement } from './dom-selection';
 
 const styles = css`
   body:has([folk-selected-element]) {
@@ -12,7 +12,7 @@ const styles = css`
   }
 `;
 
-export function selectDOMElements(
+export function selectElements(
   completionSignal: AbortSignal,
   cancellationSignal: AbortSignal,
   filter?: (el: Element) => Element | null,
@@ -62,7 +62,7 @@ export function selectDOMElements(
     const signal = AbortSignal.any([completionSignal, cancellationSignal]);
 
     while (!(completionSignal.aborted || cancellationSignal.aborted)) {
-      const el = await selectDOMElement(signal, selectionFilter);
+      const el = await selectElement(signal, selectionFilter);
 
       if (el) {
         el.setAttribute('folk-selected-element', '');

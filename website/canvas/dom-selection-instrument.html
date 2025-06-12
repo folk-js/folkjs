@@ -38,6 +38,11 @@
         border-radius: 5px;
         padding: 1rem
       }
+
+      [folk-shape] {
+        border-radius: 5px;
+        border: 1px black solid;
+      }
     </style>
   </head>
   <body>
@@ -466,12 +471,21 @@
       <button  onclick="selectMany()">
         Select Elements
       </button>
+      <br />
+      <button  onclick="clickToCreate()">
+        Click to create
+      </button> 
+      <button  onclick="dragToCreate()">
+        Drag to create
+      </button>
     </div>
     
     <script type="module">
       
-      import {selectDOMElement} from '@folkjs/labs/interactions/dom-selection'
-      import {selectDOMElements} from '@folkjs/labs/interactions/dom-multi-selection'
+      import {selectElement} from '@folkjs/labs/interactions/dom-selection'
+      import {selectElements} from '@folkjs/labs/interactions/dom-multi-selection'
+      import {clickToCreateElement, dragToCreateElement} from '@folkjs/labs/interactions/create-element'
+      import '@folkjs/labs/standalone/folk-shape-attribute';
 
       function filter(el) {
         const value = window.selectorInput.value;
@@ -481,7 +495,7 @@
       window.select = async () => {
         const cancel = new AbortController();
         // setTimeout(() => c.abort(), 2000)
-        const el = await selectDOMElement(cancel.signal, filter);
+        const el = await selectElement(cancel.signal, filter);
         console.log(el)
       }
 
@@ -489,8 +503,39 @@
         const complete = AbortSignal.timeout(5000);
         const cancel = new AbortController();
         // setTimeout(() => c.abort(), 2000)
-        const elements = await selectDOMElements(complete, cancel.signal, filter);
+        const elements = await selectElements(complete, cancel.signal, filter);
         console.log(elements)
+      }
+
+      window.clickToCreate = async () => {
+        const cancel = new AbortController();
+
+        const el = await clickToCreateElement(document.body, cancel.signal, ({x, y}) => {
+          const div = document.createElement('div');
+          div.setAttribute('folk-shape', `x: ${x - 25}; y: ${y - 25}; width: 50; height: 50`);
+          return div;
+        })
+
+        setTimeout(() => el.focus());
+
+        console.log(el)
+      }
+
+      window.dragToCreate = async () => {
+        const cancel = new AbortController();
+
+        const el = await dragToCreateElement(document.body, cancel.signal, ({x, y}) => {
+          const div = document.createElement('div');
+          div.setAttribute('folk-shape', `x: ${x}; y: ${y}; width: 0; height: 0`);
+          return div;
+        }, (el, {x, y}) => {
+          el.shape.width = x - el.shape.x;
+          el.shape.height = y - el.shape.y;
+        })
+
+        setTimeout(() => el.focus());
+
+        console.log(el)
       }
     </script>
  </body>
