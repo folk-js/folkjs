@@ -45,18 +45,20 @@ export function selectElement(cancellationSignal: AbortSignal, filter?: (el: Ele
     }
 
     function onSelection(event: MouseEvent) {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-
       if (filter !== undefined) {
         const el = filter(event.target as Element);
 
         if (el) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
           cleanUp();
           resolve(el);
         }
       } else {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
         cleanUp();
         resolve(event.target as Element);
       }

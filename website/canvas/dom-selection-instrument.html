@@ -489,22 +489,31 @@
 
       function filter(el) {
         const value = window.selectorInput.value;
+
+        // ignore other tools
+        if (el.closest('#instruments')) return null;
+
         return value === '' ? el : el.closest(value)
       }
      
       window.select = async () => {
         const cancel = new AbortController();
-        // setTimeout(() => c.abort(), 2000)
         const el = await selectElement(cancel.signal, filter);
         console.log(el)
       }
 
+      let selectingManyComplete = null;
+
       window.selectMany = async () => {
-        const complete = AbortSignal.timeout(5000);
-        const cancel = new AbortController();
-        // setTimeout(() => c.abort(), 2000)
-        const elements = await selectElements(complete, cancel.signal, filter);
-        console.log(elements)
+        if (selectingManyComplete) {
+          selectingManyComplete.abort();
+        } else {
+          selectingManyComplete = new AbortController();
+          const cancel = new AbortController();
+          const elements = await selectElements(selectingManyComplete.signal, cancel.signal, filter);
+          selectingManyComplete = null;
+          console.log(elements)
+        }
       }
 
       window.clickToCreate = async () => {
