@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Optical Effects</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: monospace;
+        margin: 0;
+        padding: 20px;
+        background: #fff;
+        color: #000;
+        line-height: 1.5;
+      }
+
+      .container {
+        max-width: 800px;
+        margin: 0 auto;
+        border: 2px solid #000;
+        padding: 20px;
+      }
+
+      h1 {
+        margin: 0 0 20px 0;
+        font-size: 24px;
+        font-weight: normal;
+        text-align: center;
+      }
+
+      .section {
+        margin-bottom: 20px;
+        padding: 15px;
+        border: 1px solid #000;
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 15px;
+        margin-bottom: 15px;
+      }
+
+      .controls-merged {
+        display: grid;
+        grid-template-columns: 3fr 2fr;
+        gap: 40px;
+        margin-bottom: 15px;
+        align-items: start;
+      }
+
+      .shape-controls {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+        align-items: start;
+      }
+
+      .display-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding-left: 20px;
+        border-left: 1px solid #000;
+      }
+
+      .display-controls h4 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+        font-weight: bold;
+        font-family: monospace;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+        font-size: 12px;
+      }
+
+      input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #000;
+        background: #fff;
+        font-family: monospace;
+        font-size: 14px;
+      }
+
+      input:focus {
+        outline: 2px solid #000;
+        outline-offset: -2px;
+      }
+
+      select {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #000;
+        background: #fff;
+        font-family: monospace;
+        font-size: 14px;
+      }
+
+      button {
+        padding: 10px 20px;
+        background: #000;
+        color: #fff;
+        border: none;
+        font-family: monospace;
+        font-size: 14px;
+        cursor: pointer;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+
+      button:hover {
+        background: #333;
+      }
+
+      .range-input {
+        width: 100%;
+      }
+
+      .range-value {
+        font-size: 10px;
+        color: #666;
+        margin-top: 2px;
+        text-align: center;
+      }
+
+      .controls label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+        font-size: 12px;
+      }
+
+      .checkbox-label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-weight: bold;
+        font-size: 12px;
+        margin-bottom: 0;
+        padding: 4px 0;
+      }
+
+      .checkbox-label input[type='checkbox'] {
+        width: auto;
+        margin: 0;
+        flex-shrink: 0;
+      }
+
+      .current-polygon {
+        text-align: center;
+        margin: 20px 0 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Optical Effects</h1>
+
+      <div class="section">
+        <div class="controls-merged">
+          <div class="shape-controls">
+            <div>
+              <label for="shape-type">Type:</label>
+              <select id="shape-type">
+                <option value="regular">Regular</option>
+                <option value="irregular">Irregular</option>
+                <option value="random" selected>Random</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="sides">Sides</label>
+              <input
+                type="range"
+                id="sides"
+                min="3"
+                max="12"
+                value="5"
+                class="range-input"
+                oninput="updateValue('sides')"
+              />
+              <div class="range-value" id="sides-value">5</div>
+            </div>
+
+            <div>
+              <label for="randomness">Randomness</label>
+              <input
+                type="range"
+                id="randomness"
+                min="0"
+                max="1"
+                step="0.1"
+                value="0.6"
+                class="range-input"
+                oninput="updateValue('randomness')"
+              />
+              <div class="range-value" id="randomness-value">0.6</div>
+            </div>
+
+            <div>
+              <label for="array-count">Count</label>
+              <input
+                type="range"
+                id="array-count"
+                min="6"
+                max="20"
+                value="8"
+                class="range-input"
+                oninput="updateValue('array-count')"
+              />
+              <div class="range-value" id="array-count-value">8</div>
+            </div>
+          </div>
+
+          <div class="display-controls">
+            <h4 style="margin: 0 0 10px 0; font-size: 14px">Display Options</h4>
+            <label class="checkbox-label">
+              Path Centroid Alignment
+              <input type="checkbox" id="use-path-centroid" onchange="updateDisplay()" checked />
+            </label>
+            <label class="checkbox-label">
+              Show Bounding Boxes
+              <input type="checkbox" id="show-bounding-boxes" onchange="updateDisplay()" />
+            </label>
+            <label class="checkbox-label">
+              Show Axis Lines
+              <input type="checkbox" checked id="show-axis-lines" onchange="updateDisplay()" />
+            </label>
+          </div>
+        </div>
+        <button onclick="generateShapes()">Generate New Shapes</button>
+      </div>
+
+      <div class="current-polygon" id="currentPolygon"></div>
+    </div>
+
+    <script type="module">
+      import { createFittedSVGPolygon } from '@folkjs/labs/utils/svg-generator';
+      import { analyzePolygon } from '@folkjs/labs/utils/svg-analyzer';
+
+      // Global state
+      let cachedShapes = [];
+
+      window.updateValue = function (id) {
+        document.getElementById(id + '-value').textContent = document.getElementById(id).value;
+      };
+
+      window.generateShapes = function () {
+        cacheShapeData();
+        updateDisplay();
+      };
+
+      function cacheShapeData() {
+        const shapeType = document.getElementById('shape-type').value;
+        const sides = parseInt(document.getElementById('sides').value);
+        const arrayCount = parseInt(document.getElementById('array-count').value);
+        const randomness = parseFloat(document.getElementById('randomness').value);
+
+        // Cache array shapes with variety
+        cachedShapes = [];
+        const types = ['regular', 'irregular', 'random'];
+        const sideOptions = [3, 4, 5, 6, 7, 8, 10, 12];
+
+        for (let i = 0; i < arrayCount; i++) {
+          const type = shapeType === 'random' ? types[i % types.length] : shapeType;
+          const sideCount = shapeType === 'random' ? sideOptions[i % sideOptions.length] : sides;
+
+          const options = {
+            sides: sideCount,
+            type,
+            irregularity: randomness,
+            spikiness: randomness,
+          };
+
+          const svg = createFittedSVGPolygon(options, { size: 100, padding: 5 });
+          const analysis = analyzePolygon(svg);
+          cachedShapes.push({
+            svg,
+            analysis,
+            metadata: { type, sides: sideCount },
+          });
+        }
+      }
+
+      window.updateDisplay = function () {
+        const usePathCentroid = document.getElementById('use-path-centroid').checked;
+        const alignmentMethod = usePathCentroid ? 'path-centroid' : 'bounding-box';
+        const showBoundingBoxes = document.getElementById('show-bounding-boxes').checked;
+        const showAxisLines = document.getElementById('show-axis-lines').checked;
+
+        displayLinearArray(alignmentMethod, showBoundingBoxes, showAxisLines);
+      };
+
+      function displayLinearArray(alignmentMethod, showBoundingBoxes, showAxisLines) {
+        if (cachedShapes.length === 0) return;
+
+        const arrayWidth = 760; // Match the container width (800px - 40px padding)
+        const arrayHeight = 120; // Reduced height to remove excess space
+        const padding = 50; // Much more padding to prevent cropping
+        const shapeSpacing = (arrayWidth - padding * 2) / (cachedShapes.length - 1);
+
+        let shapesContent = '';
+
+        cachedShapes.forEach((shape, index) => {
+          const targetX = padding + index * shapeSpacing;
+          const targetY = arrayHeight / 2;
+
+          // Get alignment point
+          const alignPoint =
+            alignmentMethod === 'bounding-box' ? shape.analysis.boundingBoxCenter : shape.analysis.pathCentroid;
+
+          if (!alignPoint) return;
+
+          // Calculate offset to position shape at target
+          const offsetX = targetX - alignPoint.x;
+          const offsetY = targetY - alignPoint.y;
+
+          // Add the shape with transform
+          let shapeContent = shape.svg
+            .replace(/<svg[^>]*>/, `<g transform="translate(${offsetX}, ${offsetY})">`)
+            .replace('</svg>', '</g>');
+
+          // Add bounding box if requested
+          if (showBoundingBoxes) {
+            const bbox = shape.analysis.boundingBox;
+            shapeContent += `
+              <g transform="translate(${offsetX}, ${offsetY})">
+                <rect x="${bbox.minX}" y="${bbox.minY}" width="${bbox.width}" height="${bbox.height}"
+                      fill="none" stroke="#ff0000" stroke-width="1" stroke-dasharray="2,2"/>
+              </g>`;
+          }
+
+          shapesContent += shapeContent;
+        });
+
+        // Add axis lines if requested
+        let axisLines = '';
+        if (showAxisLines) {
+          // Horizontal line across the container
+          axisLines += `<line x1="0" y1="${arrayHeight / 2}" x2="${arrayWidth}" y2="${arrayHeight / 2}" stroke="#999" stroke-width="1" stroke-dasharray="3,3"/>`;
+
+          // Vertical lines at each polygon center
+          cachedShapes.forEach((shape, index) => {
+            const targetX = padding + index * shapeSpacing;
+            axisLines += `<line x1="${targetX}" y1="0" x2="${targetX}" y2="${arrayHeight}" stroke="#999" stroke-width="1" stroke-dasharray="3,3"/>`;
+          });
+        }
+
+        document.getElementById('currentPolygon').innerHTML = `
+          <svg width="${arrayWidth}" height="${arrayHeight}" viewBox="0 0 ${arrayWidth} ${arrayHeight}" 
+               style="border: 1px solid #000; background: white;" xmlns="http://www.w3.org/2000/svg">
+            ${axisLines}
+            ${shapesContent}
+          </svg>`;
+      }
+
+      // Initialize
+      generateShapes();
+    </script>
+  </body>
+</html>
