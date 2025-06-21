@@ -2,7 +2,7 @@
 export const glsl = String.raw;
 
 // Some websites with strict CSP require trusted types for using DOM APIS prone to XSS
-const policy = (window as any)?.trustedTypes.createPolicy('folkjs', {
+const policy = (window as any)?.trustedTypes?.createPolicy('folkjs', {
   createHTML: (s: string) => s,
 });
 
