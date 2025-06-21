@@ -245,7 +245,7 @@
 
     <script type="module">
       import { createFittedSVGPolygon } from '@folkjs/labs/utils/svg-generator';
-      import { analyzePolygon } from '@folkjs/labs/utils/svg-analyzer';
+      import * as optical from '@folkjs/labs/utils/svg-analyzer';
 
       // Global state
       let cachedShapes = [];
@@ -282,10 +282,21 @@
           };
 
           const svg = createFittedSVGPolygon(options, { size: 100, padding: 5 });
-          const analysis = analyzePolygon(svg);
+
+          // Get all optical measurements directly
+          const opticalCenter = optical.center(svg);
+          const opticalSize = optical.size(svg);
+          const opticalWeight = optical.weight(svg);
+          const boundingBox = optical.boundingBox(svg);
+          const boundingBoxCenter = optical.boundingBoxCenter(svg);
+
           cachedShapes.push({
             svg,
-            analysis,
+            opticalCenter,
+            opticalSize,
+            opticalWeight,
+            boundingBox,
+            boundingBoxCenter,
             metadata: { type, sides: sideCount },
           });
         }
@@ -298,14 +309,15 @@
         const showAxisLines = document.getElementById('show-axis-lines').checked;
 
         displayLinearArray(alignmentMethod, showBoundingBoxes, showAxisLines);
+        displayOpticalSizeArray(showBoundingBoxes, showAxisLines);
       };
 
       function displayLinearArray(alignmentMethod, showBoundingBoxes, showAxisLines) {
         if (cachedShapes.length === 0) return;
 
-        const arrayWidth = 760; // Match the container width (800px - 40px padding)
-        const arrayHeight = 120; // Reduced height to remove excess space
-        const padding = 50; // Much more padding to prevent cropping
+        const arrayWidth = 760;
+        const arrayHeight = 120;
+        const padding = 50;
         const shapeSpacing = (arrayWidth - padding * 2) / (cachedShapes.length - 1);
 
         let shapesContent = '';
@@ -315,8 +327,7 @@
           const targetY = arrayHeight / 2;
 
           // Get alignment point
-          const alignPoint =
-            alignmentMethod === 'bounding-box' ? shape.analysis.boundingBoxCenter : shape.analysis.pathCentroid;
+          const alignPoint = alignmentMethod === 'bounding-box' ? shape.boundingBoxCenter : shape.opticalCenter;
 
           if (!alignPoint) return;
 
@@ -331,7 +342,7 @@
 
           // Add bounding box if requested
           if (showBoundingBoxes) {
-            const bbox = shape.analysis.boundingBox;
+            const bbox = shape.boundingBox;
             shapeContent += `
               <g transform="translate(${offsetX}, ${offsetY})">
                 <rect x="${bbox.minX}" y="${bbox.minY}" width="${bbox.width}" height="${bbox.height}"
@@ -345,10 +356,8 @@
         // Add axis lines if requested
         let axisLines = '';
         if (showAxisLines) {
-          // Horizontal line across the container
           axisLines += `<line x1="0" y1="${arrayHeight / 2}" x2="${arrayWidth}" y2="${arrayHeight / 2}" stroke="#999" stroke-width="1" stroke-dasharray="3,3"/>`;
 
-          // Vertical lines at each polygon center
           cachedShapes.forEach((shape, index) => {
             const targetX = padding + index * shapeSpacing;
             axisLines += `<line x1="${targetX}" y1="0" x2="${targetX}" y2="${arrayHeight}" stroke="#999" stroke-width="1" stroke-dasharray="3,3"/>`;
@@ -356,11 +365,87 @@
         }
 
         document.getElementById('currentPolygon').innerHTML = `
+          <h4>Optical Alignment Comparison</h4>
           <svg width="${arrayWidth}" height="${arrayHeight}" viewBox="0 0 ${arrayWidth} ${arrayHeight}" 
                style="border: 1px solid #000; background: white;" xmlns="http://www.w3.org/2000/svg">
             ${axisLines}
             ${shapesContent}
           </svg>`;
+      }
+
+      function displayOpticalSizeArray(showBoundingBoxes, showAxisLines) {
+        if (cachedShapes.length === 0) return;
+
+        const arrayWidth = 760;
+        const arrayHeight = 120;
+        const padding = 50;
+        const shapeSpacing = (arrayWidth - padding * 2) / (cachedShapes.length - 1);
+
+        // Find min/max optical sizes for normalization
+        const sizes = cachedShapes.map((shape) => shape.opticalSize);
+        const minSize = Math.min(...sizes);
+        const maxSize = Math.max(...sizes);
+        const sizeRange = maxSize - minSize;
+
+        let shapesContent = '';
+
+        cachedShapes.forEach((shape, index) => {
+          const targetX = padding + index * shapeSpacing;
+          const targetY = arrayHeight / 2;
+
+          // Normalize optical size to scale factor (0.5 to 1.5)
+          const normalizedSize = sizeRange > 0 ? (shape.opticalSize - minSize) / sizeRange : 0.5;
+          const scaleFactor = 0.5 + normalizedSize * 1.0;
+
+          // Get optical center for positioning
+          const opticalCenter = shape.opticalCenter || shape.boundingBoxCenter;
+
+          // Calculate offset to position shape at target
+          const offsetX = targetX - opticalCenter.x * scaleFactor;
+          const offsetY = targetY - opticalCenter.y * scaleFactor;
+
+          // Add the shape with transform (scaled by optical size)
+          let shapeContent = shape.svg
+            .replace(/<svg[^>]*>/, `<g transform="translate(${offsetX}, ${offsetY}) scale(${scaleFactor})">`)
+            .replace('</svg>', '</g>');
+
+          // Add bounding box if requested
+          if (showBoundingBoxes) {
+            const bbox = shape.boundingBox;
+            shapeContent += `
+              <g transform="translate(${offsetX}, ${offsetY}) scale(${scaleFactor})">
+                <rect x="${bbox.minX}" y="${bbox.minY}" width="${bbox.width}" height="${bbox.height}"
+                      fill="none" stroke="#ff0000" stroke-width="1" stroke-dasharray="2,2"/>
+              </g>`;
+          }
+
+          shapesContent += shapeContent;
+        });
+
+        // Add axis lines if requested
+        let axisLines = '';
+        if (showAxisLines) {
+          axisLines += `<line x1="0" y1="${arrayHeight / 2}" x2="${arrayWidth}" y2="${arrayHeight / 2}" stroke="#999" stroke-width="1" stroke-dasharray="3,3"/>`;
+
+          cachedShapes.forEach((shape, index) => {
+            const targetX = padding + index * shapeSpacing;
+            axisLines += `<line x1="${targetX}" y1="0" x2="${targetX}" y2="${arrayHeight}" stroke="#999" stroke-width="1" stroke-dasharray="3,3"/>`;
+          });
+        }
+
+        const sizeArrayHtml = `
+          <h4>Optical Size Normalization</h4>
+          <svg width="${arrayWidth}" height="${arrayHeight}" viewBox="0 0 ${arrayWidth} ${arrayHeight}" 
+               style="border: 1px solid #000; background: white;" xmlns="http://www.w3.org/2000/svg">
+            ${axisLines}
+            ${shapesContent}
+          </svg>
+          <div style="font-size: 11px; color: #666; margin-top: 5px; text-align: center;">
+            Shapes scaled by optical.size() - smaller visual weight = larger scale
+          </div>`;
+
+        // Append to the existing display
+        document.getElementById('currentPolygon').innerHTML += '<br>' + sizeArrayHtml;
       }
 
       // Initialize

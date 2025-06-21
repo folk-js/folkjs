@@ -1,5 +1,5 @@
 /**
- * SVG Analysis utilities for extracting geometric information
+ * Optical effects utilities for accounting for visual perception in UI layouts
  */
 
 export interface Point {
@@ -16,17 +16,10 @@ export interface BoundingBox {
   height: number;
 }
 
-export interface PolygonAnalysis {
-  pathCentroid: Point | null; // Path-based centroid (works with self-intersections)
-  boundingBox: BoundingBox;
-  boundingBoxCenter: Point;
-  points: string;
-}
-
 /**
  * Extract polygon points from SVG element or string
  */
-export function extractPolygonPoints(svgInput: string | SVGElement): string {
+function extractPolygonPoints(svgInput: string | SVGElement): string {
   let polygonElement: Element | null;
 
   if (typeof svgInput === 'string') {
@@ -50,15 +43,15 @@ export function extractPolygonPoints(svgInput: string | SVGElement): string {
 }
 
 /**
- * Calculate center of gravity (centroid) of polygon path/stroke using line segments
- * This works for self-intersecting polygons, open paths, and complex shapes
+ * Calculate geometric centroid of polygon path using line segments
+ * This is a helper function - use optical.center() for UI alignment
  */
-export function calculateCentroid(pointsString: string, options: { closed?: boolean } = {}): Point | null {
+function calculatePathCentroid(pointsString: string, options: { closed?: boolean } = {}): Point | null {
   const { closed = true } = options;
   const pairs = pointsString.split(' ');
 
   if (pairs.length < 2) {
-    return null; // Need at least 2 points to form a path
+    return null;
   }
 
   const vertices = pairs.map((pair) => {
@@ -70,34 +63,28 @@ export function calculateCentroid(pointsString: string, options: { closed?: bool
   let weightedX = 0;
   let weightedY = 0;
 
-  // Calculate centroid based on line segments (the actual path)
   const segmentCount = closed ? vertices.length : vertices.length - 1;
 
   for (let i = 0; i < segmentCount; i++) {
     const currentVertex = vertices[i];
     const nextVertex = vertices[(i + 1) % vertices.length];
 
-    // Calculate length of this segment
     const dx = nextVertex.x - currentVertex.x;
     const dy = nextVertex.y - currentVertex.y;
     const segmentLength = Math.sqrt(dx * dx + dy * dy);
 
-    // Skip zero-length segments
     if (segmentLength < 1e-10) {
       continue;
     }
 
-    // Calculate centroid of this segment (midpoint)
     const segmentCentroidX = (currentVertex.x + nextVertex.x) / 2;
     const segmentCentroidY = (currentVertex.y + nextVertex.y) / 2;
 
-    // Weight by segment length
     totalLength += segmentLength;
     weightedX += segmentCentroidX * segmentLength;
     weightedY += segmentCentroidY * segmentLength;
   }
 
-  // Handle the case where total length is 0 (all segments are degenerate)
   if (totalLength < 1e-10) {
     return null;
   }
@@ -111,7 +98,7 @@ export function calculateCentroid(pointsString: string, options: { closed?: bool
 /**
  * Calculate bounding box of polygon points
  */
-export function calculateBoundingBox(pointsString: string): BoundingBox {
+function calculateBoundingBox(pointsString: string): BoundingBox {
   const pairs = pointsString.split(' ');
   let minX = Infinity,
     maxX = -Infinity,
@@ -130,21 +117,58 @@ export function calculateBoundingBox(pointsString: string): BoundingBox {
 }
 
 /**
- * Analyze an SVG polygon and return comprehensive geometric information
+ * Calculate optical center for UI alignment
+ * Currently uses path centroid but will be enhanced with perceptual adjustments
  */
-export function analyzePolygon(svgInput: string | SVGElement): PolygonAnalysis {
+export function center(svgInput: string | SVGElement): Point | null {
   const points = extractPolygonPoints(svgInput);
-  const pathCentroid = calculateCentroid(points);
-  const boundingBox = calculateBoundingBox(points);
-  const boundingBoxCenter = {
-    x: (boundingBox.minX + boundingBox.maxX) / 2,
-    y: (boundingBox.minY + boundingBox.maxY) / 2,
-  };
+  // TODO: Add perceptual adjustments for different shape types
+  return calculatePathCentroid(points);
+}
 
+/**
+ * Calculate optical size for consistent visual weight
+ * Currently uses bounding box area but will account for shape complexity
+ */
+export function size(svgInput: string | SVGElement): number {
+  const points = extractPolygonPoints(svgInput);
+  const bbox = calculateBoundingBox(points);
+  // TODO: Account for shape complexity, density, and visual mass
+  return bbox.width * bbox.height;
+}
+
+/**
+ * Calculate optical weight for visual hierarchy
+ * Accounts for area, density, and shape complexity
+ */
+export function weight(svgInput: string | SVGElement): number {
+  const points = extractPolygonPoints(svgInput);
+  const bbox = calculateBoundingBox(points);
+  const pairs = points.split(' ');
+
+  // Basic weight calculation: area + complexity factor
+  const area = bbox.width * bbox.height;
+  const complexity = pairs.length / 12; // Normalized by max sides in UI
+
+  // TODO: Add perceptual weight adjustments for different colors, strokes
+  return area * (1 + complexity * 0.3);
+}
+
+/**
+ * Get bounding box information for an SVG
+ */
+export function boundingBox(svgInput: string | SVGElement): BoundingBox {
+  const points = extractPolygonPoints(svgInput);
+  return calculateBoundingBox(points);
+}
+
+/**
+ * Get bounding box center for an SVG
+ */
+export function boundingBoxCenter(svgInput: string | SVGElement): Point {
+  const bbox = boundingBox(svgInput);
   return {
-    pathCentroid,
-    boundingBox,
-    boundingBoxCenter,
-    points,
+    x: (bbox.minX + bbox.maxX) / 2,
+    y: (bbox.minY + bbox.maxY) / 2,
   };
 }
