@@ -1,5 +1,6 @@
+import { type AnyDocumentId, DocHandle, isValidAutomergeUrl, Repo } from '@automerge/automerge-repo';
+import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 import { CustomAttribute } from '@folkjs/canvas';
-import { FolkAutomerge } from './FolkAutomerge';
 
 /**
  * Interface for DOM node attributes
@@ -46,8 +47,11 @@ interface SyncOperation {
 export class FolkSyncAttribute extends CustomAttribute {
   static override attributeName = 'folk-sync';
 
-  // The FolkAutomerge instance for network sync
-  #automerge!: FolkAutomerge<DOMNode>;
+  // Automerge repository and document handle
+  #repo!: Repo;
+  #handle!: DocHandle<DOMNode>;
+  #networkAdapter!: BrowserWebSocketClientAdapter;
+  #isLocalChange: boolean = false;
 
   // MutationObserver instance
   #observer: MutationObserver | null = null;
@@ -64,6 +68,38 @@ export class FolkSyncAttribute extends CustomAttribute {
   // Generate a unique ID for a node
   #generateNodeId(): string {
     return `node-${Math.random().toString(36).substring(2, 11)}`;
+  }
+
+  // Generate a random peer ID for this client
+  #generatePeerId(): string {
+    return `peer-${Math.floor(Math.random() * 1_000_000)}`;
+  }
+
+  // Create new document and update URL hash
+  #createNewDocAndUpdateHash(initialState?: DOMNode): void {
+    this.#handle = this.#repo.create<DOMNode>(initialState as any);
+
+    this.#handle.whenReady().then(() => {
+      window.location.hash = this.#handle.url;
+    });
+  }
+
+  // Apply changes to the document in a single transaction
+  #changeDocument(changeFunc: (doc: DOMNode) => void): void {
+    this.#isLocalChange = true;
+    try {
+      this.#handle.change((doc: any) => {
+        changeFunc(doc as DOMNode);
+      });
+    } finally {
+      // Reset the flag after the change is applied
+      this.#isLocalChange = false;
+    }
+  }
+
+  // Get the document URL that can be shared
+  #getDocumentId(): string {
+    return this.#handle.url;
   }
 
   /**
@@ -569,8 +605,8 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Handle DOM mutations and update Automerge document
    */
   #handleMutations(mutations: MutationRecord[]): void {
-    if (!this.#automerge) {
-      throw new Error('Cannot handle mutations: FolkAutomerge instance not initialized');
+    if (!this.#handle) {
+      throw new Error('Cannot handle mutations: Document handle not initialized');
     }
 
     // Process each mutation as an operation
@@ -581,7 +617,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         continue;
       }
 
-      this.#automerge.change((doc: DOMNode) => {
+      this.#changeDocument((doc: DOMNode) => {
         // If document is empty, initialize it
         if (!doc.nodeType) {
           console.log('Creating document from DOM');
@@ -825,50 +861,102 @@ export class FolkSyncAttribute extends CustomAttribute {
     this.#nodeToPath = new WeakMap<Node, string[]>();
     this.#pathToNode = new Map<string, Node>();
 
-    // Initialize FolkAutomerge for network sync with an empty constructor
-    this.#automerge = new FolkAutomerge<DOMNode>();
+    // Initialize Automerge repository and document
+    const peerId = this.#generatePeerId();
 
-    // When the document is ready, either initialize from the document or from the DOM
-    this.#automerge
-      .whenReady((doc) => {
+    // Check if there's a valid Automerge URL in the hash
+    const hashDocId = window.location.hash.slice(1);
+    let docId: string | undefined;
+
+    if (hashDocId && isValidAutomergeUrl(hashDocId)) {
+      docId = hashDocId;
+    }
+
+    // Set up the WebSocket network adapter
+    this.#networkAdapter = new BrowserWebSocketClientAdapter('wss://sync.automerge.org');
+
+    // Initialize the repo with network configuration
+    this.#repo = new Repo({
+      peerId: peerId as any,
+      network: [this.#networkAdapter],
+    });
+
+    // Either connect to existing document or create a new one
+    if (docId) {
+      this.#handle = this.#repo.find<DOMNode>(docId as unknown as AnyDocumentId);
+
+      // Verify document exists or create a new one
+      this.#handle.whenReady().then(async () => {
         try {
-          if (!doc.nodeType) {
-            // No valid document: serialize the DOM into the document
-            console.log('Initializing new document from DOM');
-            this.#automerge.change((newDoc) => {
-              // Serialize the owner element and copy all properties to the document
-              const serialized = this.#serializeNode(this.ownerElement);
-              Object.assign(newDoc, serialized);
-              console.log('Initialized document with DOM tree:', newDoc);
-            });
+          const doc = await this.#handle.doc();
+          if (!doc) {
+            this.#createNewDocAndUpdateHash();
           } else {
-            // Existing document: update the DOM to match
-            console.log('Initializing DOM from existing document');
-            // Completely replace the DOM subtree with the one from the Automerge document
-            this.#replaceDOMSubtree(doc);
+            this.#initializeWithDocument(doc);
           }
-
-          // Set up the change handler for future updates only after successful initialization
-          let previousDoc = doc;
-          this.#automerge.onRemoteChange((updatedDoc) => {
-            this.#handleDocumentChange(previousDoc, updatedDoc);
-            previousDoc = updatedDoc;
-          });
-
-          // Start observing only after successful initialization
-          this.#startObserving();
-
-          console.log('FolkSync successfully initialized with document ID:', this.#automerge.getDocumentId());
         } catch (error) {
-          console.error('FolkSync initialization failed:', error);
-          // Fail fast, don't try to recover
-          throw error;
+          console.error('Error finding document:', error);
+          this.#createNewDocAndUpdateHash();
+        }
+      });
+    } else {
+      this.#createNewDocAndUpdateHash();
+    }
+
+    // Set up initialization after document is ready
+    this.#handle
+      .whenReady()
+      .then(async () => {
+        const doc = await this.#handle.doc();
+        if (doc) {
+          this.#initializeWithDocument(doc);
         }
       })
-      .catch((error) => {
+      .catch((error: any) => {
         console.error('FolkSync initialization promise rejected:', error);
-        throw error; // Ensure errors in the promise chain are not swallowed
+        throw error;
       });
+  }
+
+  /**
+   * Initialize the sync system once we have a document
+   */
+  async #initializeWithDocument(doc: DOMNode): Promise<void> {
+    try {
+      if (!doc.nodeType) {
+        // No valid document: serialize the DOM into the document
+        console.log('Initializing new document from DOM');
+        this.#changeDocument((newDoc: DOMNode) => {
+          // Serialize the owner element and copy all properties to the document
+          const serialized = this.#serializeNode(this.ownerElement);
+          Object.assign(newDoc, serialized);
+          console.log('Initialized document with DOM tree:', newDoc);
+        });
+      } else {
+        // Existing document: update the DOM to match
+        console.log('Initializing DOM from existing document');
+        // Completely replace the DOM subtree with the one from the Automerge document
+        this.#replaceDOMSubtree(doc);
+      }
+
+      // Set up the change handler for future updates only after successful initialization
+      let previousDoc = doc;
+      this.#handle.on('change', ({ doc: updatedDoc }) => {
+        if (updatedDoc && !this.#isLocalChange) {
+          this.#handleDocumentChange(previousDoc, updatedDoc as DOMNode);
+          previousDoc = updatedDoc as DOMNode;
+        }
+      });
+
+      // Start observing only after successful initialization
+      this.#startObserving();
+
+      console.log('FolkSync successfully initialized with document ID:', this.#getDocumentId());
+    } catch (error) {
+      console.error('FolkSync initialization failed:', error);
+      // Fail fast, don't try to recover
+      throw error;
+    }
   }
 
   /**
