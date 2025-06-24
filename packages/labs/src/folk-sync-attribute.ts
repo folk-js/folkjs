@@ -941,8 +941,35 @@ export class FolkSyncAttribute extends CustomAttribute {
 
       // Set up the change handler for future updates only after successful initialization
       let previousDoc = doc;
-      this.#handle.on('change', ({ doc: updatedDoc }) => {
+      this.#handle.on('change', ({ doc: updatedDoc, patches }) => {
         if (updatedDoc && !this.#isLocalChange) {
+          // Log incoming patches for debugging
+          if (patches && patches.length > 0) {
+            console.log('📥 Incoming patches:', patches);
+            console.log(
+              '📊 Patch details:',
+              patches.map((patch) => {
+                const details: any = {
+                  action: patch.action,
+                  path: patch.path,
+                };
+
+                // Add type-specific properties
+                if (patch.action === 'put' || patch.action === 'splice') {
+                  details.value = (patch as any).value;
+                }
+                if (patch.action === 'splice') {
+                  details.length = (patch as any).length;
+                }
+                if (patch.action === 'del') {
+                  details.length = (patch as any).length;
+                }
+
+                return details;
+              }),
+            );
+          }
+
           this.#handleDocumentChange(previousDoc, updatedDoc as DOMNode);
           previousDoc = updatedDoc as DOMNode;
         }
