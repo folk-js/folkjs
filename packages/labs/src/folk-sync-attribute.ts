@@ -38,7 +38,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   #observer: MutationObserver | null = null;
 
   // Sync mappings - DOM node to Automerge symbol ID and vice versa
-  #domToAutomergeId = new WeakMap<Node, string>();
+  #domToAutomergeId = new Map<Node, string>();
   #automergeIdToDom = new Map<string, Node>();
 
   // Flag to prevent recursive updates
@@ -58,6 +58,34 @@ export class FolkSyncAttribute extends CustomAttribute {
     } else {
       console.error(`No ID found for automerge object:`, automergeNode);
     }
+  }
+
+  /**
+   * Find an Automerge node by its object ID by traversing the document
+   * NOTE: The hope is that this will become redundant with new automerge APIs to do direct mutations by id
+   */
+  #findAutomergeNodeById(rootNode: AutomergeElementNode, targetId: string): AutomergeNode | null {
+    // Check if this node matches
+    const nodeId = getObjectId(rootNode);
+    if (nodeId === targetId) {
+      return rootNode;
+    }
+
+    // Recursively search children
+    for (const child of rootNode.childNodes) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        const found = this.#findAutomergeNodeById(child, targetId);
+        if (found) return found;
+      } else {
+        // Check text/comment nodes
+        const childId = getObjectId(child);
+        if (childId === targetId) {
+          return child;
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -163,26 +191,120 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Handle DOM mutations - convert to Automerge changes
    */
   #handleDOMMutation(mutation: MutationRecord): void {
-    console.log(mutation);
-    console.log('mutated AUTOMERGE ID:', this.#domToAutomergeId.get(mutation.target));
-    switch (mutation.type) {
-      case 'attributes': {
-        // TODO: Handle attribute changes
-        break;
-      }
-      case 'characterData': {
-        // TODO: Handle text/comment content changes
-        break;
-      }
-      case 'childList': {
-        // TODO: Handle node additions/removals
-        break;
-      }
-      default: {
-        mutation.type satisfies never;
-        throw new Error(`Unhandled mutation type: ${mutation.type}`);
-      }
+    if (!this.#handle) {
+      console.warn('Cannot handle DOM mutation: Document handle not initialized');
+      return;
     }
+
+    console.log(mutation);
+
+    const targetId = this.#domToAutomergeId.get(mutation.target);
+    if (!targetId) {
+      console.warn('Cannot find Automerge ID for mutated DOM node:', mutation.target);
+      return;
+    }
+
+    console.log('Handling DOM mutation:', mutation.type, 'for node:', targetId);
+
+    // Set flag to indicate this is a local change
+    this.#isLocalChange = true;
+
+    this.#handle.change((doc) => {
+      const targetNode = this.#findAutomergeNodeById(doc, targetId);
+      if (!targetNode) {
+        console.warn('Cannot find Automerge node with ID:', targetId);
+        return;
+      }
+
+      switch (mutation.type) {
+        case 'attributes': {
+          if (targetNode.nodeType === Node.ELEMENT_NODE && mutation.attributeName) {
+            const element = mutation.target as Element;
+            const newValue = element.getAttribute(mutation.attributeName);
+
+            if (newValue === null) {
+              // Attribute was removed
+              delete targetNode.attributes[mutation.attributeName];
+            } else {
+              // Attribute was added or changed
+              targetNode.attributes[mutation.attributeName] = newValue;
+            }
+          }
+          break;
+        }
+        case 'characterData': {
+          if (targetNode.nodeType === Node.TEXT_NODE || targetNode.nodeType === Node.COMMENT_NODE) {
+            targetNode.textContent = mutation.target.textContent || '';
+          }
+          break;
+        }
+        case 'childList': {
+          if (targetNode.nodeType === Node.ELEMENT_NODE) {
+            // Handle removed nodes
+            for (const removedNode of mutation.removedNodes) {
+              const removedId = this.#domToAutomergeId.get(removedNode);
+              if (removedId) {
+                // Find and remove the corresponding Automerge node
+                const index = targetNode.childNodes.findIndex((child) => getObjectId(child) === removedId);
+                if (index !== -1) {
+                  targetNode.childNodes.splice(index, 1);
+                }
+                // Clean up mappings
+                this.#domToAutomergeId.delete(removedNode);
+                this.#automergeIdToDom.delete(removedId);
+              }
+            }
+
+            // Handle added nodes
+            for (const addedNode of mutation.addedNodes) {
+              let automergeNode: AutomergeNode;
+
+              switch (addedNode.nodeType) {
+                case Node.ELEMENT_NODE: {
+                  automergeNode = this.#buildAutomergeFromDOM(addedNode as Element);
+                  break;
+                }
+                case Node.TEXT_NODE: {
+                  automergeNode = {
+                    nodeType: Node.TEXT_NODE,
+                    textContent: addedNode.textContent || '',
+                  } satisfies AutomergeNode;
+                  break;
+                }
+                case Node.COMMENT_NODE: {
+                  automergeNode = {
+                    nodeType: Node.COMMENT_NODE,
+                    textContent: addedNode.textContent || '',
+                  } satisfies AutomergeNode;
+                  break;
+                }
+                default: {
+                  continue; // Skip unknown node types
+                }
+              }
+
+              // Find the correct insertion position
+              const domParent = mutation.target as Element;
+              const addedNodeIndex = Array.from(domParent.childNodes).indexOf(addedNode as ChildNode);
+
+              if (addedNodeIndex !== -1) {
+                targetNode.childNodes.splice(addedNodeIndex, 0, automergeNode);
+                // Store mapping for the new node
+                this.#storeMapping(addedNode, automergeNode);
+              }
+            }
+          }
+          break;
+        }
+        default: {
+          mutation.type satisfies never;
+          throw new Error(`Unhandled mutation type: ${mutation.type}`);
+        }
+      }
+    });
+
+    // Reset the flag
+    this.#isLocalChange = false;
   }
 
   /**
@@ -365,7 +487,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     this.#stopObserving();
 
     // Clear mappings
-    this.#domToAutomergeId = new WeakMap<Node, string>();
+    this.#domToAutomergeId = new Map<Node, string>();
     this.#automergeIdToDom = new Map<string, Node>();
 
     // Initialize with new hash
