@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <title>Folk Pipes</title>
+    <style>
+      body {
+        font-family: 'Recursive', Courier, monospace;
+        font-variation-settings:
+          'slnt' 0,
+          'wght' 400,
+          'CASL' 1,
+          'CRSV' 0,
+          'MONO' 0;
+        max-width: 900px;
+        margin: 2rem auto;
+        padding: 2rem;
+        line-height: 1.6;
+        background: #f5f5f5;
+      }
+
+      h1 {
+        font-variation-settings:
+          'CASL' 1,
+          'MONO' 1;
+        text-align: center;
+        margin-bottom: 2rem;
+      }
+
+      h2 {
+        font-weight: 800;
+        font-variation-settings: 'wght' 800;
+        margin: 3rem 0 1rem;
+      }
+
+      p {
+        margin-bottom: 1rem;
+        color: #666;
+      }
+
+      section {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin: 1rem 0;
+        flex-wrap: wrap;
+      }
+
+      section > *:not(folk-pipe) {
+        min-width: 200px;
+        flex: 1;
+      }
+
+      input,
+      textarea,
+      select {
+        padding: 0.5rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font: inherit;
+      }
+
+      pre,
+      code,
+      [contenteditable] {
+        background: #f8f8f8;
+        padding: 0.5rem;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        min-height: 2rem;
+      }
+
+      button {
+        background: #007acc;
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+        margin: 0.25rem;
+      }
+
+      button:hover {
+        background: #005a9c;
+      }
+
+      canvas {
+        border: 2px solid #007acc;
+        border-radius: 4px;
+        cursor: crosshair;
+        background: white;
+      }
+
+      img {
+        max-width: 200px;
+        max-height: 150px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Folk Pipes</h1>
+    <p>The <code>&lt;folk-pipe&gt;</code> element creates reactive data flows between DOM elements.</p>
+
+    <h2>Basic Text Flow</h2>
+    <section>
+      <h3 contenteditable>Type here</h3>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h2>Form Input</h2>
+    <section>
+      <input type="text" placeholder="Enter text..." value="Hello pipes!" />
+      <folk-pipe></folk-pipe>
+      <div contenteditable></div>
+    </section>
+
+    <h2>Code Block</h2>
+    <section>
+      <textarea rows="3" placeholder="Write code...">
+function hello() {
+  console.log("Hello pipes!");
+}</textarea
+      >
+      <folk-pipe></folk-pipe>
+      <code></code>
+    </section>
+
+    <h2>Select Options</h2>
+    <section>
+      <select>
+        <option value="">Choose...</option>
+        <option value="red">Red</option>
+        <option value="green">Green</option>
+        <option value="blue">Blue</option>
+      </select>
+      <folk-pipe></folk-pipe>
+      <output></output>
+    </section>
+
+    <h2>Image URLs</h2>
+    <section>
+      <input type="url" placeholder="Image URL..." value="https://picsum.photos/200/150" />
+      <folk-pipe></folk-pipe>
+      <img alt="Piped image" />
+    </section>
+
+    <h2>Canvas Drawing</h2>
+    <p>Click and drag on the canvas to draw.</p>
+    <section>
+      <canvas width="300" height="200"></canvas>
+      <folk-pipe></folk-pipe>
+      <img alt="Canvas output" />
+    </section>
+    <button onclick="clearCanvas()">Clear Canvas</button>
+
+    <h2>Chained Pipes</h2>
+    <p>Changes flow through multiple elements.</p>
+    <section>
+      <textarea rows="2">Hello chained pipes!</textarea>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+      <folk-pipe></folk-pipe>
+      <div contenteditable></div>
+    </section>
+    <button onclick="testChainedReactivity()">Test Programmatic Change</button>
+
+    <h2>Dynamic Connections</h2>
+    <p>Insert elements between pipes to change connections.</p>
+    <section>
+      <input type="text" value="Source element" />
+      <folk-pipe></folk-pipe>
+      <div contenteditable>Original target</div>
+    </section>
+    <button onclick="insertBetween()">Insert Between</button>
+    <button onclick="removeInserted()">Remove Inserted</button>
+    <button onclick="testCurrentConnection()">Test Connection</button>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-pipe';
+
+      // Canvas drawing functionality
+      const canvas = document.querySelector('canvas');
+      const ctx = canvas.getContext('2d');
+      let isDrawing = false;
+
+      ctx.strokeStyle = '#007acc';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+
+      function startDrawing(e) {
+        isDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+      }
+
+      function draw(e) {
+        if (!isDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        // Trigger pipe update
+        canvas.dispatchEvent(new Event('change'));
+      }
+
+      function stopDrawing() {
+        if (isDrawing) {
+          isDrawing = false;
+          ctx.beginPath();
+        }
+      }
+
+      canvas.addEventListener('mousedown', startDrawing);
+      canvas.addEventListener('mousemove', draw);
+      canvas.addEventListener('mouseup', stopDrawing);
+      canvas.addEventListener('mouseout', stopDrawing);
+
+      // Touch support for mobile
+      canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent('mousedown', {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        });
+        canvas.dispatchEvent(mouseEvent);
+      });
+
+      canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent('mousemove', {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        });
+        canvas.dispatchEvent(mouseEvent);
+      });
+
+      canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        const mouseEvent = new MouseEvent('mouseup', {});
+        canvas.dispatchEvent(mouseEvent);
+      });
+
+      window.clearCanvas = function () {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.dispatchEvent(new Event('change'));
+      };
+
+      // Test functions
+      window.testChainedReactivity = function () {
+        const textarea = document.querySelector('textarea[rows="2"]');
+        const messages = [
+          'Programmatic change at: ' + new Date().toLocaleTimeString(),
+          'Testing reactive pipes...',
+          'This flows through all elements!',
+        ];
+
+        let index = 0;
+        const interval = setInterval(() => {
+          if (index < messages.length) {
+            textarea.value = messages[index];
+            console.log(`Set textarea: "${messages[index]}"`);
+            index++;
+          } else {
+            clearInterval(interval);
+          }
+        }, 1500);
+      };
+
+      // Dynamic DOM manipulation
+      let insertedElements = [];
+
+      window.insertBetween = function () {
+        const lastSection = document.querySelector('section:last-of-type');
+        const pipe = lastSection.querySelector('folk-pipe');
+
+        const newElement = document.createElement('pre');
+        newElement.textContent = `New target ${insertedElements.length + 1}`;
+        newElement.style.background = '#fff3cd';
+        newElement.style.border = '1px solid #ffeaa7';
+
+        lastSection.insertBefore(newElement, pipe.nextElementSibling);
+        insertedElements.push(newElement);
+      };
+
+      window.removeInserted = function () {
+        insertedElements.forEach((el) => el.remove());
+        insertedElements = [];
+      };
+
+      window.testCurrentConnection = function () {
+        const lastSection = document.querySelector('section:last-of-type');
+        const input = lastSection.querySelector('input');
+        input.value = `Testing at ${new Date().toLocaleTimeString()}`;
+      };
+    </script>
+  </body>
+</html>
