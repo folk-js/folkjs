@@ -3,8 +3,8 @@ import { css, property, state, type CSSResultGroup } from '@folkjs/canvas/reacti
 
 // Element I/O type definitions
 interface ElementIO {
-  getValue(element: Element): any;
-  setValue(element: Element, value: any): void;
+  getValue(element: Element, inputValue?: any): any | Promise<any>;
+  setValue(element: Element, value: any): void | Promise<void>;
   getChangeEventName(element: Element): string;
 }
 
@@ -168,6 +168,70 @@ const ELEMENT_IO_MAP: Map<string, ElementIO> = new Map([
     },
   ],
 
+  // Script elements with textContent (for editable code)
+  [
+    'SCRIPT',
+    {
+      getValue: async (el: HTMLScriptElement, inputValue?: any) => {
+        // For hash modules, try to execute the default export as a function
+        if (el.type === 'hash-module' && el.id) {
+          try {
+            const moduleUrl = URL.createObjectURL(new Blob([el.textContent || ''], { type: 'application/javascript' }));
+            const module = await import(moduleUrl);
+            URL.revokeObjectURL(moduleUrl);
+
+            if (typeof module.default === 'function') {
+              // Call the function with the input value from the pipe
+              return await module.default(inputValue);
+            }
+          } catch (error) {
+            console.error('Error executing hash module:', error);
+            return `Error: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
+
+        // Fallback to textContent for non-hash modules
+        return el.textContent || '';
+      },
+      setValue: async (el: HTMLScriptElement, value: any) => {
+        // For hash modules, execute the function with the input value and display the result
+        if (el.type === 'hash-module' && el.id) {
+          try {
+            const moduleUrl = URL.createObjectURL(new Blob([el.textContent || ''], { type: 'application/javascript' }));
+            const module = await import(moduleUrl);
+            URL.revokeObjectURL(moduleUrl);
+
+            if (typeof module.default === 'function') {
+              const result = await module.default(value);
+              // Store the result in a data attribute or display it somehow
+              el.dataset.pipeResult = String(result);
+              el.dispatchEvent(new CustomEvent('pipe-result', { detail: result }));
+
+              // Find the next element to pipe the result to
+              const nextPipe = el.nextElementSibling;
+              if (nextPipe && nextPipe.tagName === 'FOLK-PIPE') {
+                const nextTarget = nextPipe.nextElementSibling;
+                if (nextTarget) {
+                  const targetIO = ELEMENT_IO_MAP.get(nextTarget.tagName);
+                  if (targetIO) {
+                    targetIO.setValue(nextTarget, result);
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            console.error('Error executing hash module on setValue:', error);
+            el.dataset.pipeResult = `Error: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        } else {
+          // For regular scripts, set textContent
+          el.textContent = String(value);
+        }
+      },
+      getChangeEventName: () => 'input',
+    },
+  ],
+
   // Media elements with .src
   [
     'IMG',
@@ -218,6 +282,129 @@ const ELEMENT_IO_MAP: Map<string, ElementIO> = new Map([
         }
       },
       getChangeEventName: () => 'change',
+    },
+  ],
+
+  // Form - outputs key-value object of all form elements
+  [
+    'FORM',
+    {
+      getValue: (el: HTMLFormElement) => {
+        const formData = new FormData(el);
+        const result: { [key: string]: any } = {};
+
+        // Handle regular form fields
+        for (const [key, value] of formData.entries()) {
+          // If key already exists, convert to array (for multiple checkboxes, selects, etc.)
+          if (result[key] !== undefined) {
+            if (Array.isArray(result[key])) {
+              result[key].push(value);
+            } else {
+              result[key] = [result[key], value];
+            }
+          } else {
+            result[key] = value;
+          }
+        }
+
+        // Handle unchecked checkboxes and radio buttons (they don't appear in FormData)
+        const inputs = el.querySelectorAll('input[name]');
+        inputs.forEach((element) => {
+          const input = element as HTMLInputElement;
+          if ((input.type === 'checkbox' || input.type === 'radio') && !input.checked) {
+            if (result[input.name] === undefined) {
+              result[input.name] = input.type === 'checkbox' ? false : null;
+            }
+          }
+        });
+
+        return result;
+      },
+      setValue: (el: HTMLFormElement, value: any) => {
+        if (typeof value === 'object' && value !== null) {
+          Object.entries(value).forEach(([key, val]) => {
+            const elements = el.querySelectorAll(`[name="${key}"]`);
+            elements.forEach((element) => {
+              if (element instanceof HTMLInputElement) {
+                if (element.type === 'checkbox' || element.type === 'radio') {
+                  element.checked = Boolean(val);
+                } else {
+                  element.value = String(val);
+                }
+              } else if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
+                element.value = String(val);
+              }
+            });
+          });
+        }
+      },
+      getChangeEventName: () => 'input',
+    },
+  ],
+
+  // Table - outputs 2D array representation
+  [
+    'TABLE',
+    {
+      getValue: (el: HTMLTableElement) => {
+        const rows = Array.from(el.querySelectorAll('tr'));
+        return rows.map((row) => {
+          const cells = Array.from(row.querySelectorAll('td, th'));
+          return cells.map((cell) => cell.textContent || '');
+        });
+      },
+      setValue: (el: HTMLTableElement, value: any) => {
+        if (Array.isArray(value) && value.length > 0) {
+          // Clear existing content completely
+          el.innerHTML = '';
+
+          // Determine if first row should be headers
+          const hasHeaders = value.length > 1;
+
+          value.forEach((rowData, rowIndex) => {
+            if (Array.isArray(rowData) && rowData.length > 0) {
+              const row = document.createElement('tr');
+
+              rowData.forEach((cellData) => {
+                // First row gets th elements if we have multiple rows, otherwise td
+                const cellType = hasHeaders && rowIndex === 0 ? 'th' : 'td';
+                const cell = document.createElement(cellType);
+                cell.textContent = String(cellData);
+
+                // Make cells editable for interaction
+                cell.contentEditable = 'true';
+
+                // Add input listener to trigger table change events
+                cell.addEventListener('input', () => {
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                });
+
+                row.appendChild(cell);
+              });
+
+              // Add the row to the appropriate parent
+              if (hasHeaders && rowIndex === 0) {
+                // Create thead for header row
+                const thead = document.createElement('thead');
+                thead.appendChild(row);
+                el.appendChild(thead);
+              } else {
+                // Create tbody if it doesn't exist
+                let tbody = el.querySelector('tbody');
+                if (!tbody) {
+                  tbody = document.createElement('tbody');
+                  el.appendChild(tbody);
+                }
+                tbody.appendChild(row);
+              }
+            }
+          });
+
+          // Dispatch a change event to notify that the table structure changed
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      },
+      getChangeEventName: () => 'input',
     },
   ],
 ]);
@@ -353,16 +540,20 @@ export class FolkPipe extends FolkElement {
   #startValuePolling() {
     if (!this.sourceElement) return;
 
-    const checkForChanges = () => {
+    const checkForChanges = async () => {
       if (!this.sourceElement) return;
 
       const io = this.#getElementIO(this.sourceElement);
       if (!io) return;
 
-      const currentValue = io.getValue(this.sourceElement);
-      if (currentValue !== this.#lastSourceValue) {
-        this.#lastSourceValue = currentValue;
-        this.#syncFromSourceToTarget();
+      try {
+        const currentValue = await io.getValue(this.sourceElement);
+        if (currentValue !== this.#lastSourceValue) {
+          this.#lastSourceValue = currentValue;
+          this.#syncFromSourceToTarget();
+        }
+      } catch (error) {
+        console.error('Error checking for changes:', error);
       }
     };
 
@@ -405,7 +596,7 @@ export class FolkPipe extends FolkElement {
     this.#syncFromSourceToTarget();
   }
 
-  #syncFromSourceToTarget() {
+  async #syncFromSourceToTarget() {
     if (!this.sourceElement || !this.targetElement) return;
 
     const sourceIO = this.#getElementIO(this.sourceElement);
@@ -413,13 +604,21 @@ export class FolkPipe extends FolkElement {
 
     if (!sourceIO || !targetIO) return;
 
-    const value = sourceIO.getValue(this.sourceElement);
+    try {
+      const sourceValue = await sourceIO.getValue(this.sourceElement);
 
-    // Always update the target, but only update lastSourceValue if it actually changed
-    if (value !== this.#lastSourceValue) {
-      this.#lastSourceValue = value;
+      // Always update the target, but only update lastSourceValue if it actually changed
+      if (sourceValue !== this.#lastSourceValue) {
+        this.#lastSourceValue = sourceValue;
+      }
+
+      // Set the value on the target - the setValue method will handle hash modules appropriately
+      await targetIO.setValue(this.targetElement, sourceValue);
+    } catch (error) {
+      console.error('Error syncing from source to target:', error);
+      // Set error message on target
+      targetIO.setValue(this.targetElement, `Error: ${error instanceof Error ? error.message : String(error)}`);
     }
-    targetIO.setValue(this.targetElement, value);
   }
 
   #getElementIO(element: Element): ElementIO | null {

@@ -47,13 +47,18 @@
 
       section {
         display: flex;
-        align-items: center;
+        flex-direction: column;
         gap: 1rem;
         margin: 1rem 0;
+      }
+
+      .horizontal {
+        flex-direction: row;
+        align-items: center;
         flex-wrap: wrap;
       }
 
-      section > *:not(folk-pipe) {
+      .horizontal > *:not(folk-pipe) {
         min-width: 200px;
         flex: 1;
       }
@@ -77,6 +82,89 @@
         min-height: 2rem;
       }
 
+      script[type='hash-module'] {
+        display: block !important;
+        background: #1e1e1e;
+        color: #f1f1f1;
+        border: 2px solid #007acc;
+        border-radius: 6px;
+        padding: 1rem;
+        font-family: 'Recursive', Courier, monospace;
+        font-variation-settings: 'MONO' 1;
+        font-size: 0.85rem;
+        white-space: pre;
+        min-height: 4rem;
+        outline: none;
+        overflow-x: auto;
+        min-width: 300px;
+        max-width: 100%;
+        position: relative;
+        transition: all 0.3s ease;
+      }
+
+      script[type='hash-module']:focus {
+        border-color: #00d4ff;
+        box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.3);
+      }
+
+      script[type='hash-module']:before {
+        content: '📜 #' attr(id) ' ▼';
+        display: block;
+        font-size: 0.7rem;
+        color: #007acc;
+        margin-bottom: 0.5rem;
+        font-weight: bold;
+        cursor: pointer;
+        user-select: none;
+        padding: 0.25rem;
+        margin: -0.25rem -0.25rem 0.5rem -0.25rem;
+        border-radius: 3px;
+        transition: background-color 0.2s ease;
+      }
+
+      script[type='hash-module']:before:hover {
+        background-color: rgba(0, 122, 204, 0.1);
+      }
+
+      script[type='hash-module'].collapsed {
+        min-height: auto;
+        height: 2.5rem;
+        overflow: hidden;
+        padding: 0.5rem 1rem;
+      }
+
+      script[type='hash-module'].collapsed:before {
+        content: '📜 #' attr(id) ' ▶ (click to expand)';
+        margin-bottom: 0;
+      }
+
+      script[type='hash-module']:after {
+        content: '▶️ Run';
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        font-size: 0.7rem;
+        background: #007acc;
+        color: white;
+        padding: 0.25rem 0.5rem;
+        border-radius: 3px;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        pointer-events: none;
+      }
+
+      script[type='hash-module']:hover:after {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      script[type='hash-module'].running:after {
+        content: '⏳ Running...';
+        background: #ff9500;
+        opacity: 1;
+      }
+
       button {
         background: #007acc;
         color: white;
@@ -97,6 +185,7 @@
         border-radius: 4px;
         cursor: crosshair;
         background: white;
+        display: block;
       }
 
       img {
@@ -125,6 +214,36 @@
       <div contenteditable></div>
     </section>
 
+    <h2>Script Transform</h2>
+    <p>Input flows through a script transform before reaching the output.</p>
+    <section>
+      <input type="text" placeholder="Enter some text..." value="hello world" />
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="textTransform" contenteditable>
+        export default function transform(input) {
+          const emojis = ['🚀', '✨', '🎉', '🔥', '💫', '⭐', '🌟', '💥', '🎊', '🎈'];
+
+          function getRandomEmojis() {
+            const count = 2 + Math.floor(Math.random() * 2); // 2-3 emojis
+            return Array.from({length: count}, () =>
+              emojis[Math.floor(Math.random() * emojis.length)]
+            ).join(' ');
+          }
+
+          const words = input.toUpperCase().split(' ');
+          let result = words[0] || '';
+
+          for (let i = 1; i < words.length; i++) {
+            result += ` ${getRandomEmojis()} ${words[i]}`;
+          }
+
+          return result + ` ${getRandomEmojis()}`;
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
     <h2>Code Block</h2>
     <section>
       <textarea rows="3" placeholder="Write code...">
@@ -136,8 +255,22 @@ function hello() {
       <code></code>
     </section>
 
-    <h2>Select Options</h2>
+    <h2>Script to Display</h2>
+    <p>Script output pipes to display elements.</p>
     <section>
+      <script type="hash-module" id="generator" contenteditable>
+        export default function generateText() {
+          const now = new Date();
+          return `Generated at ${now.toLocaleTimeString()}:\n• Current hour: ${now.getHours()}\n• Random: ${Math.floor(Math.random() * 100)}`;
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+    <button onclick="triggerScriptUpdate()">Trigger Script Update</button>
+
+    <h2>Select Options</h2>
+    <section class="horizontal">
       <select>
         <option value="">Choose...</option>
         <option value="red">Red</option>
@@ -149,7 +282,7 @@ function hello() {
     </section>
 
     <h2>Image URLs</h2>
-    <section>
+    <section class="horizontal">
       <input type="url" placeholder="Image URL..." value="https://picsum.photos/200/150" />
       <folk-pipe></folk-pipe>
       <img alt="Piped image" />
@@ -161,8 +294,8 @@ function hello() {
       <canvas width="300" height="200"></canvas>
       <folk-pipe></folk-pipe>
       <img alt="Canvas output" />
+      <button onclick="clearCanvas()">Clear Canvas</button>
     </section>
-    <button onclick="clearCanvas()">Clear Canvas</button>
 
     <h2>Chained Pipes</h2>
     <p>Changes flow through multiple elements.</p>
@@ -172,8 +305,285 @@ function hello() {
       <pre></pre>
       <folk-pipe></folk-pipe>
       <div contenteditable></div>
+      <button onclick="testChainedReactivity()">Test Programmatic Change</button>
     </section>
-    <button onclick="testChainedReactivity()">Test Programmatic Change</button>
+
+    <h2>Form Data Processing</h2>
+    <p>Forms pipe out key-value objects of all their fields.</p>
+    <section>
+      <form>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem">
+          <div>
+            <label>Name: <input type="text" name="name" value="Alice" /></label>
+          </div>
+          <div>
+            <label>Age: <input type="number" name="age" value="25" /></label>
+          </div>
+          <div>
+            <label>Email: <input type="email" name="email" value="alice@example.com" /></label>
+          </div>
+          <div>
+            <label
+              >Department:
+              <select name="department">
+                <option value="engineering">Engineering</option>
+                <option value="design" selected>Design</option>
+                <option value="marketing">Marketing</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label><input type="checkbox" name="remote" checked /> Remote Worker</label>
+          </div>
+          <div>
+            <label><input type="checkbox" name="fulltime" checked /> Full Time</label>
+          </div>
+        </div>
+      </form>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="formProcessor" contenteditable>
+                export default function processEmployee(formData) {
+                  const employee = {
+                    ...formData,
+                    status: formData.remote ? 'Remote' : 'On-site',
+                    workType: formData.fulltime ? 'Full-time' : 'Part-time',
+                    yearsToRetirement: Math.max(0, 65 - (formData.age || 0))
+                  };
+
+                  return `Employee Profile:
+        🧑‍💼 ${employee.name} (${employee.age} years old)
+        📧 ${employee.email}
+        🏢 ${employee.department} department
+        💼 ${employee.status}, ${employee.workType}
+        🎯 ${employee.yearsToRetirement} years to retirement`;
+                }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h2>Table Data Analysis</h2>
+    <p>Tables pipe out 2D arrays that can be processed with scripts.</p>
+    <section>
+      <table border="1" style="border-collapse: collapse; width: 100%">
+        <tr>
+          <th>Product</th>
+          <th>Q1 Sales</th>
+          <th>Q2 Sales</th>
+          <th>Q3 Sales</th>
+          <th>Q4 Sales</th>
+        </tr>
+        <tr>
+          <td contenteditable>Laptops</td>
+          <td contenteditable>120</td>
+          <td contenteditable>150</td>
+          <td contenteditable>180</td>
+          <td contenteditable>200</td>
+        </tr>
+        <tr>
+          <td contenteditable>Phones</td>
+          <td contenteditable>300</td>
+          <td contenteditable>320</td>
+          <td contenteditable>280</td>
+          <td contenteditable>350</td>
+        </tr>
+        <tr>
+          <td contenteditable>Tablets</td>
+          <td contenteditable>80</td>
+          <td contenteditable>90</td>
+          <td contenteditable>70</td>
+          <td contenteditable>85</td>
+        </tr>
+      </table>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="tableAnalyzer" contenteditable>
+        export default function analyzeSales(tableData) {
+          if (!Array.isArray(tableData) || tableData.length < 2) {
+            return "No data to analyze";
+          }
+
+          const [headers, ...rows] = tableData;
+          let analysis = "📊 SALES ANALYSIS\n\n";
+
+          // Calculate totals for each product
+          rows.forEach(row => {
+            const [product, ...sales] = row;
+            const numbers = sales.map(s => parseFloat(s) || 0);
+            const total = numbers.reduce((sum, n) => sum + n, 0);
+            const avg = total / numbers.length;
+            const growth = numbers.length > 1 ?
+              ((numbers[numbers.length - 1] - numbers[0]) / numbers[0] * 100).toFixed(1) : 0;
+
+            analysis += `${product}:\n`;
+            analysis += `  📈 Total: ${total} units\n`;
+            analysis += `  📊 Average: ${avg.toFixed(1)} units/quarter\n`;
+            analysis += `  🚀 Growth: ${growth}%\n\n`;
+          });
+
+          // Calculate quarterly totals
+          const quarterTotals = [];
+          for (let i = 1; i < headers.length; i++) {
+            const quarterTotal = rows.reduce((sum, row) => {
+              return sum + (parseFloat(row[i]) || 0);
+            }, 0);
+            quarterTotals.push(quarterTotal);
+            analysis += `${headers[i]}: ${quarterTotal} total units\n`;
+          }
+
+          return analysis;
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h2>Dynamic Table Generation</h2>
+    <p>Generate tables from script data - they automatically resize to match the data.</p>
+    <section>
+      <button onclick="generateRandomData()">Generate Random Data</button>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="tableGenerator" contenteditable>
+        export default function generateTableData(trigger) {
+          const products = ['Laptops', 'Phones', 'Tablets', 'Monitors', 'Keyboards', 'Mice'];
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+
+          // Random number of products (2-6) and months (3-6)
+          const numProducts = 2 + Math.floor(Math.random() * 5);
+          const numMonths = 3 + Math.floor(Math.random() * 4);
+
+          const selectedProducts = products.slice(0, numProducts);
+          const selectedMonths = months.slice(0, numMonths);
+
+          // Create header row
+          const headers = ['Product', ...selectedMonths];
+
+          // Create data rows
+          const dataRows = selectedProducts.map(product => {
+            const sales = selectedMonths.map(() =>
+              Math.floor(Math.random() * 200) + 50
+            );
+            return [product, ...sales];
+          });
+
+          return [headers, ...dataRows];
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <table border="1" style="border-collapse: collapse; width: 100%; background: #f9f9f9"></table>
+    </section>
+
+    <h2>Advanced CSV Analysis Pipeline</h2>
+    <p>Complex CSV data with quoted fields, analysis, and smart formatting.</p>
+    <section>
+      <textarea rows="8" placeholder="Paste CSV data here...">
+"Employee ID","Full Name","Department","Hire Date","Salary","Performance Score","Remote","Projects Completed"
+"EMP001","Alice Johnson","Engineering","2022-03-15","$85,000",4.2,true,12
+"EMP002","Bob Chen","Design","2021-11-08","$72,500",3.8,false,8
+"EMP003","Carol Williams","Marketing","2023-01-22","$68,000",4.5,true,15
+"EMP004","David Rodriguez","Engineering","2020-09-12","$92,000",3.9,true,18
+"EMP005","Eva Kim","Sales","2022-07-30","$75,000",4.1,false,22
+"EMP006","Frank Thompson","Design","2021-04-18","$70,000",3.7,true,6</textarea
+      >
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="advancedCSVParser" contenteditable>
+        export default function parseAndAnalyzeCSV(csvText) {
+          if (!csvText.trim()) return [];
+
+          const lines = csvText.trim().split('\n');
+
+          // Parse CSV with quoted field support
+          function parseCSVLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+
+            for (let i = 0; i < line.length; i++) {
+              const char = line[i];
+
+              if (char === '"') {
+                inQuotes = !inQuotes;
+              } else if (char === ',' && !inQuotes) {
+                result.push(current.trim());
+                current = '';
+              } else {
+                current += char;
+              }
+            }
+
+            result.push(current.trim());
+            return result;
+          }
+
+          const [headers, ...dataRows] = lines.map(parseCSVLine);
+
+          // Clean and analyze the data
+          const cleanedData = dataRows.map((row, rowIndex) => {
+            return row.map((cell, colIndex) => {
+              const header = headers[colIndex]?.toLowerCase() || '';
+
+              // Clean salary format
+              if (header.includes('salary')) {
+                return cell.replace(/[$,"]/g, '');
+              }
+              // Convert boolean strings to emojis
+              if (cell.toLowerCase() === 'true') return '✅';
+              if (cell.toLowerCase() === 'false') return '❌';
+              // Clean quoted strings
+              const cleaned = cell.replace(/^"(.*)"$/, '$1');
+
+              // Add department emojis
+              if (header.includes('department')) {
+                const deptEmojis = {
+                  'engineering': '⚙️ Engineering',
+                  'design': '🎨 Design',
+                  'marketing': '📢 Marketing',
+                  'sales': '💼 Sales'
+                };
+                return deptEmojis[cleaned.toLowerCase()] || cleaned;
+              }
+
+              return cleaned;
+            });
+          });
+
+          // Calculate department statistics
+          const deptStats = {};
+          cleanedData.forEach(row => {
+            const dept = row[headers.findIndex(h => h.toLowerCase().includes('department'))];
+            const salary = parseFloat(row[headers.findIndex(h => h.toLowerCase().includes('salary'))]) || 0;
+            const score = parseFloat(row[headers.findIndex(h => h.toLowerCase().includes('performance'))]) || 0;
+
+            if (!deptStats[dept]) {
+              deptStats[dept] = { count: 0, totalSalary: 0, totalScore: 0 };
+            }
+            deptStats[dept].count++;
+            deptStats[dept].totalSalary += salary;
+            deptStats[dept].totalScore += score;
+          });
+
+          // Add summary rows
+          const summaryRows = [
+            ['═══ DEPARTMENT ANALYSIS ═══', ...Array(headers.length - 1).fill('')],
+          ];
+
+          Object.entries(deptStats).forEach(([dept, stats]) => {
+            const avgSalary = (stats.totalSalary / stats.count).toLocaleString();
+            const avgScore = (stats.totalScore / stats.count).toFixed(1);
+            summaryRows.push([
+              dept,
+              `👥 ${stats.count} people`,
+              `💰 $${avgSalary} avg`,
+              `⭐ ${avgScore} score`,
+              ...Array(Math.max(0, headers.length - 4)).fill('')
+            ]);
+          });
+
+          return [headers, ...cleanedData, ...summaryRows];
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <table border="1" style="border-collapse: collapse; width: 100%"></table>
+    </section>
 
     <h2>Dynamic Connections</h2>
     <p>Insert elements between pipes to change connections.</p>
@@ -181,10 +591,27 @@ function hello() {
       <input type="text" value="Source element" />
       <folk-pipe></folk-pipe>
       <div contenteditable>Original target</div>
+      <div>
+        <button onclick="insertBetween()">Insert Between</button>
+        <button onclick="removeInserted()">Remove Inserted</button>
+        <button onclick="testCurrentConnection()">Test Connection</button>
+      </div>
     </section>
-    <button onclick="insertBetween()">Insert Between</button>
-    <button onclick="removeInserted()">Remove Inserted</button>
-    <button onclick="testCurrentConnection()">Test Connection</button>
+
+    <script id="boot-loader">
+      // Hash module boot loader - initializes the module system
+      const imports = {};
+
+      document.querySelectorAll('script[type="hash-module"]').forEach((module) => {
+        imports['#' + module.id] = URL.createObjectURL(new Blob([module.text], { type: 'application/javascript' }));
+      });
+
+      const importmap = document.createElement('script');
+      importmap.type = 'importmap';
+      importmap.text = JSON.stringify({ imports }, null, 2);
+      document.head.appendChild(importmap);
+      importmap.remove();
+    </script>
 
     <script type="module">
       import '@folkjs/labs/standalone/folk-pipe';
@@ -201,8 +628,10 @@ function hello() {
       function startDrawing(e) {
         isDrawing = true;
         const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
         ctx.beginPath();
         ctx.moveTo(x, y);
       }
@@ -210,8 +639,10 @@ function hello() {
       function draw(e) {
         if (!isDrawing) return;
         const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
         ctx.lineTo(x, y);
         ctx.stroke();
 
@@ -263,6 +694,14 @@ function hello() {
         canvas.dispatchEvent(new Event('change'));
       };
 
+      // Script update trigger
+      window.triggerScriptUpdate = function () {
+        const scriptElement = document.querySelector('script[type="hash-module"]:last-of-type');
+        if (scriptElement) {
+          scriptElement.dispatchEvent(new Event('input'));
+        }
+      };
+
       // Test functions
       window.testChainedReactivity = function () {
         const textarea = document.querySelector('textarea[rows="2"]');
@@ -309,6 +748,91 @@ function hello() {
         const lastSection = document.querySelector('section:last-of-type');
         const input = lastSection.querySelector('input');
         input.value = `Testing at ${new Date().toLocaleTimeString()}`;
+      };
+
+      // Script collapse/expand and re-execution functionality
+      function initializeScriptInteractions() {
+        document.querySelectorAll('script[type="hash-module"]').forEach((script) => {
+          script.addEventListener('click', (e) => {
+            const rect = script.getBoundingClientRect();
+            const headerHeight = 40;
+            const runButtonArea = { x: rect.width - 80, y: 40, width: 80, height: 30 };
+
+            // Check if clicking on the run button area (::after pseudo-element)
+            if (e.offsetX >= runButtonArea.x && e.offsetY <= runButtonArea.y) {
+              executeScript(script);
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+
+            // Check if clicking on the header area for collapse/expand
+            if (e.offsetY <= headerHeight) {
+              script.classList.toggle('collapsed');
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          });
+
+          // Prevent text selection when clicking header
+          script.addEventListener('selectstart', (e) => {
+            const rect = script.getBoundingClientRect();
+            const headerHeight = 40;
+
+            if (e.offsetY <= headerHeight) {
+              e.preventDefault();
+            }
+          });
+        });
+      }
+
+      // Execute a script manually
+      async function executeScript(scriptElement) {
+        if (scriptElement.classList.contains('running')) return;
+
+        scriptElement.classList.add('running');
+
+        try {
+          // Find the previous element to use as input (if any)
+          let inputValue = undefined;
+          let previousElement = scriptElement.previousElementSibling;
+
+          // Skip over folk-pipe elements to find the actual data source
+          while (previousElement && previousElement.tagName === 'FOLK-PIPE') {
+            previousElement = previousElement.previousElementSibling;
+          }
+
+          // If there's a previous element but no pipe, this might be a data source script
+          // For data source scripts, we can pass a trigger value
+          if (!previousElement || previousElement.tagName !== 'FOLK-PIPE') {
+            inputValue = Date.now(); // Trigger value for data source scripts
+          }
+
+          // Dispatch an input event to trigger the pipe system
+          scriptElement.dispatchEvent(new Event('input', { bubbles: true }));
+
+          // Give a brief visual feedback
+          setTimeout(() => {
+            scriptElement.classList.remove('running');
+          }, 500);
+        } catch (error) {
+          console.error('Error executing script:', error);
+          scriptElement.classList.remove('running');
+        }
+      }
+
+      // Initialize script interactions after DOM is loaded
+      initializeScriptInteractions();
+
+      // Generate random data function
+      window.generateRandomData = function () {
+        const button = document.querySelector('button[onclick="generateRandomData()"]');
+        button.textContent = 'Generating...';
+        button.dispatchEvent(new Event('click'));
+
+        setTimeout(() => {
+          button.textContent = 'Generate Random Data';
+        }, 100);
       };
     </script>
   </body>
