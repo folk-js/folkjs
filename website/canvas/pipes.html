@@ -20,9 +20,9 @@
           'CRSV' 0,
           'MONO' 0;
         max-width: 900px;
-        margin: 2rem auto;
-        padding: 2rem;
-        line-height: 1.6;
+        margin: 1rem auto;
+        padding: 1.5rem;
+        line-height: 1.5;
         background: #f5f5f5;
       }
 
@@ -31,25 +31,34 @@
           'CASL' 1,
           'MONO' 1;
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
+        font-size: 2rem;
       }
 
       h2 {
         font-weight: 800;
         font-variation-settings: 'wght' 800;
-        margin: 3rem 0 1rem;
+        margin: 2rem 0 0.75rem;
+        font-size: 1.4rem;
+      }
+
+      h3 {
+        font-weight: 600;
+        margin: 1.5rem 0 0.5rem;
+        font-size: 1.2rem;
       }
 
       p {
-        margin-bottom: 1rem;
+        margin-bottom: 0.75rem;
         color: #666;
+        font-size: 0.9rem;
       }
 
       section {
         display: flex;
         flex-direction: column;
-        gap: 1rem;
-        margin: 1rem 0;
+        gap: 0.75rem;
+        margin: 0.75rem 0 1.5rem;
       }
 
       .horizontal {
@@ -66,20 +75,22 @@
       input,
       textarea,
       select {
-        padding: 0.5rem;
+        padding: 0.4rem;
         border: 1px solid #ccc;
-        border-radius: 4px;
+        border-radius: 3px;
         font: inherit;
+        font-size: 0.9rem;
       }
 
       pre,
       code,
       [contenteditable] {
         background: #f8f8f8;
-        padding: 0.5rem;
-        border-radius: 4px;
+        padding: 0.4rem;
+        border-radius: 3px;
         border: 1px solid #ddd;
-        min-height: 2rem;
+        min-height: 1.5rem;
+        font-size: 0.85rem;
       }
 
       script[type='hash-module'] {
@@ -87,16 +98,16 @@
         background: #1e1e1e;
         color: #f1f1f1;
         border: 2px solid #007acc;
-        border-radius: 6px;
-        padding: 1rem;
+        border-radius: 4px;
+        padding: 0.75rem;
         font-family: 'Recursive', Courier, monospace;
         font-variation-settings: 'MONO' 1;
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         white-space: pre;
-        min-height: 4rem;
+        min-height: 3rem;
         outline: none;
         overflow-x: auto;
-        min-width: 300px;
+        min-width: 250px;
         max-width: 100%;
         position: relative;
         transition: all 0.3s ease;
@@ -169,11 +180,12 @@
         background: #007acc;
         color: white;
         border: none;
-        padding: 0.5rem 1rem;
-        border-radius: 4px;
+        padding: 0.4rem 0.8rem;
+        border-radius: 3px;
         cursor: pointer;
         font: inherit;
-        margin: 0.25rem;
+        font-size: 0.85rem;
+        margin: 0.2rem;
       }
 
       button:hover {
@@ -182,17 +194,26 @@
 
       canvas {
         border: 2px solid #007acc;
-        border-radius: 4px;
+        border-radius: 3px;
         cursor: crosshair;
         background: white;
         display: block;
       }
 
       img {
-        max-width: 200px;
-        max-height: 150px;
+        max-width: 180px;
+        max-height: 135px;
         border: 1px solid #ddd;
-        border-radius: 4px;
+        border-radius: 3px;
+      }
+
+      table {
+        font-size: 0.85rem;
+      }
+
+      label {
+        font-size: 0.9rem;
+        font-weight: 500;
       }
     </style>
   </head>
@@ -200,22 +221,8 @@
     <h1>Folk Pipes</h1>
     <p>The <code>&lt;folk-pipe&gt;</code> element creates reactive data flows between DOM elements.</p>
 
-    <h2>Basic Text Flow</h2>
-    <section>
-      <h3 contenteditable>Type here</h3>
-      <folk-pipe></folk-pipe>
-      <pre></pre>
-    </section>
-
-    <h2>Form Input</h2>
-    <section>
-      <input type="text" placeholder="Enter text..." value="Hello pipes!" />
-      <folk-pipe></folk-pipe>
-      <div contenteditable></div>
-    </section>
-
-    <h2>Script Transform</h2>
-    <p>Input flows through a script transform before reaching the output.</p>
+    <h2>Core Concept: Script Transform</h2>
+    <p>The fundamental pattern: Input → Script Transform → Output</p>
     <section>
       <input type="text" placeholder="Enter some text..." value="hello world" />
       <folk-pipe></folk-pipe>
@@ -244,68 +251,79 @@
       <pre></pre>
     </section>
 
-    <h2>Code Block</h2>
+    <h2>Interactive Controls</h2>
+    <p>Various input controls can drive data flows.</p>
     <section>
-      <textarea rows="3" placeholder="Write code...">
-function hello() {
-  console.log("Hello pipes!");
-}</textarea
-      >
-      <folk-pipe></folk-pipe>
-      <code></code>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem">
+        <div>
+          <label for="volume-slider">Volume:</label>
+          <input type="range" id="volume-slider" min="0" max="100" value="75" />
+          <folk-pipe></folk-pipe>
+          <script type="hash-module" id="volumeProcessor" contenteditable>
+            export default function processVolume(value) {
+              const vol = parseInt(value);
+              const bars = Math.floor(vol / 10);
+              const visual = '█'.repeat(bars) + '░'.repeat(10 - bars);
+              return `🔊 ${visual} ${vol}%`;
+            }
+          </script>
+          <folk-pipe></folk-pipe>
+          <output></output>
+        </div>
+        <div>
+          <label for="color-select">Color:</label>
+          <select id="color-select">
+            <option value="#ff0000">🔴 Red</option>
+            <option value="#00ff00">🟢 Green</option>
+            <option value="#0000ff">🔵 Blue</option>
+            <option value="#ffff00">🟡 Yellow</option>
+          </select>
+          <folk-pipe></folk-pipe>
+          <div
+            style="
+              width: 100px;
+              height: 50px;
+              border: 2px solid #333;
+              background: #ff0000;
+              color: white;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 0.8rem;
+            "
+            >🔴 Red</div
+          >
+        </div>
+      </div>
     </section>
 
-    <h2>Script to Display</h2>
-    <p>Script output pipes to display elements.</p>
+    <h2>Multi-Step Pipelines</h2>
+    <p>Chain multiple transforms together for complex data flows.</p>
     <section>
-      <script type="hash-module" id="generator" contenteditable>
-        export default function generateText() {
-          const now = new Date();
-          return `Generated at ${now.toLocaleTimeString()}:\n• Current hour: ${now.getHours()}\n• Random: ${Math.floor(Math.random() * 100)}`;
+      <textarea rows="2">Alice,25 Bob,30 Carol,28</textarea>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="csvSplitter" contenteditable>
+        export default function parseSimpleCSV(input) {
+          return input.split(' ').map(person => {
+            const [name, age] = person.split(',');
+            return { name, age: parseInt(age) };
+          });
         }
       </script>
       <folk-pipe></folk-pipe>
-      <pre></pre>
-    </section>
-    <button onclick="triggerScriptUpdate()">Trigger Script Update</button>
+      <script type="hash-module" id="ageAnalyzer" contenteditable>
+                export default function analyzeAges(people) {
+                  const totalAge = people.reduce((sum, p) => sum + p.age, 0);
+                  const avgAge = totalAge / people.length;
+                  const oldest = people.reduce((max, p) => p.age > max.age ? p : max);
 
-    <h2>Select Options</h2>
-    <section class="horizontal">
-      <select>
-        <option value="">Choose...</option>
-        <option value="red">Red</option>
-        <option value="green">Green</option>
-        <option value="blue">Blue</option>
-      </select>
-      <folk-pipe></folk-pipe>
-      <output></output>
-    </section>
-
-    <h2>Image URLs</h2>
-    <section class="horizontal">
-      <input type="url" placeholder="Image URL..." value="https://picsum.photos/200/150" />
-      <folk-pipe></folk-pipe>
-      <img alt="Piped image" />
-    </section>
-
-    <h2>Canvas Drawing</h2>
-    <p>Click and drag on the canvas to draw.</p>
-    <section>
-      <canvas width="300" height="200"></canvas>
-      <folk-pipe></folk-pipe>
-      <img alt="Canvas output" />
-      <button onclick="clearCanvas()">Clear Canvas</button>
-    </section>
-
-    <h2>Chained Pipes</h2>
-    <p>Changes flow through multiple elements.</p>
-    <section>
-      <textarea rows="2">Hello chained pipes!</textarea>
+                  return `👥 ${people.length} people
+        🎂 Average age: ${avgAge.toFixed(1)}
+        👑 Oldest: ${oldest.name} (${oldest.age})`;
+                }
+      </script>
       <folk-pipe></folk-pipe>
       <pre></pre>
-      <folk-pipe></folk-pipe>
-      <div contenteditable></div>
-      <button onclick="testChainedReactivity()">Test Programmatic Change</button>
     </section>
 
     <h2>Form Data Processing</h2>
@@ -472,121 +490,27 @@ function hello() {
       <table border="1" style="border-collapse: collapse; width: 100%; background: #f9f9f9"></table>
     </section>
 
-    <h2>Advanced CSV Analysis Pipeline</h2>
-    <p>Complex CSV data with quoted fields, analysis, and smart formatting.</p>
+    <h2>Tests & Experiments</h2>
+    <p>Advanced features and interactive demonstrations.</p>
+
+    <h3>Canvas Drawing</h3>
+    <p>Click and drag on the canvas to draw, pipe the result to an image.</p>
     <section>
-      <textarea rows="8" placeholder="Paste CSV data here...">
-"Employee ID","Full Name","Department","Hire Date","Salary","Performance Score","Remote","Projects Completed"
-"EMP001","Alice Johnson","Engineering","2022-03-15","$85,000",4.2,true,12
-"EMP002","Bob Chen","Design","2021-11-08","$72,500",3.8,false,8
-"EMP003","Carol Williams","Marketing","2023-01-22","$68,000",4.5,true,15
-"EMP004","David Rodriguez","Engineering","2020-09-12","$92,000",3.9,true,18
-"EMP005","Eva Kim","Sales","2022-07-30","$75,000",4.1,false,22
-"EMP006","Frank Thompson","Design","2021-04-18","$70,000",3.7,true,6</textarea
-      >
+      <canvas width="300" height="200"></canvas>
       <folk-pipe></folk-pipe>
-      <script type="hash-module" id="advancedCSVParser" contenteditable>
-        export default function parseAndAnalyzeCSV(csvText) {
-          if (!csvText.trim()) return [];
-
-          const lines = csvText.trim().split('\n');
-
-          // Parse CSV with quoted field support
-          function parseCSVLine(line) {
-            const result = [];
-            let current = '';
-            let inQuotes = false;
-
-            for (let i = 0; i < line.length; i++) {
-              const char = line[i];
-
-              if (char === '"') {
-                inQuotes = !inQuotes;
-              } else if (char === ',' && !inQuotes) {
-                result.push(current.trim());
-                current = '';
-              } else {
-                current += char;
-              }
-            }
-
-            result.push(current.trim());
-            return result;
-          }
-
-          const [headers, ...dataRows] = lines.map(parseCSVLine);
-
-          // Clean and analyze the data
-          const cleanedData = dataRows.map((row, rowIndex) => {
-            return row.map((cell, colIndex) => {
-              const header = headers[colIndex]?.toLowerCase() || '';
-
-              // Clean salary format
-              if (header.includes('salary')) {
-                return cell.replace(/[$,"]/g, '');
-              }
-              // Convert boolean strings to emojis
-              if (cell.toLowerCase() === 'true') return '✅';
-              if (cell.toLowerCase() === 'false') return '❌';
-              // Clean quoted strings
-              const cleaned = cell.replace(/^"(.*)"$/, '$1');
-
-              // Add department emojis
-              if (header.includes('department')) {
-                const deptEmojis = {
-                  'engineering': '⚙️ Engineering',
-                  'design': '🎨 Design',
-                  'marketing': '📢 Marketing',
-                  'sales': '💼 Sales'
-                };
-                return deptEmojis[cleaned.toLowerCase()] || cleaned;
-              }
-
-              return cleaned;
-            });
-          });
-
-          // Calculate department statistics
-          const deptStats = {};
-          cleanedData.forEach(row => {
-            const dept = row[headers.findIndex(h => h.toLowerCase().includes('department'))];
-            const salary = parseFloat(row[headers.findIndex(h => h.toLowerCase().includes('salary'))]) || 0;
-            const score = parseFloat(row[headers.findIndex(h => h.toLowerCase().includes('performance'))]) || 0;
-
-            if (!deptStats[dept]) {
-              deptStats[dept] = { count: 0, totalSalary: 0, totalScore: 0 };
-            }
-            deptStats[dept].count++;
-            deptStats[dept].totalSalary += salary;
-            deptStats[dept].totalScore += score;
-          });
-
-          // Add summary rows
-          const summaryRows = [
-            ['═══ DEPARTMENT ANALYSIS ═══', ...Array(headers.length - 1).fill('')],
-          ];
-
-          Object.entries(deptStats).forEach(([dept, stats]) => {
-            const avgSalary = (stats.totalSalary / stats.count).toLocaleString();
-            const avgScore = (stats.totalScore / stats.count).toFixed(1);
-            summaryRows.push([
-              dept,
-              `👥 ${stats.count} people`,
-              `💰 $${avgSalary} avg`,
-              `⭐ ${avgScore} score`,
-              ...Array(Math.max(0, headers.length - 4)).fill('')
-            ]);
-          });
-
-          return [headers, ...cleanedData, ...summaryRows];
-        }
-      </script>
-      <folk-pipe></folk-pipe>
-      <table border="1" style="border-collapse: collapse; width: 100%"></table>
+      <img alt="Canvas output" />
+      <button onclick="clearCanvas()">Clear Canvas</button>
     </section>
 
-    <h2>Dynamic Connections</h2>
-    <p>Insert elements between pipes to change connections.</p>
+    <h3>Image URLs</h3>
+    <section class="horizontal">
+      <input type="url" placeholder="Image URL..." value="https://picsum.photos/200/150" />
+      <folk-pipe></folk-pipe>
+      <img alt="Piped image" />
+    </section>
+
+    <h3>Dynamic Connections</h3>
+    <p>Insert elements between pipes to change connections dynamically.</p>
     <section>
       <input type="text" value="Source element" />
       <folk-pipe></folk-pipe>

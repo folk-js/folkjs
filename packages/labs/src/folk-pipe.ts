@@ -58,7 +58,32 @@ const ELEMENT_IO_MAP: Map<string, ElementIO> = new Map([
     {
       getValue: (el: Element) => el.textContent || '',
       setValue: (el: Element, value: any) => {
-        el.textContent = String(value);
+        const valueStr = String(value);
+
+        // If the value looks like a hex color, apply it as background
+        if (/^#[0-9a-fA-F]{6}$/.test(valueStr)) {
+          const htmlEl = el as HTMLElement;
+          htmlEl.style.backgroundColor = valueStr;
+
+          // Update text content to show the color name
+          const colorNames: { [key: string]: string } = {
+            '#ff0000': '🔴 Red',
+            '#00ff00': '🟢 Green',
+            '#0000ff': '🔵 Blue',
+            '#ffff00': '🟡 Yellow',
+          };
+
+          el.textContent = colorNames[valueStr.toLowerCase()] || valueStr;
+
+          // Set text color for contrast
+          const r = parseInt(valueStr.substr(1, 2), 16);
+          const g = parseInt(valueStr.substr(3, 2), 16);
+          const b = parseInt(valueStr.substr(5, 2), 16);
+          const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+          htmlEl.style.color = brightness > 128 ? 'black' : 'white';
+        } else {
+          el.textContent = valueStr;
+        }
       },
       getChangeEventName: () => 'input',
     },
