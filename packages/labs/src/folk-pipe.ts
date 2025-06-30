@@ -1,6 +1,22 @@
 import { FolkElement } from '@folkjs/canvas';
 import { css, type CSSResultGroup } from '@folkjs/canvas/reactive-element';
-import { ELEMENT_IO_MAP, type ElementIO } from './html-io.js';
+import * as io from './html-io.js';
+
+// Change event lookup for different element types
+const CHANGE_EVENTS: Record<string, string> = {
+  INPUT: 'input',
+  TEXTAREA: 'input',
+  SELECT: 'change',
+  FORM: 'input',
+  TABLE: 'input',
+  OL: 'input',
+  UL: 'input',
+  CANVAS: 'change',
+  IMG: 'load',
+  VIDEO: 'loadeddata',
+  AUDIO: 'loadeddata',
+  SCRIPT: 'input', // For hash modules
+};
 
 /**
  * Pipes data from element before to element after the <pipe> using {@link "html-io"}
@@ -69,22 +85,18 @@ export class FolkPipe extends FolkElement {
 
   async #getValue(element: Element): Promise<any> {
     if (element.tagName === 'SCRIPT') {
-      return this.#getScriptValue(element as HTMLScriptElement);
+      return await this.#getScriptValue(element as HTMLScriptElement);
     }
 
-    const io = ELEMENT_IO_MAP.get(element.tagName);
-    return io ? await io.getValue(element) : '';
+    return io.get(element);
   }
 
   async #setValue(element: Element, value: any): Promise<void> {
     if (element.tagName === 'SCRIPT') {
-      return this.#setScriptValue(element as HTMLScriptElement, value);
+      return await this.#setScriptValue(element as HTMLScriptElement, value);
     }
 
-    const io = ELEMENT_IO_MAP.get(element.tagName);
-    if (io) {
-      await io.setValue(element, value);
-    }
+    io.set(element, value);
   }
 
   // Script-specific logic isolated here
@@ -156,11 +168,9 @@ export class FolkPipe extends FolkElement {
     if (!this.#sourceElement) return;
 
     // Event listening
-    const isScript = this.#sourceElement.tagName === 'SCRIPT';
-    const io = ELEMENT_IO_MAP.get(this.#sourceElement.tagName);
-    const eventName = isScript ? 'input' : io?.getChangeEventName(this.#sourceElement) || 'input';
-
+    const eventName = CHANGE_EVENTS[this.#sourceElement.tagName] || 'input';
     const handler = () => this.#pipe();
+
     this.#sourceElement.addEventListener(eventName, handler);
 
     if (this.#sourceElement.hasAttribute('contenteditable')) {

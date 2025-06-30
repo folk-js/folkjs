@@ -210,7 +210,10 @@
   </head>
   <body>
     <h1>Folk Pipes</h1>
-    <p>The <code>&lt;folk-pipe&gt;</code> element creates reactive data flows between DOM elements.</p>
+    <p
+      >The <code>&lt;folk-pipe&gt;</code> element creates reactive data flows between DOM elements. All the elements
+      here are plain html elements, no special coordination is happening other than the pipe element itself.</p
+    >
 
     <h2>HTML IO</h2>
     <p>Standard input/output for HTML elements. More examples coming soon...</p>
@@ -219,7 +222,10 @@
     </section>
 
     <h2>Pipes</h2>
-    <p>The fundamental pattern: Input → Pipe → Output</p>
+    <p
+      >Reactively passes data from element before to element after the pipe using a standard
+      <code>html-io</code> interface.</p
+    >
     <section>
       <input type="text" placeholder="Enter some text..." value="hello world" />
       <folk-pipe></folk-pipe>
@@ -227,7 +233,10 @@
     </section>
 
     <h2>Scripts</h2>
-    <p>Transform data with JavaScript scripts in the middle of a pipe.</p>
+    <p
+      >Data from table elements can be read as 2D arrays and, like any other element, passed through scripts to
+      transform it.</p
+    >
     <section>
       <table border="1" style="border-collapse: collapse; width: 100%">
         <tr>
@@ -353,6 +362,41 @@
       </script>
       <folk-pipe></folk-pipe>
       <pre></pre>
+    </section>
+
+    <h2>Arrays & Lists</h2>
+    <p>Arrays can be piped to lists for display and interaction.</p>
+
+    <h3>CSV to List</h3>
+    <section>
+      <input type="text" placeholder="Enter comma-separated values..." value="apple,banana,cherry,date,elderberry" />
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="csvToArray" class="collapsed" contenteditable>
+        export default function csvToArray(csvString) {
+          return csvString.split(',').map(item => item.trim()).filter(item => item.length > 0);
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <ol></ol>
+    </section>
+
+    <h3>List Filtering</h3>
+    <section>
+      <ol>
+        <li contenteditable>JavaScript</li>
+        <li contenteditable>Python</li>
+        <li contenteditable>Rust</li>
+        <li contenteditable>Go</li>
+        <li contenteditable>TypeScript</li>
+      </ol>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="listFilter" class="collapsed" contenteditable>
+        export default function filterByLength(items) {
+          return items.filter(item => item.length > 4).sort();
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <ul></ul>
     </section>
 
     <h2>Misc</h2>
