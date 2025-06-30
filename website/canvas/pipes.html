@@ -326,6 +326,41 @@
       <pre></pre>
     </section>
 
+    <h2>Module Reuse</h2>
+    <p>Hash modules can import and reuse each other using <code>import from '#moduleId'</code>.</p>
+    <p>The <code>#mathUtils</code> module is defined above and provides reusable functions.</p>
+    <section>
+      <textarea rows="3">
+Product A: 100,120,110,130
+Product B: 80,90,85,95
+Product C: 150,160,140,170</textarea
+      >
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="salesAnalyzer" contenteditable>
+        import { average, formatPercent, formatCurrency } from '#mathUtils';
+
+        export default function analyzeSales(input) {
+          const lines = input.trim().split('\n');
+          let results = '📊 SALES ANALYSIS\n\n';
+
+          lines.forEach(line => {
+            const [product, salesStr] = line.split(': ');
+            const sales = salesStr.split(',').map(Number);
+            const avg = average(sales);
+            const growth = (sales[sales.length - 1] - sales[0]) / sales[0];
+
+            results += `${product}:\n`;
+            results += `  📈 Average: ${formatCurrency(avg)}\n`;
+            results += `  🚀 Growth: ${formatPercent(growth)}\n\n`;
+          });
+
+          return results;
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
     <h2>Form Data Processing</h2>
     <p>Forms pipe out key-value objects of all their fields.</p>
     <section>
@@ -522,19 +557,56 @@
       </div>
     </section>
 
-    <script id="boot-loader">
-      // Hash module boot loader - initializes the module system
-      const imports = {};
+    <!-- Utility modules must be defined before boot loader -->
+    <script type="hash-module" id="mathUtils">
+      export function average(numbers) {
+        return numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
+      }
 
-      document.querySelectorAll('script[type="hash-module"]').forEach((module) => {
-        imports['#' + module.id] = URL.createObjectURL(new Blob([module.text], { type: 'application/javascript' }));
+      export function formatPercent(value) {
+        return `${(value * 100).toFixed(1)}%`;
+      }
+
+      export function formatCurrency(value) {
+        return `$${value.toLocaleString()}`;
+      }
+
+      export default { average, formatPercent, formatCurrency };
+    </script>
+
+    <!-- Hash module bootloader -->
+    <script>
+      console.log('🚀 Starting hash module bootloader...');
+
+      // Create import map for all hash modules
+      const imports = {};
+      const modules = document.querySelectorAll('script[type="hash-module"]');
+
+      modules.forEach((module) => {
+        if (module.id) {
+          const blobUrl = URL.createObjectURL(new Blob([module.textContent || ''], { type: 'application/javascript' }));
+          imports['#' + module.id] = blobUrl;
+        }
       });
 
-      const importmap = document.createElement('script');
-      importmap.type = 'importmap';
-      importmap.text = JSON.stringify({ imports }, null, 2);
-      document.head.appendChild(importmap);
-      importmap.remove();
+      if (Object.keys(imports).length > 0) {
+        const importMap = document.createElement('script');
+        importMap.type = 'importmap';
+        importMap.textContent = JSON.stringify({ imports });
+        document.head.appendChild(importMap);
+
+        console.log('✅ Hash modules ready:', Object.keys(imports));
+      }
+
+      // Signal that hash modules are ready
+      window.hashModulesReady = true;
+      window.hashModuleImports = imports;
+
+      document.dispatchEvent(
+        new CustomEvent('hash-modules-ready', {
+          detail: { imports, moduleIds: Object.keys(imports) },
+        }),
+      );
     </script>
 
     <script type="module">

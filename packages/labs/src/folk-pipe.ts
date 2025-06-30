@@ -1,6 +1,64 @@
 import { FolkElement } from '@folkjs/canvas';
 import { css, property, state, type CSSResultGroup } from '@folkjs/canvas/reactive-element';
 
+// Hash module system integration
+let hashModulesReadyPromise: Promise<void> | null = null;
+
+// Firefox fallback - direct module registry without import maps
+const firefoxModuleRegistry = new Map<string, string>();
+
+function isFirefox(): boolean {
+  return navigator.userAgent.indexOf('Firefox') > -1;
+}
+
+async function ensureHashModulesReady(): Promise<void> {
+  // Return cached promise if we already have one
+  if (hashModulesReadyPromise) {
+    return hashModulesReadyPromise;
+  }
+
+  // Check if hash modules are already ready (from HTML bootloader)
+  if ((window as any).hashModulesReady) {
+    return Promise.resolve();
+  }
+
+  // Create promise to wait for hash modules to be ready
+  hashModulesReadyPromise = new Promise<void>((resolve) => {
+    // If already ready, resolve immediately
+    if ((window as any).hashModulesReady) {
+      resolve();
+      return;
+    }
+
+    // Otherwise, listen for the ready event
+    const handleReady = () => {
+      document.removeEventListener('hash-modules-ready', handleReady);
+
+      // For Firefox, populate the fallback registry
+      if (isFirefox()) {
+        const imports = (window as any).hashModuleImports || {};
+        for (const [key, value] of Object.entries(imports)) {
+          firefoxModuleRegistry.set(key, value as string);
+        }
+        console.log('🦊 Firefox: populated module registry with', firefoxModuleRegistry.size, 'modules');
+      }
+
+      resolve();
+    };
+
+    document.addEventListener('hash-modules-ready', handleReady);
+
+    // Fallback timeout in case event doesn't fire
+    setTimeout(() => {
+      document.removeEventListener('hash-modules-ready', handleReady);
+      console.warn('Hash modules ready timeout - proceeding anyway');
+      resolve();
+    }, 1000);
+  });
+
+  return hashModulesReadyPromise;
+}
+
 // Element I/O type definitions
 interface ElementIO {
   getValue(element: Element, inputValue?: any): any | Promise<any>;
@@ -201,9 +259,10 @@ const ELEMENT_IO_MAP: Map<string, ElementIO> = new Map([
         // For hash modules, try to execute the default export as a function
         if (el.type === 'hash-module' && el.id) {
           try {
-            const moduleUrl = URL.createObjectURL(new Blob([el.textContent || ''], { type: 'application/javascript' }));
-            const module = await import(moduleUrl);
-            URL.revokeObjectURL(moduleUrl);
+            // Ensure all hash modules are processed first
+            await ensureHashModulesReady();
+
+            const module = await import(`#${el.id}`);
 
             if (typeof module.default === 'function') {
               // Call the function with the input value from the pipe
@@ -222,9 +281,10 @@ const ELEMENT_IO_MAP: Map<string, ElementIO> = new Map([
         // For hash modules, execute the function with the input value and display the result
         if (el.type === 'hash-module' && el.id) {
           try {
-            const moduleUrl = URL.createObjectURL(new Blob([el.textContent || ''], { type: 'application/javascript' }));
-            const module = await import(moduleUrl);
-            URL.revokeObjectURL(moduleUrl);
+            // Ensure all hash modules are processed first
+            await ensureHashModulesReady();
+
+            const module = await import(`#${el.id}`);
 
             if (typeof module.default === 'function') {
               const result = await module.default(value);
@@ -630,7 +690,27 @@ export class FolkPipe extends FolkElement {
     if (!sourceIO || !targetIO) return;
 
     try {
-      const sourceValue = await sourceIO.getValue(this.sourceElement);
+      let sourceValue;
+
+      // For hash modules as source elements, we need to get the input from the previous element in the chain
+      if (this.sourceElement.tagName === 'SCRIPT' && (this.sourceElement as HTMLScriptElement).type === 'hash-module') {
+        // Find the input value by looking at the previous pipe's source
+        const prevPipe = this.sourceElement.previousElementSibling;
+        if (prevPipe && prevPipe.tagName === 'FOLK-PIPE') {
+          const prevSource = prevPipe.previousElementSibling;
+          if (prevSource) {
+            // Use recursive helper to handle multi-step pipelines
+            const inputValue = await this.#getValueFromPreviousInChain(prevSource);
+            sourceValue = await sourceIO.getValue(this.sourceElement, inputValue);
+          } else {
+            sourceValue = await sourceIO.getValue(this.sourceElement);
+          }
+        } else {
+          sourceValue = await sourceIO.getValue(this.sourceElement);
+        }
+      } else {
+        sourceValue = await sourceIO.getValue(this.sourceElement);
+      }
 
       // Always update the target, but only update lastSourceValue if it actually changed
       if (sourceValue !== this.#lastSourceValue) {
@@ -648,6 +728,27 @@ export class FolkPipe extends FolkElement {
 
   #getElementIO(element: Element): ElementIO | null {
     return ELEMENT_IO_MAP.get(element.tagName) || null;
+  }
+
+  async #getValueFromPreviousInChain(element: Element): Promise<any> {
+    const io = this.#getElementIO(element);
+    if (!io) return undefined;
+
+    // If this is a hash module, we need to get its input from the previous element
+    if (element.tagName === 'SCRIPT' && (element as HTMLScriptElement).type === 'hash-module') {
+      const prevPipe = element.previousElementSibling;
+      if (prevPipe && prevPipe.tagName === 'FOLK-PIPE') {
+        const prevSource = prevPipe.previousElementSibling;
+        if (prevSource) {
+          const inputValue = await this.#getValueFromPreviousInChain(prevSource);
+          return await io.getValue(element, inputValue);
+        }
+      }
+      return await io.getValue(element);
+    } else {
+      // Regular element, just get its value
+      return await io.getValue(element);
+    }
   }
 
   #observeStructuralChanges() {
