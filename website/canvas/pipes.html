@@ -110,7 +110,6 @@
         min-width: 250px;
         max-width: 100%;
         position: relative;
-        transition: all 0.3s ease;
       }
 
       script[type='hash-module']:focus {
@@ -130,7 +129,6 @@
         padding: 0.25rem;
         margin: -0.25rem -0.25rem 0.5rem -0.25rem;
         border-radius: 3px;
-        transition: background-color 0.2s ease;
       }
 
       script[type='hash-module']:before:hover {
@@ -161,7 +159,6 @@
         border-radius: 3px;
         cursor: pointer;
         opacity: 0;
-        transition: opacity 0.2s ease;
         pointer-events: none;
       }
 
@@ -263,7 +260,7 @@
         </tr>
       </table>
       <folk-pipe></folk-pipe>
-      <script type="hash-module" id="tableAnalyzer" contenteditable>
+      <script type="hash-module" id="tableAnalyzer" class="collapsed" contenteditable>
         export default function analyzeSales(tableData) {
           if (!Array.isArray(tableData) || tableData.length < 2) {
             return "No data to analyze";
@@ -337,7 +334,7 @@
         </div>
       </form>
       <folk-pipe></folk-pipe>
-      <script type="hash-module" id="formProcessor" contenteditable>
+      <script type="hash-module" id="formProcessor" class="collapsed" contenteditable>
                 export default function processEmployee(formData) {
                   const employee = {
                     ...formData,
@@ -359,13 +356,12 @@
     </section>
 
     <h2>Misc</h2>
-    <p>Advanced features and examples.</p>
 
     <h3>Multi-Step Pipelines</h3>
     <section>
       <textarea rows="2">Alice,25 Bob,30 Carol,28</textarea>
       <folk-pipe></folk-pipe>
-      <script type="hash-module" id="csvSplitter" contenteditable>
+      <script type="hash-module" id="csvSplitter" class="collapsed" contenteditable>
         export default function parseSimpleCSV(input) {
           return input.split(' ').map(person => {
             const [name, age] = person.split(',');
@@ -374,7 +370,7 @@
         }
       </script>
       <folk-pipe></folk-pipe>
-      <script type="hash-module" id="ageAnalyzer" contenteditable>
+      <script type="hash-module" id="ageAnalyzer" class="collapsed" contenteditable>
                 export default function analyzeAges(people) {
                   const totalAge = people.reduce((sum, p) => sum + p.age, 0);
                   const avgAge = totalAge / people.length;
@@ -398,7 +394,7 @@ Product B: 80,90,85,95
 Product C: 150,160,140,170</textarea
       >
       <folk-pipe></folk-pipe>
-      <script type="hash-module" id="salesAnalyzer" contenteditable>
+      <script type="hash-module" id="salesAnalyzer" class="collapsed" contenteditable>
         import { average, formatPercent, formatCurrency } from '#mathUtils';
 
         export default function analyzeSales(input) {
@@ -425,7 +421,7 @@ Product C: 150,160,140,170</textarea
 
     <h3>Dynamic Table Generation</h3>
     <section>
-      <script type="hash-module" id="tableGenerator" contenteditable>
+      <script type="hash-module" id="tableGenerator" class="collapsed" contenteditable>
         export default function generateTableData(trigger) {
           const products = ['Laptops', 'Phones', 'Tablets', 'Monitors', 'Keyboards', 'Mice'];
           const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
@@ -472,7 +468,7 @@ Product C: 150,160,140,170</textarea
     </section>
 
     <!-- Utility modules must be defined before boot loader -->
-    <script type="hash-module" id="mathUtils">
+    <script type="hash-module" id="mathUtils" class="collapsed">
       export function average(numbers) {
         return numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
       }
