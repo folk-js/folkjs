@@ -486,7 +486,6 @@ Product C: 150,160,140,170</textarea
 
     <!-- Hash module bootloader -->
     <script>
-      // Create import map for all hash modules
       const imports = {};
       const modules = document.querySelectorAll('script[type="hash-module"]');
 
@@ -498,16 +497,10 @@ Product C: 150,160,140,170</textarea
         }
       });
 
-      if (Object.keys(imports).length > 0) {
-        const importMap = document.createElement('script');
-        importMap.type = 'importmap';
-        importMap.textContent = JSON.stringify({ imports });
-        document.head.appendChild(importMap);
-      }
-
-      // Signal that hash modules are ready
-      window.hashModulesReady = true;
-      document.dispatchEvent(new CustomEvent('hash-modules-ready'));
+      const importMap = document.createElement('script');
+      importMap.type = 'importmap';
+      importMap.textContent = JSON.stringify({ imports });
+      document.head.appendChild(importMap);
     </script>
 
     <script type="module">

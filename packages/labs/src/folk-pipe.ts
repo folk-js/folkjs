@@ -2,21 +2,11 @@ import { FolkElement } from '@folkjs/canvas';
 import { css, type CSSResultGroup } from '@folkjs/canvas/reactive-element';
 import { ELEMENT_IO_MAP, type ElementIO } from './html-io.js';
 
-// Hash module system integration
-async function ensureHashModulesReady(): Promise<void> {
-  if ((window as any).hashModulesReady) {
-    return Promise.resolve();
-  }
-
-  return new Promise<void>((resolve) => {
-    const handleReady = () => {
-      document.removeEventListener('hash-modules-ready', handleReady);
-      resolve();
-    };
-    document.addEventListener('hash-modules-ready', handleReady);
-  });
-}
-
+/**
+ * Pipes data from element before to element after the <pipe> using {@link "html-io"}
+ * This was thrown together quickly, most of the mess is in the special casing of scripts.
+ * TBD what this becomes...
+ */
 export class FolkPipe extends FolkElement {
   static override tagName = 'folk-pipe';
 
@@ -107,7 +97,6 @@ export class FolkPipe extends FolkElement {
     // Execute hash module
     if (script.type === 'hash-module' && script.id) {
       try {
-        await ensureHashModulesReady();
         const module = await import(`#${script.id}`);
 
         if (typeof module.default === 'function') {
@@ -128,7 +117,6 @@ export class FolkPipe extends FolkElement {
   async #setScriptValue(script: HTMLScriptElement, value: any): Promise<void> {
     if (script.type === 'hash-module' && script.id) {
       try {
-        await ensureHashModulesReady();
         const module = await import(`#${script.id}`);
 
         if (typeof module.default === 'function') {
