@@ -215,202 +215,22 @@
     <h1>Folk Pipes</h1>
     <p>The <code>&lt;folk-pipe&gt;</code> element creates reactive data flows between DOM elements.</p>
 
-    <h2>Core Concept: Script Transform</h2>
-    <p>The fundamental pattern: Input → Script Transform → Output</p>
+    <h2>HTML IO</h2>
+    <p>Standard input/output for HTML elements. More examples coming soon...</p>
+    <section>
+      <!-- This section will be fleshed out later -->
+    </section>
+
+    <h2>Pipes</h2>
+    <p>The fundamental pattern: Input → Pipe → Output</p>
     <section>
       <input type="text" placeholder="Enter some text..." value="hello world" />
       <folk-pipe></folk-pipe>
-      <script type="hash-module" id="textTransform" contenteditable>
-        export default function transform(input) {
-          const emojis = ['🚀', '✨', '🎉', '🔥', '💫', '⭐', '🌟', '💥', '🎊', '🎈'];
-
-          function getRandomEmojis() {
-            const count = 2 + Math.floor(Math.random() * 2); // 2-3 emojis
-            return Array.from({length: count}, () =>
-              emojis[Math.floor(Math.random() * emojis.length)]
-            ).join(' ');
-          }
-
-          const words = input.toUpperCase().split(' ');
-          let result = words[0] || '';
-
-          for (let i = 1; i < words.length; i++) {
-            result += ` ${getRandomEmojis()} ${words[i]}`;
-          }
-
-          return result + ` ${getRandomEmojis()}`;
-        }
-      </script>
-      <folk-pipe></folk-pipe>
       <pre></pre>
     </section>
 
-    <h2>Interactive Controls</h2>
-    <p>Various input controls can drive data flows.</p>
-    <section>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem">
-        <div>
-          <label for="volume-slider">Volume:</label>
-          <input type="range" id="volume-slider" min="0" max="100" value="75" />
-          <folk-pipe></folk-pipe>
-          <script type="hash-module" id="volumeProcessor" contenteditable>
-            export default function processVolume(value) {
-              const vol = parseInt(value);
-              const bars = Math.floor(vol / 10);
-              const visual = '█'.repeat(bars) + '░'.repeat(10 - bars);
-              return `🔊 ${visual} ${vol}%`;
-            }
-          </script>
-          <folk-pipe></folk-pipe>
-          <output></output>
-        </div>
-        <div>
-          <label for="color-select">Color:</label>
-          <select id="color-select">
-            <option value="#ff0000">🔴 Red</option>
-            <option value="#00ff00">🟢 Green</option>
-            <option value="#0000ff">🔵 Blue</option>
-            <option value="#ffff00">🟡 Yellow</option>
-          </select>
-          <folk-pipe></folk-pipe>
-          <div
-            style="
-              width: 100px;
-              height: 50px;
-              border: 2px solid #333;
-              background: #ff0000;
-              color: white;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              font-size: 0.8rem;
-            "
-            >🔴 Red</div
-          >
-        </div>
-      </div>
-    </section>
-
-    <h2>Multi-Step Pipelines</h2>
-    <p>Chain multiple transforms together for complex data flows.</p>
-    <section>
-      <textarea rows="2">Alice,25 Bob,30 Carol,28</textarea>
-      <folk-pipe></folk-pipe>
-      <script type="hash-module" id="csvSplitter" contenteditable>
-        export default function parseSimpleCSV(input) {
-          return input.split(' ').map(person => {
-            const [name, age] = person.split(',');
-            return { name, age: parseInt(age) };
-          });
-        }
-      </script>
-      <folk-pipe></folk-pipe>
-      <script type="hash-module" id="ageAnalyzer" contenteditable>
-                export default function analyzeAges(people) {
-                  const totalAge = people.reduce((sum, p) => sum + p.age, 0);
-                  const avgAge = totalAge / people.length;
-                  const oldest = people.reduce((max, p) => p.age > max.age ? p : max);
-
-                  return `👥 ${people.length} people
-        🎂 Average age: ${avgAge.toFixed(1)}
-        👑 Oldest: ${oldest.name} (${oldest.age})`;
-                }
-      </script>
-      <folk-pipe></folk-pipe>
-      <pre></pre>
-    </section>
-
-    <h2>Module Reuse</h2>
-    <p>Hash modules can import and reuse each other using <code>import from '#moduleId'</code>.</p>
-    <p>The <code>#mathUtils</code> module is defined above and provides reusable functions.</p>
-    <section>
-      <textarea rows="3">
-Product A: 100,120,110,130
-Product B: 80,90,85,95
-Product C: 150,160,140,170</textarea
-      >
-      <folk-pipe></folk-pipe>
-      <script type="hash-module" id="salesAnalyzer" contenteditable>
-        import { average, formatPercent, formatCurrency } from '#mathUtils';
-
-        export default function analyzeSales(input) {
-          const lines = input.trim().split('\n');
-          let results = '📊 SALES ANALYSIS\n\n';
-
-          lines.forEach(line => {
-            const [product, salesStr] = line.split(': ');
-            const sales = salesStr.split(',').map(Number);
-            const avg = average(sales);
-            const growth = (sales[sales.length - 1] - sales[0]) / sales[0];
-
-            results += `${product}:\n`;
-            results += `  📈 Average: ${formatCurrency(avg)}\n`;
-            results += `  🚀 Growth: ${formatPercent(growth)}\n\n`;
-          });
-
-          return results;
-        }
-      </script>
-      <folk-pipe></folk-pipe>
-      <pre></pre>
-    </section>
-
-    <h2>Form Data Processing</h2>
-    <p>Forms pipe out key-value objects of all their fields.</p>
-    <section>
-      <form>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem">
-          <div>
-            <label>Name: <input type="text" name="name" value="Alice" /></label>
-          </div>
-          <div>
-            <label>Age: <input type="number" name="age" value="25" /></label>
-          </div>
-          <div>
-            <label>Email: <input type="email" name="email" value="alice@example.com" /></label>
-          </div>
-          <div>
-            <label
-              >Department:
-              <select name="department">
-                <option value="engineering">Engineering</option>
-                <option value="design" selected>Design</option>
-                <option value="marketing">Marketing</option>
-              </select>
-            </label>
-          </div>
-          <div>
-            <label><input type="checkbox" name="remote" checked /> Remote Worker</label>
-          </div>
-          <div>
-            <label><input type="checkbox" name="fulltime" checked /> Full Time</label>
-          </div>
-        </div>
-      </form>
-      <folk-pipe></folk-pipe>
-      <script type="hash-module" id="formProcessor" contenteditable>
-                export default function processEmployee(formData) {
-                  const employee = {
-                    ...formData,
-                    status: formData.remote ? 'Remote' : 'On-site',
-                    workType: formData.fulltime ? 'Full-time' : 'Part-time',
-                    yearsToRetirement: Math.max(0, 65 - (formData.age || 0))
-                  };
-
-                  return `Employee Profile:
-        🧑‍💼 ${employee.name} (${employee.age} years old)
-        📧 ${employee.email}
-        🏢 ${employee.department} department
-        💼 ${employee.status}, ${employee.workType}
-        🎯 ${employee.yearsToRetirement} years to retirement`;
-                }
-      </script>
-      <folk-pipe></folk-pipe>
-      <pre></pre>
-    </section>
-
-    <h2>Table Data Analysis</h2>
-    <p>Tables pipe out 2D arrays that can be processed with scripts.</p>
+    <h2>Scripts</h2>
+    <p>Transform data with JavaScript scripts in the middle of a pipe.</p>
     <section>
       <table border="1" style="border-collapse: collapse; width: 100%">
         <tr>
@@ -484,8 +304,126 @@ Product C: 150,160,140,170</textarea
       <pre></pre>
     </section>
 
-    <h2>Dynamic Table Generation</h2>
-    <p>Generate tables from script data - they automatically resize to match the data.</p>
+    <h2>Forms</h2>
+    <p>Forms pipe out key-value objects of all their fields.</p>
+    <section>
+      <form>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem">
+          <div>
+            <label>Name: <input type="text" name="name" value="Alice" /></label>
+          </div>
+          <div>
+            <label>Age: <input type="number" name="age" value="25" /></label>
+          </div>
+          <div>
+            <label>Email: <input type="email" name="email" value="alice@example.com" /></label>
+          </div>
+          <div>
+            <label
+              >Department:
+              <select name="department">
+                <option value="engineering">Engineering</option>
+                <option value="design" selected>Design</option>
+                <option value="marketing">Marketing</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label><input type="checkbox" name="remote" checked /> Remote Worker</label>
+          </div>
+          <div>
+            <label><input type="checkbox" name="fulltime" checked /> Full Time</label>
+          </div>
+        </div>
+      </form>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="formProcessor" contenteditable>
+                export default function processEmployee(formData) {
+                  const employee = {
+                    ...formData,
+                    status: formData.remote ? 'Remote' : 'On-site',
+                    workType: formData.fulltime ? 'Full-time' : 'Part-time',
+                    yearsToRetirement: Math.max(0, 65 - (formData.age || 0))
+                  };
+
+                  return `Employee Profile:
+        🧑‍💼 ${employee.name} (${employee.age} years old)
+        📧 ${employee.email}
+        🏢 ${employee.department} department
+        💼 ${employee.status}, ${employee.workType}
+        🎯 ${employee.yearsToRetirement} years to retirement`;
+                }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h2>Misc</h2>
+    <p>Advanced features and examples.</p>
+
+    <h3>Multi-Step Pipelines</h3>
+    <section>
+      <textarea rows="2">Alice,25 Bob,30 Carol,28</textarea>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="csvSplitter" contenteditable>
+        export default function parseSimpleCSV(input) {
+          return input.split(' ').map(person => {
+            const [name, age] = person.split(',');
+            return { name, age: parseInt(age) };
+          });
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="ageAnalyzer" contenteditable>
+                export default function analyzeAges(people) {
+                  const totalAge = people.reduce((sum, p) => sum + p.age, 0);
+                  const avgAge = totalAge / people.length;
+                  const oldest = people.reduce((max, p) => p.age > max.age ? p : max);
+
+                  return `👥 ${people.length} people
+        🎂 Average age: ${avgAge.toFixed(1)}
+        👑 Oldest: ${oldest.name} (${oldest.age})`;
+                }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h3>Module Reuse</h3>
+    <p>Hash modules can import and reuse each other using <code>import from '#moduleId'</code>.</p>
+    <section>
+      <textarea rows="3">
+Product A: 100,120,110,130
+Product B: 80,90,85,95
+Product C: 150,160,140,170</textarea
+      >
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="salesAnalyzer" contenteditable>
+        import { average, formatPercent, formatCurrency } from '#mathUtils';
+
+        export default function analyzeSales(input) {
+          const lines = input.trim().split('\n');
+          let results = '📊 SALES ANALYSIS\n\n';
+
+          lines.forEach(line => {
+            const [product, salesStr] = line.split(': ');
+            const sales = salesStr.split(',').map(Number);
+            const avg = average(sales);
+            const growth = (sales[sales.length - 1] - sales[0]) / sales[0];
+
+            results += `${product}:\n`;
+            results += `  📈 Average: ${formatCurrency(avg)}\n`;
+            results += `  🚀 Growth: ${formatPercent(growth)}\n\n`;
+          });
+
+          return results;
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h3>Dynamic Table Generation</h3>
     <section>
       <script type="hash-module" id="tableGenerator" contenteditable>
         export default function generateTableData(trigger) {
@@ -516,9 +454,6 @@ Product C: 150,160,140,170</textarea
       <folk-pipe></folk-pipe>
       <table border="1" style="border-collapse: collapse; width: 100%; background: #f9f9f9"></table>
     </section>
-
-    <h2>Tests & Experiments</h2>
-    <p>Advanced features and interactive demonstrations.</p>
 
     <h3>Canvas Drawing</h3>
     <p>Click and drag on the canvas to draw, pipe the result to an image.</p>
