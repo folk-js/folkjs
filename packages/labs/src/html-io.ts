@@ -2,74 +2,67 @@
  * Standard JSON-based I/O for HTML elements and DOM subtrees
  * - Plain values for textContent or input values
  * - Objects for forms
- * - Arrays for tables and lists
+ * - 1D arrays for lists
+ * - 2D arrays for tables
  */
 
 // Type for all data that flows through the HTML I/O system
 export type IOData = string | number | boolean | { [key: string]: any } | any[][] | any[];
 
-// Internal handler interface
-interface IOHandler {
-  getValue(element: Element): IOData;
-  setValue(element: Element, value: IOData): void;
-}
+// Internal handler interface with proper typing
+type IOHandler<T> = {
+  getValue(element: T): IOData;
+  setValue(element: T, value: IOData): void;
+};
 
-// Registry of element handlers - only for elements needing special behavior
-const handlers: Record<string, IOHandler> = {
+// Registry of element handlers - partial mapping of HTMLElementTagNameMap
+const handlers: {
+  [K in keyof HTMLElementTagNameMap]?: IOHandler<HTMLElementTagNameMap[K]>;
+} = {
   // Form controls with .value
-  INPUT: {
-    getValue: (el: HTMLInputElement) => el.value,
-    setValue: (el: HTMLInputElement, value) => {
+  input: {
+    getValue: (el) => el.value,
+    setValue: (el, value) => {
       el.value = String(value);
     },
   },
-  TEXTAREA: {
-    getValue: (el: HTMLTextAreaElement) => el.value,
-    setValue: (el: HTMLTextAreaElement, value) => {
+  textarea: {
+    getValue: (el) => el.value,
+    setValue: (el, value) => {
       el.value = String(value);
     },
   },
-  SELECT: {
-    getValue: (el: HTMLSelectElement) => el.value,
-    setValue: (el: HTMLSelectElement, value) => {
+  select: {
+    getValue: (el) => el.value,
+    setValue: (el, value) => {
       el.value = String(value);
-    },
-  },
-
-  // OUTPUT element can use both .value and .textContent
-  OUTPUT: {
-    getValue: (el: HTMLOutputElement) => el.value || el.textContent || '',
-    setValue: (el: HTMLOutputElement, value) => {
-      const str = String(value);
-      el.value = str;
-      el.textContent = str;
     },
   },
 
   // Media elements with .src
-  IMG: {
-    getValue: (el: HTMLImageElement) => el.src,
-    setValue: (el: HTMLImageElement, value) => {
+  img: {
+    getValue: (el) => el.src,
+    setValue: (el, value) => {
       el.src = String(value);
     },
   },
-  VIDEO: {
-    getValue: (el: HTMLVideoElement) => el.src,
-    setValue: (el: HTMLVideoElement, value) => {
+  video: {
+    getValue: (el) => el.src,
+    setValue: (el, value) => {
       el.src = String(value);
     },
   },
-  AUDIO: {
-    getValue: (el: HTMLAudioElement) => el.src,
-    setValue: (el: HTMLAudioElement, value) => {
+  audio: {
+    getValue: (el) => el.src,
+    setValue: (el, value) => {
       el.src = String(value);
     },
   },
 
-  // Canvas - special case for data URL
-  CANVAS: {
-    getValue: (el: HTMLCanvasElement) => el.toDataURL(),
-    setValue: (el: HTMLCanvasElement, value) => {
+  // Canvas - data URL
+  canvas: {
+    getValue: (el) => el.toDataURL(),
+    setValue: (el, value) => {
       const ctx = el.getContext('2d');
       if (ctx && typeof value === 'string' && value.startsWith('data:image/')) {
         const img = new Image();
@@ -82,61 +75,79 @@ const handlers: Record<string, IOHandler> = {
     },
   },
 
-  // Lists - handle arrays of items
-  OL: {
-    getValue: (el: Element) => {
+  // Lists - preserve existing elements where possible
+  ol: {
+    getValue: (el) => {
       const items = Array.from(el.querySelectorAll('li'));
       return items.map((item) => item.textContent || '');
     },
-    setValue: (el: Element, value) => {
-      if (Array.isArray(value)) {
-        el.innerHTML = '';
-        value.forEach((item) => {
+    setValue: (el, value) => {
+      if (!Array.isArray(value)) return;
+
+      const existingItems = Array.from(el.querySelectorAll('li'));
+
+      // Update existing items
+      value.forEach((item, index) => {
+        if (index < existingItems.length) {
+          existingItems[index].textContent = String(item);
+        } else {
+          // Add new item
           const li = document.createElement('li');
           li.textContent = String(item);
           li.contentEditable = 'true';
-
-          // Trigger change events on edit
           li.addEventListener('input', () => {
             el.dispatchEvent(new Event('input', { bubbles: true }));
           });
-
           el.appendChild(li);
-        });
+        }
+      });
 
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+      // Remove excess items
+      for (let i = existingItems.length - 1; i >= value.length; i--) {
+        existingItems[i].remove();
       }
+
+      el.dispatchEvent(new Event('change', { bubbles: true }));
     },
   },
-  UL: {
-    getValue: (el: Element) => {
+  ul: {
+    getValue: (el) => {
       const items = Array.from(el.querySelectorAll('li'));
       return items.map((item) => item.textContent || '');
     },
-    setValue: (el: Element, value) => {
-      if (Array.isArray(value)) {
-        el.innerHTML = '';
-        value.forEach((item) => {
+    setValue: (el, value) => {
+      if (!Array.isArray(value)) return;
+
+      const existingItems = Array.from(el.querySelectorAll('li'));
+
+      // Update existing items
+      value.forEach((item, index) => {
+        if (index < existingItems.length) {
+          existingItems[index].textContent = String(item);
+        } else {
+          // Add new item
           const li = document.createElement('li');
           li.textContent = String(item);
           li.contentEditable = 'true';
-
-          // Trigger change events on edit
           li.addEventListener('input', () => {
             el.dispatchEvent(new Event('input', { bubbles: true }));
           });
-
           el.appendChild(li);
-        });
+        }
+      });
 
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+      // Remove excess items
+      for (let i = existingItems.length - 1; i >= value.length; i--) {
+        existingItems[i].remove();
       }
+
+      el.dispatchEvent(new Event('change', { bubbles: true }));
     },
   },
 
-  // Form - outputs key-value object
-  FORM: {
-    getValue: (el: HTMLFormElement) => {
+  // Form - key-value object
+  form: {
+    getValue: (el) => {
       const formData = new FormData(el);
       const result: { [key: string]: any } = {};
 
@@ -166,75 +177,99 @@ const handlers: Record<string, IOHandler> = {
 
       return result;
     },
-    setValue: (el: HTMLFormElement, value) => {
-      if (typeof value === 'object' && value !== null) {
-        Object.entries(value).forEach(([key, val]) => {
-          const elements = el.querySelectorAll(`[name="${key}"]`);
-          elements.forEach((element) => {
-            if (element instanceof HTMLInputElement) {
-              if (element.type === 'checkbox' || element.type === 'radio') {
-                element.checked = Boolean(val);
-              } else {
-                element.value = String(val);
-              }
-            } else if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
+    setValue: (el, value) => {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return;
+
+      Object.entries(value).forEach(([key, val]) => {
+        const elements = el.querySelectorAll(`[name="${key}"]`);
+        elements.forEach((element) => {
+          if (element instanceof HTMLInputElement) {
+            if (element.type === 'checkbox' || element.type === 'radio') {
+              element.checked = Boolean(val);
+            } else {
               element.value = String(val);
             }
-          });
+          } else if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
+            element.value = String(val);
+          }
         });
-      }
+      });
     },
   },
 
-  // Table - outputs 2D array
-  TABLE: {
-    getValue: (el: HTMLTableElement) => {
+  // Table - 2D array, preserve structure where possible
+  table: {
+    getValue: (el) => {
       const rows = Array.from(el.querySelectorAll('tr'));
       return rows.map((row) => {
         const cells = Array.from(row.querySelectorAll('td, th'));
         return cells.map((cell) => cell.textContent || '');
       });
     },
-    setValue: (el: HTMLTableElement, value) => {
-      if (Array.isArray(value) && value.length > 0) {
-        el.innerHTML = '';
-        const hasHeaders = value.length > 1;
+    setValue: (el, value) => {
+      if (!Array.isArray(value) || value.length === 0) return;
 
-        value.forEach((rowData, rowIndex) => {
-          if (Array.isArray(rowData) && rowData.length > 0) {
-            const row = document.createElement('tr');
+      const existingRows = Array.from(el.querySelectorAll('tr'));
+      const hasHeaders = value.length > 1;
 
-            rowData.forEach((cellData) => {
-              const cellType = hasHeaders && rowIndex === 0 ? 'th' : 'td';
-              const cell = document.createElement(cellType);
-              cell.textContent = String(cellData);
-              cell.contentEditable = 'true';
+      // Update existing rows and cells
+      value.forEach((rowData, rowIndex) => {
+        if (!Array.isArray(rowData) || rowData.length === 0) return;
 
-              // Trigger change events on edit
-              cell.addEventListener('input', () => {
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-              });
-
-              row.appendChild(cell);
-            });
-
-            if (hasHeaders && rowIndex === 0) {
-              const thead = document.createElement('thead');
-              thead.appendChild(row);
+        let row: HTMLTableRowElement;
+        if (rowIndex < existingRows.length) {
+          row = existingRows[rowIndex];
+        } else {
+          // Create new row
+          row = document.createElement('tr');
+          if (hasHeaders && rowIndex === 0) {
+            let thead = el.querySelector('thead');
+            if (!thead) {
+              thead = document.createElement('thead');
               el.appendChild(thead);
-            } else {
-              let tbody = el.querySelector('tbody');
-              if (!tbody) {
-                tbody = document.createElement('tbody');
-                el.appendChild(tbody);
-              }
-              tbody.appendChild(row);
             }
+            thead.appendChild(row);
+          } else {
+            let tbody = el.querySelector('tbody');
+            if (!tbody) {
+              tbody = document.createElement('tbody');
+              el.appendChild(tbody);
+            }
+            tbody.appendChild(row);
+          }
+        }
+
+        const existingCells = Array.from(row.querySelectorAll('td, th'));
+
+        // Update existing cells
+        rowData.forEach((cellData, cellIndex) => {
+          if (cellIndex < existingCells.length) {
+            existingCells[cellIndex].textContent = String(cellData);
+          } else {
+            // Add new cell
+            const cellType = hasHeaders && rowIndex === 0 ? 'th' : 'td';
+            const cell = document.createElement(cellType);
+            cell.textContent = String(cellData);
+            cell.contentEditable = 'true';
+            cell.addEventListener('input', () => {
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+            row.appendChild(cell);
           }
         });
 
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        // Remove excess cells
+        for (let i = existingCells.length - 1; i >= rowData.length; i--) {
+          existingCells[i].remove();
+        }
+      });
+
+      // Remove excess rows
+      for (let i = existingRows.length - 1; i >= value.length; i--) {
+        existingRows[i].remove();
       }
+
+      el.dispatchEvent(new Event('change', { bubbles: true }));
     },
   },
 };
@@ -243,9 +278,9 @@ const handlers: Record<string, IOHandler> = {
  * Get standardized JSON data from any HTML element
  */
 export function get(element: Element): IOData {
-  const handler = handlers[element.tagName];
+  const handler = handlers[element.tagName.toLowerCase() as keyof typeof handlers];
   if (handler) {
-    return handler.getValue(element);
+    return handler.getValue(element as any);
   }
 
   // Fallback: read textContent for any unhandled element
@@ -256,9 +291,9 @@ export function get(element: Element): IOData {
  * Set standardized JSON data to any HTML element
  */
 export function set(element: Element, value: IOData): void {
-  const handler = handlers[element.tagName];
+  const handler = handlers[element.tagName.toLowerCase() as keyof typeof handlers];
   if (handler) {
-    handler.setValue(element, value);
+    handler.setValue(element as any, value);
   } else {
     // Fallback: write to textContent for any unhandled element
     element.textContent = String(value);

@@ -214,17 +214,20 @@
       >The <code>&lt;folk-pipe&gt;</code> element creates reactive data flows between DOM elements. All the elements
       here are plain html elements, no special coordination is happening other than the pipe element itself.</p
     >
-
-    <h2>HTML IO</h2>
-    <p>Standard input/output for HTML elements. More examples coming soon...</p>
-    <section>
-      <!-- This section will be fleshed out later -->
-    </section>
+    <p>
+      This is really an experiment in what a 'Standard IO for HTML' would look like, and as such this experiment leverages a simple <code>html-io</code> system where all input/outputs of elements are reduced to:
+      <ol>
+        <li>Plain value IO for single inputs, contenteditable/textcontent, and others</li>
+        <li>1D arrays for lists</li>
+        <li>2D arrays for tables</li>
+        <li>objects for forms</li>
+      </ol>
+    </p>
 
     <h2>Pipes</h2>
     <p
-      >Reactively passes data from element before to element after the pipe using a standard
-      <code>html-io</code> interface.</p
+      >Reactively passes data from element before to element after the pipe using
+      <code>html-io</code></p
     >
     <section>
       <input type="text" placeholder="Enter some text..." value="hello world" />
