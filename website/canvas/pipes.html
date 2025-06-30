@@ -211,8 +211,11 @@
   <body>
     <h1>Folk Pipes</h1>
     <p
+      >TODO: figure out why Firefox doesn't like the hash module reuse example.</p
+    >
+    <p
       >The <code>&lt;folk-pipe&gt;</code> element creates reactive data flows between DOM elements. All the elements
-      here are plain html elements, no special coordination is happening other than the pipe element itself.</p
+      here are plain html elements, no special coordination is happening other than the pipe element itself. If you squint, it's almost an html jupyter-esque notebook.</p
     >
     <p>
       This is really an experiment in what a 'Standard IO for HTML' would look like, and as such this experiment leverages a simple <code>html-io</code> system where all input/outputs of elements are reduced to:
@@ -222,6 +225,7 @@
         <li>2D arrays for tables</li>
         <li>objects for forms</li>
       </ol>
+      This is one take on what an 'html-io' could look like, but ideas here are welcome. A thin normalization layer has already proven very useful in its utility, but exactly what that normalization should be is up for grabs.
     </p>
 
     <h2>Pipes</h2>
