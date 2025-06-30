@@ -170,12 +170,6 @@
         pointer-events: auto;
       }
 
-      script[type='hash-module'].running:after {
-        content: '⏳ Running...';
-        background: #ff9500;
-        opacity: 1;
-      }
-
       button {
         background: #007acc;
         color: white;
@@ -493,8 +487,6 @@ Product C: 150,160,140,170</textarea
     <h2>Dynamic Table Generation</h2>
     <p>Generate tables from script data - they automatically resize to match the data.</p>
     <section>
-      <button onclick="generateRandomData()">Generate Random Data</button>
-      <folk-pipe></folk-pipe>
       <script type="hash-module" id="tableGenerator" contenteditable>
         export default function generateTableData(trigger) {
           const products = ['Laptops', 'Phones', 'Tablets', 'Monitors', 'Keyboards', 'Mice'];
@@ -544,19 +536,6 @@ Product C: 150,160,140,170</textarea
       <img alt="Piped image" />
     </section>
 
-    <h3>Dynamic Connections</h3>
-    <p>Insert elements between pipes to change connections dynamically.</p>
-    <section>
-      <input type="text" value="Source element" />
-      <folk-pipe></folk-pipe>
-      <div contenteditable>Original target</div>
-      <div>
-        <button onclick="insertBetween()">Insert Between</button>
-        <button onclick="removeInserted()">Remove Inserted</button>
-        <button onclick="testCurrentConnection()">Test Connection</button>
-      </div>
-    </section>
-
     <!-- Utility modules must be defined before boot loader -->
     <script type="hash-module" id="mathUtils">
       export function average(numbers) {
@@ -576,16 +555,15 @@ Product C: 150,160,140,170</textarea
 
     <!-- Hash module bootloader -->
     <script>
-      console.log('🚀 Starting hash module bootloader...');
-
       // Create import map for all hash modules
       const imports = {};
       const modules = document.querySelectorAll('script[type="hash-module"]');
 
       modules.forEach((module) => {
         if (module.id) {
-          const blobUrl = URL.createObjectURL(new Blob([module.textContent || ''], { type: 'application/javascript' }));
-          imports['#' + module.id] = blobUrl;
+          imports['#' + module.id] = URL.createObjectURL(
+            new Blob([module.textContent || ''], { type: 'application/javascript' }),
+          );
         }
       });
 
@@ -594,19 +572,11 @@ Product C: 150,160,140,170</textarea
         importMap.type = 'importmap';
         importMap.textContent = JSON.stringify({ imports });
         document.head.appendChild(importMap);
-
-        console.log('✅ Hash modules ready:', Object.keys(imports));
       }
 
       // Signal that hash modules are ready
       window.hashModulesReady = true;
-      window.hashModuleImports = imports;
-
-      document.dispatchEvent(
-        new CustomEvent('hash-modules-ready', {
-          detail: { imports, moduleIds: Object.keys(imports) },
-        }),
-      );
+      document.dispatchEvent(new CustomEvent('hash-modules-ready'));
     </script>
 
     <script type="module">
@@ -690,92 +660,23 @@ Product C: 150,160,140,170</textarea
         canvas.dispatchEvent(new Event('change'));
       };
 
-      // Script update trigger
-      window.triggerScriptUpdate = function () {
-        const scriptElement = document.querySelector('script[type="hash-module"]:last-of-type');
-        if (scriptElement) {
-          scriptElement.dispatchEvent(new Event('input'));
-        }
-      };
-
-      // Test functions
-      window.testChainedReactivity = function () {
-        const textarea = document.querySelector('textarea[rows="2"]');
-        const messages = [
-          'Programmatic change at: ' + new Date().toLocaleTimeString(),
-          'Testing reactive pipes...',
-          'This flows through all elements!',
-        ];
-
-        let index = 0;
-        const interval = setInterval(() => {
-          if (index < messages.length) {
-            textarea.value = messages[index];
-            console.log(`Set textarea: "${messages[index]}"`);
-            index++;
-          } else {
-            clearInterval(interval);
-          }
-        }, 1500);
-      };
-
-      // Dynamic DOM manipulation
-      let insertedElements = [];
-
-      window.insertBetween = function () {
-        const lastSection = document.querySelector('section:last-of-type');
-        const pipe = lastSection.querySelector('folk-pipe');
-
-        const newElement = document.createElement('pre');
-        newElement.textContent = `New target ${insertedElements.length + 1}`;
-        newElement.style.background = '#fff3cd';
-        newElement.style.border = '1px solid #ffeaa7';
-
-        lastSection.insertBefore(newElement, pipe.nextElementSibling);
-        insertedElements.push(newElement);
-      };
-
-      window.removeInserted = function () {
-        insertedElements.forEach((el) => el.remove());
-        insertedElements = [];
-      };
-
-      window.testCurrentConnection = function () {
-        const lastSection = document.querySelector('section:last-of-type');
-        const input = lastSection.querySelector('input');
-        input.value = `Testing at ${new Date().toLocaleTimeString()}`;
-      };
-
-      // Script collapse/expand and re-execution functionality
+      // Script collapse/expand and run functionality
       function initializeScriptInteractions() {
         document.querySelectorAll('script[type="hash-module"]').forEach((script) => {
           script.addEventListener('click', (e) => {
             const rect = script.getBoundingClientRect();
-            const headerHeight = 40;
             const runButtonArea = { x: rect.width - 80, y: 40, width: 80, height: 30 };
 
-            // Check if clicking on the run button area (::after pseudo-element)
+            // Check if clicking on the run button area
             if (e.offsetX >= runButtonArea.x && e.offsetY <= runButtonArea.y) {
               executeScript(script);
               e.preventDefault();
-              e.stopPropagation();
               return;
             }
 
-            // Check if clicking on the header area for collapse/expand
-            if (e.offsetY <= headerHeight) {
+            // Toggle collapsed state when clicking on the header area
+            if (e.offsetY <= 40) {
               script.classList.toggle('collapsed');
-              e.preventDefault();
-              e.stopPropagation();
-            }
-          });
-
-          // Prevent text selection when clicking header
-          script.addEventListener('selectstart', (e) => {
-            const rect = script.getBoundingClientRect();
-            const headerHeight = 40;
-
-            if (e.offsetY <= headerHeight) {
               e.preventDefault();
             }
           });
@@ -783,53 +684,11 @@ Product C: 150,160,140,170</textarea
       }
 
       // Execute a script manually
-      async function executeScript(scriptElement) {
-        if (scriptElement.classList.contains('running')) return;
-
-        scriptElement.classList.add('running');
-
-        try {
-          // Find the previous element to use as input (if any)
-          let inputValue = undefined;
-          let previousElement = scriptElement.previousElementSibling;
-
-          // Skip over folk-pipe elements to find the actual data source
-          while (previousElement && previousElement.tagName === 'FOLK-PIPE') {
-            previousElement = previousElement.previousElementSibling;
-          }
-
-          // If there's a previous element but no pipe, this might be a data source script
-          // For data source scripts, we can pass a trigger value
-          if (!previousElement || previousElement.tagName !== 'FOLK-PIPE') {
-            inputValue = Date.now(); // Trigger value for data source scripts
-          }
-
-          // Dispatch an input event to trigger the pipe system
-          scriptElement.dispatchEvent(new Event('input', { bubbles: true }));
-
-          // Give a brief visual feedback
-          setTimeout(() => {
-            scriptElement.classList.remove('running');
-          }, 500);
-        } catch (error) {
-          console.error('Error executing script:', error);
-          scriptElement.classList.remove('running');
-        }
+      function executeScript(scriptElement) {
+        scriptElement.dispatchEvent(new Event('input', { bubbles: true }));
       }
 
-      // Initialize script interactions after DOM is loaded
       initializeScriptInteractions();
-
-      // Generate random data function
-      window.generateRandomData = function () {
-        const button = document.querySelector('button[onclick="generateRandomData()"]');
-        button.textContent = 'Generating...';
-        button.dispatchEvent(new Event('click'));
-
-        setTimeout(() => {
-          button.textContent = 'Generate Random Data';
-        }, 100);
-      };
     </script>
   </body>
 </html>

@@ -2,61 +2,21 @@ import { FolkElement } from '@folkjs/canvas';
 import { css, property, state, type CSSResultGroup } from '@folkjs/canvas/reactive-element';
 
 // Hash module system integration
-let hashModulesReadyPromise: Promise<void> | null = null;
-
-// Firefox fallback - direct module registry without import maps
-const firefoxModuleRegistry = new Map<string, string>();
-
-function isFirefox(): boolean {
-  return navigator.userAgent.indexOf('Firefox') > -1;
-}
-
 async function ensureHashModulesReady(): Promise<void> {
-  // Return cached promise if we already have one
-  if (hashModulesReadyPromise) {
-    return hashModulesReadyPromise;
-  }
-
   // Check if hash modules are already ready (from HTML bootloader)
   if ((window as any).hashModulesReady) {
     return Promise.resolve();
   }
 
-  // Create promise to wait for hash modules to be ready
-  hashModulesReadyPromise = new Promise<void>((resolve) => {
-    // If already ready, resolve immediately
-    if ((window as any).hashModulesReady) {
-      resolve();
-      return;
-    }
-
-    // Otherwise, listen for the ready event
+  // Wait for hash modules to be ready
+  return new Promise<void>((resolve) => {
     const handleReady = () => {
       document.removeEventListener('hash-modules-ready', handleReady);
-
-      // For Firefox, populate the fallback registry
-      if (isFirefox()) {
-        const imports = (window as any).hashModuleImports || {};
-        for (const [key, value] of Object.entries(imports)) {
-          firefoxModuleRegistry.set(key, value as string);
-        }
-        console.log('🦊 Firefox: populated module registry with', firefoxModuleRegistry.size, 'modules');
-      }
-
       resolve();
     };
 
     document.addEventListener('hash-modules-ready', handleReady);
-
-    // Fallback timeout in case event doesn't fire
-    setTimeout(() => {
-      document.removeEventListener('hash-modules-ready', handleReady);
-      console.warn('Hash modules ready timeout - proceeding anyway');
-      resolve();
-    }, 1000);
   });
-
-  return hashModulesReadyPromise;
 }
 
 // Element I/O type definitions
@@ -642,7 +602,6 @@ export class FolkPipe extends FolkElement {
       }
     };
 
-    // Use a shorter interval for better responsiveness to programmatic changes
     this.#pollingIntervalId = window.setInterval(checkForChanges, 50);
   }
 
@@ -670,7 +629,6 @@ export class FolkPipe extends FolkElement {
     this.#contentMutationObserver?.disconnect();
     this.#contentMutationObserver = null;
 
-    // Clean up polling interval
     if (this.#pollingIntervalId !== null) {
       clearInterval(this.#pollingIntervalId);
       this.#pollingIntervalId = null;
@@ -692,14 +650,12 @@ export class FolkPipe extends FolkElement {
     try {
       let sourceValue;
 
-      // For hash modules as source elements, we need to get the input from the previous element in the chain
+      // Hash modules need input from the previous element in the chain
       if (this.sourceElement.tagName === 'SCRIPT' && (this.sourceElement as HTMLScriptElement).type === 'hash-module') {
-        // Find the input value by looking at the previous pipe's source
         const prevPipe = this.sourceElement.previousElementSibling;
         if (prevPipe && prevPipe.tagName === 'FOLK-PIPE') {
           const prevSource = prevPipe.previousElementSibling;
           if (prevSource) {
-            // Use recursive helper to handle multi-step pipelines
             const inputValue = await this.#getValueFromPreviousInChain(prevSource);
             sourceValue = await sourceIO.getValue(this.sourceElement, inputValue);
           } else {
@@ -712,12 +668,10 @@ export class FolkPipe extends FolkElement {
         sourceValue = await sourceIO.getValue(this.sourceElement);
       }
 
-      // Always update the target, but only update lastSourceValue if it actually changed
       if (sourceValue !== this.#lastSourceValue) {
         this.#lastSourceValue = sourceValue;
       }
 
-      // Set the value on the target - the setValue method will handle hash modules appropriately
       await targetIO.setValue(this.targetElement, sourceValue);
     } catch (error) {
       console.error('Error syncing from source to target:', error);
