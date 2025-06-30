@@ -6,63 +6,63 @@
  * - 2D arrays for tables
  */
 
-// Type for all data that flows through the HTML I/O system
+/** NOTE: this is all still very crude, might change dramatically, but a thin normalization layer over read/write for html has already proved very compelling for its utility */
+
 export type IOData = string | number | boolean | { [key: string]: any } | any[][] | any[];
 
 // Internal handler interface with proper typing
 type IOHandler<T> = {
-  getValue(element: T): IOData;
-  setValue(element: T, value: IOData): void;
+  get(element: T): IOData;
+  set(element: T, value: IOData): void;
 };
 
-// Registry of element handlers - partial mapping of HTMLElementTagNameMap
 const handlers: {
   [K in keyof HTMLElementTagNameMap]?: IOHandler<HTMLElementTagNameMap[K]>;
 } = {
   // Form controls with .value
   input: {
-    getValue: (el) => el.value,
-    setValue: (el, value) => {
+    get: (el) => el.value,
+    set: (el, value) => {
       el.value = String(value);
     },
   },
   textarea: {
-    getValue: (el) => el.value,
-    setValue: (el, value) => {
+    get: (el) => el.value,
+    set: (el, value) => {
       el.value = String(value);
     },
   },
   select: {
-    getValue: (el) => el.value,
-    setValue: (el, value) => {
+    get: (el) => el.value,
+    set: (el, value) => {
       el.value = String(value);
     },
   },
 
   // Media elements with .src
   img: {
-    getValue: (el) => el.src,
-    setValue: (el, value) => {
+    get: (el) => el.src,
+    set: (el, value) => {
       el.src = String(value);
     },
   },
   video: {
-    getValue: (el) => el.src,
-    setValue: (el, value) => {
+    get: (el) => el.src,
+    set: (el, value) => {
       el.src = String(value);
     },
   },
   audio: {
-    getValue: (el) => el.src,
-    setValue: (el, value) => {
+    get: (el) => el.src,
+    set: (el, value) => {
       el.src = String(value);
     },
   },
 
   // Canvas - data URL
   canvas: {
-    getValue: (el) => el.toDataURL(),
-    setValue: (el, value) => {
+    get: (el) => el.toDataURL(),
+    set: (el, value) => {
       const ctx = el.getContext('2d');
       if (ctx && typeof value === 'string' && value.startsWith('data:image/')) {
         const img = new Image();
@@ -77,11 +77,11 @@ const handlers: {
 
   // Lists - preserve existing elements where possible
   ol: {
-    getValue: (el) => {
+    get: (el) => {
       const items = Array.from(el.querySelectorAll('li'));
       return items.map((item) => item.textContent || '');
     },
-    setValue: (el, value) => {
+    set: (el, value) => {
       if (!Array.isArray(value)) return;
 
       const existingItems = Array.from(el.querySelectorAll('li'));
@@ -111,11 +111,11 @@ const handlers: {
     },
   },
   ul: {
-    getValue: (el) => {
+    get: (el) => {
       const items = Array.from(el.querySelectorAll('li'));
       return items.map((item) => item.textContent || '');
     },
-    setValue: (el, value) => {
+    set: (el, value) => {
       if (!Array.isArray(value)) return;
 
       const existingItems = Array.from(el.querySelectorAll('li'));
@@ -147,7 +147,7 @@ const handlers: {
 
   // Form - key-value object
   form: {
-    getValue: (el) => {
+    get: (el) => {
       const formData = new FormData(el);
       const result: { [key: string]: any } = {};
 
@@ -177,7 +177,7 @@ const handlers: {
 
       return result;
     },
-    setValue: (el, value) => {
+    set: (el, value) => {
       if (typeof value !== 'object' || value === null || Array.isArray(value)) return;
 
       Object.entries(value).forEach(([key, val]) => {
@@ -199,14 +199,14 @@ const handlers: {
 
   // Table - 2D array, preserve structure where possible
   table: {
-    getValue: (el) => {
+    get: (el) => {
       const rows = Array.from(el.querySelectorAll('tr'));
       return rows.map((row) => {
         const cells = Array.from(row.querySelectorAll('td, th'));
         return cells.map((cell) => cell.textContent || '');
       });
     },
-    setValue: (el, value) => {
+    set: (el, value) => {
       if (!Array.isArray(value) || value.length === 0) return;
 
       const existingRows = Array.from(el.querySelectorAll('tr'));
@@ -280,7 +280,7 @@ const handlers: {
 export function get(element: Element): IOData {
   const handler = handlers[element.tagName.toLowerCase() as keyof typeof handlers];
   if (handler) {
-    return handler.getValue(element as any);
+    return handler.get(element as any);
   }
 
   // Fallback: read textContent for any unhandled element
@@ -293,7 +293,7 @@ export function get(element: Element): IOData {
 export function set(element: Element, value: IOData): void {
   const handler = handlers[element.tagName.toLowerCase() as keyof typeof handlers];
   if (handler) {
-    handler.setValue(element as any, value);
+    handler.set(element as any, value);
   } else {
     // Fallback: write to textContent for any unhandled element
     element.textContent = String(value);
