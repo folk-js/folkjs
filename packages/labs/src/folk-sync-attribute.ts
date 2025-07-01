@@ -85,6 +85,31 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
+   * Helper to synchronize attributes from Automerge to DOM element
+   */
+  #syncAttributesToDOM(domElement: Element, automergeAttributes: Record<string, ImmutableString>): void {
+    // Set/update attributes from Automerge
+    for (const [name, attrValue] of Object.entries(automergeAttributes)) {
+      // All attributes are ImmutableString - extract the string value
+      const value = attrValue.val;
+      const currentValue = domElement.getAttribute(name);
+
+      if (currentValue !== value) {
+        domElement.setAttribute(name, value);
+      }
+    }
+  }
+
+  /**
+   * Helper to synchronize text content from Automerge to DOM node
+   */
+  #syncTextContentToDOM(domNode: Node, textContent: string): void {
+    if (domNode.textContent !== textContent) {
+      domNode.textContent = textContent;
+    }
+  }
+
+  /**
    * Find an Automerge node by its object ID by traversing the document
    * NOTE: The hope is that this will become redundant with new automerge APIs to do direct mutations by id
    */
@@ -173,12 +198,8 @@ export class FolkSyncAttribute extends CustomAttribute {
       case Node.ELEMENT_NODE: {
         const element = document.createElement(automergeNode.tagName);
 
-        // Set attributes
-        for (const [name, attrValue] of Object.entries(automergeNode.attributes)) {
-          // All attributes are ImmutableString - extract the string value
-          const value = attrValue.val;
-          element.setAttribute(name, value);
-        }
+        // Set attributes using helper
+        this.#syncAttributesToDOM(element, automergeNode.attributes);
 
         // Add to parent
         parentElement.appendChild(element);
@@ -344,16 +365,8 @@ export class FolkSyncAttribute extends CustomAttribute {
           }
         }
 
-        // Then, set/update attributes from Automerge
-        for (const [name, attrValue] of Object.entries(automergeNode.attributes)) {
-          // All attributes are ImmutableString - extract the string value
-          const value = attrValue.val;
-          const currentValue = domElement.getAttribute(name);
-
-          if (currentValue !== value) {
-            domElement.setAttribute(name, value);
-          }
-        }
+        // Then, set/update attributes from Automerge using helper
+        this.#syncAttributesToDOM(domElement, automergeNode.attributes);
         break;
       }
 
@@ -362,9 +375,7 @@ export class FolkSyncAttribute extends CustomAttribute {
           return;
         }
 
-        if (domNode.textContent !== automergeNode.textContent) {
-          domNode.textContent = automergeNode.textContent;
-        }
+        this.#syncTextContentToDOM(domNode, automergeNode.textContent);
         break;
       }
 
@@ -373,9 +384,7 @@ export class FolkSyncAttribute extends CustomAttribute {
           return;
         }
 
-        if (domNode.textContent !== automergeNode.textContent) {
-          domNode.textContent = automergeNode.textContent;
-        }
+        this.#syncTextContentToDOM(domNode, automergeNode.textContent);
         break;
       }
     }
@@ -388,7 +397,15 @@ export class FolkSyncAttribute extends CustomAttribute {
     if (!this.#observer) {
       this.#observer = new MutationObserver((mutations) => {
         if (this.#isApplyingRemoteChanges) return;
-        this.#handleMutations(mutations);
+
+        if (!this.#handle) {
+          throw new Error('Cannot handle mutations: Document handle not initialized');
+        }
+
+        // Process each mutation
+        for (const mutation of mutations) {
+          this.#handleDOMMutation(mutation);
+        }
       });
     }
 
@@ -408,20 +425,6 @@ export class FolkSyncAttribute extends CustomAttribute {
   #stopObserving(): void {
     if (this.#observer) {
       this.#observer.disconnect();
-    }
-  }
-
-  /**
-   * Handle DOM mutations and update Automerge document
-   */
-  #handleMutations(mutations: MutationRecord[]): void {
-    if (!this.#handle) {
-      throw new Error('Cannot handle mutations: Document handle not initialized');
-    }
-
-    // Process each mutation
-    for (const mutation of mutations) {
-      this.#handleDOMMutation(mutation);
     }
   }
 
@@ -531,32 +534,20 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Initialize the sync system once we have a document
    */
   async #initializeWithDocument(doc: AutomergeElementNode, isNewDocument: boolean): Promise<void> {
-    try {
-      if (isNewDocument) {
-        // New document created from DOM - no need to update DOM
-      } else {
-        // Existing document from network - update DOM to match
-        // Clear DOM children and rebuild from Automerge
-        while (this.ownerElement.firstChild) {
-          this.ownerElement.removeChild(this.ownerElement.firstChild);
-        }
-        this.#buildDOMFromAutomerge(doc, this.ownerElement);
-      }
-
-      // Set up the change handler for future updates only after successful initialization
-      this.#handle.on('change', ({ doc: updatedDoc, patches, patchInfo }) => {
-        if (updatedDoc && !this.#isLocalChange) {
-          this.#handleAutomergePatches(patches || []);
-        }
-      });
-
-      // Start observing only after successful initialization
-      this.#startObserving();
-    } catch (error) {
-      console.error('FolkSync initialization failed:', error);
-      // Fail fast, don't try to recover
-      throw error;
+    if (!isNewDocument) {
+      // Clear DOM and rebuild from Automerge
+      this.ownerElement.replaceChildren();
+      this.#buildDOMFromAutomerge(doc, this.ownerElement);
     }
+
+    // Set up change handler
+    this.#handle.on('change', ({ doc: updatedDoc, patches }) => {
+      if (updatedDoc && !this.#isLocalChange) {
+        this.#handleAutomergePatches(patches || []);
+      }
+    });
+
+    this.#startObserving();
   }
 
   /**
