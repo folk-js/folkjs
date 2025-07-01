@@ -1,5 +1,5 @@
-import { FolkPresence } from '../folk-presence';
+// import { FolkPresence } from '../folk-presence';
 
-FolkPresence.define();
+// FolkPresence.define();
 
-export { FolkPresence };
+// export { FolkPresence };
