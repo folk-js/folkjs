@@ -1,8 +1,31 @@
+import type { DelPatch, Doc, ObjID, Patch, Prop, PutPatch, SpliceTextPatch } from '@automerge/automerge';
 import { getObjectId } from '@automerge/automerge';
-import { type AnyDocumentId, DocHandle, isValidAutomergeUrl, type Patch, Repo } from '@automerge/automerge-repo';
+import { DocHandle, isValidAutomergeUrl, Repo } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 import { CustomAttribute } from '@folkjs/canvas';
 // TODO: use @automerge/vanillajs package
+
+/**
+ * Helper to get object ID from a path in an Automerge document
+ */
+function getIdFromPath<T>(obj: Doc<T>, path: Prop[]): ObjID | null {
+  return getObjectId(path.reduce((current: any, key) => current?.[key], obj));
+}
+
+/**
+ * Get the path to the DOM node object (up to "childNodes" and its index)
+ * Example: ["childNodes", 1, "attributes", "style", 5] -> ["childNodes", 1]
+ */
+function getNodePath(path: Prop[]): Prop[] {
+  // Find the last occurrence of "childNodes"
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (path[i] === 'childNodes' && i + 1 < path.length && typeof path[i + 1] === 'number') {
+      return path.slice(0, i + 2); // Include "childNodes" and the index
+    }
+  }
+  // If no "childNodes" found, return empty path (root node)
+  return [];
+}
 
 /**
  * Automerge node types - 1:1 correspondence with DOM
@@ -20,7 +43,7 @@ interface AutomergeCommentNode {
 interface AutomergeElementNode {
   nodeType: Node['ELEMENT_NODE'];
   tagName: string;
-  attributes: { [key: string]: string };
+  attributes: { [key: string]: any }; // Can be string (legacy) or {value: string} wrapper
   childNodes: AutomergeNode[];
 }
 
@@ -93,9 +116,10 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Build Automerge document structure from DOM tree
    */
   #buildAutomergeFromDOM(element: Element): AutomergeElementNode {
-    const attributes: { [key: string]: string } = {};
+    const attributes: { [key: string]: any } = {};
     for (const attr of element.attributes) {
-      attributes[attr.name] = attr.value;
+      // Store attributes as wrapper objects to prevent Automerge text merging
+      attributes[attr.name] = { value: String(attr.value) };
     }
 
     const childNodes: AutomergeNode[] = [];
@@ -150,7 +174,9 @@ export class FolkSyncAttribute extends CustomAttribute {
         const element = document.createElement(automergeNode.tagName);
 
         // Set attributes
-        for (const [name, value] of Object.entries(automergeNode.attributes)) {
+        for (const [name, attrData] of Object.entries(automergeNode.attributes)) {
+          // Handle both legacy string format and new wrapper object format
+          const value = typeof attrData === 'object' && attrData !== null ? (attrData as any).value : attrData;
           element.setAttribute(name, value);
         }
 
@@ -197,15 +223,13 @@ export class FolkSyncAttribute extends CustomAttribute {
       return;
     }
 
-    console.log(mutation);
-
     const targetId = this.#domToAutomergeId.get(mutation.target);
     if (!targetId) {
       console.warn('Cannot find Automerge ID for mutated DOM node:', mutation.target);
       return;
     }
 
-    console.log('Handling DOM mutation:', mutation.type, 'for node:', targetId);
+    console.log(`[${Date.now()}] Handling DOM mutation:`, mutation.type, 'for node:', targetId);
 
     // Set flag to indicate this is a local change
     this.#isLocalChange = true;
@@ -222,13 +246,35 @@ export class FolkSyncAttribute extends CustomAttribute {
           if (targetNode.nodeType === Node.ELEMENT_NODE && mutation.attributeName) {
             const element = mutation.target as Element;
             const newValue = element.getAttribute(mutation.attributeName);
+            const oldAttrData = targetNode.attributes[mutation.attributeName];
+            const oldValue = typeof oldAttrData === 'object' && oldAttrData !== null ? oldAttrData.value : oldAttrData;
+
+            // Special logging for style attribute
+            if (mutation.attributeName === 'style') {
+              console.log(`🎨 DOM mutation - Style change:`);
+              console.log(`  Mutation oldValue: "${mutation.oldValue}"`);
+              console.log(`  Old Automerge: "${oldValue}"`);
+              console.log(`  New DOM: "${newValue}"`);
+              console.log(`  Current DOM at time of mutation: "${element.getAttribute('style')}"`);
+
+              // Check if the new value is just an append of the old value
+              if (mutation.oldValue && newValue && newValue.includes(mutation.oldValue)) {
+                console.log(`🚨 NEW VALUE CONTAINS OLD VALUE - This suggests appending behavior!`);
+                console.log(`  Appended part: "${newValue.replace(mutation.oldValue, '')}"`);
+              }
+            }
 
             if (newValue === null) {
               // Attribute was removed
               delete targetNode.attributes[mutation.attributeName];
             } else {
               // Attribute was added or changed
-              targetNode.attributes[mutation.attributeName] = newValue;
+              // To prevent Automerge text merging, we need to ensure this is treated as an atomic value
+              // Store as an object with a value property to prevent automatic Text object creation
+              delete targetNode.attributes[mutation.attributeName];
+
+              // Use a wrapper object to prevent Automerge from treating this as mergeable text
+              (targetNode.attributes as any)[mutation.attributeName] = { value: String(newValue) };
             }
           }
           break;
@@ -240,61 +286,62 @@ export class FolkSyncAttribute extends CustomAttribute {
           break;
         }
         case 'childList': {
-          if (targetNode.nodeType === Node.ELEMENT_NODE) {
-            // Handle removed nodes
-            for (const removedNode of mutation.removedNodes) {
-              const removedId = this.#domToAutomergeId.get(removedNode);
-              if (removedId) {
-                // Find and remove the corresponding Automerge node
-                const index = targetNode.childNodes.findIndex((child) => getObjectId(child) === removedId);
-                if (index !== -1) {
-                  targetNode.childNodes.splice(index, 1);
-                }
-                // Clean up mappings
-                this.#domToAutomergeId.delete(removedNode);
-                this.#automergeIdToDom.delete(removedId);
-              }
-            }
+          throw new Error('Not implemented');
+          // if (targetNode.nodeType === Node.ELEMENT_NODE) {
+          //   // Handle removed nodes
+          //   for (const removedNode of mutation.removedNodes) {
+          //     const removedId = this.#domToAutomergeId.get(removedNode);
+          //     if (removedId) {
+          //       // Find and remove the corresponding Automerge node
+          //       const index = targetNode.childNodes.findIndex((child) => getObjectId(child) === removedId);
+          //       if (index !== -1) {
+          //         targetNode.childNodes.splice(index, 1);
+          //       }
+          //       // Clean up mappings
+          //       this.#domToAutomergeId.delete(removedNode);
+          //       this.#automergeIdToDom.delete(removedId);
+          //     }
+          //   }
 
-            // Handle added nodes
-            for (const addedNode of mutation.addedNodes) {
-              let automergeNode: AutomergeNode;
+          //   // Handle added nodes
+          //   for (const addedNode of mutation.addedNodes) {
+          //     let automergeNode: AutomergeNode;
 
-              switch (addedNode.nodeType) {
-                case Node.ELEMENT_NODE: {
-                  automergeNode = this.#buildAutomergeFromDOM(addedNode as Element);
-                  break;
-                }
-                case Node.TEXT_NODE: {
-                  automergeNode = {
-                    nodeType: Node.TEXT_NODE,
-                    textContent: addedNode.textContent || '',
-                  } satisfies AutomergeNode;
-                  break;
-                }
-                case Node.COMMENT_NODE: {
-                  automergeNode = {
-                    nodeType: Node.COMMENT_NODE,
-                    textContent: addedNode.textContent || '',
-                  } satisfies AutomergeNode;
-                  break;
-                }
-                default: {
-                  continue; // Skip unknown node types
-                }
-              }
+          //     switch (addedNode.nodeType) {
+          //       case Node.ELEMENT_NODE: {
+          //         automergeNode = this.#buildAutomergeFromDOM(addedNode as Element);
+          //         break;
+          //       }
+          //       case Node.TEXT_NODE: {
+          //         automergeNode = {
+          //           nodeType: Node.TEXT_NODE,
+          //           textContent: addedNode.textContent || '',
+          //         } satisfies AutomergeNode;
+          //         break;
+          //       }
+          //       case Node.COMMENT_NODE: {
+          //         automergeNode = {
+          //           nodeType: Node.COMMENT_NODE,
+          //           textContent: addedNode.textContent || '',
+          //         } satisfies AutomergeNode;
+          //         break;
+          //       }
+          //       default: {
+          //         continue; // Skip unknown node types
+          //       }
+          //     }
 
-              // Find the correct insertion position
-              const domParent = mutation.target as Element;
-              const addedNodeIndex = Array.from(domParent.childNodes).indexOf(addedNode as ChildNode);
+          //     // Find the correct insertion position
+          //     const domParent = mutation.target as Element;
+          //     const addedNodeIndex = Array.from(domParent.childNodes).indexOf(addedNode as ChildNode);
 
-              if (addedNodeIndex !== -1) {
-                targetNode.childNodes.splice(addedNodeIndex, 0, automergeNode);
-                // Store mapping for the new node
-                this.#storeMapping(addedNode, automergeNode);
-              }
-            }
-          }
+          //     if (addedNodeIndex !== -1) {
+          //       targetNode.childNodes.splice(addedNodeIndex, 0, automergeNode);
+          //       // Store mapping for the new node
+          //       this.#storeMapping(addedNode, automergeNode);
+          //     }
+          //   }
+          // }
           break;
         }
         default: {
@@ -311,35 +358,139 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Handle Automerge patches - convert to DOM changes
    */
-  #handleAutomergePatches(patches: Patch[]): void {
-    for (const patch of patches) {
-      console.log(patch);
-      const { action } = patch;
-      switch (action) {
-        case 'put': {
-          // TODO: Handle put patches
-          break;
+  async #handleAutomergePatches(patches: Patch[]): Promise<void> {
+    // Set flag to prevent recursive updates
+    this.#isApplyingRemoteChanges = true;
+
+    try {
+      const doc = this.#handle.doc();
+      if (!doc) {
+        console.warn('No document available for handling patches');
+        return;
+      }
+
+      for (const patch of patches) {
+        console.log('Processing patch:', patch);
+
+        // Special logging for style-related patches
+        if (patch.path.includes('style')) {
+          console.log('🎨 Style-related patch:', patch);
         }
-        case 'del': {
-          // TODO: Handle delete patches
-          break;
+
+        // Get the node path (up to "childNodes" and its index)
+        const nodePath = getNodePath(patch.path);
+
+        // Get the object ID of the changed node
+        const nodeObjectId = getIdFromPath(doc, nodePath);
+        if (!nodeObjectId) {
+          console.warn('Could not find object ID for node path:', nodePath);
+          continue;
         }
-        case 'splice': {
-          // TODO: Handle splice patches (for arrays)
-          break;
+
+        // Find the corresponding DOM node
+        const domNode = this.#automergeIdToDom.get(nodeObjectId);
+        if (!domNode) {
+          console.warn('Could not find DOM node for object ID:', nodeObjectId);
+          continue;
         }
-        case 'inc':
-        case 'insert':
-        case 'mark':
-        case 'unmark':
-        case 'conflict': {
-          // Skip these patch actions
-          break;
+
+        // Find the corresponding Automerge node in current doc
+        const automergeNode = this.#findAutomergeNodeById(doc, nodeObjectId);
+        if (!automergeNode) {
+          console.warn('Could not find Automerge node for object ID:', nodeObjectId);
+          continue;
         }
-        default: {
-          action satisfies never;
-          throw new Error(`Unhandled patch: ${patch}`);
+
+        // Special logging for style attribute updates
+        if (automergeNode.nodeType === Node.ELEMENT_NODE && 'style' in automergeNode.attributes) {
+          const styleAttr = automergeNode.attributes.style;
+          const styleValue = typeof styleAttr === 'object' && styleAttr !== null ? styleAttr.value : styleAttr;
+          console.log(`🎨 About to update DOM with style: "${styleValue}"`);
         }
+
+        // Update DOM node to match current Automerge state
+        this.#updateDOMNodeFromAutomerge(domNode, automergeNode);
+      }
+    } finally {
+      // Always reset the flag
+      this.#isApplyingRemoteChanges = false;
+    }
+  }
+
+  /**
+   * Update a DOM node to match the current state of its corresponding Automerge node
+   * Only updates the node itself, not its children
+   */
+  #updateDOMNodeFromAutomerge(domNode: Node, automergeNode: AutomergeNode): void {
+    switch (automergeNode.nodeType) {
+      case Node.ELEMENT_NODE: {
+        if (domNode.nodeType !== Node.ELEMENT_NODE) {
+          console.warn('DOM node type mismatch: expected element, got', domNode.nodeType);
+          return;
+        }
+
+        const domElement = domNode as Element;
+
+        // Update attributes to match Automerge state
+        // First, remove any attributes that don't exist in Automerge
+        const existingAttributes = Array.from(domElement.attributes);
+        for (const attr of existingAttributes) {
+          if (!(attr.name in automergeNode.attributes)) {
+            domElement.removeAttribute(attr.name);
+            console.log(`✅ Removed attribute ${attr.name} from`, domElement.tagName);
+          }
+        }
+
+        // Then, set/update attributes from Automerge
+        for (const [name, attrData] of Object.entries(automergeNode.attributes)) {
+          // Handle both legacy string format and new wrapper object format
+          const value = typeof attrData === 'object' && attrData !== null ? (attrData as any).value : attrData;
+          const currentValue = domElement.getAttribute(name);
+
+          if (currentValue !== value) {
+            // Special logging for style attribute to debug the appending issue
+            if (name === 'style') {
+              console.log(`🎨 Style update from Automerge:`);
+              console.log(`  Current DOM: "${currentValue}"`);
+              console.log(`  New Automerge: "${value}"`);
+              console.log(`  Attribute data type: ${typeof attrData}`);
+              console.log(`  Length - Current: ${currentValue?.length || 0}, New: ${value.length}`);
+            }
+            domElement.setAttribute(name, value);
+            console.log(`✅ Set ${name}="${value}" on`, domElement.tagName);
+          }
+        }
+        break;
+      }
+
+      case Node.TEXT_NODE: {
+        if (domNode.nodeType !== Node.TEXT_NODE) {
+          console.warn('DOM node type mismatch: expected text node, got', domNode.nodeType);
+          return;
+        }
+
+        if (domNode.textContent !== automergeNode.textContent) {
+          domNode.textContent = automergeNode.textContent;
+          console.log(`✅ Updated text content to "${automergeNode.textContent}"`);
+        }
+        break;
+      }
+
+      case Node.COMMENT_NODE: {
+        if (domNode.nodeType !== Node.COMMENT_NODE) {
+          console.warn('DOM node type mismatch: expected comment node, got', domNode.nodeType);
+          return;
+        }
+
+        if (domNode.textContent !== automergeNode.textContent) {
+          domNode.textContent = automergeNode.textContent;
+          console.log(`✅ Updated comment content to "${automergeNode.textContent}"`);
+        }
+        break;
+      }
+
+      default: {
+        console.warn('Unknown Automerge node type:', (automergeNode as any).nodeType);
       }
     }
   }
@@ -380,6 +531,14 @@ export class FolkSyncAttribute extends CustomAttribute {
   #handleMutations(mutations: MutationRecord[]): void {
     if (!this.#handle) {
       throw new Error('Cannot handle mutations: Document handle not initialized');
+    }
+
+    console.log(`🔄 Processing ${mutations.length} mutations`);
+
+    // Check for multiple style mutations in the same batch
+    const styleMutations = mutations.filter((m) => m.type === 'attributes' && m.attributeName === 'style');
+    if (styleMutations.length > 1) {
+      console.log(`⚠️ Multiple style mutations in one batch:`, styleMutations.length);
     }
 
     // Process each mutation
@@ -512,7 +671,7 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
 
       // Set up the change handler for future updates only after successful initialization
-      this.#handle.on('change', ({ doc: updatedDoc, patches }) => {
+      this.#handle.on('change', ({ doc: updatedDoc, patches, patchInfo }) => {
         if (updatedDoc && !this.#isLocalChange) {
           // Log incoming patches for debugging
           if (patches && patches.length > 0) {
