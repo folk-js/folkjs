@@ -452,7 +452,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Initialize document based on current URL hash
    */
-  #initializeDocument(): void {
+  async #initializeDocument(): Promise<void> {
     const hashDocId = window.location.hash.slice(1);
 
     // If no valid hash, create new document
@@ -462,21 +462,19 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
 
     // Try to connect to existing document
-    this.#handle = this.#repo.find<AutomergeElementNode>(hashDocId);
+    this.#handle = await this.#repo.find<AutomergeElementNode>(hashDocId);
 
-    this.#handle.whenReady().then(async () => {
-      try {
-        const doc = await this.#handle.doc();
-        if (doc) {
-          this.#initializeWithDocument(doc, false);
-        } else {
-          this.#createNewDocument();
-        }
-      } catch (error) {
-        console.error('Error finding document:', error);
+    try {
+      const doc = this.#handle.doc();
+      if (doc) {
+        this.#initializeWithDocument(doc, false);
+      } else {
         this.#createNewDocument();
       }
-    });
+    } catch (error) {
+      console.error('Error finding document:', error);
+      this.#createNewDocument();
+    }
   }
 
   /**
