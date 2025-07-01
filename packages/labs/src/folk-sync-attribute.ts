@@ -1,6 +1,6 @@
 import type { DelPatch, Doc, ObjID, Patch, Prop, PutPatch, SpliceTextPatch } from '@automerge/automerge';
 import { getObjectId } from '@automerge/automerge';
-import { DocHandle, isValidAutomergeUrl, Repo } from '@automerge/automerge-repo';
+import { DocHandle, ImmutableString, isValidAutomergeUrl, Repo } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 import { CustomAttribute } from '@folkjs/canvas';
 // TODO: use @automerge/vanillajs package
@@ -43,7 +43,7 @@ interface AutomergeCommentNode {
 interface AutomergeElementNode {
   nodeType: Node['ELEMENT_NODE'];
   tagName: string;
-  attributes: { [key: string]: any }; // Can be string (legacy) or {value: string} wrapper
+  attributes: { [key: string]: ImmutableString };
   childNodes: AutomergeNode[];
 }
 
@@ -116,10 +116,10 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Build Automerge document structure from DOM tree
    */
   #buildAutomergeFromDOM(element: Element): AutomergeElementNode {
-    const attributes: { [key: string]: any } = {};
+    const attributes: { [key: string]: ImmutableString } = {};
     for (const attr of element.attributes) {
-      // Store attributes as wrapper objects to prevent Automerge text merging
-      attributes[attr.name] = { value: String(attr.value) };
+      // Use ImmutableString to prevent text merging conflicts
+      attributes[attr.name] = new ImmutableString(attr.value);
     }
 
     const childNodes: AutomergeNode[] = [];
@@ -174,9 +174,9 @@ export class FolkSyncAttribute extends CustomAttribute {
         const element = document.createElement(automergeNode.tagName);
 
         // Set attributes
-        for (const [name, attrData] of Object.entries(automergeNode.attributes)) {
-          // Handle both legacy string format and new wrapper object format
-          const value = typeof attrData === 'object' && attrData !== null ? (attrData as any).value : attrData;
+        for (const [name, attrValue] of Object.entries(automergeNode.attributes)) {
+          // All attributes are ImmutableString - extract the string value
+          const value = attrValue.val;
           element.setAttribute(name, value);
         }
 
@@ -234,7 +234,9 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Set flag to indicate this is a local change
     this.#isLocalChange = true;
 
+    console.log(`🔄 About to call handle.change() for ${mutation.type} mutation`);
     this.#handle.change((doc) => {
+      console.log(`📄 Inside handle.change() callback`);
       const targetNode = this.#findAutomergeNodeById(doc, targetId);
       if (!targetNode) {
         console.warn('Cannot find Automerge node with ID:', targetId);
@@ -246,8 +248,7 @@ export class FolkSyncAttribute extends CustomAttribute {
           if (targetNode.nodeType === Node.ELEMENT_NODE && mutation.attributeName) {
             const element = mutation.target as Element;
             const newValue = element.getAttribute(mutation.attributeName);
-            const oldAttrData = targetNode.attributes[mutation.attributeName];
-            const oldValue = typeof oldAttrData === 'object' && oldAttrData !== null ? oldAttrData.value : oldAttrData;
+            const oldValue = targetNode.attributes[mutation.attributeName];
 
             // Special logging for style attribute
             if (mutation.attributeName === 'style') {
@@ -269,12 +270,16 @@ export class FolkSyncAttribute extends CustomAttribute {
               delete targetNode.attributes[mutation.attributeName];
             } else {
               // Attribute was added or changed
-              // To prevent Automerge text merging, we need to ensure this is treated as an atomic value
-              // Store as an object with a value property to prevent automatic Text object creation
-              delete targetNode.attributes[mutation.attributeName];
+              // Always create a new ImmutableString to ensure proper Automerge tracking
+              targetNode.attributes[mutation.attributeName] = new ImmutableString(String(newValue));
 
-              // Use a wrapper object to prevent Automerge from treating this as mergeable text
-              (targetNode.attributes as any)[mutation.attributeName] = { value: String(newValue) };
+              console.log(
+                `📝 Applied attribute change: ${mutation.attributeName}="${newValue}" to automerge node ${targetId}`,
+              );
+
+              // Debug: check the actual structure after the change
+              console.log(`🔍 After change - targetNode.attributes:`, targetNode.attributes);
+              console.log(`🔍 Specific attribute value:`, targetNode.attributes[mutation.attributeName]);
             }
           }
           break;
@@ -351,6 +356,18 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
     });
 
+    // Debug: Check document state after change
+    const docAfterChange = this.#handle.doc();
+    if (docAfterChange && mutation.type === 'attributes' && mutation.attributeName) {
+      const nodeAfterChange = this.#findAutomergeNodeById(docAfterChange, targetId);
+      if (nodeAfterChange && nodeAfterChange.nodeType === Node.ELEMENT_NODE) {
+        console.log(
+          `🔍 Document state after change - ${mutation.attributeName}:`,
+          nodeAfterChange.attributes[mutation.attributeName],
+        );
+      }
+    }
+
     // Reset the flag
     this.#isLocalChange = false;
   }
@@ -403,9 +420,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
         // Special logging for style attribute updates
         if (automergeNode.nodeType === Node.ELEMENT_NODE && 'style' in automergeNode.attributes) {
-          const styleAttr = automergeNode.attributes.style;
-          const styleValue = typeof styleAttr === 'object' && styleAttr !== null ? styleAttr.value : styleAttr;
-          console.log(`🎨 About to update DOM with style: "${styleValue}"`);
+          console.log(`🎨 About to update DOM with style: "${automergeNode.attributes.style}"`);
         }
 
         // Update DOM node to match current Automerge state
@@ -442,9 +457,9 @@ export class FolkSyncAttribute extends CustomAttribute {
         }
 
         // Then, set/update attributes from Automerge
-        for (const [name, attrData] of Object.entries(automergeNode.attributes)) {
-          // Handle both legacy string format and new wrapper object format
-          const value = typeof attrData === 'object' && attrData !== null ? (attrData as any).value : attrData;
+        for (const [name, attrValue] of Object.entries(automergeNode.attributes)) {
+          // All attributes are ImmutableString - extract the string value
+          const value = attrValue.val;
           const currentValue = domElement.getAttribute(name);
 
           if (currentValue !== value) {
@@ -453,7 +468,6 @@ export class FolkSyncAttribute extends CustomAttribute {
               console.log(`🎨 Style update from Automerge:`);
               console.log(`  Current DOM: "${currentValue}"`);
               console.log(`  New Automerge: "${value}"`);
-              console.log(`  Attribute data type: ${typeof attrData}`);
               console.log(`  Length - Current: ${currentValue?.length || 0}, New: ${value.length}`);
             }
             domElement.setAttribute(name, value);
@@ -597,9 +611,11 @@ export class FolkSyncAttribute extends CustomAttribute {
    */
   #initializeRepo(): void {
     const peerId = `peer-${Math.floor(Math.random() * 1_000_000)}`;
+    console.log(`🔗 Initializing repo with peer ID: ${peerId}`);
 
     // Set up the WebSocket network adapter
     this.#networkAdapter = new BrowserWebSocketClientAdapter('wss://sync.automerge.org');
+    console.log('🌐 Network adapter created');
 
     // Initialize the repo with network configuration
     this.#repo = new Repo({
@@ -672,13 +688,33 @@ export class FolkSyncAttribute extends CustomAttribute {
 
       // Set up the change handler for future updates only after successful initialization
       this.#handle.on('change', ({ doc: updatedDoc, patches, patchInfo }) => {
+        console.log(
+          `🔄 Change event triggered. Local change: ${this.#isLocalChange}, Patches: ${patches?.length || 0}`,
+        );
+
+        // Log all patches for debugging
+        if (patches && patches.length > 0) {
+          console.log('📄 All patches:', patches);
+
+          // Check for attribute-related patches
+          const attributePatches = patches.filter((p) => p.path.includes('attributes'));
+          if (attributePatches.length > 0) {
+            console.log('🏷️ Attribute patches:', attributePatches);
+          }
+        }
+
         if (updatedDoc && !this.#isLocalChange) {
           // Log incoming patches for debugging
           if (patches && patches.length > 0) {
-            console.log('📥 Incoming patches:', patches);
+            console.log('📥 Processing incoming patches:', patches);
           }
 
           this.#handleAutomergePatches(patches || []);
+        } else if (this.#isLocalChange) {
+          console.log('📤 Outgoing change - patches should propagate to network:', patches?.length || 0);
+          if (patches && patches.length > 0) {
+            console.log('📤 Outgoing patches:', patches);
+          }
         }
       });
 
