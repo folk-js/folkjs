@@ -2,6 +2,7 @@ import { getObjectId } from '@automerge/automerge';
 import { type AnyDocumentId, DocHandle, isValidAutomergeUrl, type Patch, Repo } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 import { CustomAttribute } from '@folkjs/canvas';
+// TODO: use @automerge/vanillajs package
 
 /**
  * Automerge node types - 1:1 correspondence with DOM
