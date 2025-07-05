@@ -1,5 +1,6 @@
 import type { Point } from 'packages/geometry/dist/Vector2';
 import type { FolkBaseConnection } from '../folk-base-connection';
+import { selectElements } from './dom-multi-selection';
 
 export function clickToCreateElement<T extends Element = Element>(
   container: HTMLElement,
@@ -130,6 +131,19 @@ export async function dragToCreateShape<T extends Element = Element>(
     },
   );
   return el;
+}
+
+export function clickToCreateShapes<T extends Element = Element>(
+  completionSignal: AbortSignal,
+  cancellationSignal: AbortSignal,
+): Promise<T | null> {
+  return new Promise(async (resolve) => {
+    const elements = await selectElements(completionSignal, cancellationSignal);
+
+    for (const el of elements) {
+      el.setAttribute('folk-shape', '');
+    }
+  });
 }
 
 export function dragToCreateConnection<T extends FolkBaseConnection = FolkBaseConnection>(
