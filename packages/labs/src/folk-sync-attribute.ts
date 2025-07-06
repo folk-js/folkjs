@@ -313,6 +313,18 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
 
       for (const patch of patches) {
+        switch (patch.action) {
+          case 'insert': {
+            console.log('PATCH insert', patch);
+            // TODO: implement
+            break;
+          }
+          case 'del': {
+            console.log('PATCH del', patch);
+            // TODO: implement
+            break;
+          }
+        }
         // Get the node path (up to "childNodes" and its index)
         const nodePath = getNodePath(patch.path);
 
