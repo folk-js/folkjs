@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <title>Folk Pipes</title>
+    <style>
+      body {
+        font-family: 'Recursive', Courier, monospace;
+        font-variation-settings:
+          'slnt' 0,
+          'wght' 400,
+          'CASL' 1,
+          'CRSV' 0,
+          'MONO' 0;
+        max-width: 900px;
+        margin: 1rem auto;
+        padding: 1.5rem;
+        line-height: 1.5;
+        background: #f5f5f5;
+      }
+
+      h1 {
+        font-variation-settings:
+          'CASL' 1,
+          'MONO' 1;
+        text-align: center;
+        margin-bottom: 1.5rem;
+        font-size: 2rem;
+      }
+
+      h2 {
+        font-weight: 800;
+        font-variation-settings: 'wght' 800;
+        margin: 2rem 0 0.75rem;
+        font-size: 1.4rem;
+      }
+
+      h3 {
+        font-weight: 600;
+        margin: 1.5rem 0 0.5rem;
+        font-size: 1.2rem;
+      }
+
+      p {
+        margin-bottom: 0.75rem;
+        color: #666;
+        font-size: 0.9rem;
+      }
+
+      section {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        margin: 0.75rem 0 1.5rem;
+      }
+
+      .horizontal {
+        flex-direction: row;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .horizontal > *:not(folk-pipe) {
+        min-width: 200px;
+        flex: 1;
+      }
+
+      input,
+      textarea,
+      select {
+        padding: 0.4rem;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        font: inherit;
+        font-size: 0.9rem;
+      }
+
+      pre,
+      code,
+      [contenteditable] {
+        background: #f8f8f8;
+        padding: 0.4rem;
+        border-radius: 3px;
+        border: 1px solid #ddd;
+        min-height: 1.5rem;
+        font-size: 0.85rem;
+      }
+
+      script[type='hash-module'] {
+        display: block !important;
+        background: #1e1e1e;
+        color: #f1f1f1;
+        border: 2px solid #007acc;
+        border-radius: 4px;
+        padding: 0.75rem;
+        font-family: 'Recursive', Courier, monospace;
+        font-variation-settings: 'MONO' 1;
+        font-size: 0.8rem;
+        white-space: pre;
+        min-height: 3rem;
+        outline: none;
+        overflow-x: auto;
+        min-width: 250px;
+        max-width: 100%;
+        position: relative;
+      }
+
+      script[type='hash-module']:focus {
+        border-color: #00d4ff;
+        box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.3);
+      }
+
+      script[type='hash-module']:before {
+        content: '📜 #' attr(id) ' ▼';
+        display: block;
+        font-size: 0.7rem;
+        color: #007acc;
+        margin-bottom: 0.5rem;
+        font-weight: bold;
+        cursor: pointer;
+        user-select: none;
+        padding: 0.25rem;
+        margin: -0.25rem -0.25rem 0.5rem -0.25rem;
+        border-radius: 3px;
+      }
+
+      script[type='hash-module']:before:hover {
+        background-color: rgba(0, 122, 204, 0.1);
+      }
+
+      script[type='hash-module'].collapsed {
+        min-height: auto;
+        height: 2.5rem;
+        overflow: hidden;
+        padding: 0.5rem 1rem;
+      }
+
+      script[type='hash-module'].collapsed:before {
+        content: '📜 #' attr(id) ' ▶ (click to expand)';
+        margin-bottom: 0;
+      }
+
+      script[type='hash-module']:after {
+        content: '▶️ Run';
+        position: absolute;
+        top: 0.5rem;
+        right: 0.5rem;
+        font-size: 0.7rem;
+        background: #007acc;
+        color: white;
+        padding: 0.25rem 0.5rem;
+        border-radius: 3px;
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      script[type='hash-module']:hover:after {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      button {
+        background: #007acc;
+        color: white;
+        border: none;
+        padding: 0.4rem 0.8rem;
+        border-radius: 3px;
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.85rem;
+        margin: 0.2rem;
+      }
+
+      button:hover {
+        background: #005a9c;
+      }
+
+      canvas {
+        border: 2px solid #007acc;
+        border-radius: 3px;
+        cursor: crosshair;
+        background: white;
+        display: block;
+      }
+
+      img {
+        max-width: 180px;
+        max-height: 135px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+      }
+
+      table {
+        font-size: 0.85rem;
+      }
+
+      label {
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Folk Pipes</h1>
+    <p
+      >TODO: figure out why Firefox doesn't like the hash module reuse example.</p
+    >
+    <p
+      >The <code>&lt;folk-pipe&gt;</code> element creates reactive data flows between DOM elements. All the elements
+      here are plain html elements, no special coordination is happening other than the pipe element itself. If you squint, it's almost an html jupyter-esque notebook.</p
+    >
+    <p>
+      This is really an experiment in what a 'Standard IO for HTML' would look like, and as such this experiment leverages a simple <code>html-io</code> system where all input/outputs of elements are reduced to:
+      <ol>
+        <li>Plain value IO for single inputs, contenteditable/textcontent, and others</li>
+        <li>1D arrays for lists</li>
+        <li>2D arrays for tables</li>
+        <li>objects for forms</li>
+      </ol>
+      This is one take on what an 'html-io' could look like, but ideas here are welcome. A thin normalization layer has already proven very useful in its utility, but exactly what that normalization should be is up for grabs.
+    </p>
+
+    <h2>Pipes</h2>
+    <p
+      >Reactively passes data from element before to element after the pipe using
+      <code>html-io</code></p
+    >
+    <section>
+      <input type="text" placeholder="Enter some text..." value="hello world" />
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h2>Scripts</h2>
+    <p
+      >Data from table elements can be read as 2D arrays and, like any other element, passed through scripts to
+      transform it.</p
+    >
+    <section>
+      <table border="1" style="border-collapse: collapse; width: 100%">
+        <tr>
+          <th>Product</th>
+          <th>Q1 Sales</th>
+          <th>Q2 Sales</th>
+          <th>Q3 Sales</th>
+          <th>Q4 Sales</th>
+        </tr>
+        <tr>
+          <td contenteditable>Laptops</td>
+          <td contenteditable>120</td>
+          <td contenteditable>150</td>
+          <td contenteditable>180</td>
+          <td contenteditable>200</td>
+        </tr>
+        <tr>
+          <td contenteditable>Phones</td>
+          <td contenteditable>300</td>
+          <td contenteditable>320</td>
+          <td contenteditable>280</td>
+          <td contenteditable>350</td>
+        </tr>
+        <tr>
+          <td contenteditable>Tablets</td>
+          <td contenteditable>80</td>
+          <td contenteditable>90</td>
+          <td contenteditable>70</td>
+          <td contenteditable>85</td>
+        </tr>
+      </table>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="tableAnalyzer" class="collapsed" contenteditable>
+        export default function analyzeSales(tableData) {
+          if (!Array.isArray(tableData) || tableData.length < 2) {
+            return "No data to analyze";
+          }
+
+          const [headers, ...rows] = tableData;
+          let analysis = "📊 SALES ANALYSIS\n\n";
+
+          // Calculate totals for each product
+          rows.forEach(row => {
+            const [product, ...sales] = row;
+            const numbers = sales.map(s => parseFloat(s) || 0);
+            const total = numbers.reduce((sum, n) => sum + n, 0);
+            const avg = total / numbers.length;
+            const growth = numbers.length > 1 ?
+              ((numbers[numbers.length - 1] - numbers[0]) / numbers[0] * 100).toFixed(1) : 0;
+
+            analysis += `${product}:\n`;
+            analysis += `  📈 Total: ${total} units\n`;
+            analysis += `  📊 Average: ${avg.toFixed(1)} units/quarter\n`;
+            analysis += `  🚀 Growth: ${growth}%\n\n`;
+          });
+
+          // Calculate quarterly totals
+          const quarterTotals = [];
+          for (let i = 1; i < headers.length; i++) {
+            const quarterTotal = rows.reduce((sum, row) => {
+              return sum + (parseFloat(row[i]) || 0);
+            }, 0);
+            quarterTotals.push(quarterTotal);
+            analysis += `${headers[i]}: ${quarterTotal} total units\n`;
+          }
+
+          return analysis;
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h2>Forms</h2>
+    <p>Forms pipe out key-value objects of all their fields.</p>
+    <section>
+      <form>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem">
+          <div>
+            <label>Name: <input type="text" name="name" value="Alice" /></label>
+          </div>
+          <div>
+            <label>Age: <input type="number" name="age" value="25" /></label>
+          </div>
+          <div>
+            <label>Email: <input type="email" name="email" value="alice@example.com" /></label>
+          </div>
+          <div>
+            <label
+              >Department:
+              <select name="department">
+                <option value="engineering">Engineering</option>
+                <option value="design" selected>Design</option>
+                <option value="marketing">Marketing</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label><input type="checkbox" name="remote" checked /> Remote Worker</label>
+          </div>
+          <div>
+            <label><input type="checkbox" name="fulltime" checked /> Full Time</label>
+          </div>
+        </div>
+      </form>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="formProcessor" class="collapsed" contenteditable>
+                export default function processEmployee(formData) {
+                  const employee = {
+                    ...formData,
+                    status: formData.remote ? 'Remote' : 'On-site',
+                    workType: formData.fulltime ? 'Full-time' : 'Part-time',
+                    yearsToRetirement: Math.max(0, 65 - (formData.age || 0))
+                  };
+
+                  return `Employee Profile:
+        🧑‍💼 ${employee.name} (${employee.age} years old)
+        📧 ${employee.email}
+        🏢 ${employee.department} department
+        💼 ${employee.status}, ${employee.workType}
+        🎯 ${employee.yearsToRetirement} years to retirement`;
+                }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h2>Arrays & Lists</h2>
+    <p>Arrays can be piped to lists for display and interaction.</p>
+
+    <h3>CSV to List</h3>
+    <section>
+      <input type="text" placeholder="Enter comma-separated values..." value="apple,banana,cherry,date,elderberry" />
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="csvToArray" class="collapsed" contenteditable>
+        export default function csvToArray(csvString) {
+          return csvString.split(',').map(item => item.trim()).filter(item => item.length > 0);
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <ol></ol>
+    </section>
+
+    <h3>List Filtering</h3>
+    <section>
+      <ol>
+        <li contenteditable>JavaScript</li>
+        <li contenteditable>Python</li>
+        <li contenteditable>Rust</li>
+        <li contenteditable>Go</li>
+        <li contenteditable>TypeScript</li>
+      </ol>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="listFilter" class="collapsed" contenteditable>
+        export default function filterByLength(items) {
+          return items.filter(item => item.length > 4).sort();
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <ul></ul>
+    </section>
+
+    <h2>Misc</h2>
+
+    <h3>Multi-Step Pipelines</h3>
+    <section>
+      <textarea rows="2">Alice,25 Bob,30 Carol,28</textarea>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="csvSplitter" class="collapsed" contenteditable>
+        export default function parseSimpleCSV(input) {
+          return input.split(' ').map(person => {
+            const [name, age] = person.split(',');
+            return { name, age: parseInt(age) };
+          });
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="ageAnalyzer" class="collapsed" contenteditable>
+                export default function analyzeAges(people) {
+                  const totalAge = people.reduce((sum, p) => sum + p.age, 0);
+                  const avgAge = totalAge / people.length;
+                  const oldest = people.reduce((max, p) => p.age > max.age ? p : max);
+
+                  return `👥 ${people.length} people
+        🎂 Average age: ${avgAge.toFixed(1)}
+        👑 Oldest: ${oldest.name} (${oldest.age})`;
+                }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h3>Module Reuse</h3>
+    <p>Hash modules can import and reuse each other using <code>import from '#moduleId'</code>.</p>
+    <section>
+      <textarea rows="3">
+Product A: 100,120,110,130
+Product B: 80,90,85,95
+Product C: 150,160,140,170</textarea
+      >
+      <folk-pipe></folk-pipe>
+      <script type="hash-module" id="salesAnalyzer" class="collapsed" contenteditable>
+        import { average, formatPercent, formatCurrency } from '#mathUtils';
+
+        export default function analyzeSales(input) {
+          const lines = input.trim().split('\n');
+          let results = '📊 SALES ANALYSIS\n\n';
+
+          lines.forEach(line => {
+            const [product, salesStr] = line.split(': ');
+            const sales = salesStr.split(',').map(Number);
+            const avg = average(sales);
+            const growth = (sales[sales.length - 1] - sales[0]) / sales[0];
+
+            results += `${product}:\n`;
+            results += `  📈 Average: ${formatCurrency(avg)}\n`;
+            results += `  🚀 Growth: ${formatPercent(growth)}\n\n`;
+          });
+
+          return results;
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <pre></pre>
+    </section>
+
+    <h3>Dynamic Table Generation</h3>
+    <section>
+      <script type="hash-module" id="tableGenerator" class="collapsed" contenteditable>
+        export default function generateTableData(trigger) {
+          const products = ['Laptops', 'Phones', 'Tablets', 'Monitors', 'Keyboards', 'Mice'];
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+
+          // Random number of products (2-6) and months (3-6)
+          const numProducts = 2 + Math.floor(Math.random() * 5);
+          const numMonths = 3 + Math.floor(Math.random() * 4);
+
+          const selectedProducts = products.slice(0, numProducts);
+          const selectedMonths = months.slice(0, numMonths);
+
+          // Create header row
+          const headers = ['Product', ...selectedMonths];
+
+          // Create data rows
+          const dataRows = selectedProducts.map(product => {
+            const sales = selectedMonths.map(() =>
+              Math.floor(Math.random() * 200) + 50
+            );
+            return [product, ...sales];
+          });
+
+          return [headers, ...dataRows];
+        }
+      </script>
+      <folk-pipe></folk-pipe>
+      <table border="1" style="border-collapse: collapse; width: 100%; background: #f9f9f9"></table>
+    </section>
+
+    <h3>Canvas Drawing</h3>
+    <p>Click and drag on the canvas to draw, pipe the result to an image.</p>
+    <section>
+      <canvas width="300" height="200"></canvas>
+      <folk-pipe></folk-pipe>
+      <img alt="Canvas output" />
+      <button onclick="clearCanvas()">Clear Canvas</button>
+    </section>
+
+    <h3>Image URLs</h3>
+    <section class="horizontal">
+      <input type="url" placeholder="Image URL..." value="https://picsum.photos/200/150" />
+      <folk-pipe></folk-pipe>
+      <img alt="Piped image" />
+    </section>
+
+    <!-- Utility modules must be defined before boot loader -->
+    <script type="hash-module" id="mathUtils" class="collapsed">
+      export function average(numbers) {
+        return numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
+      }
+
+      export function formatPercent(value) {
+        return `${(value * 100).toFixed(1)}%`;
+      }
+
+      export function formatCurrency(value) {
+        return `$${value.toLocaleString()}`;
+      }
+
+      export default { average, formatPercent, formatCurrency };
+    </script>
+
+    <!-- Hash module bootloader -->
+    <script>
+      const imports = {};
+      const modules = document.querySelectorAll('script[type="hash-module"]');
+
+      modules.forEach((module) => {
+        if (module.id) {
+          imports['#' + module.id] = URL.createObjectURL(
+            new Blob([module.textContent || ''], { type: 'application/javascript' }),
+          );
+        }
+      });
+
+      const importMap = document.createElement('script');
+      importMap.type = 'importmap';
+      importMap.textContent = JSON.stringify({ imports });
+      document.head.appendChild(importMap);
+    </script>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-pipe';
+
+      // Canvas drawing functionality
+      const canvas = document.querySelector('canvas');
+      const ctx = canvas.getContext('2d');
+      let isDrawing = false;
+
+      ctx.strokeStyle = '#007acc';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+
+      function startDrawing(e) {
+        isDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+      }
+
+      function draw(e) {
+        if (!isDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        // Trigger pipe update
+        canvas.dispatchEvent(new Event('change'));
+      }
+
+      function stopDrawing() {
+        if (isDrawing) {
+          isDrawing = false;
+          ctx.beginPath();
+        }
+      }
+
+      canvas.addEventListener('mousedown', startDrawing);
+      canvas.addEventListener('mousemove', draw);
+      canvas.addEventListener('mouseup', stopDrawing);
+      canvas.addEventListener('mouseout', stopDrawing);
+
+      // Touch support for mobile
+      canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent('mousedown', {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        });
+        canvas.dispatchEvent(mouseEvent);
+      });
+
+      canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent('mousemove', {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        });
+        canvas.dispatchEvent(mouseEvent);
+      });
+
+      canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        const mouseEvent = new MouseEvent('mouseup', {});
+        canvas.dispatchEvent(mouseEvent);
+      });
+
+      window.clearCanvas = function () {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.dispatchEvent(new Event('change'));
+      };
+
+      // Script collapse/expand and run functionality
+      function initializeScriptInteractions() {
+        document.querySelectorAll('script[type="hash-module"]').forEach((script) => {
+          script.addEventListener('click', (e) => {
+            const rect = script.getBoundingClientRect();
+            const runButtonArea = { x: rect.width - 80, y: 40, width: 80, height: 30 };
+
+            // Check if clicking on the run button area
+            if (e.offsetX >= runButtonArea.x && e.offsetY <= runButtonArea.y) {
+              executeScript(script);
+              e.preventDefault();
+              return;
+            }
+
+            // Toggle collapsed state when clicking on the header area
+            if (e.offsetY <= 40) {
+              script.classList.toggle('collapsed');
+              e.preventDefault();
+            }
+          });
+        });
+      }
+
+      // Execute a script manually
+      function executeScript(scriptElement) {
+        scriptElement.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+
+      initializeScriptInteractions();
+    </script>
+  </body>
+</html>
