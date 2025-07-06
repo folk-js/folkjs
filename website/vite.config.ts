@@ -19,7 +19,7 @@ function getEntryPoints() {
   };
 
   // Add site-level folders
-  ['file-space', 'hyperzoom'].forEach((section) => {
+  ['file-space', 'hyperzoom', 'chess'].forEach((section) => {
     entries[section] = resolve(websiteDir, section, 'index.html');
   });
 
