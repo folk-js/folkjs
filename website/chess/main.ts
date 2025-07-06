@@ -129,7 +129,7 @@ class ChessPiece extends FolkElement {
     }
   `;
 
-  @property({ type: Number, reflect: true }) position: ChessPosition = 'a1';
+  @property({ type: String, reflect: true }) position: ChessPosition = 'a1';
 
   @property({ type: String, reflect: true }) type: ChessPieceType = 'white-pawn';
 }
@@ -215,12 +215,6 @@ chess-square {
     root.appendChild(document.createElement('slot'));
 
     return root;
-  }
-
-  override connectedCallback() {
-    super.connectedCallback();
-
-    this.configureBoard();
   }
 
   configureBoard(configuration: ChessBoardConfiguration = defaultBoard) {
