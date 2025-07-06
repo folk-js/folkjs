@@ -125,6 +125,12 @@
       </div>
 
       <div class="group">
+        <label>MST Width</label>
+        <input type="range" id="mstWidth" min="1" max="20" value="4" />
+        <span class="value" id="mstWidthValue">4</span>
+      </div>
+
+      <div class="group">
         <button data-tool="rect" class="active">Rectangle</button>
         <button data-tool="circle">Circle</button>
       </div>
@@ -136,6 +142,18 @@
         <button data-view="dilated">Dilated</button>
         <button data-view="union">Union</button>
         <button data-view="eroded" class="active">Eroded</button>
+      </div>
+
+      <div class="separator"></div>
+
+      <div class="group">
+        <button id="toggleMST">Show MST</button>
+      </div>
+
+      <div class="separator"></div>
+
+      <div class="group">
+        <button id="includeMSTInClosing">Include MST in Closing</button>
       </div>
 
       <div class="separator"></div>
@@ -203,6 +221,68 @@
         ctx.restore();
       };
 
+      // Validate and filter paths for clipper operations
+      const validatePaths = (paths) => {
+        if (!Array.isArray(paths)) return [];
+        return paths.filter(
+          (path) =>
+            Array.isArray(path) &&
+            path.length >= 3 &&
+            path.every(
+              (point) =>
+                point &&
+                typeof point.X === 'number' &&
+                typeof point.Y === 'number' &&
+                !isNaN(point.X) &&
+                !isNaN(point.Y),
+            ),
+        );
+      };
+
+      const safeUnion = (pathsA, pathsB) => {
+        const validPathsA = validatePaths(pathsA);
+        const validPathsB = validatePaths(pathsB);
+
+        if (validPathsA.length === 0 && validPathsB.length === 0) return [];
+        if (validPathsA.length === 0) return validPathsB;
+        if (validPathsB.length === 0) return validPathsA;
+
+        try {
+          const clipper = new ClipperLib.Clipper();
+          const solution = new ClipperLib.Paths();
+          clipper.AddPaths(validPathsA, ClipperLib.PolyType.ptSubject, true);
+          clipper.AddPaths(validPathsB, ClipperLib.PolyType.ptClip, true);
+          clipper.Execute(ClipperLib.ClipType.ctUnion, solution);
+          return solution;
+        } catch (error) {
+          console.warn('Union operation failed:', error);
+          return [...validPathsA, ...validPathsB];
+        }
+      };
+
+      const safeUnionAll = (pathGroups) => {
+        const validPathGroups = pathGroups.filter((paths) => validatePaths(paths).length > 0);
+        if (validPathGroups.length === 0) return [];
+
+        return validPathGroups.reduce((acc, paths) => safeUnion(acc, paths), []);
+      };
+
+      const safeDilate = (paths, radius) => {
+        const validPaths = validatePaths(paths);
+        if (validPaths.length === 0) return [];
+
+        try {
+          const clipper = new ClipperLib.ClipperOffset();
+          const solution = new ClipperLib.Paths();
+          clipper.AddPaths(validPaths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+          clipper.Execute(solution, radius);
+          return solution;
+        } catch (error) {
+          console.warn('Dilate operation failed:', error);
+          return validPaths;
+        }
+      };
+
       // Shape utilities
       const shapeContains = (shape, x, y) => {
         if (shape.r) {
@@ -233,6 +313,9 @@
         erosion: 1.0,
         drawing: null,
         dragging: null,
+        showMST: false,
+        includeMSTInClosing: false,
+        mstWidth: 4,
       };
 
       const views = {
@@ -259,6 +342,157 @@
         return { x: e.clientX - rect.left, y: e.clientY - rect.top };
       };
 
+      // MST utilities
+      const getShapeCenter = (shape) => {
+        if (shape.r) {
+          return { x: shape.x + shape.r, y: shape.y + shape.r };
+        }
+        return { x: shape.x + shape.w / 2, y: shape.y + shape.h / 2 };
+      };
+
+      const distance = (p1, p2) => {
+        const dx = p1.x - p2.x;
+        const dy = p1.y - p2.y;
+        return Math.sqrt(dx * dx + dy * dy);
+      };
+
+      // Union-Find data structure for Kruskal's algorithm
+      class UnionFind {
+        constructor(n) {
+          this.parent = Array.from({ length: n }, (_, i) => i);
+          this.rank = Array(n).fill(0);
+        }
+
+        find(x) {
+          if (this.parent[x] !== x) {
+            this.parent[x] = this.find(this.parent[x]);
+          }
+          return this.parent[x];
+        }
+
+        union(x, y) {
+          const rootX = this.find(x);
+          const rootY = this.find(y);
+
+          if (rootX !== rootY) {
+            if (this.rank[rootX] < this.rank[rootY]) {
+              this.parent[rootX] = rootY;
+            } else if (this.rank[rootX] > this.rank[rootY]) {
+              this.parent[rootY] = rootX;
+            } else {
+              this.parent[rootY] = rootX;
+              this.rank[rootX]++;
+            }
+            return true;
+          }
+          return false;
+        }
+      }
+
+      const computeMST = (shapes) => {
+        if (shapes.length < 2) return [];
+
+        const centers = shapes.map(getShapeCenter);
+        const edges = [];
+
+        // Generate all edges
+        for (let i = 0; i < centers.length; i++) {
+          for (let j = i + 1; j < centers.length; j++) {
+            edges.push({
+              from: i,
+              to: j,
+              weight: distance(centers[i], centers[j]),
+              fromCenter: centers[i],
+              toCenter: centers[j],
+            });
+          }
+        }
+
+        // Sort edges by weight
+        edges.sort((a, b) => a.weight - b.weight);
+
+        // Kruskal's algorithm
+        const mst = [];
+        const uf = new UnionFind(centers.length);
+
+        for (const edge of edges) {
+          if (uf.union(edge.from, edge.to)) {
+            mst.push(edge);
+            if (mst.length === centers.length - 1) break;
+          }
+        }
+
+        return mst;
+      };
+
+      const drawMST = (ctx, mst) => {
+        if (mst.length === 0) return;
+
+        ctx.save();
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+
+        // Draw edges
+        mst.forEach((edge) => {
+          ctx.beginPath();
+          ctx.moveTo(edge.fromCenter.x, edge.fromCenter.y);
+          ctx.lineTo(edge.toCenter.x, edge.toCenter.y);
+          ctx.stroke();
+        });
+
+        // Draw nodes (shape centers)
+        ctx.fillStyle = '#ff0000';
+        mst.forEach((edge) => {
+          // Draw circles at centers
+          ctx.beginPath();
+          ctx.arc(edge.fromCenter.x, edge.fromCenter.y, 4, 0, 2 * Math.PI);
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.arc(edge.toCenter.x, edge.toCenter.y, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+
+        ctx.restore();
+      };
+
+      // Convert MST edges to paths for morphological operations
+      const mstToPaths = (mst, lineWidth = state.mstWidth) => {
+        if (mst.length === 0) return [];
+
+        const paths = [];
+
+        mst.forEach((edge) => {
+          const { fromCenter, toCenter } = edge;
+          const dx = toCenter.x - fromCenter.x;
+          const dy = toCenter.y - fromCenter.y;
+          const length = Math.sqrt(dx * dx + dy * dy);
+
+          if (length === 0) return;
+
+          // Normalize direction vector
+          const nx = dx / length;
+          const ny = dy / length;
+
+          // Perpendicular vector for line width
+          const px = (-ny * lineWidth) / 2;
+          const py = (nx * lineWidth) / 2;
+
+          // Create rectangular path for the line
+          const path = [
+            { X: fromCenter.x + px, Y: fromCenter.y + py },
+            { X: toCenter.x + px, Y: toCenter.y + py },
+            { X: toCenter.x - px, Y: toCenter.y - py },
+            { X: fromCenter.x - px, Y: fromCenter.y - py },
+          ];
+
+          paths.push(path);
+        });
+
+        return paths;
+      };
+
       // Rendering
       const render = () => {
         const { width, height } = canvas.getBoundingClientRect();
@@ -267,6 +501,8 @@
         if (state.shapes.length === 0) return;
 
         const allPaths = state.shapes.map((shape) => shapeToPaths(shape, 64));
+        const mst = state.shapes.length > 1 ? computeMST(state.shapes) : [];
+        const mstPaths = state.includeMSTInClosing ? mstToPaths(mst, state.mstWidth) : [];
         const style = views[state.view];
 
         switch (state.view) {
@@ -276,22 +512,33 @@
 
           case 'dilated':
             allPaths.forEach((paths) => {
-              const dilated = dilate(paths, state.radius);
+              const dilated = safeDilate(paths, state.radius);
               drawPaths(ctx, dilated, style);
             });
+
+            if (mstPaths.length > 0) {
+              const dilatedMST = safeDilate(mstPaths, state.radius);
+              drawPaths(ctx, dilatedMST, style);
+            }
             break;
 
           case 'union':
-            const dilatedAll = allPaths.map((paths) => dilate(paths, state.radius));
-            const unionResult = unionAll(dilatedAll);
+            const dilatedShapes = allPaths.map((paths) => safeDilate(paths, state.radius));
+            const dilatedMST = mstPaths.length > 0 ? safeDilate(mstPaths, state.radius) : [];
+            const allDilatedPaths = [...dilatedShapes, dilatedMST].filter((paths) => paths.length > 0);
+            const unionResult = safeUnionAll(allDilatedPaths);
             drawPaths(ctx, unionResult, style);
             break;
 
           case 'eroded':
-            const dilatedForClosing = allPaths.map((paths) => dilate(paths, state.radius));
-            const unionForClosing = unionAll(dilatedForClosing);
+            const dilatedForClosing = allPaths.map((paths) => safeDilate(paths, state.radius));
+            const dilatedMSTForClosing = mstPaths.length > 0 ? safeDilate(mstPaths, state.radius) : [];
+            const allDilatedForClosing = [...dilatedForClosing, dilatedMSTForClosing].filter(
+              (paths) => paths.length > 0,
+            );
+            const unionForClosing = safeUnionAll(allDilatedForClosing);
             const erosionRadius = state.radius * state.erosion;
-            const eroded = dilate(unionForClosing, -erosionRadius);
+            const eroded = safeDilate(unionForClosing, -erosionRadius);
             drawPaths(ctx, eroded, style);
 
             // Render original shapes on top for comparison
@@ -308,6 +555,11 @@
         // Reference outline (except for eroded view which handles it separately)
         if (state.view !== 'original' && state.view !== 'eroded') {
           allPaths.forEach((paths) => drawPaths(ctx, paths, { stroke: '#000', lineWidth: 1 }));
+        }
+
+        // Draw MST overlay only if explicitly toggled visible
+        if (state.showMST && state.shapes.length > 1) {
+          drawMST(ctx, mst);
         }
       };
 
@@ -434,6 +686,14 @@
         render();
       });
 
+      const mstWidthSlider = document.getElementById('mstWidth');
+      const mstWidthValue = document.getElementById('mstWidthValue');
+      mstWidthSlider.addEventListener('input', () => {
+        state.mstWidth = parseInt(mstWidthSlider.value);
+        mstWidthValue.textContent = state.mstWidth;
+        render();
+      });
+
       document.getElementById('clear').addEventListener('click', () => {
         state.shapes = [];
         render();
@@ -458,6 +718,24 @@
       };
 
       document.getElementById('demo').addEventListener('click', loadDemoShapes);
+
+      // MST toggle
+      const toggleMSTBtn = document.getElementById('toggleMST');
+      toggleMSTBtn.addEventListener('click', () => {
+        state.showMST = !state.showMST;
+        toggleMSTBtn.textContent = state.showMST ? 'Hide MST' : 'Show MST';
+        toggleMSTBtn.classList.toggle('active', state.showMST);
+        render();
+      });
+
+      // Include MST in closing toggle
+      const includeMSTBtn = document.getElementById('includeMSTInClosing');
+      includeMSTBtn.addEventListener('click', () => {
+        state.includeMSTInClosing = !state.includeMSTInClosing;
+        includeMSTBtn.textContent = state.includeMSTInClosing ? 'Exclude MST from Closing' : 'Include MST in Closing';
+        includeMSTBtn.classList.toggle('active', state.includeMSTInClosing);
+        render();
+      });
 
       // Load demo shapes on start
       loadDemoShapes();
