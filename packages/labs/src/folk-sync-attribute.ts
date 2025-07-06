@@ -62,8 +62,8 @@ export class FolkSyncAttribute extends CustomAttribute {
   #observer: MutationObserver | null = null;
 
   // Sync mappings - DOM node to Automerge symbol ID and vice versa
-  #domToAutomergeId = new Map<Node, string>();
-  #automergeIdToDom = new Map<string, Node>();
+  #domToAutomergeId = new Map<Node, ObjID>();
+  #automergeIdToDom = new Map<ObjID, Node>();
 
   // Flag to prevent recursive updates
   #isApplyingRemoteChanges = false;
