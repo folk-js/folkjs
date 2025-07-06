@@ -6,7 +6,7 @@ export type Shape2D = Rect2D & {
   /** Clockwise rotation of the shape, in radians. */
   rotation: number;
   /** Relative vertices of the shape, in the range [0, 1] */
-  vertices: ReadonlyArray<V.Vector2Readonly> | null;
+  vertices: ReadonlyArray<V.Vector2Readonly> | undefined;
 };
 
 export type Shape2DReadonly = Readonly<Shape2D>;
@@ -18,8 +18,49 @@ export type Shape2DCorners = Readonly<{
   bottomLeft: Vector2Readonly;
 }>;
 
-export function fromValues(x = 0, y = 0, width = 0, height = 0, rotation = 0, vertices = null): Shape2D {
+export function fromValues(x = 0, y = 0, width = 0, height = 0, rotation = 0, vertices?: Shape2D['vertices']): Shape2D {
   return { x, y, width, height, rotation, vertices };
+}
+
+export function fromTriangle(x = 0, y = 0, width = 0, height = 0, rotation = 0): Shape2D {
+  return fromValues(x, y, width, height, rotation, [V.fromValues(0.5, 1), V.fromValues(1, 1), V.fromValues(0, 1)]);
+}
+
+export function fromDiamond(x = 0, y = 0, width = 0, height = 0, rotation = 0): Shape2D {
+  return fromValues(x, y, width, height, rotation, [
+    V.fromValues(0.5, 1),
+    V.fromValues(1, 1),
+    V.fromValues(0, 1),
+    V.fromValues(0, 0.5),
+  ]);
+}
+
+export function fromRhombus(x = 0, y = 0, width = 0, height = 0, rotation = 0): Shape2D {
+  return fromValues(x, y, width, height, rotation, [
+    V.fromValues(0.25, 0),
+    V.fromValues(1, 0),
+    V.fromValues(0.75, 1),
+    V.fromValues(0, 1),
+  ]);
+}
+
+export function fromHexagon(x = 0, y = 0, width = 0, height = 0, rotation = 0): Shape2D {
+  return fromValues(x, y, width, height, rotation, [
+    V.fromValues(0.5, 0),
+    V.fromValues(1, 0.25),
+    V.fromValues(1, 0.75),
+    V.fromValues(0.5, 1),
+    V.fromValues(0, 0.75),
+    V.fromValues(0, 0.25),
+  ]);
+}
+
+export function fromCircle(x = 0, y = 0, radius: number): Shape2D {
+  return fromValues(x, y, radius, radius, 0, []);
+}
+
+export function fromEclipse(x = 0, y = 0, width = 0, height = 0, rotation = 0): Shape2D {
+  return fromValues(x, y, width, height, rotation, []);
 }
 
 export function clone({ x, y, width, height, rotation, vertices }: Shape2D): Shape2D {
@@ -148,8 +189,12 @@ export function bounds(shape: Shape2DReadonly, c?: Shape2DCorners): Rect2D {
   };
 }
 
-export function absoluteVertices(shape: Shape2DReadonly, c = center(shape)): ReadonlyArray<V.Vector2Readonly> | null {
-  if (shape.vertices === null) return null;
+export function absoluteVertices(shape: Shape2DReadonly, c = center(shape)): ReadonlyArray<V.Vector2Readonly> {
+  if (shape.vertices === undefined) {
+    const { topLeft, topRight, bottomRight, bottomLeft } = corners(shape);
+    return [topLeft, topRight, bottomRight, bottomLeft];
+  }
+
   return shape.vertices.map((v) =>
     V.rotateAround({ x: shape.x + v.x * shape.width, y: shape.y + v.y * shape.height }, c, shape.rotation),
   );
