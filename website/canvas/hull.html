@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Morphological Closing</title>
+    <script src="https://unpkg.com/clipper-lib@6.4.2/clipper.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+        background: #fff;
+        color: #000;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        font-size: 12px;
+      }
+
+      .controls {
+        background: #fff;
+        border-bottom: 1px solid #000;
+        padding: 16px;
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      label {
+        width: 64px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+
+      input[type='range'] {
+        width: 80px;
+        height: 16px;
+        -webkit-appearance: none;
+        background: #000;
+        outline: none;
+      }
+
+      input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 16px;
+        height: 16px;
+        background: #fff;
+        border: 1px solid #000;
+        cursor: pointer;
+      }
+
+      input[type='range']::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        background: #fff;
+        border: 1px solid #000;
+        cursor: pointer;
+      }
+
+      .value {
+        width: 32px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      button {
+        padding: 8px 16px;
+        background: #fff;
+        border: 1px solid #000;
+        color: #000;
+        cursor: pointer;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-family: inherit;
+        font-size: 12px;
+      }
+
+      button:hover {
+        background: #000;
+        color: #fff;
+      }
+      button.active {
+        background: #000;
+        color: #fff;
+      }
+
+      .separator {
+        width: 1px;
+        height: 32px;
+        background: #000;
+        margin: 0 8px;
+      }
+
+      canvas {
+        flex: 1;
+        background: #fff;
+        cursor: crosshair;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="controls">
+      <div class="group">
+        <label>Radius</label>
+        <input type="range" id="radius" min="0" max="100" value="50" />
+        <span class="value" id="radiusValue">50</span>
+      </div>
+
+      <div class="group">
+        <label>Erosion</label>
+        <input type="range" id="erosion" min="0" max="100" value="100" />
+        <span class="value" id="erosionValue">100%</span>
+      </div>
+
+      <div class="group">
+        <button data-tool="rect" class="active">Rectangle</button>
+        <button data-tool="circle">Circle</button>
+      </div>
+
+      <div class="separator"></div>
+
+      <div class="group">
+        <button data-view="original">Original</button>
+        <button data-view="dilated">Dilated</button>
+        <button data-view="union">Union</button>
+        <button data-view="eroded" class="active">Eroded</button>
+      </div>
+
+      <div class="separator"></div>
+
+      <div class="group">
+        <button id="clear">Clear</button>
+        <button id="demo">Demo</button>
+      </div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script type="module">
+      // Geometry utilities
+      const createRect = (x, y, w, h) => [
+        { X: x, Y: y },
+        { X: x + w, Y: y },
+        { X: x + w, Y: y + h },
+        { X: x, Y: y + h },
+      ];
+
+      const createCircle = (cx, cy, r, segments) =>
+        Array.from({ length: segments }, (_, i) => {
+          const angle = (i * 2 * Math.PI) / segments;
+          return { X: cx + r * Math.cos(angle), Y: cy + r * Math.sin(angle) };
+        });
+
+      const dilate = (paths, radius) => {
+        const clipper = new ClipperLib.ClipperOffset();
+        const solution = new ClipperLib.Paths();
+        clipper.AddPaths(paths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
+        clipper.Execute(solution, radius);
+        return solution;
+      };
+
+      const union = (pathsA, pathsB) => {
+        const clipper = new ClipperLib.Clipper();
+        const solution = new ClipperLib.Paths();
+        clipper.AddPaths(pathsA, ClipperLib.PolyType.ptSubject, true);
+        clipper.AddPaths(pathsB, ClipperLib.PolyType.ptClip, true);
+        clipper.Execute(ClipperLib.ClipType.ctUnion, solution);
+        return solution;
+      };
+
+      const unionAll = (pathGroups) => pathGroups.reduce((acc, paths) => union(acc, paths), []);
+
+      const drawPaths = (ctx, paths, { fill, stroke, lineWidth = 2 }) => {
+        ctx.save();
+        if (fill) ctx.fillStyle = fill;
+        if (stroke) {
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = lineWidth;
+        }
+
+        paths.forEach((path) => {
+          if (path.length === 0) return;
+          ctx.beginPath();
+          ctx.moveTo(path[0].X, path[0].Y);
+          path.slice(1).forEach((p) => ctx.lineTo(p.X, p.Y));
+          ctx.closePath();
+          if (fill) ctx.fill();
+          if (stroke) ctx.stroke();
+        });
+
+        ctx.restore();
+      };
+
+      // Shape utilities
+      const shapeContains = (shape, x, y) => {
+        if (shape.r) {
+          const cx = shape.x + shape.r;
+          const cy = shape.y + shape.r;
+          const dx = x - cx;
+          const dy = y - cy;
+          return dx * dx + dy * dy <= shape.r * shape.r;
+        }
+        return x >= shape.x && x <= shape.x + shape.w && y >= shape.y && y <= shape.y + shape.h;
+      };
+
+      const shapeToPaths = (shape, resolution) => {
+        if (shape.r) {
+          const cx = shape.x + shape.r;
+          const cy = shape.y + shape.r;
+          return [createCircle(cx, cy, shape.r, resolution)];
+        }
+        return [createRect(shape.x, shape.y, shape.w, shape.h)];
+      };
+
+      // App state
+      const state = {
+        shapes: [],
+        tool: 'rect',
+        view: 'eroded',
+        radius: 50,
+        erosion: 1.0,
+        drawing: null,
+        dragging: null,
+      };
+
+      const views = {
+        original: { fill: 'rgba(0, 0, 0, 0.8)', stroke: '#000', lineWidth: 1 },
+        dilated: { fill: '#ccc', stroke: '#000', lineWidth: 1 },
+        union: { fill: '#ccc', stroke: '#000', lineWidth: 1 },
+        eroded: { fill: '#ccc', stroke: '#000', lineWidth: 1 },
+      };
+
+      // Canvas setup
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+
+      const resizeCanvas = () => {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * devicePixelRatio;
+        canvas.height = rect.height * devicePixelRatio;
+        ctx.scale(devicePixelRatio, devicePixelRatio);
+        render();
+      };
+
+      const getMousePos = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      };
+
+      // Rendering
+      const render = () => {
+        const { width, height } = canvas.getBoundingClientRect();
+        ctx.clearRect(0, 0, width, height);
+
+        if (state.shapes.length === 0) return;
+
+        const allPaths = state.shapes.map((shape) => shapeToPaths(shape, 64));
+        const style = views[state.view];
+
+        switch (state.view) {
+          case 'original':
+            allPaths.forEach((paths) => drawPaths(ctx, paths, style));
+            break;
+
+          case 'dilated':
+            allPaths.forEach((paths) => {
+              const dilated = dilate(paths, state.radius);
+              drawPaths(ctx, dilated, style);
+            });
+            break;
+
+          case 'union':
+            const dilatedAll = allPaths.map((paths) => dilate(paths, state.radius));
+            const unionResult = unionAll(dilatedAll);
+            drawPaths(ctx, unionResult, style);
+            break;
+
+          case 'eroded':
+            const dilatedForClosing = allPaths.map((paths) => dilate(paths, state.radius));
+            const unionForClosing = unionAll(dilatedForClosing);
+            const erosionRadius = state.radius * state.erosion;
+            const eroded = dilate(unionForClosing, -erosionRadius);
+            drawPaths(ctx, eroded, style);
+
+            // Render original shapes on top for comparison
+            allPaths.forEach((paths) =>
+              drawPaths(ctx, paths, {
+                fill: '#fff',
+                stroke: '#000',
+                lineWidth: 1,
+              }),
+            );
+            break;
+        }
+
+        // Reference outline (except for eroded view which handles it separately)
+        if (state.view !== 'original' && state.view !== 'eroded') {
+          allPaths.forEach((paths) => drawPaths(ctx, paths, { stroke: '#000', lineWidth: 1 }));
+        }
+      };
+
+      // Event handlers
+      const updateButtons = (selector, activeValue, dataAttr) => {
+        document.querySelectorAll(selector).forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset[dataAttr] === activeValue);
+        });
+      };
+
+      const onMouseDown = (e) => {
+        const pos = getMousePos(e);
+
+        // Check if clicking on an existing shape to move it
+        const shape = [...state.shapes].reverse().find((s) => shapeContains(s, pos.x, pos.y));
+        if (shape) {
+          state.dragging = { shape, offsetX: pos.x - shape.x, offsetY: pos.y - shape.y };
+          canvas.style.cursor = 'grabbing';
+        } else {
+          // Start drawing a new shape
+          state.drawing = { startX: pos.x, startY: pos.y, currentX: pos.x, currentY: pos.y };
+        }
+      };
+
+      const onMouseMove = (e) => {
+        const pos = getMousePos(e);
+
+        if (state.dragging) {
+          state.dragging.shape.x = pos.x - state.dragging.offsetX;
+          state.dragging.shape.y = pos.y - state.dragging.offsetY;
+          render();
+        } else if (state.drawing) {
+          state.drawing.currentX = pos.x;
+          state.drawing.currentY = pos.y;
+          render();
+          drawPreview();
+        } else {
+          // Update cursor based on whether we're over a shape
+          const overShape = state.shapes.some((s) => shapeContains(s, pos.x, pos.y));
+          canvas.style.cursor = overShape ? 'grab' : 'crosshair';
+        }
+      };
+
+      const onMouseUp = (e) => {
+        if (state.dragging) {
+          state.dragging = null;
+          canvas.style.cursor = 'crosshair';
+          return;
+        }
+
+        if (state.drawing) {
+          const { startX, startY, currentX, currentY } = state.drawing;
+          const w = Math.abs(currentX - startX);
+          const h = Math.abs(currentY - startY);
+
+          if (w > 10 && h > 10) {
+            const x = Math.min(startX, currentX);
+            const y = Math.min(startY, currentY);
+            if (state.tool === 'circle') {
+              const r = Math.min(w, h) / 2;
+              state.shapes.push({ x, y, r });
+            } else {
+              state.shapes.push({ x, y, w, h });
+            }
+          }
+
+          state.drawing = null;
+          render();
+        }
+      };
+
+      const drawPreview = () => {
+        if (!state.drawing) return;
+        const { startX, startY, currentX, currentY } = state.drawing;
+        const w = Math.abs(currentX - startX);
+        const h = Math.abs(currentY - startY);
+        const x = Math.min(startX, currentX);
+        const y = Math.min(startY, currentY);
+
+        const shape = state.tool === 'circle' ? { x, y, r: Math.min(w, h) / 2 } : { x, y, w, h };
+
+        const paths = shapeToPaths(shape, 64);
+        drawPaths(ctx, paths, { stroke: '#000', lineWidth: 1 });
+      };
+
+      // Initialize
+      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
+
+      canvas.addEventListener('mousedown', onMouseDown);
+      canvas.addEventListener('mousemove', onMouseMove);
+      canvas.addEventListener('mouseup', onMouseUp);
+
+      // Controls
+      document.querySelectorAll('[data-tool]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          state.tool = btn.dataset.tool;
+          updateButtons('[data-tool]', state.tool, 'tool');
+          canvas.style.cursor = 'crosshair';
+        });
+      });
+
+      document.querySelectorAll('[data-view]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          state.view = btn.dataset.view;
+          updateButtons('[data-view]', state.view, 'view');
+          render();
+        });
+      });
+
+      const radiusSlider = document.getElementById('radius');
+      const radiusValue = document.getElementById('radiusValue');
+      radiusSlider.addEventListener('input', () => {
+        state.radius = parseInt(radiusSlider.value);
+        radiusValue.textContent = state.radius;
+        render();
+      });
+
+      const erosionSlider = document.getElementById('erosion');
+      const erosionValue = document.getElementById('erosionValue');
+      erosionSlider.addEventListener('input', () => {
+        state.erosion = parseInt(erosionSlider.value) / 100;
+        erosionValue.textContent = Math.round(state.erosion * 100) + '%';
+        render();
+      });
+
+      document.getElementById('clear').addEventListener('click', () => {
+        state.shapes = [];
+        render();
+      });
+
+      const loadDemoShapes = () => {
+        state.shapes = [
+          { x: 80, y: 120, w: 100, h: 60 },
+          { x: 200, y: 80, r: 35 },
+          { x: 350, y: 150, w: 80, h: 80 },
+          { x: 120, y: 250, r: 45 },
+          { x: 300, y: 300, w: 120, h: 50 },
+          { x: 500, y: 180, r: 40 },
+          { x: 600, y: 120, w: 90, h: 70 },
+          { x: 450, y: 280, r: 30 },
+          { x: 650, y: 350, w: 60, h: 90 },
+          { x: 750, y: 200, r: 50 },
+          { x: 150, y: 400, w: 110, h: 40 },
+          { x: 400, y: 450, r: 35 },
+        ];
+        render();
+      };
+
+      document.getElementById('demo').addEventListener('click', loadDemoShapes);
+
+      // Load demo shapes on start
+      loadDemoShapes();
+    </script>
+  </body>
+</html>
