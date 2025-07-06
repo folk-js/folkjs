@@ -1,4 +1,4 @@
-import type { DelPatch, Doc, ObjID, Patch, Prop, PutPatch, SpliceTextPatch } from '@automerge/automerge';
+import type { Doc, ObjID, Patch, Prop } from '@automerge/automerge';
 import { getObjectId } from '@automerge/automerge';
 import { DocHandle, ImmutableString, isValidAutomergeUrl, Repo, type PeerId } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
