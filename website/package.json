@@ -24,6 +24,7 @@
         "public/**",
         "file-space/**",
         "hyperzoom/**",
+        "chess/**",
         "public/**",
         "package.json",
         "tsconfig.json",

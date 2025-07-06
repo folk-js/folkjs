@@ -1,4 +1,5 @@
-import { css, FolkElement, property } from '@folkjs/dom/FolkElement';
+import { FolkElement } from '@folkjs/canvas/folk-element';
+import { css, property } from '@folkjs/canvas/reactive-element';
 
 // https://github.com/lichess-org/chessground
 // https://chessboardjs.com/#start
@@ -72,7 +73,7 @@ class ChessPiece extends FolkElement {
       display: block;
       grid-area: attr(position type(<custom-ident>));
       z-index: 1;
-      padding: 5px;
+      background-size: 90%;
     }
 
     :host([type='black-pawn']) {
