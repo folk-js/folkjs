@@ -26,9 +26,6 @@ export * from './rAF';
 // Integration and effects
 export * from './collision';
 
-// WebGL utilities
-export * from './webgl';
-
 export * from './indexeddb';
 
 export * from './custom-attribute-registry';

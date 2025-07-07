@@ -1,5 +1,6 @@
-import { DOMRectTransform, WebGLUtils } from '@folkjs/canvas';
+import { DOMRectTransform } from '@folkjs/canvas';
 import { css, type PropertyValues } from '@folkjs/canvas/reactive-element';
+import { WebGLUtils } from '@folkjs/dom/webgl';
 import { FolkBaseSet } from './folk-base-set';
 import {
   collisionFragmentShader,
