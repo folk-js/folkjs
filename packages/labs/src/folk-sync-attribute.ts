@@ -10,7 +10,6 @@ import {
 } from '@automerge/vanillajs';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import type { DOMJElement, DOMJNode } from '@folkjs/labs/dom-json';
-// TODO: use @automerge/vanillajs package
 
 /**
  * Helper to get object ID from a path in an Automerge document
