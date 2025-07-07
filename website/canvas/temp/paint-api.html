@@ -78,7 +78,7 @@
     ></folk-shape>
 
     <script type="module">
-      import { CanIUse } from '@folkjs/canvas/CanIUse';
+      import { canIUsePaintAPI } from '@folkjs/dom/CanIUse';
       import '@folkjs/labs/standalone/folk-shape';
 
       function createRandom(seed) {
@@ -96,7 +96,7 @@
         };
       }
 
-      if (CanIUse.paintAPI()) {
+      if (canIUsePaintAPI()) {
         CSS.paintWorklet.addModule(
           URL.createObjectURL(
             new Blob(

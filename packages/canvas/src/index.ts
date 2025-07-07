@@ -23,9 +23,6 @@ export * from './animation-frame-controller';
 // Integration and effects
 export * from './collision';
 
-// Experimental features
-export * from './CanIUse';
-
 // Interfaces
 export * from './interfaces/InterfaceKey';
 export * from './interfaces/IPointTransform';

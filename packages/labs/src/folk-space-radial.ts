@@ -1,5 +1,6 @@
-import { CanIUse, TransformEvent, Vector } from '@folkjs/canvas';
+import { TransformEvent, Vector } from '@folkjs/canvas';
 import { css, type PropertyValues } from '@folkjs/canvas/reactive-element';
+import { canIUseMoveBefore } from '@folkjs/dom/CanIUse';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 
@@ -62,7 +63,7 @@ export class FolkSpaceRadial extends FolkBaseSet {
   }
 
   #handleMoveBefore(event: Event) {
-    if (!CanIUse.moveBefore()) return;
+    if (!canIUseMoveBefore()) return;
 
     const shapeElement = event.target as HTMLElement;
 

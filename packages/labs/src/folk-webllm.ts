@@ -1,4 +1,4 @@
-import { CanIUse } from '@folkjs/canvas';
+import { canIUseWebGPU } from '@folkjs/dom/CanIUse';
 import { CreateMLCEngine, prebuiltAppConfig } from '@mlc-ai/web-llm';
 
 export type RolePrompt = {
@@ -162,7 +162,7 @@ export class FolkWebLLM extends HTMLElement {
       this._model = this.getAttribute('model') || '';
     }
 
-    if (CanIUse.webGPU()) {
+    if (canIUseWebGPU()) {
       if (this._model) {
         this.initializeModel(this._model);
       } else {
