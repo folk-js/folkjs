@@ -244,15 +244,6 @@ export class FolkSyncAttribute extends CustomAttribute {
       return;
     }
 
-    // DEBUG: Log mutation details
-    console.log('DEBUG: Handling mutation:', mutation.type, 'on', mutation.target);
-    if (mutation.type === 'childList') {
-      console.log('DEBUG: Added nodes:', mutation.addedNodes.length, 'Removed nodes:', mutation.removedNodes.length);
-      Array.from(mutation.addedNodes).forEach((node, i) => {
-        console.log(`DEBUG: Added node ${i}:`, node);
-      });
-    }
-
     // Set flag to indicate this is a local change
     this.#isLocalChange = true;
 
@@ -315,13 +306,11 @@ export class FolkSyncAttribute extends CustomAttribute {
 
           // Handle added nodes - add to Automerge but defer mapping creation
           if (mutation.addedNodes.length > 0) {
-            console.log('DEBUG: Processing', mutation.addedNodes.length, 'added nodes in transaction');
             this.#handleAddedNodesInTransaction(parentElement, mutation.addedNodes, parentNode);
             // Store info for post-transaction mapping
             for (const addedNode of mutation.addedNodes) {
               addedNodeInfo.push({ domNode: addedNode, parentElement });
             }
-            console.log('DEBUG: Added', mutation.addedNodes.length, 'nodes to addedNodeInfo');
           }
 
           // Handle removed nodes
@@ -339,7 +328,6 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     // After the change is committed, create mappings for added nodes
     if (addedNodeInfo.length > 0) {
-      console.log('DEBUG: Creating mappings for', addedNodeInfo.length, 'added nodes');
       this.#createMappingsForAddedNodes(addedNodeInfo);
     }
 
@@ -362,7 +350,6 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
 
       for (const patch of patches) {
-        console.log('DEBUG: Processing patch:', patch.action, 'at path:', patch.path);
         switch (patch.action) {
           case 'insert': {
             await this.#handleInsertPatch(patch, doc);
@@ -443,9 +430,6 @@ export class FolkSyncAttribute extends CustomAttribute {
         if (!this.#handle) {
           throw new Error('Cannot handle mutations: Document handle not initialized');
         }
-
-        // DEBUG: Log mutation batch
-        console.log('DEBUG: MutationObserver received', mutations.length, 'mutations');
 
         // Process each mutation
         for (const mutation of mutations) {
@@ -827,8 +811,6 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
       insertedCount++;
     }
-
-    console.log(`DEBUG: Inserting ${insertedCount} consecutive elements starting at index ${insertionIndex}`);
 
     // Insert all the new consecutive elements
     for (let i = 0; i < insertedCount; i++) {
