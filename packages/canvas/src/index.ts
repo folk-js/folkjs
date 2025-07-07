@@ -20,7 +20,6 @@ export * from './TransformStack';
 
 // Animation and timing
 export * from './animation-frame-controller';
-export * from './rAF';
 
 // Integration and effects
 export * from './collision';
