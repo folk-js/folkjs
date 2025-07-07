@@ -1,5 +1,5 @@
 // Ported from https://github.com/bitu467/record-player
-import { css, html } from '@folkjs/canvas/tags';
+import { css, html } from '@folkjs/dom/tags';
 
 const styles = css`
   ::slotted(*) {
