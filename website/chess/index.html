@@ -25,10 +25,15 @@
         justify-content: center;
         margin: 0;
       }
+
+      chess-board {
+        width: 100%;
+        max-width: calc(var(--square-size, 80px) * 8);
+      }
     </style>
   </head>
   <body>
-    <chess-board folk-sync>
+    <chess-board>
       <chess-piece position="a1" type="white-rook"></chess-piece>
       <chess-piece position="b1" type="white-knight"></chess-piece>
       <chess-piece position="c1" type="white-bishop"></chess-piece>

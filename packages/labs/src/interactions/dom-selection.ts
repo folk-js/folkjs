@@ -6,6 +6,7 @@ styles.replaceSync(`
 
   [folk-hovered-element] {
     outline: solid 1px blue !important;
+    outline-offset: -1px;
   }
 
   [folk-hovered-element],
@@ -14,14 +15,20 @@ styles.replaceSync(`
   }
 `);
 
-export function selectElement(cancellationSignal: AbortSignal, filter?: (el: Element) => Element | null) {
-  return new Promise<Element | null>((resolve) => {
+export function selectElement<T extends Element = Element>(
+  cancellationSignal: AbortSignal,
+  container: HTMLElement | DocumentOrShadowRoot = document.documentElement,
+  filter?: (el: Element) => T | null,
+) {
+  const containerDocument = container instanceof HTMLElement ? container.ownerDocument : container;
+
+  return new Promise<T | null>((resolve) => {
     let el: Element | null = null;
 
     function onPointerOver(event: PointerEvent) {
       el?.removeAttribute('folk-hovered-element');
       if (filter !== undefined) {
-        el = filter(event.target as Element);
+        el = filter(event.target as T);
       } else {
         el = event.target as Element;
       }
@@ -45,7 +52,7 @@ export function selectElement(cancellationSignal: AbortSignal, filter?: (el: Ele
 
     function onSelection(event: MouseEvent) {
       if (filter !== undefined) {
-        const el = filter(event.target as Element);
+        const el = filter(event.target as T);
 
         if (el) {
           event.preventDefault();
@@ -59,23 +66,24 @@ export function selectElement(cancellationSignal: AbortSignal, filter?: (el: Ele
         event.stopPropagation();
         event.stopImmediatePropagation();
         cleanUp();
-        resolve(event.target as Element);
+        resolve(event.target as T);
       }
     }
 
     function cleanUp() {
       el?.removeAttribute('folk-hovered-element');
       cancellationSignal.removeEventListener('abort', onCancel);
-      window.removeEventListener('pointerover', onPointerOver, { capture: true });
-      window.removeEventListener('click', onSelection, { capture: true });
-      window.removeEventListener('keydown', onKeyDown, { capture: true });
-      document.adoptedStyleSheets.splice(document.adoptedStyleSheets.indexOf(styles), 1);
+      (container as HTMLElement).removeEventListener('pointerover', onPointerOver, { capture: true });
+      (container as HTMLElement).removeEventListener('click', onSelection, { capture: true });
+      (container as HTMLElement).removeEventListener('keydown', onKeyDown, { capture: true });
+      containerDocument.adoptedStyleSheets.splice(containerDocument.adoptedStyleSheets.indexOf(styles), 1);
     }
 
     cancellationSignal.addEventListener('abort', onCancel);
-    window.addEventListener('pointerover', onPointerOver, { capture: true });
-    window.addEventListener('click', onSelection, { capture: true });
-    window.addEventListener('keydown', onKeyDown, { capture: true });
-    document.adoptedStyleSheets.push(styles);
+    (container as HTMLElement).addEventListener('pointerover', onPointerOver, { capture: true });
+    (container as HTMLElement).addEventListener('click', onSelection, { capture: true });
+    (container as HTMLElement).addEventListener('keydown', onKeyDown, { capture: true });
+
+    containerDocument.adoptedStyleSheets.push(styles);
   });
 }

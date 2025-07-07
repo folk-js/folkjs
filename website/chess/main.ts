@@ -1,6 +1,7 @@
 import { FolkElement } from '@folkjs/canvas/folk-element';
-import { css, property } from '@folkjs/canvas/reactive-element';
+import { css, property, type PropertyValues } from '@folkjs/canvas/reactive-element';
 import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
+import { selectElement } from '@folkjs/labs/interactions/dom-selection';
 
 FolkSyncAttribute.define();
 
@@ -27,7 +28,7 @@ type ChessPieceType =
   | 'black-king'
   | 'black-queen';
 
-const rows: ChessRow[] = [1, 2, 3, 4, 5, 6, 7, 8];
+const rows: ChessRow[] = [8, 7, 6, 5, 4, 3, 2, 1];
 
 const columns: ChessColumn[] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
@@ -74,10 +75,10 @@ class ChessPiece extends FolkElement {
   static override styles = css`
     :host {
       display: block;
-      grid-area: attr(position type(<custom-ident>));
       z-index: 1;
-      background-size: 90%;
+      background-size: 80%;
       background-position: center;
+      background-repeat: no-repeat;
     }
 
     :host([type='black-pawn']) {
@@ -132,72 +133,111 @@ class ChessPiece extends FolkElement {
   @property({ type: String, reflect: true }) position: ChessPosition = 'a1';
 
   @property({ type: String, reflect: true }) type: ChessPieceType = 'white-pawn';
+
+  protected override update(changedProperties: PropertyValues): void {
+    super.update(changedProperties);
+    this.style.gridArea = this.position;
+  }
+}
+
+class ChessSquare extends FolkElement {
+  static override tagName = 'chess-square';
+
+  @property({ type: String, reflect: true }) row: ChessRow = 1;
+
+  @property({ type: String, reflect: true }) column: ChessColumn = 'a';
+
+  get position(): ChessPosition {
+    return `${this.column}${this.row}`;
+  }
+
+  set position(value) {
+    this.column = value[0] as ChessColumn;
+    this.row = Number(value[1]) as ChessRow;
+  }
 }
 
 class ChessBoard extends FolkElement {
   static override tagName = 'chess-board';
 
   static override styles = css`
-:host {
-  --square-size: 80px;
-  --dark-color: #c1926e;
-  --light-color: #f0dcb9;
+    :host {
+      --dark-color: #c1926e;
+      --light-color: #f0dcb9;
 
-  display: grid;
-  grid-template-columns: repeat(8, var(--square-size) [col-start]);
-  grid-template-rows: repeat(8, var(--square-size) [col-start]);
-  grid-template-areas:
-    "a1 b1 c1 d1 e1 f1 g1 h1"
-    "a2 b2 c2 d2 e2 f2 g2 h2"
-    "a3 b3 c3 d3 e3 f3 g3 h3"
-    "a4 b4 c4 d4 e4 f4 g4 h4"
-    "a5 b5 c5 d5 e5 f5 g5 h5"
-    "a6 b6 c6 d6 e6 f6 g6 h6"
-    "a7 b7 c7 d7 e7 f7 g7 h7"
-    "a8 b8 c8 d8 e8 f8 g8 h8";
-}
-  
-chess-square {
-  display: block;
-  position: relative;
-  background-color: var(--light-color);
-  background-size: 85%;
-  background-position: center;
-  background-repeat: no-repeat;
-  color: var(--dark-color);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.9rem;
-  grid-area: attr(position type(<custom-ident>));
+      width: calc(var(--square-size, 80px) * 8);
+      aspect-ratio: 1;
 
-  &:nth-child(16n + 2),
-  &:nth-child(16n + 4),
-  &:nth-child(16n + 6),
-  &:nth-child(16n + 8),
-  &:nth-child(16n + 9),
-  &:nth-child(16n + 11),
-  &:nth-child(16n + 13),
-  &:nth-child(16n + 15) {
-    background-color: var(--dark-color);
-    color: var(--light-color);
-  }
+      display: grid;
+      grid-template-columns: repeat(8, 1fr [col-start]);
+      grid-template-rows: repeat(8, 1fr [col-start]);
+      grid-template-areas:
+        'a8 b8 c8 d8 e8 f8 g8 h8'
+        'a7 b7 c7 d7 e7 f7 g7 h7'
+        'a6 b6 c6 d6 e6 f6 g6 h6'
+        'a5 b5 c5 d5 e5 f5 g5 h5'
+        'a4 b4 c4 d4 e4 f4 g4 h4'
+        'a3 b3 c3 d3 e3 f3 g3 h3'
+        'a2 b2 c2 d2 e2 f2 g2 h2'
+        'a1 b1 c1 d1 e1 f1 g1 h1';
+    }
 
-  /* Label rows */
-  &:nth-child(8n + 1)::before {
-    content: attr(row);
-    position: absolute;
-    padding: 0.15rem;
-    top: 0;
-    left: 0;
-  }
+    chess-square {
+      display: block;
+      position: relative;
+      background-color: var(--light-color);
+      background-size: 85%;
+      background-position: center;
+      background-repeat: no-repeat;
+      color: var(--dark-color);
+      font-variant-numeric: tabular-nums;
+      font-size: 1rem;
 
-  /* Label columns */
-  &:nth-last-of-type(-n + 8)::after {
-    content: attr(column);
-    position: absolute;
-    right: 0;
-    bottom: 0;
-    padding: 0.15rem;
-  }`;
+      &:nth-child(16n + 2),
+      &:nth-child(16n + 4),
+      &:nth-child(16n + 6),
+      &:nth-child(16n + 8),
+      &:nth-child(16n + 9),
+      &:nth-child(16n + 11),
+      &:nth-child(16n + 13),
+      &:nth-child(16n + 15) {
+        background-color: var(--dark-color);
+        color: var(--light-color);
+      }
+
+      /* Label rows */
+      &:nth-child(8n + 1)::before {
+        content: attr(row);
+        position: absolute;
+        padding: 0.2em;
+        top: 0;
+        left: 0;
+      }
+    }
+
+    :host([flip]) {
+      grid-template-areas:
+        'a1 b1 c1 d1 e1 f1 g1 h1'
+        'a2 b2 c2 d2 e2 f2 g2 h2'
+        'a3 b3 c3 d3 e3 f3 g3 h3'
+        'a4 b4 c4 d4 e4 f4 g4 h4'
+        'a5 b5 c5 d5 e5 f5 g5 h5'
+        'a6 b6 c6 d6 e6 f6 g6 h6'
+        'a7 b7 c7 d7 e7 f7 g7 h7'
+        'a8 b8 c8 d8 e8 f8 g8 h8';
+    }
+
+    :host(:not([flip])) chess-square:nth-last-of-type(-n + 8)::after,
+    :host([flip]) chess-square:nth-of-type(-n + 8)::after {
+      content: attr(column);
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      padding: 0.2rem;
+    }
+  `;
+
+  @property({ type: String }) orientation: 'white' | 'black' = 'white';
 
   protected override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
@@ -205,9 +245,12 @@ chess-square {
     for (const row of rows) {
       for (const column of columns) {
         const square = document.createElement('chess-square');
+        const position = column + row;
+        square.part.add('square', position);
         square.setAttribute('column', column);
         square.setAttribute('row', row.toString());
-        square.style.gridArea = column + row;
+        square.tabIndex = 0;
+        square.style.gridArea = position;
         root.appendChild(square);
       }
     }
@@ -230,15 +273,53 @@ chess-square {
     return piece;
   }
 
-  movePiece(fromSquare: string, toSquare: string) {}
+  getPiece(position: ChessPosition): ChessPiece | null {
+    return this.querySelector(`chess-piece[position="${position}"]`);
+  }
+
+  async selectSquare(cancellationSignal: AbortSignal): Promise<ChessSquare | null> {
+    return selectElement(cancellationSignal, this.renderRoot as HTMLElement, (el) =>
+      el instanceof ChessSquare ? el : null,
+    );
+  }
 }
 
-ChessPiece.define();
+ChessSquare.define();
 ChessBoard.define();
+ChessPiece.define();
 
 declare global {
   interface HTMLElementTagNameMap {
     'chess-board': ChessBoard;
     'chess-piece': ChessPiece;
+    'chess-square': ChessSquare;
   }
+}
+
+async function selectPiece(cancellationSignal: AbortSignal, board: ChessBoard): Promise<ChessPiece | null> {
+  return selectElement(cancellationSignal, board, (el) => {
+    return el instanceof ChessPiece && el.parentElement === board ? el : null;
+  }) as Promise<ChessPiece | null>;
+}
+
+async function movePiece(cancellationSignal: AbortSignal, board: ChessBoard): Promise<ChessPiece | null> {
+  const piece = await selectPiece(cancellationSignal, board);
+
+  if (piece === null) return null;
+
+  const square = await board.selectSquare(cancellationSignal);
+
+  if (square === null) return null;
+
+  const squarePiece = board.getPiece(square.position);
+
+  squarePiece?.remove();
+
+  piece.position = square.position;
+
+  return piece;
+}
+
+while (true) {
+  await movePiece(new AbortController().signal, document.querySelector('chess-board')!);
 }

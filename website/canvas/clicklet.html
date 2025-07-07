@@ -248,7 +248,7 @@
       async function select(selector, action, separator) {
         const cancel = new AbortController();
 
-        const el = await selectElement(cancel.signal, (el) => (!!el.querySelector(selector) ? el : null));
+        const el = await selectElement(cancel.signal, document, (el) => (!!el.querySelector(selector) ? el : null));
 
         if (!el) return;
 

@@ -62,7 +62,7 @@ export function selectElements(
     const signal = AbortSignal.any([completionSignal, cancellationSignal]);
 
     while (!(completionSignal.aborted || cancellationSignal.aborted)) {
-      const el = await selectElement(signal, selectionFilter);
+      const el = await selectElement(signal, document, selectionFilter);
 
       if (el) {
         el.setAttribute('folk-selected-element', '');

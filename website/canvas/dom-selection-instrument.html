@@ -497,7 +497,7 @@
      
       window.select = async () => {
         const cancel = new AbortController();
-        const el = await selectElement(cancel.signal, filter);
+        const el = await selectElement(cancel.signal, document, filter);
         console.log(el)
       }
 
