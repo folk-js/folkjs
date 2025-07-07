@@ -8,8 +8,8 @@ import {
   Repo,
   WebSocketClientAdapter,
 } from '@automerge/vanillajs';
-import { CustomAttribute } from '@folkjs/dom/CustomAttributeRegistry';
-import type { DOMJElement, DOMJNode } from 'packages/labs/src/dom-json';
+import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
+import type { DOMJElement, DOMJNode } from '@folkjs/labs/dom-json';
 // TODO: use @automerge/vanillajs package
 
 /**
