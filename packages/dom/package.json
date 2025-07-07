@@ -12,6 +12,10 @@
     "./*": {
       "import": "./dist/*.js",
       "types": "./dist/*.d.ts"
+    },
+    "./ReactiveElement": {
+      "import": "./dist/ReactiveElement/index.js",
+      "types": "./dist/ReactiveElement/index.d.ts"
     }
   },
   "files": [

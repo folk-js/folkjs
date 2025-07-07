@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/canvas';
-import { css } from '@folkjs/canvas/reactive-element';
+import { css } from '@folkjs/dom/ReactiveElement';
 import { html } from '@folkjs/dom/tags';
 import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';

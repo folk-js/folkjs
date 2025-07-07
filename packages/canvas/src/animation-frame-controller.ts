@@ -1,5 +1,5 @@
 import { cancelAnimationFrame, requestAnimationFrame } from '@folkjs/dom/rAF';
-import type { ReactiveController, ReactiveControllerHost } from './reactive-element';
+import type { ReactiveController, ReactiveControllerHost } from '@folkjs/dom/ReactiveElement';
 
 export interface AnimationFrameControllerHost extends ReactiveControllerHost {
   tick(): void;

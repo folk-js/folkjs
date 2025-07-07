@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/canvas';
-import { css, type CSSResultGroup } from '@folkjs/canvas/reactive-element';
+import { css, type CSSResultGroup } from '@folkjs/dom/ReactiveElement';
 import * as io from './html-io.js';
 
 // Change event lookup for different element types

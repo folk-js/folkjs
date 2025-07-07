@@ -1,6 +1,6 @@
 import type { Point } from '@folkjs/canvas';
 import { verticesToPolygon } from '@folkjs/canvas';
-import type { PropertyValues } from '@folkjs/canvas/reactive-element';
+import type { PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseConnection } from './folk-base-connection.js';
 
 export class FolkXanadu extends FolkBaseConnection {

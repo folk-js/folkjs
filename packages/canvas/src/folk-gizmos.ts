@@ -1,6 +1,6 @@
+import { css } from '@folkjs/dom/ReactiveElement';
 import { DOMRectTransform } from './DOMRectTransform';
 import { FolkElement } from './folk-element';
-import { css } from './reactive-element';
 import type { Point } from './types';
 import { Vector } from './Vector';
 

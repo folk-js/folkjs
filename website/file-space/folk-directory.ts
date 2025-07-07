@@ -1,4 +1,4 @@
-import { css, type PropertyValues, state } from '@folkjs/canvas/reactive-element';
+import { css, type PropertyValues, state } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseSet } from '@folkjs/labs/folk-base-set';
 import { FolkFile } from './folk-file.ts';
 

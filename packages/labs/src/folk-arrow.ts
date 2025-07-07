@@ -1,5 +1,5 @@
 import { getSvgPathFromStroke, pointsOnBezierCurves } from '@folkjs/canvas';
-import { css, type PropertyValues } from '@folkjs/canvas/reactive-element';
+import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { getBoxToBoxArrow } from 'perfect-arrows';
 import { getStroke } from 'perfect-freehand';
 import { FolkBaseConnection } from './folk-base-connection';

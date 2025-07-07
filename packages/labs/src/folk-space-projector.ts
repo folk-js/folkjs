@@ -1,5 +1,5 @@
 import { DOMRectTransform } from '@folkjs/canvas';
-import { css, type PropertyValues } from '@folkjs/canvas/reactive-element';
+import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 import { type CellTemplate, FolkSpreadsheet, FolkSpreadSheetCell, templateCells } from './folk-spreadsheet';

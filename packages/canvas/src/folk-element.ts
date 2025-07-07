@@ -1,4 +1,4 @@
-import { ReactiveElement } from './reactive-element';
+import { ReactiveElement } from '@folkjs/dom/ReactiveElement/index';
 
 /**
  *  Base class for all custom elements. Extends Lit's `ReactiveElement` and adds some utilities for defining the element.

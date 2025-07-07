@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/canvas';
-import { css } from '@folkjs/canvas/reactive-element';
+import { css } from '@folkjs/dom/ReactiveElement';
 
 class NetworkIndicator extends FolkElement {
   static override tagName = 'network-indicator';

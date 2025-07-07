@@ -13,7 +13,7 @@ import {
   Vector,
   type Point,
 } from '@folkjs/canvas';
-import { css } from '@folkjs/canvas/reactive-element';
+import { css } from '@folkjs/dom/ReactiveElement';
 import { html } from '@folkjs/dom/tags';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 

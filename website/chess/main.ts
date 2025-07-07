@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/canvas/folk-element';
-import { css, property, type PropertyValues } from '@folkjs/canvas/reactive-element';
+import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
 import { selectElement } from '@folkjs/labs/interactions/dom-selection';
 

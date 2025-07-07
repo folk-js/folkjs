@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/canvas';
-import { css, property } from '@folkjs/canvas/reactive-element';
+import { css, property } from '@folkjs/dom/ReactiveElement';
 import * as V from '@folkjs/geometry/Vector2';
 import { PI, RADIAN, TAU, toDOMPrecision } from '@folkjs/geometry/utilities';
 

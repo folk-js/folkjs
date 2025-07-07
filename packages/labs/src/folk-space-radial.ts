@@ -1,6 +1,6 @@
 import { TransformEvent, Vector } from '@folkjs/canvas';
-import { css, type PropertyValues } from '@folkjs/canvas/reactive-element';
 import { canIUseMoveBefore } from '@folkjs/dom/CanIUse';
+import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 

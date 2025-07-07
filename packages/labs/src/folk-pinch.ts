@@ -1,6 +1,6 @@
 import { FolkElement, Matrix, Vector } from '@folkjs/canvas';
-import { css, property, type PropertyValues } from '@folkjs/canvas/reactive-element';
 import PointerTracker, { Pointer } from '@folkjs/dom/PointerTracker';
+import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {

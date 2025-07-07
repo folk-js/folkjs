@@ -2,12 +2,12 @@
 
 import {
   AnimationFrameController,
-  type AnimationFrameControllerHost,
   DOMRectTransform,
   Vector,
+  type AnimationFrameControllerHost,
   type Point,
 } from '@folkjs/canvas';
-import { css, property, type PropertyValues } from '@folkjs/canvas/reactive-element';
+import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseConnection } from './folk-base-connection';
 
 // Each rope part is one of these uses a high precision variant of Störmer–Verlet integration to keep the simulation consistent otherwise it would "explode"!

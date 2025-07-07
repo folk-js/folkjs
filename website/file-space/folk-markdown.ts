@@ -1,5 +1,5 @@
 import { FolkElement } from '@folkjs/canvas';
-import { css } from '@folkjs/canvas/reactive-element';
+import { css } from '@folkjs/dom/ReactiveElement';
 import { type AwaitableInstance, ink } from 'ink-mde';
 
 declare global {

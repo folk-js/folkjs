@@ -1,8 +1,8 @@
-import { FolkBaseHyperedge } from './folk-base-hyperedge';
 import type { Point } from '@folkjs/canvas';
 import { Gizmos, Vector } from '@folkjs/canvas';
-import { css, type PropertyValues } from '@folkjs/canvas/reactive-element';
 import { verticesToPolygon } from '@folkjs/canvas/utils';
+import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { FolkBaseHyperedge } from './folk-base-hyperedge';
 
 declare global {
   interface HTMLElementTagNameMap {
