@@ -3,7 +3,6 @@
 export * from './folk-element';
 
 // Observers (move these to the top since they're dependencies)
-export * from './client-rect-observer';
 export * from './resize-manger';
 
 // Core utilities and types

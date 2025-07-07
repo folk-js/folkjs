@@ -1,5 +1,6 @@
-import { FolkElement, type ClientRectObserverEntry } from '@folkjs/canvas';
+import { FolkElement } from '@folkjs/canvas';
 import { css, property, state, type CSSResultGroup, type PropertyValues } from '@folkjs/canvas/reactive-element';
+import { type ClientRectObserverEntry } from '@folkjs/dom/ClientRectObserver';
 import { FolkObserver, parseDeepCSSSelector } from './folk-observer';
 
 const folkObserver = new FolkObserver();

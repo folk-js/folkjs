@@ -1,4 +1,4 @@
-import type { ClientRectObserverEntry } from '@folkjs/canvas';
+import { type ClientRectObserverEntry } from '@folkjs/dom/ClientRectObserver';
 import { FolkObserver } from '@folkjs/labs/folk-observer';
 
 const folkObserver = new FolkObserver();
