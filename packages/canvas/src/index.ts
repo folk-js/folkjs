@@ -9,7 +9,6 @@ export * from './resize-manger';
 // Core utilities and types
 export * from './folk-gizmos';
 export * from './Matrix';
-export * from './tags';
 export * from './types';
 export * from './utils';
 export * from './Vector';

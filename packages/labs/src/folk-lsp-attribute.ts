@@ -1,4 +1,5 @@
-import { css, CustomAttribute, customAttributes } from '@folkjs/canvas';
+import { CustomAttribute, customAttributes } from '@folkjs/canvas';
+import { css } from '@folkjs/dom/tags';
 import {
   CompletionRequest,
   Diagnostic,

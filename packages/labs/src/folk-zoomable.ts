@@ -1,4 +1,5 @@
-import { css, CustomAttribute, customAttributes, IPointTransform, toDOMPrecision, type Point } from '@folkjs/canvas';
+import { CustomAttribute, customAttributes, IPointTransform, toDOMPrecision, type Point } from '@folkjs/canvas';
+import { css } from '@folkjs/dom/tags';
 import * as BVH from '@folkjs/geometry/BoundingVolumeHierarchy';
 import * as M from '@folkjs/geometry/Matrix2D';
 import * as S from '@folkjs/geometry/Shape2D';

@@ -1,4 +1,4 @@
-import { glsl } from '@folkjs/canvas/tags';
+import { glsl } from '@folkjs/dom/tags';
 
 /** Falling sand shaders using block cellular automata with Margolus offsets.
  * Based on "Probabilistic Cellular Automata for Granular Media in Video Games" (https://arxiv.org/abs/2008.06341)

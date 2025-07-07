@@ -2,7 +2,6 @@ import {
   DOMRectTransform,
   DOMRectTransformReadonly,
   FolkElement,
-  html,
   IPointTransform,
   Matrix,
   MAX_Z_INDEX,
@@ -15,6 +14,7 @@ import {
   type Point,
 } from '@folkjs/canvas';
 import { css } from '@folkjs/canvas/reactive-element';
+import { html } from '@folkjs/dom/tags';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 const resizeManager = new ResizeManager();

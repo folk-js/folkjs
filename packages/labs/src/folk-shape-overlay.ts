@@ -1,6 +1,6 @@
 import { FolkElement } from '@folkjs/canvas';
 import { css } from '@folkjs/canvas/reactive-element';
-import { html } from '@folkjs/canvas/tags';
+import { html } from '@folkjs/dom/tags';
 import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';

@@ -1,4 +1,5 @@
-import { css, FolkElement } from '@folkjs/canvas';
+import { FolkElement } from '@folkjs/canvas';
+import { css } from '@folkjs/dom/tags';
 
 declare global {
   interface HTMLElementTagNameMap {

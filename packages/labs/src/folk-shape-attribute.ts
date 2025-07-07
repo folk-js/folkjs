@@ -1,4 +1,5 @@
-import { css, CustomAttribute, customAttributes, IPointTransform, ResizeManager, TransformStack } from '@folkjs/canvas';
+import { CustomAttribute, customAttributes, IPointTransform, ResizeManager, TransformStack } from '@folkjs/canvas';
+import { css } from '@folkjs/dom/tags';
 import type { Shape2DReadonly } from '@folkjs/geometry/Shape2D';
 import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';
