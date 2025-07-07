@@ -3,7 +3,7 @@ import { getObjectId } from '@automerge/automerge';
 import { DocHandle, ImmutableString, isValidAutomergeUrl, Repo, type PeerId } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
 import { CustomAttribute } from '@folkjs/dom/CustomAttributeRegistry';
-import type { DOMJElementNode, DOMJNode } from 'packages/labs/src/dom-json';
+import type { DOMJElement, DOMJNode } from 'packages/labs/src/dom-json';
 // TODO: use @automerge/vanillajs package
 
 /**
@@ -33,7 +33,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   // Automerge repository and document handle
   #repo!: Repo;
-  #handle!: DocHandle<DOMJElementNode>;
+  #handle!: DocHandle<DOMJElement>;
   #networkAdapter!: BrowserWebSocketClientAdapter;
   #isLocalChange: boolean = false;
 
@@ -66,7 +66,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Helper to synchronize attributes from Automerge to DOM element
    */
-  #syncAttributesToDOM(domElement: Element, automergeAttributes: Record<string, ImmutableString>): void {
+  #setDOMAttributes(domElement: Element, automergeAttributes: Record<string, ImmutableString>): void {
     // Set/update attributes from Automerge
     for (const [name, attrValue] of Object.entries(automergeAttributes)) {
       // All attributes are ImmutableString - extract the string value
@@ -82,7 +82,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Helper to synchronize text content from Automerge to DOM node
    */
-  #syncTextContentToDOM(domNode: Node, textContent: string): void {
+  #setDOMText(domNode: Node, textContent: string): void {
     if (domNode.textContent !== textContent) {
       domNode.textContent = textContent;
     }
@@ -92,7 +92,7 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Find an Automerge node by its object ID by traversing the document
    * NOTE: The hope is that this will become redundant with new automerge APIs to do direct mutations by id
    */
-  #findAutomergeNodeById(rootNode: DOMJElementNode, targetId: string): DOMJNode | null {
+  #findAutomergeNodeById(rootNode: DOMJElement, targetId: string): DOMJNode | null {
     // Check if this node matches
     const nodeId = getObjectId(rootNode);
     if (nodeId === targetId) {
@@ -119,7 +119,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Build Automerge document structure from DOM tree
    */
-  #buildAutomergeFromDOM(element: Element): DOMJElementNode {
+  #buildAutomergeFromDOM(element: Element): DOMJElement {
     const attributes: { [key: string]: ImmutableString } = {};
     for (const attr of element.attributes) {
       // Use ImmutableString to prevent text merging conflicts
@@ -161,7 +161,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Build DOM children from Automerge document (skips root element)
    */
-  #buildDOMFromAutomerge(automergeRootNode: DOMJElementNode, parentElement: Element): void {
+  #buildDOMFromAutomerge(automergeRootNode: DOMJElement, parentElement: Element): void {
     // For root node, don't create the element - just build its children into the parent
     for (const child of automergeRootNode.childNodes) {
       this.#buildDOMNode(child, parentElement);
@@ -178,7 +178,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         const element = document.createElement(automergeNode.tagName);
 
         // Set attributes using helper
-        this.#syncAttributesToDOM(element, automergeNode.attributes);
+        this.#setDOMAttributes(element, automergeNode.attributes);
 
         // Add to parent
         parentElement.appendChild(element);
@@ -374,7 +374,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         }
 
         // Then, set/update attributes from Automerge using helper
-        this.#syncAttributesToDOM(domElement, automergeNode.attributes);
+        this.#setDOMAttributes(domElement, automergeNode.attributes);
         break;
       }
 
@@ -383,7 +383,7 @@ export class FolkSyncAttribute extends CustomAttribute {
           return;
         }
 
-        this.#syncTextContentToDOM(domNode, automergeNode.textContent);
+        this.#setDOMText(domNode, automergeNode.textContent);
         break;
       }
 
@@ -392,7 +392,7 @@ export class FolkSyncAttribute extends CustomAttribute {
           return;
         }
 
-        this.#syncTextContentToDOM(domNode, automergeNode.textContent);
+        this.#setDOMText(domNode, automergeNode.textContent);
         break;
       }
     }
@@ -441,7 +441,7 @@ export class FolkSyncAttribute extends CustomAttribute {
    */
   #createNewDocument(): void {
     const initialDoc = this.#buildAutomergeFromDOM(this.ownerElement);
-    this.#handle = this.#repo.create<DOMJElementNode>(initialDoc as any);
+    this.#handle = this.#repo.create<DOMJElement>(initialDoc as any);
 
     this.#handle
       .whenReady()
@@ -508,7 +508,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
 
     // Try to connect to existing document
-    this.#handle = await this.#repo.find<DOMJElementNode>(hashDocId);
+    this.#handle = await this.#repo.find<DOMJElement>(hashDocId);
 
     try {
       const doc = this.#handle.doc();
@@ -541,7 +541,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Create mappings for existing DOM tree when initializing a new document
    */
-  #createMappingsForExistingDOM(automergeRootNode: DOMJElementNode): void {
+  #createMappingsForExistingDOM(automergeRootNode: DOMJElement): void {
     // Map all existing children in the DOM to their corresponding Automerge nodes
     const domChildren = Array.from(this.ownerElement.childNodes);
     const automergeChildren = automergeRootNode.childNodes;
@@ -554,7 +554,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Initialize the sync system once we have a document
    */
-  async #initializeWithDocument(doc: DOMJElementNode, isNewDocument: boolean): Promise<void> {
+  async #initializeWithDocument(doc: DOMJElement, isNewDocument: boolean): Promise<void> {
     if (!isNewDocument) {
       // Clear DOM and rebuild from Automerge
       this.ownerElement.replaceChildren();
@@ -662,11 +662,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Handle added nodes in transaction (without creating mappings)
    */
-  #handleAddedNodesInTransaction(
-    parentElement: Element,
-    addedNodes: NodeList,
-    parentAutomergeNode: DOMJElementNode,
-  ): void {
+  #handleAddedNodesInTransaction(parentElement: Element, addedNodes: NodeList, parentAutomergeNode: DOMJElement): void {
     for (const addedNode of addedNodes) {
       // Convert DOM node to Automerge format
       const automergeNode = this.#convertDOMNodeToAutomerge(addedNode);
@@ -718,28 +714,9 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
-   * Handle added nodes in childList mutations (legacy method - kept for reference)
-   */
-  #handleAddedNodes(parentElement: Element, addedNodes: NodeList, parentAutomergeNode: DOMJElementNode): void {
-    for (const addedNode of addedNodes) {
-      // Convert DOM node to Automerge format
-      const automergeNode = this.#convertDOMNodeToAutomerge(addedNode);
-
-      // Find insertion position (addedNode should be a ChildNode since it's being added to an element)
-      const insertionPosition = this.#findInsertionPosition(parentElement, addedNode as ChildNode);
-
-      // Insert into Automerge document
-      parentAutomergeNode.childNodes.splice(insertionPosition, 0, automergeNode);
-
-      // Create mappings for the new subtree
-      this.#createMappingsForSubtree(addedNode, automergeNode);
-    }
-  }
-
-  /**
    * Handle insertion patches from Automerge
    */
-  async #handleInsertPatch(patch: Patch, doc: DOMJElementNode): Promise<void> {
+  async #handleInsertPatch(patch: Patch, doc: DOMJElement): Promise<void> {
     // Insert patches are for childNodes arrays - check if this is a childNodes insertion
     if (!patch.path.includes('childNodes')) {
       console.warn('Insert patch not in childNodes, skipping:', patch);
@@ -805,11 +782,7 @@ export class FolkSyncAttribute extends CustomAttribute {
       const insertedDomNode = this.#createDOMNodeFromAutomerge(insertedAutomergeNode);
 
       // Find the correct insertion position in DOM (considering existing mappings)
-      const domInsertionIndex = this.#findDOMInsertionIndex(
-        parentElement,
-        currentIndex,
-        parentAutomergeNode.childNodes,
-      );
+      const domInsertionIndex = this.#findDOMInsertionIndex(currentIndex, parentAutomergeNode.childNodes);
 
       // Insert the DOM node
       if (domInsertionIndex >= parentElement.childNodes.length) {
@@ -827,7 +800,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Handle property update patches from Automerge
    */
-  async #handlePropertyUpdatePatch(patch: Patch, doc: DOMJElementNode): Promise<void> {
+  async #handlePropertyUpdatePatch(patch: Patch, doc: DOMJElement): Promise<void> {
     // Get the node path (up to "childNodes" and its index)
     const nodePath = getNodePath(patch.path);
 
@@ -871,7 +844,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         const element = document.createElement(automergeNode.tagName);
 
         // Set attributes
-        this.#syncAttributesToDOM(element, automergeNode.attributes);
+        this.#setDOMAttributes(element, automergeNode.attributes);
 
         // Recursively create children
         for (const child of automergeNode.childNodes) {
@@ -888,8 +861,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         return document.createComment(automergeNode.textContent);
       }
       default: {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const _exhaustiveCheck: never = automergeNode;
+        automergeNode satisfies never;
         throw new Error(`Unsupported Automerge node type: ${(automergeNode as any).nodeType}`);
       }
     }
@@ -898,7 +870,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Find the correct DOM insertion index based on Automerge insertion index
    */
-  #findDOMInsertionIndex(parentElement: Element, automergeIndex: number, automergeChildren: DOMJNode[]): number {
+  #findDOMInsertionIndex(automergeIndex: number, automergeChildren: DOMJNode[]): number {
     let domIndex = 0;
 
     // Count how many of the preceding Automerge children have corresponding DOM nodes
@@ -917,7 +889,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Handle removed nodes in transaction
    */
-  #handleRemovedNodesInTransaction(removedNodes: NodeList, parentAutomergeNode: DOMJElementNode): void {
+  #handleRemovedNodesInTransaction(removedNodes: NodeList, parentAutomergeNode: DOMJElement): void {
     for (const removedNode of removedNodes) {
       // Find the corresponding Automerge node
       const removedNodeId = this.#domToAutomergeId.get(removedNode);
@@ -968,20 +940,10 @@ export class FolkSyncAttribute extends CustomAttribute {
   /**
    * Handle deletion patches from Automerge
    */
-  async #handleDeletePatch(patch: Patch, doc: DOMJElementNode): Promise<void> {
+  async #handleDeletePatch(patch: Patch, doc: DOMJElement): Promise<void> {
     // Delete patches are for childNodes arrays - check if this is a childNodes deletion
     if (!patch.path.includes('childNodes')) {
       console.warn('Delete patch not in childNodes, skipping:', patch);
-      return;
-    }
-
-    // For deletions, we need to find the DOM node that was removed
-    // The patch path points to the index that was deleted, but the node is already gone from Automerge
-    // We need to find it by its object ID if it exists in our mappings
-
-    const deletionIndex = patch.path[patch.path.length - 1];
-    if (typeof deletionIndex !== 'number') {
-      console.warn('Delete patch index is not a number:', deletionIndex);
       return;
     }
 
@@ -1003,55 +965,37 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     const parentElement = parentDomNode as Element;
 
-    // The tricky part: find which DOM node corresponds to the deleted Automerge node
-    // We'll use the deletion index and our current mappings to figure this out
-    const domNodeToRemove = this.#findDOMNodeAtAutomergeIndex(parentElement, deletionIndex, doc, parentObjectId);
-
-    if (!domNodeToRemove) {
-      console.warn('Cannot find DOM node to remove for delete patch at index:', deletionIndex);
+    // Find the corresponding Automerge parent node
+    const parentAutomergeNode = this.#findAutomergeNodeById(doc, parentObjectId);
+    if (!parentAutomergeNode || parentAutomergeNode.nodeType !== Node.ELEMENT_NODE) {
+      console.warn('Cannot find parent Automerge node for delete patch:', patch);
       return;
     }
 
-    // Remove the DOM node
-    parentElement.removeChild(domNodeToRemove);
+    // Instead of trying to match specific indices, find all DOM nodes that are mapped
+    // but no longer exist in the current Automerge document (orphaned nodes)
+    const currentAutomergeChildIds = new Set(
+      parentAutomergeNode.childNodes.map((child) => getObjectId(child)).filter((id) => id !== null),
+    );
 
-    // Clean up mappings for the removed subtree
-    this.#cleanupMappingsForSubtree(domNodeToRemove);
-  }
+    const domChildrenToRemove: Node[] = [];
 
-  /**
-   * Find the DOM node that corresponds to a specific Automerge index
-   * This is used for deletions where we need to find which DOM node to remove
-   */
-  #findDOMNodeAtAutomergeIndex(
-    parentElement: Element,
-    automergeIndex: number,
-    doc: DOMJElementNode,
-    parentObjectId: string,
-  ): Node | null {
-    const parentAutomergeNode = this.#findAutomergeNodeById(doc, parentObjectId);
-    if (!parentAutomergeNode || parentAutomergeNode.nodeType !== Node.ELEMENT_NODE) {
-      return null;
-    }
-
-    // Map current Automerge children to DOM children based on existing mappings
-    const domChildren = Array.from(parentElement.childNodes);
-    let automergeChildIndex = 0;
-
-    for (const domChild of domChildren) {
+    // Check all DOM children of this parent
+    for (const domChild of Array.from(parentElement.childNodes)) {
       const domChildId = this.#domToAutomergeId.get(domChild);
 
-      if (domChildId) {
-        // This DOM child has a mapping - check if it matches our target index
-        if (automergeChildIndex === automergeIndex) {
-          return domChild;
-        }
-        automergeChildIndex++;
+      // If this DOM child has a mapping but is not in the current Automerge children,
+      // it needs to be removed
+      if (domChildId && !currentAutomergeChildIds.has(domChildId)) {
+        domChildrenToRemove.push(domChild);
       }
-      // If no mapping, this DOM child doesn't count towards Automerge indexing
     }
 
-    return null;
+    // Remove all orphaned DOM nodes
+    for (const domNodeToRemove of domChildrenToRemove) {
+      parentElement.removeChild(domNodeToRemove);
+      this.#cleanupMappingsForSubtree(domNodeToRemove);
+    }
   }
 }
 

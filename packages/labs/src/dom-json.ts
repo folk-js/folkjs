@@ -24,18 +24,18 @@ import type { ImmutableString } from '@automerge/automerge-repo';
 // readonly DOCUMENT_FRAGMENT_NODE: 11;
 // readonly NOTATION_NODE: 12;
 
-export interface DOMJTextNode {
+export interface DOMJText {
   nodeType: Node['TEXT_NODE'];
   textContent: string;
 }
-export interface DOMJCommentNode {
+export interface DOMJComment {
   nodeType: Node['COMMENT_NODE'];
   textContent: string;
 }
-export interface DOMJElementNode {
+export interface DOMJElement {
   nodeType: Node['ELEMENT_NODE'];
   tagName: string;
   attributes: { [key: string]: ImmutableString };
   childNodes: DOMJNode[];
 }
-export type DOMJNode = DOMJTextNode | DOMJCommentNode | DOMJElementNode;
+export type DOMJNode = DOMJText | DOMJComment | DOMJElement;
