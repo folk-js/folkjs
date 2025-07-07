@@ -1,4 +1,4 @@
-import type { Point } from 'packages/geometry/dist/Vector2';
+import type { Point } from '@folkjs/geometry/Vector2';
 import type { FolkBaseConnection } from '../folk-base-connection';
 import { selectElements } from './dom-multi-selection';
 
