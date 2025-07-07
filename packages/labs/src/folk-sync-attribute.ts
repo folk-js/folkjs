@@ -313,9 +313,9 @@ export class FolkSyncAttribute extends CustomAttribute {
             }
           }
 
-          // TODO: Handle removed nodes
+          // Handle removed nodes
           if (mutation.removedNodes.length > 0) {
-            console.warn('Removed nodes not yet implemented');
+            this.#handleRemovedNodesInTransaction(mutation.removedNodes, parentNode);
           }
           break;
         }
@@ -350,15 +350,13 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
 
       for (const patch of patches) {
-        console.log('PATCH', patch);
         switch (patch.action) {
           case 'insert': {
             await this.#handleInsertPatch(patch, doc);
             break;
           }
           case 'del': {
-            console.log('PATCH del', patch);
-            // TODO: implement delete
+            await this.#handleDeletePatch(patch, doc);
             break;
           }
           default: {
@@ -863,6 +861,15 @@ export class FolkSyncAttribute extends CustomAttribute {
    * Create a DOM node from an Automerge node (single node, not recursive)
    */
   #createDOMNodeFromAutomerge(automergeNode: AutomergeNode): Node {
+    // Check if this Automerge node already has a DOM mapping
+    const nodeId = getObjectId(automergeNode);
+    if (nodeId) {
+      const existingDomNode = this.#automergeIdToDom.get(nodeId);
+      if (existingDomNode) {
+        return existingDomNode;
+      }
+    }
+
     switch (automergeNode.nodeType) {
       case Node.ELEMENT_NODE: {
         const element = document.createElement(automergeNode.tagName);
@@ -909,6 +916,146 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
 
     return domIndex;
+  }
+
+  /**
+   * Handle removed nodes in transaction
+   */
+  #handleRemovedNodesInTransaction(removedNodes: NodeList, parentAutomergeNode: AutomergeElementNode): void {
+    for (const removedNode of removedNodes) {
+      // Find the corresponding Automerge node
+      const removedNodeId = this.#domToAutomergeId.get(removedNode);
+      if (!removedNodeId) {
+        console.warn('Cannot find Automerge ID for removed DOM node:', removedNode);
+        continue;
+      }
+
+      // Find the index of this node in the parent's childNodes array
+      const nodeIndex = parentAutomergeNode.childNodes.findIndex((child) => {
+        const childId = getObjectId(child);
+        return childId === removedNodeId;
+      });
+
+      if (nodeIndex === -1) {
+        console.warn('Cannot find removed node in parent childNodes array:', removedNodeId);
+        continue;
+      }
+
+      // Remove from Automerge document
+      parentAutomergeNode.childNodes.splice(nodeIndex, 1);
+
+      // Clean up mappings for the removed subtree
+      this.#cleanupMappingsForSubtree(removedNode);
+    }
+  }
+
+  /**
+   * Clean up mappings for a removed DOM subtree
+   */
+  #cleanupMappingsForSubtree(domNode: Node): void {
+    // Remove mapping for this node
+    const nodeId = this.#domToAutomergeId.get(domNode);
+    if (nodeId) {
+      this.#domToAutomergeId.delete(domNode);
+      this.#automergeIdToDom.delete(nodeId);
+    }
+
+    // Recursively clean up children
+    if (domNode.nodeType === Node.ELEMENT_NODE) {
+      const element = domNode as Element;
+      for (const child of element.childNodes) {
+        this.#cleanupMappingsForSubtree(child);
+      }
+    }
+  }
+
+  /**
+   * Handle deletion patches from Automerge
+   */
+  async #handleDeletePatch(patch: Patch, doc: AutomergeElementNode): Promise<void> {
+    // Delete patches are for childNodes arrays - check if this is a childNodes deletion
+    if (!patch.path.includes('childNodes')) {
+      console.warn('Delete patch not in childNodes, skipping:', patch);
+      return;
+    }
+
+    // For deletions, we need to find the DOM node that was removed
+    // The patch path points to the index that was deleted, but the node is already gone from Automerge
+    // We need to find it by its object ID if it exists in our mappings
+
+    const deletionIndex = patch.path[patch.path.length - 1];
+    if (typeof deletionIndex !== 'number') {
+      console.warn('Delete patch index is not a number:', deletionIndex);
+      return;
+    }
+
+    // Get the parent node path (up to "childNodes")
+    const parentPath = patch.path.slice(0, patch.path.lastIndexOf('childNodes') + 1);
+    const parentObjectId = getIdFromPath(doc, parentPath.slice(0, -1)); // Remove 'childNodes'
+
+    if (!parentObjectId) {
+      console.warn('Cannot find parent object ID for delete patch:', patch);
+      return;
+    }
+
+    // Find the corresponding DOM parent node
+    const parentDomNode = this.#automergeIdToDom.get(parentObjectId);
+    if (!parentDomNode || parentDomNode.nodeType !== Node.ELEMENT_NODE) {
+      console.warn('Cannot find parent DOM element for delete patch:', patch);
+      return;
+    }
+
+    const parentElement = parentDomNode as Element;
+
+    // The tricky part: find which DOM node corresponds to the deleted Automerge node
+    // We'll use the deletion index and our current mappings to figure this out
+    const domNodeToRemove = this.#findDOMNodeAtAutomergeIndex(parentElement, deletionIndex, doc, parentObjectId);
+
+    if (!domNodeToRemove) {
+      console.warn('Cannot find DOM node to remove for delete patch at index:', deletionIndex);
+      return;
+    }
+
+    // Remove the DOM node
+    parentElement.removeChild(domNodeToRemove);
+
+    // Clean up mappings for the removed subtree
+    this.#cleanupMappingsForSubtree(domNodeToRemove);
+  }
+
+  /**
+   * Find the DOM node that corresponds to a specific Automerge index
+   * This is used for deletions where we need to find which DOM node to remove
+   */
+  #findDOMNodeAtAutomergeIndex(
+    parentElement: Element,
+    automergeIndex: number,
+    doc: AutomergeElementNode,
+    parentObjectId: string,
+  ): Node | null {
+    const parentAutomergeNode = this.#findAutomergeNodeById(doc, parentObjectId);
+    if (!parentAutomergeNode || parentAutomergeNode.nodeType !== Node.ELEMENT_NODE) {
+      return null;
+    }
+
+    // Map current Automerge children to DOM children based on existing mappings
+    const domChildren = Array.from(parentElement.childNodes);
+    let automergeChildIndex = 0;
+
+    for (const domChild of domChildren) {
+      const domChildId = this.#domToAutomergeId.get(domChild);
+
+      if (domChildId) {
+        // This DOM child has a mapping - check if it matches our target index
+        if (automergeChildIndex === automergeIndex) {
+          return domChild;
+        }
+        automergeChildIndex++;
+      }
+      // If no mapping, this DOM child doesn't count towards Automerge indexing
+    }
+
+    return null;
   }
 }
 
