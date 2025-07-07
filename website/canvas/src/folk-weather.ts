@@ -1,4 +1,4 @@
-import { html } from '@folkjs/canvas/tags';
+import { html } from '@folkjs/dom/tags';
 
 interface Weather {
   temperature: string;

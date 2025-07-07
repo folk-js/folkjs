@@ -1,4 +1,4 @@
-import { CustomAttribute } from '@folkjs/canvas';
+import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 
 export class FolkCameraAttribute extends CustomAttribute {
   static override attributeName = 'folk-camera';

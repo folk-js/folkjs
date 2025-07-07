@@ -24,8 +24,6 @@ export * from './animation-frame-controller';
 // Integration and effects
 export * from './collision';
 
-export * from './custom-attribute-registry';
-
 // Experimental features
 export * from './CanIUse';
 

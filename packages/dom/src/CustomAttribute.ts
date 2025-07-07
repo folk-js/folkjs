@@ -97,6 +97,10 @@ export class CustomAttributeRegistry {
     });
   }
 
+  isDefined(attrName: string): boolean {
+    return this.#attrMap.has(attrName);
+  }
+
   get(element: Element, attrName: string) {
     return this.#elementMap.get(element)?.get(attrName);
   }

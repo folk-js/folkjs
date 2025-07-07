@@ -2,7 +2,7 @@ import type { Doc, ObjID, Patch, Prop } from '@automerge/automerge';
 import { getObjectId } from '@automerge/automerge';
 import { DocHandle, ImmutableString, isValidAutomergeUrl, Repo, type PeerId } from '@automerge/automerge-repo';
 import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
-import { CustomAttribute } from '@folkjs/canvas';
+import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 // TODO: use @automerge/vanillajs package
 
 /**
