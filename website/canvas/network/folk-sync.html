@@ -20,6 +20,67 @@
         position: relative;
         margin: 0;
         font-family: Arial, sans-serif;
+        padding: 20px;
+      }
+
+      .controls {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: white;
+        border: 2px solid #333;
+        border-radius: 8px;
+        padding: 15px;
+        max-width: 300px;
+        max-height: 90vh;
+        overflow-y: auto;
+        z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      }
+
+      .controls h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+        color: #333;
+        font-size: 16px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 8px;
+      }
+
+      .controls button {
+        display: block;
+        width: 100%;
+        margin-bottom: 8px;
+        padding: 8px 12px;
+        background: #f0f0f0;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      .controls button:hover {
+        background: #e0e0e0;
+      }
+
+      .controls button:active {
+        background: #d0d0d0;
+      }
+
+      .controls .section {
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #eee;
+      }
+
+      .controls .section:last-child {
+        border-bottom: none;
+      }
+
+      .sync-container {
+        position: relative;
+        width: 100%;
+        height: 100vh;
       }
 
       folk-shape {
@@ -49,36 +110,283 @@
         border-color: #4caf50;
         box-shadow: 0 0 3px rgba(76, 175, 80, 0.3);
       }
+
+      .test-element {
+        background: #fffacd;
+        border: 2px dashed #ffa500;
+        padding: 10px;
+        margin: 5px;
+        border-radius: 4px;
+      }
     </style>
   </head>
-  <body folk-sync>
-    <folk-shape x="50" y="50" width="400" height="300">
-      <h3>Editable Content 1</h3>
-      <div class="editable-content" contenteditable="true" id="editableContent1">
-        This is an editable area. Try typing here!
-      </div>
-    </folk-shape>
+  <body>
+    <!-- Test Controls (not synced) -->
+    <div class="controls">
+      <h3>🧪 Sync Tests</h3>
 
-    <folk-shape x="500" y="50" width="400" height="300">
-      <h3>Editable Content 2</h3>
-      <div class="editable-content" contenteditable="true" id="editableContent2">
-        This is another editable area. Changes should sync between browsers.
+      <div class="section">
+        <h4>Add Elements</h4>
+        <button onclick="addSingleDiv()">Add Single Div</button>
+        <button onclick="addDivWithText()">Add Div with Text</button>
+        <button onclick="addComplexElement()">Add Complex Element</button>
+        <button onclick="addMultipleElements()">Add 3 Elements at Once</button>
+        <button onclick="addNestedElements()">Add Nested Structure</button>
       </div>
-    </folk-shape>
 
-    <!-- About Shape -->
-    <folk-shape x="50" y="400" width="850" height="100">
-      <h3>Folk Sync</h3>
-      <p>
-        This is a very WIP demo of the <em>folk-sync</em> attribute. By adding the <em>folk-sync</em> attribute to an
-        element in the DOM, it will sync that DOM subtree between clients via
-        <a href="https://automerge.org/">Automerge</a>.
-      </p>
-    </folk-shape>
+      <div class="section">
+        <h4>Remove Elements</h4>
+        <button onclick="removeLastTestElement()">Remove Last Test Element</button>
+        <button onclick="removeAllTestElements()">Remove All Test Elements</button>
+        <button onclick="removeFirstShape()">Remove First Shape</button>
+      </div>
+
+      <div class="section">
+        <h4>Update Content</h4>
+        <button onclick="updateRandomText()">Update Random Text</button>
+        <button onclick="updateAttributes()">Update Attributes</button>
+        <button onclick="replaceInnerHTML()">Replace innerHTML</button>
+        <button onclick="appendToExisting()">Append to Existing</button>
+      </div>
+
+      <div class="section">
+        <h4>Complex Operations</h4>
+        <button onclick="moveElement()">Move Element</button>
+        <button onclick="cloneElement()">Clone Element</button>
+        <button onclick="replaceElement()">Replace Element</button>
+        <button onclick="stressTest()">Stress Test (10 ops)</button>
+      </div>
+
+      <div class="section">
+        <h4>Edge Cases</h4>
+        <button onclick="addCommentNode()">Add Comment Node</button>
+        <button onclick="addEmptyElements()">Add Empty Elements</button>
+        <button onclick="addSpecialChars()">Add Special Characters</button>
+        <button onclick="rapidChanges()">Rapid Changes</button>
+      </div>
+    </div>
+
+    <!-- Synced Content Area -->
+    <div class="sync-container" folk-sync>
+      <folk-shape x="50" y="50" width="400" height="300">
+        <h3>Editable Content 1</h3>
+        <div class="editable-content" contenteditable="true" id="editableContent1">
+          This is an editable area. Try typing here!
+        </div>
+      </folk-shape>
+
+      <folk-shape x="500" y="50" width="400" height="300">
+        <h3>Editable Content 2</h3>
+        <div class="editable-content" contenteditable="true" id="editableContent2">
+          This is another editable area. Changes should sync between browsers.
+        </div>
+      </folk-shape>
+
+      <!-- About Shape -->
+      <folk-shape x="50" y="400" width="850" height="100">
+        <h3>Folk Sync</h3>
+        <p>
+          This is a very WIP demo of the <em>folk-sync</em> attribute. By adding the <em>folk-sync</em> attribute to an
+          element in the DOM, it will sync that DOM subtree between clients via
+          <a href="https://automerge.org/">Automerge</a>.
+        </p>
+      </folk-shape>
+    </div>
 
     <script type="module">
       import '@folkjs/labs/standalone/folk-shape';
       import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
+
+      // Get the synced container
+      const syncContainer = document.querySelector('.sync-container');
+      let testCounter = 0;
+
+      // Add Elements Tests
+      window.addSingleDiv = () => {
+        const div = document.createElement('div');
+        div.className = 'test-element';
+        div.textContent = `Test Div #${++testCounter}`;
+        syncContainer.appendChild(div);
+      };
+
+      window.addDivWithText = () => {
+        const div = document.createElement('div');
+        div.className = 'test-element';
+        div.innerHTML = `<strong>Bold Test #${++testCounter}</strong> with <em>italic text</em>`;
+        syncContainer.appendChild(div);
+      };
+
+      window.addComplexElement = () => {
+        const shape = document.createElement('folk-shape');
+        shape.setAttribute('x', Math.floor(Math.random() * 800));
+        shape.setAttribute('y', Math.floor(Math.random() * 400) + 100);
+        shape.setAttribute('width', '200');
+        shape.setAttribute('height', '150');
+        shape.innerHTML = `
+          <h3>Dynamic Shape #${++testCounter}</h3>
+          <p>Generated at ${new Date().toLocaleTimeString()}</p>
+          <button onclick="this.textContent = 'Clicked!'">Click me</button>
+        `;
+        syncContainer.appendChild(shape);
+      };
+
+      window.addMultipleElements = () => {
+        const fragment = document.createDocumentFragment();
+        for (let i = 0; i < 3; i++) {
+          const div = document.createElement('div');
+          div.className = 'test-element';
+          div.textContent = `Batch Element ${++testCounter}`;
+          fragment.appendChild(div);
+        }
+        syncContainer.appendChild(fragment);
+      };
+
+      window.addNestedElements = () => {
+        const container = document.createElement('div');
+        container.className = 'test-element';
+        container.innerHTML = `
+          <h4>Nested Container #${++testCounter}</h4>
+          <div>
+            <span>Nested span</span>
+            <ul>
+              <li>Item 1</li>
+              <li>Item 2</li>
+            </ul>
+          </div>
+        `;
+        syncContainer.appendChild(container);
+      };
+
+      // Remove Elements Tests
+      window.removeLastTestElement = () => {
+        const testElements = syncContainer.querySelectorAll('.test-element');
+        if (testElements.length > 0) {
+          testElements[testElements.length - 1].remove();
+        }
+      };
+
+      window.removeAllTestElements = () => {
+        const testElements = syncContainer.querySelectorAll('.test-element');
+        testElements.forEach((el) => el.remove());
+      };
+
+      window.removeFirstShape = () => {
+        const shapes = syncContainer.querySelectorAll('folk-shape');
+        if (shapes.length > 0) {
+          shapes[0].remove();
+        }
+      };
+
+      // Update Content Tests
+      window.updateRandomText = () => {
+        const editableElements = syncContainer.querySelectorAll('.editable-content');
+        if (editableElements.length > 0) {
+          const randomEl = editableElements[Math.floor(Math.random() * editableElements.length)];
+          randomEl.textContent = `Updated at ${new Date().toLocaleTimeString()} - Random: ${Math.floor(Math.random() * 1000)}`;
+        }
+      };
+
+      window.updateAttributes = () => {
+        const shapes = syncContainer.querySelectorAll('folk-shape');
+        shapes.forEach((shape) => {
+          shape.setAttribute('x', Math.floor(Math.random() * 800));
+          shape.setAttribute('y', Math.floor(Math.random() * 400) + 100);
+        });
+      };
+
+      window.replaceInnerHTML = () => {
+        const testElements = syncContainer.querySelectorAll('.test-element');
+        if (testElements.length > 0) {
+          const randomEl = testElements[Math.floor(Math.random() * testElements.length)];
+          randomEl.innerHTML = `<strong>Replaced at ${new Date().toLocaleTimeString()}</strong>`;
+        }
+      };
+
+      window.appendToExisting = () => {
+        const firstShape = syncContainer.querySelector('folk-shape');
+        if (firstShape) {
+          const p = document.createElement('p');
+          p.textContent = `Appended: ${new Date().toLocaleTimeString()}`;
+          firstShape.appendChild(p);
+        }
+      };
+
+      // Complex Operations Tests
+      window.moveElement = () => {
+        const testElements = syncContainer.querySelectorAll('.test-element');
+        if (testElements.length >= 2) {
+          const elementToMove = testElements[0];
+          syncContainer.appendChild(elementToMove); // Move to end
+        }
+      };
+
+      window.cloneElement = () => {
+        const testElements = syncContainer.querySelectorAll('.test-element');
+        if (testElements.length > 0) {
+          const elementToClone = testElements[0];
+          const clone = elementToClone.cloneNode(true);
+          clone.textContent += ' (Clone)';
+          syncContainer.appendChild(clone);
+        }
+      };
+
+      window.replaceElement = () => {
+        const testElements = syncContainer.querySelectorAll('.test-element');
+        if (testElements.length > 0) {
+          const oldElement = testElements[0];
+          const newElement = document.createElement('div');
+          newElement.className = 'test-element';
+          newElement.textContent = `Replacement #${++testCounter}`;
+          oldElement.replaceWith(newElement);
+        }
+      };
+
+      window.stressTest = () => {
+        for (let i = 0; i < 10; i++) {
+          setTimeout(() => {
+            const operations = [addSingleDiv, addDivWithText, updateRandomText, updateAttributes];
+            const randomOp = operations[Math.floor(Math.random() * operations.length)];
+            randomOp();
+          }, i * 100);
+        }
+      };
+
+      // Edge Cases Tests
+      window.addCommentNode = () => {
+        const comment = document.createComment(`Comment added at ${new Date().toLocaleTimeString()}`);
+        syncContainer.appendChild(comment);
+      };
+
+      window.addEmptyElements = () => {
+        const div1 = document.createElement('div');
+        const div2 = document.createElement('div');
+        div2.className = 'test-element';
+        syncContainer.appendChild(div1);
+        syncContainer.appendChild(div2);
+      };
+
+      window.addSpecialChars = () => {
+        const div = document.createElement('div');
+        div.className = 'test-element';
+        div.textContent = `Special: äöüß 中文 🚀 <>&"' ${++testCounter}`;
+        syncContainer.appendChild(div);
+      };
+
+      window.rapidChanges = () => {
+        const div = document.createElement('div');
+        div.className = 'test-element';
+        div.textContent = 'Rapid changes...';
+        syncContainer.appendChild(div);
+
+        for (let i = 0; i < 5; i++) {
+          setTimeout(() => {
+            div.textContent = `Rapid change ${i + 1}`;
+            div.style.background = i % 2 ? '#ffcccc' : '#ccffcc';
+          }, i * 50);
+        }
+      };
+
+      console.log('🧪 Sync test interface loaded. Use the buttons on the right to test various operations.');
     </script>
   </body>
 </html>
