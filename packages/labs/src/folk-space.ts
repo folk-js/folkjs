@@ -1,5 +1,5 @@
-import { FolkElement, IPointTransform, Matrix, type Point, toDOMPrecision } from '@folkjs/canvas';
-import { css } from '@folkjs/dom/tags';
+import { IPointTransform, Matrix, type Point, toDOMPrecision } from '@folkjs/canvas';
+import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;
@@ -14,7 +14,7 @@ export type TransformChangeCallback = (scale: number, position: Point) => void;
  * and space coordinates, which is essential for proper interaction with
  * elements inside the space.
  */
-export class FolkSpace extends FolkElement implements IPointTransform {
+export class FolkSpace extends ReactiveElement implements IPointTransform {
   [IPointTransform] = undefined;
 
   static override tagName = 'folk-space';

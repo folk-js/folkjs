@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas/folk-element';
-import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { css, property, ReactiveElement, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
 import { selectElement } from '@folkjs/labs/interactions/dom-selection';
 
@@ -69,7 +68,7 @@ const defaultBoard: ChessBoardConfiguration = [
   ['h8', 'black-rook'],
 ];
 
-class ChessPiece extends FolkElement {
+class ChessPiece extends ReactiveElement {
   static override tagName = 'chess-piece';
 
   static override styles = css`
@@ -140,7 +139,7 @@ class ChessPiece extends FolkElement {
   }
 }
 
-class ChessSquare extends FolkElement {
+class ChessSquare extends ReactiveElement {
   static override tagName = 'chess-square';
 
   @property({ type: String, reflect: true }) row: ChessRow = 1;
@@ -157,7 +156,7 @@ class ChessSquare extends FolkElement {
   }
 }
 
-class ChessBoard extends FolkElement {
+class ChessBoard extends ReactiveElement {
   static override tagName = 'chess-board';
 
   static override styles = css`

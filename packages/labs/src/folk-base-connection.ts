@@ -1,6 +1,12 @@
-import { FolkElement } from '@folkjs/canvas';
 import { type ClientRectObserverEntry } from '@folkjs/dom/ClientRectObserver';
-import { css, type CSSResultGroup, property, type PropertyValues, state } from '@folkjs/dom/ReactiveElement';
+import {
+  css,
+  type CSSResultGroup,
+  property,
+  type PropertyValues,
+  ReactiveElement,
+  state,
+} from '@folkjs/dom/ReactiveElement';
 import type { Point, Vector2 } from '@folkjs/geometry/Vector2';
 import { FolkObserver, parseDeepCSSSelector } from './folk-observer';
 
@@ -25,7 +31,7 @@ export function encodeToPseudoElement(v: Point): string {
 
 const folkObserver = new FolkObserver();
 
-export class FolkBaseConnection extends FolkElement {
+export class FolkBaseConnection extends ReactiveElement {
   static override styles: CSSResultGroup = css`
     :host {
       display: block;

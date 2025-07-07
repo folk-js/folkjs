@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css, type CSSResultGroup } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
 import * as io from './html-io.js';
 
 // Change event lookup for different element types
@@ -23,10 +22,10 @@ const CHANGE_EVENTS: Record<string, string> = {
  * This was thrown together quickly, most of the mess is in the special casing of scripts.
  * TBD what this becomes...
  */
-export class FolkPipe extends FolkElement {
+export class FolkPipe extends ReactiveElement {
   static override tagName = 'folk-pipe';
 
-  static override styles: CSSResultGroup = css`
+  static override styles = css`
     :host {
       display: none;
     }

@@ -1,6 +1,6 @@
 import { javascript } from '@codemirror/lang-javascript';
 import { EditorView } from '@codemirror/view';
-import { FolkElement } from '@folkjs/canvas/folk-element';
+import { ReactiveElement } from '@folkjs/dom/ReactiveElement';
 import { basicSetup } from 'codemirror';
 import { gizmoExtension } from './ast/gizmo-extension';
 import {
@@ -18,7 +18,7 @@ import {
  * @example
  * <folk-ast-gizmos value="const x = 1;"></folk-ast-gizmos>
  */
-export class ASTGizmos extends FolkElement {
+export class ASTGizmos extends ReactiveElement {
   static override tagName = 'folk-ast-gizmos';
   view: EditorView | null;
 

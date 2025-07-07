@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css, property } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css, property } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -23,7 +22,7 @@ export type ColorScheme = 'dark' | 'light';
  * This component creates a real-time scrolling spectrogram visualization
  * that can be connected to any Web Audio API source or analyzer node.
  */
-export class FolkSpectrogram extends FolkElement {
+export class FolkSpectrogram extends ReactiveElement {
   static override tagName = 'folk-spectrogram';
 
   static override styles = css`

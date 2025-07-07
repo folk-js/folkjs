@@ -1,7 +1,3 @@
-// Base elements and components
-// Due to a circular dependency between folk element and folk observer this should be exported first
-export * from './folk-element';
-
 // Observers (move these to the top since they're dependencies)
 export * from './resize-manger';
 

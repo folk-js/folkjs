@@ -1,7 +1,6 @@
 import {
   DOMRectTransform,
   DOMRectTransformReadonly,
-  FolkElement,
   IPointTransform,
   Matrix,
   MAX_Z_INDEX,
@@ -13,7 +12,7 @@ import {
   Vector,
   type Point,
 } from '@folkjs/canvas';
-import { css } from '@folkjs/dom/ReactiveElement';
+import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
 import { html } from '@folkjs/dom/tags';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
@@ -197,7 +196,7 @@ declare global {
   }
 }
 
-export class FolkShape extends FolkElement {
+export class FolkShape extends ReactiveElement {
   [IPointTransform] = true;
   static override tagName = 'folk-shape';
   static importSrc = '/labs/standalone/folk-shape.ts';

@@ -1,6 +1,6 @@
-import { FolkElement, Matrix, Vector } from '@folkjs/canvas';
+import { Matrix, Vector } from '@folkjs/canvas';
 import PointerTracker, { Pointer } from '@folkjs/dom/PointerTracker';
-import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -8,7 +8,7 @@ declare global {
   }
 }
 
-export class FolkPinch extends FolkElement {
+export class FolkPinch extends ReactiveElement {
   static override tagName = 'folk-pinch';
 
   static override styles = css`

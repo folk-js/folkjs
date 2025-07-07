@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
 import { type AwaitableInstance, ink } from 'ink-mde';
 
 declare global {
@@ -8,7 +7,7 @@ declare global {
   }
 }
 
-export class FolkMarkdown extends FolkElement {
+export class FolkMarkdown extends ReactiveElement {
   static override tagName = 'folk-markdown';
 
   static override styles = css`

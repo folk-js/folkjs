@@ -295,7 +295,7 @@ window.litPropertyMetadata ??= new WeakMap();
  * should be supplied by subclasses to render updates as desired.
  * @noInheritDoc
  */
-export abstract class ReactiveElement
+export class ReactiveElement
   // In the Node build, this `extends` clause will be substituted with
   // `(globalThis.HTMLElement ?? HTMLElement)`.
   //
@@ -307,6 +307,20 @@ export abstract class ReactiveElement
   extends HTMLElement
   implements ReactiveControllerHost
 {
+  /** Defines the name of the custom element, must include a hyphen or it will error out when defined.
+   * Defaults to a kebab-case version of the PascalCase class name
+   */
+  static tagName = this.name
+    .replace(/([A-Z])/g, '-$1')
+    .toLowerCase()
+    .slice(1);
+
+  /** Defines the custom element with the global CustomElementRegistry, ignored if called more than once. Errors if no tagName is defined or it doesn't include a hyphen. */
+  static define() {
+    if (customElements.get(this.tagName)) return;
+
+    customElements.define(this.tagName, this);
+  }
   /**
    * Adds an initializer function to the class that is called during instance
    * construction.

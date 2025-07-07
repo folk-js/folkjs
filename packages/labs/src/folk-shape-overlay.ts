@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
 import { html } from '@folkjs/dom/tags';
 import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';
@@ -59,7 +58,7 @@ declare global {
   }
 }
 
-export class FolkShapeOverlay extends FolkElement {
+export class FolkShapeOverlay extends ReactiveElement {
   static override tagName = 'folk-shape-overlay';
 
   static override styles = css`

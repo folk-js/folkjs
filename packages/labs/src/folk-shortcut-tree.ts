@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css } from '@folkjs/dom/tags';
+import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -7,7 +6,7 @@ declare global {
   }
 }
 
-export class FolkShortcutTree extends FolkElement {
+export class FolkShortcutTree extends ReactiveElement {
   static override tagName = 'folk-shortcut-tree';
 
   static override styles = css`

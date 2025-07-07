@@ -1,5 +1,5 @@
-import { FolkElement, getSvgPathFromStroke } from '@folkjs/canvas';
-import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { getSvgPathFromStroke } from '@folkjs/canvas';
+import { ReactiveElement, css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { getStroke, type StrokeOptions } from 'perfect-freehand';
 
 export type Point = [x: number, y: number, pressure: number];
@@ -15,7 +15,7 @@ declare global {
   }
 }
 
-export class FolkInk extends FolkElement {
+export class FolkInk extends ReactiveElement {
   static override tagName = 'folk-ink';
 
   static override styles = css`

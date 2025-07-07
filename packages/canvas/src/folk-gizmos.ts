@@ -1,6 +1,5 @@
-import { css } from '@folkjs/dom/ReactiveElement';
+import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
 import { DOMRectTransform } from './DOMRectTransform';
-import { FolkElement } from './folk-element';
 import type { Point } from './types';
 import { Vector } from './Vector';
 
@@ -49,7 +48,7 @@ interface TextOptions extends GizmoOptions {
  * Gizmos.vector(origin, vector, { color: 'blue', width: 2, size: 10 });
  * ```
  */
-export class Gizmos extends FolkElement {
+export class Gizmos extends ReactiveElement {
   static override tagName = 'folk-gizmos';
 
   static #layers = new Map<

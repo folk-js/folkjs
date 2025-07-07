@@ -1,5 +1,6 @@
-// import { FolkElement, type Point } from '@folkjs/canvas';
-// import { css } from '@folkjs/canvas/tags';
+// import { type Point } from '@folkjs/canvas';
+import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
+
 // import { FolkAutomerge } from './FolkAutomerge';
 // import { FolkSpace } from './folk-space';
 
@@ -69,7 +70,7 @@
 //  * to a folk-space element. It handles both the visual representation of pointers and
 //  * the synchronization of pointer positions across clients using FolkAutomerge.
 //  */
-// export class FolkPresence extends FolkElement {
+// export class FolkPresence extends ReactiveElement {
 //   static override tagName = 'folk-presence';
 
 //   static override styles = css`

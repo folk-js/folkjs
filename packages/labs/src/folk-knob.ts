@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css, property } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css, property } from '@folkjs/dom/ReactiveElement';
 import * as V from '@folkjs/geometry/Vector2';
 import { PI, RADIAN, TAU, toDOMPrecision } from '@folkjs/geometry/utilities';
 
@@ -8,7 +7,7 @@ const angle = (a: V.Vector2, b: V.Vector2) => V.angle(V.subtract(b, a));
 const newPoint = (x = 0, y = 0, a = 0) => ({ x, y, a });
 
 // Ported from https://github.com/ivanreese/knob/tree/main
-export class FolkKnob extends FolkElement {
+export class FolkKnob extends ReactiveElement {
   static override tagName = 'folk-knob';
 
   static formAssociated = true;

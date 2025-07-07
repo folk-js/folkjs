@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css, property } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css, property } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -11,7 +10,7 @@ type NumberFormatOptions = Intl.NumberFormatOptions;
 
 // // TODO: support ranges
 // Ported from https://github.com/elematic/heximal/blob/main/packages/components/src/lib/num.ts
-export class IntlNumber extends FolkElement {
+export class IntlNumber extends ReactiveElement {
   static override tagName = 'intl-number';
 
   static override styles = css`

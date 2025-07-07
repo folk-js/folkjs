@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css, type CSSResultGroup } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
 
 type PointerEventTypes =
   | 'pointercancel'
@@ -11,10 +10,10 @@ type PointerEventTypes =
   | 'pointerover'
   | 'pointerup';
 
-export class FolkModalTool extends FolkElement {
+export class FolkModalTool extends ReactiveElement {
   static override tagName = 'folk-modal-tool';
 
-  static override shadowRootOptions = { ...FolkElement.shadowRootOptions, delegatesFocus: true };
+  static override shadowRootOptions = { ...ReactiveElement.shadowRootOptions, delegatesFocus: true };
 
   static override styles = css`
     :host {

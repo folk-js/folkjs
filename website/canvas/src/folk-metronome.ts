@@ -1,4 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
+import { ReactiveElement } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -6,7 +6,7 @@ declare global {
   }
 }
 
-export class FolkMetronome extends FolkElement {
+export class FolkMetronome extends ReactiveElement {
   static override tagName = 'folk-metronome';
 
   constructor() {

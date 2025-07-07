@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css, property } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css, property } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -12,7 +11,7 @@ type DateTimeFormatOptions = Intl.DateTimeFormatOptions;
 type T = { [K in keyof DateTimeFormatOptions]: K };
 
 // TODO: support ranges
-export class IntlDateTime extends FolkElement {
+export class IntlDateTime extends ReactiveElement {
   static override tagName = 'intl-datetime';
 
   static override styles = css`

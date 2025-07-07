@@ -1,4 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
+import { ReactiveElement } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -6,7 +6,7 @@ declare global {
   }
 }
 
-export class FolkTimer extends FolkElement {
+export class FolkTimer extends ReactiveElement {
   static override tagName = 'folk-timer';
 
   #timeMs = 0;

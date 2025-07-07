@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css, unsafeCSS } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css, unsafeCSS } from '@folkjs/dom/ReactiveElement';
 import { LatLng, type LatLngExpression, type LeafletEvent, map, tileLayer } from 'leaflet';
 // @ts-ignore
 // Vite specific import :(
@@ -11,7 +10,7 @@ export class RecenterEvent extends Event {
   }
 }
 
-export class FolkMap extends FolkElement {
+export class FolkMap extends ReactiveElement {
   static override tagName = 'folk-map';
 
   static override styles = css`

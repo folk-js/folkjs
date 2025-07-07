@@ -1,5 +1,4 @@
-import { FolkElement } from '@folkjs/canvas';
-import { css, type PropertyValues, state } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css, state, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -13,7 +12,7 @@ export interface FileCreator<T extends Element = Element> {
   getValue?(element: T): FileSystemWriteChunkType | undefined;
 }
 
-export class FolkFile extends FolkElement {
+export class FolkFile extends ReactiveElement {
   static override tagName = 'folk-file';
 
   static #fileCreators = new Map<string, FileCreator>();

@@ -1,12 +1,18 @@
-import { FolkElement } from '@folkjs/canvas';
 import { type ClientRectObserverEntry } from '@folkjs/dom/ClientRectObserver';
-import { css, type CSSResultGroup, property, type PropertyValues, state } from '@folkjs/dom/ReactiveElement';
+import {
+  css,
+  type CSSResultGroup,
+  property,
+  type PropertyValues,
+  ReactiveElement,
+  state,
+} from '@folkjs/dom/ReactiveElement';
 import { FolkObserver, parseDeepCSSSelector } from './folk-observer';
 
 const folkObserver = new FolkObserver();
 
 // TODO: use mutation observer to track the addition an removal of elements
-export class FolkBaseHyperedge extends FolkElement {
+export class FolkBaseHyperedge extends ReactiveElement {
   static override styles: CSSResultGroup = css`
     :host {
       display: block;
