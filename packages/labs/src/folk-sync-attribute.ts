@@ -1,7 +1,13 @@
-import type { Doc, ObjID, Patch, Prop } from '@automerge/automerge';
-import { getObjectId } from '@automerge/automerge';
-import { DocHandle, ImmutableString, isValidAutomergeUrl, Repo, type PeerId } from '@automerge/automerge-repo';
-import { BrowserWebSocketClientAdapter } from '@automerge/automerge-repo-network-websocket';
+import { getObjectId, type ObjID } from '@automerge/automerge';
+import type { Doc, Patch, PeerId, Prop } from '@automerge/vanillajs';
+import {
+  DocHandle,
+  generateAutomergeUrl,
+  ImmutableString,
+  isValidAutomergeUrl,
+  Repo,
+  WebSocketClientAdapter,
+} from '@automerge/vanillajs';
 import { CustomAttribute } from '@folkjs/dom/CustomAttributeRegistry';
 import type { DOMJElement, DOMJNode } from 'packages/labs/src/dom-json';
 // TODO: use @automerge/vanillajs package
@@ -34,7 +40,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   // Automerge repository and document handle
   #repo!: Repo;
   #handle!: DocHandle<DOMJElement>;
-  #networkAdapter!: BrowserWebSocketClientAdapter;
+  #networkAdapter!: WebSocketClientAdapter;
   #isLocalChange: boolean = false;
 
   // MutationObserver instance
@@ -422,8 +428,6 @@ export class FolkSyncAttribute extends CustomAttribute {
       characterData: true,
       childList: true,
       subtree: true,
-      attributeOldValue: true,
-      characterDataOldValue: true,
     });
   }
 
@@ -446,8 +450,10 @@ export class FolkSyncAttribute extends CustomAttribute {
     this.#handle
       .whenReady()
       .then(async () => {
-        // Update the URL hash
-        window.location.hash = this.#handle.url;
+        // Update the URL hash only if not using attribute value
+        if (!this.value) {
+          window.location.hash = this.#handle.url;
+        }
 
         // Initialize as a new document
         const doc = this.#handle.doc();
@@ -471,11 +477,16 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Initialize document based on current hash
     this.#initializeDocument();
 
-    // Set up hash change listener
-    this.#hashChangeListener = () => {
-      this.#reinitialize();
-    };
-    window.addEventListener('hashchange', this.#hashChangeListener);
+    // Set up hash change listener only if not using attribute value
+    if (!this.value) {
+      this.#hashChangeListener = () => {
+        this.#reinitialize();
+      };
+      window.addEventListener('hashchange', this.#hashChangeListener);
+    }
+
+    // DEBUG: just here for testing atm
+    (window as any).aid = generateAutomergeUrl;
   }
 
   /**
@@ -485,7 +496,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     const peerId = `peer-${Math.floor(Math.random() * 1_000_000)}` as PeerId;
 
     // Set up the WebSocket network adapter
-    this.#networkAdapter = new BrowserWebSocketClientAdapter('wss://sync.automerge.org');
+    this.#networkAdapter = new WebSocketClientAdapter('wss://sync.automerge.org');
 
     // Initialize the repo with network configuration
     this.#repo = new Repo({
@@ -496,19 +507,20 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
-   * Initialize document based on current URL hash
+   * Initialize document based on attribute value or current URL hash
    */
   async #initializeDocument(): Promise<void> {
-    const hashDocId = window.location.hash.slice(1);
+    // Use attribute value if provided, otherwise fall back to URL hash
+    const docId = this.value || window.location.hash.slice(1);
 
-    // If no valid hash, create new document
-    if (!hashDocId || !isValidAutomergeUrl(hashDocId)) {
+    // If no valid document ID, create new document
+    if (!docId || !isValidAutomergeUrl(docId)) {
       this.#createNewDocument();
       return;
     }
 
     // Try to connect to existing document
-    this.#handle = await this.#repo.find<DOMJElement>(hashDocId);
+    this.#handle = await this.#repo.find<DOMJElement>(docId);
 
     try {
       const doc = this.#handle.doc();
