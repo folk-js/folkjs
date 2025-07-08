@@ -1,6 +1,3 @@
-// Observers (move these to the top since they're dependencies)
-export * from './resize-manger';
-
 // Core utilities and types
 export * from './folk-gizmos';
 export * from './Matrix';

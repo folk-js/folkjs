@@ -6,5 +6,5 @@
     "declaration": true,
     "rewriteRelativeImportExtensions": true
   },
-  "include": ["src/"]
+  "include": ["src/", "../labs/src/hash-modules.ts"]
 }

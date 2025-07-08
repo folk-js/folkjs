@@ -4,7 +4,6 @@ import {
   IPointTransform,
   Matrix,
   MAX_Z_INDEX,
-  ResizeManager,
   round,
   toDOMPrecision,
   TransformEvent,
@@ -12,6 +11,8 @@ import {
   Vector,
   type Point,
 } from '@folkjs/canvas';
+import { ResizeManager } from '@folkjs/dom/ResizeManger';
+
 import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
 import { html } from '@folkjs/dom/tags';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
