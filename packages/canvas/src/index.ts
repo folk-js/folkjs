@@ -12,9 +12,6 @@ export * from './TransformStack';
 // Animation and timing
 export * from './animation-frame-controller';
 
-// Integration and effects
-export * from './collision';
-
 // Interfaces
 export * from './interfaces/InterfaceKey';
 export * from './interfaces/IPointTransform';

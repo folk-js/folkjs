@@ -63,12 +63,21 @@ export function hitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly): Hi
   return hit;
 }
 
-export function intersecting(rect1: Rect2D, rect2: Rect2D) {
+export function intersecting(rect1: Rect2D, rect2: Rect2D): boolean {
   return (
     rect1.x <= rect2.x + rect2.width &&
     rect1.x + rect1.width >= rect2.x &&
     rect1.y <= rect2.y + rect2.height &&
     rect1.y + rect1.height >= rect2.y
+  );
+}
+
+export function proximal(rect1: Rect2D, rect2: Rect2D, proximity: number): boolean {
+  return (
+    rect1.x - (rect2.x + rect2.width) < proximity &&
+    rect2.x - (rect1.x + rect1.width) < proximity &&
+    rect1.y - (rect2.y + rect2.height) < proximity &&
+    rect2.y - (rect1.y + rect1.height) < proximity
   );
 }
 

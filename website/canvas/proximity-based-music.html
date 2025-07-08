@@ -68,7 +68,7 @@
     <script type="module">
       import './src/record-player';
       import '@folkjs/labs/standalone/folk-shape';
-      import { aabbIntersection } from '@folkjs/canvas/collision';
+      import { proximal } from '@folkjs/geometry/Rect2D';
 
       let proximityDistance = 150;
       const proximitySet = new Set();
@@ -88,7 +88,7 @@
       function updateFlowerProximity(flower) {
         const alreadyIntersection = proximitySet.has(flower);
 
-        const isNowIntersecting = aabbIntersection(
+        const isNowIntersecting = proximal(
           recordPlayerGeometry.getTransformDOMRect(),
           flower.getTransformDOMRect(),
           proximityDistance,

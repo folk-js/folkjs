@@ -50,7 +50,7 @@
 
     <script type="module">
       import { FolkShape } from '@folkjs/labs/standalone/folk-shape';
-      import { aabbHitDetection } from '@folkjs/canvas/collision';
+      import { hitDetection } from '@folkjs/geometry/Rect2D';
 
       const shapes = Array.from(document.querySelectorAll('folk-shape, p'));
 
@@ -60,7 +60,7 @@
         for (const shape of shapes) {
           if (shape === e.target) continue;
 
-          const hit = aabbHitDetection(getBoundingBox(e.target), getBoundingBox(shape));
+          const hit = hitDetection(getBoundingBox(e.target), getBoundingBox(shape));
 
           if (hit === null) continue;
 

@@ -1,4 +1,5 @@
-import { aabbIntersection, TransformEvent } from '@folkjs/canvas';
+import { TransformEvent } from '@folkjs/canvas';
+import { proximal } from '@folkjs/geometry/Rect2D';
 import { FolkHull } from './folk-hull';
 import { FolkShape } from './folk-shape';
 
@@ -41,8 +42,7 @@ export class FolkCluster extends FolkHull {
 
   isElementInProximity(element: FolkShape) {
     for (const el of this.sourceElements) {
-      if (aabbIntersection((el as FolkShape).getTransformDOMRect(), element.getTransformDOMRect(), PROXIMITY))
-        return true;
+      if (proximal((el as FolkShape).getTransformDOMRect(), element.getTransformDOMRect(), PROXIMITY)) return true;
     }
     return false;
   }
@@ -165,7 +165,7 @@ export class FolkProximity extends HTMLElement {
       for (const geometry of this.#geometries) {
         if (geometry === el) break;
 
-        if (aabbIntersection(geometry.getTransformDOMRect(), el.getTransformDOMRect(), PROXIMITY)) {
+        if (proximal(geometry.getTransformDOMRect(), el.getTransformDOMRect(), PROXIMITY)) {
           const cluster = document.createElement('folk-cluster');
           cluster.addElements(geometry, el);
           this.#clusters.add(cluster);
@@ -176,9 +176,7 @@ export class FolkProximity extends HTMLElement {
     } else {
       const isInCluster = Array.from(cluster.sourceElements)
         .filter((element) => el !== element)
-        .some((element) =>
-          aabbIntersection(el.getTransformDOMRect(), (element as FolkShape).getTransformDOMRect(), PROXIMITY),
-        );
+        .some((element) => proximal(el.getTransformDOMRect(), (element as FolkShape).getTransformDOMRect(), PROXIMITY));
 
       if (!isInCluster) {
         cluster.removeElement(el);
