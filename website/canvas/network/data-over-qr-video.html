@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
-    <title>Data over QR</title>
+    <title>Data over QR Video (Luby Transform)</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
@@ -151,6 +151,10 @@
         transition: width 0.3s ease;
       }
 
+      .progress-bar.complete {
+        background-color: #4caf50;
+      }
+
       .progress-text {
         position: absolute;
         top: 0;
@@ -208,18 +212,47 @@
         margin-bottom: 0px;
       }
 
-      .highlight-chunk {
-        background-color: #ffff00;
-        animation: fadeHighlight 2s forwards;
+      .controls-section {
+        margin-top: 15px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
       }
 
-      @keyframes fadeHighlight {
-        from {
-          background-color: #ffff00;
-        }
-        to {
-          background-color: transparent;
-        }
+      .control-group {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .control-group label {
+        font-size: 12px;
+        color: #666;
+      }
+
+      .control-group input {
+        width: 60px;
+        padding: 4px;
+        border: 1px solid #ccc;
+        font-size: 12px;
+      }
+
+      .status-info {
+        font-size: 11px;
+        color: #666;
+        margin-top: 5px;
+      }
+
+      .indices-display {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        color: #888;
+        margin-top: 5px;
+        max-height: 40px;
+        overflow-y: auto;
+        padding: 4px;
+        background-color: #f8f8f8;
+        border: 1px solid #eee;
       }
 
       .message-log {
@@ -317,9 +350,9 @@
   </head>
   <body>
     <div class="app-container">
-      <div class="title">Data over QR</div>
+      <div class="title">Data over QR Video (Luby Transform)</div>
 
-      <!-- New container for QR and camera side-by-side -->
+      <!-- Container for QR and camera side-by-side -->
       <div class="media-container">
         <div class="qr-container">
           <div id="qrcode"></div>
@@ -338,21 +371,33 @@
       <!-- Progress bars for sending and receiving -->
       <div class="progress-section">
         <div class="progress-column">
-          <div class="progress-title">Sending</div>
+          <div class="progress-title">Sending (Luby Transform)</div>
           <div class="progress-bar-container">
             <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
-            <div id="sendingProgressText" class="progress-text">0/0</div>
+            <div id="sendingProgressText" class="progress-text">Idle</div>
           </div>
-          <textarea id="txData" class="input-text">Hello from folkjs!</textarea>
-          <div id="chunkSizeInfo" style="font-size: 11px; color: #666; margin-top: 5px"></div>
+          <textarea id="txData" class="input-text">Hello from folkjs with Luby Transform codes!</textarea>
+          <div class="controls-section">
+            <div class="control-group">
+              <label>Block Size:</label>
+              <input type="number" id="blockSize" value="100" min="50" max="500" />
+            </div>
+            <div class="control-group">
+              <label>Frame Rate:</label>
+              <input type="number" id="frameRate" value="2" min="1" max="10" />
+            </div>
+          </div>
+          <div id="statusInfo" class="status-info"></div>
         </div>
         <div class="progress-column">
           <div class="progress-title">Receiving</div>
           <div class="progress-bar-container">
             <div id="receivingProgressBar" class="progress-bar" style="width: 0%"></div>
-            <div id="receivingProgressText" class="progress-text">0/0</div>
+            <div id="receivingProgressText" class="progress-text">Waiting for blocks...</div>
           </div>
           <div id="receivedTextDisplay" class="received-text"></div>
+          <div id="blockInfo" class="status-info"></div>
+          <div id="indicesDisplay" class="indices-display"></div>
         </div>
       </div>
 
@@ -361,18 +406,17 @@
 
     <!-- QR Code libraries -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-    <!-- Import QRTPV module -->
+    <!-- Import QR Scanner and QRTPV module -->
     <script type="module">
+      import QrScanner from 'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js';
       import { QRTPV } from '@folkjs/labs/QRTP-V';
-      import '@folkjs/labs/BraceLabel';
 
-      // Make QRTPV available globally for debugging
+      // Make modules available globally for debugging
       window.QRTPV = QRTPV;
+      window.QrScanner = QrScanner;
 
       // Core elements and state
-      let videoStream = null;
-      let scanInterval = null;
+      let qrScanner = null;
       let cameraActive = false;
       let qrProtocol;
 
@@ -380,15 +424,34 @@
       document.addEventListener('DOMContentLoaded', initApp);
 
       function initApp() {
-        // Initialize protocol
-        qrProtocol = new QRTPV();
+        // Initialize protocol with default settings
+        const blockSize = parseInt(document.getElementById('blockSize').value);
+        const frameRate = parseInt(document.getElementById('frameRate').value);
+        qrProtocol = new QRTPV(blockSize, frameRate);
 
         // Get DOM elements
-        const elements = {
+        const elements = getElements();
+
+        // Setup event handlers
+        setupProtocolEvents(elements);
+        setupUIEvents(elements);
+
+        // Initialize UI
+        updateStatusInfo(elements);
+        updateQRCode('', elements.qrcodeContainer);
+
+        // Set initial message from textarea
+        const initialText = elements.txData.value.trim();
+        if (initialText) {
+          qrProtocol.setMessage(initialText);
+        }
+      }
+
+      function getElements() {
+        return {
           txData: document.getElementById('txData'),
           qrcodeContainer: document.getElementById('qrcode'),
           video: document.getElementById('video'),
-          canvas: document.getElementById('canvas'),
           videoContainer: document.getElementById('videoContainer'),
           cameraOverlay: document.getElementById('cameraOverlay'),
           cameraLabel: document.getElementById('cameraOverlay').querySelector('.camera-label'),
@@ -398,59 +461,97 @@
           receivingProgressBar: document.getElementById('receivingProgressBar'),
           receivingProgressText: document.getElementById('receivingProgressText'),
           receivedTextDisplay: document.getElementById('receivedTextDisplay'),
-          chunkSizeInfo: document.getElementById('chunkSizeInfo'),
+          blockSize: document.getElementById('blockSize'),
+          frameRate: document.getElementById('frameRate'),
+          statusInfo: document.getElementById('statusInfo'),
+          blockInfo: document.getElementById('blockInfo'),
+          indicesDisplay: document.getElementById('indicesDisplay'),
         };
-
-        // Setup event handlers
-        setupProtocolEvents(elements);
-        setupUIEvents(elements);
-
-        // Initialize UI
-        elements.chunkSizeInfo.textContent = `Using default chunk size of 100 bytes`;
-        updateQRCode('Hello world', elements.qrcodeContainer);
-
-        // Set initial message from textarea
-        const initialText = elements.txData.value.trim();
-        if (initialText) {
-          qrProtocol.setMessage(initialText);
-        }
       }
 
       // Setup QRTPV protocol event handlers
       function setupProtocolEvents(elements) {
-        qrProtocol.on('chunk', (event) => {
-          updateReceivedText(event.payload, false, elements.receivedTextDisplay);
-          updateProgress(event.index + 1, event.total, elements.receivingProgressBar, elements.receivingProgressText);
+        qrProtocol.on('blockReceived', (event) => {
+          if (event.newIndices.length > 0) {
+            logMessage(
+              'incoming',
+              'block',
+              `New indices: [${event.newIndices.join(',')}] (${event.totalIndicesReceived}/${event.totalIndicesNeeded})`,
+              elements.messageLog,
+            );
+          }
+
+          // Update receiving progress
+          const progressPercent = Math.round(event.progress * 100);
+          elements.receivingProgressBar.style.width = `${progressPercent}%`;
+          elements.receivingProgressText.textContent = `${event.totalIndicesReceived}/${event.totalIndicesNeeded} indices (${progressPercent}%)`;
+
+          // Update block info
+          elements.blockInfo.textContent = `${event.originalBytes} bytes original | Progress: ${progressPercent}%`;
+
+          // Update indices display
+          const status = qrProtocol.getStatus();
+          if (status.receivedIndices.length > 0) {
+            const missingIndices = [];
+            for (let i = 0; i < status.totalBlocks; i++) {
+              if (!status.receivedIndices.includes(i)) {
+                missingIndices.push(i);
+              }
+            }
+            elements.indicesDisplay.textContent = `Received: [${status.receivedIndices.join(',')}]${missingIndices.length > 0 ? ` Missing: [${missingIndices.join(',')}]` : ''}`;
+          } else {
+            elements.indicesDisplay.textContent = '';
+          }
         });
 
         qrProtocol.on('init', (event) => {
           logMessage(
             'outgoing',
-            'info',
-            `Data set: ${event.dataLength} bytes, ${event.total} chunks (${event.size} bytes/chunk)`,
+            'init',
+            `Encoding ${event.dataLength} bytes into ${event.totalBlocks} blocks (${event.blockSize} bytes/block)`,
             elements.messageLog,
           );
-          updateProgress(0, event.total, elements.sendingProgressBar, elements.sendingProgressText);
-        });
-
-        qrProtocol.on('ack', (event) => {
-          if (event.matched) {
-            logMessage('incoming', 'ack', `Acknowledged chunk ${event.index + 1}`, elements.messageLog);
-          }
-          updateProgress(event.index, event.total, elements.sendingProgressBar, elements.sendingProgressText);
+          // Sender just shows that it's transmitting - no progress
+          elements.sendingProgressBar.style.width = '100%';
+          elements.sendingProgressText.textContent = 'Transmitting...';
+          updateStatusInfo(elements);
         });
 
         qrProtocol.on('qrUpdate', (event) => {
-          updateQRCode(event.data, elements.qrcodeContainer);
+          if (event.data) {
+            updateQRCode(event.data, elements.qrcodeContainer);
+
+            if (event.block) {
+              // Just show current block info, not progress
+              elements.sendingProgressText.textContent = `Block ${event.block.transmitIndex + 1} (indices: ${event.block.indices.join(',')})`;
+            }
+          } else {
+            updateQRCode('', elements.qrcodeContainer);
+            elements.sendingProgressBar.style.width = '0%';
+            elements.sendingProgressText.textContent = 'Idle';
+          }
+          updateStatusInfo(elements);
         });
 
         qrProtocol.on('complete', (event) => {
-          if (event && event.payload) {
-            logMessage('incoming', 'complete', `Message received successfully!`, elements.messageLog);
-            updateReceivedText(event.payload, true, elements.receivedTextDisplay);
-          } else {
-            logMessage('outgoing', 'complete', `Message sent successfully!`, elements.messageLog);
-          }
+          logMessage(
+            'incoming',
+            'complete',
+            `Message received! ${event.blocksReceived}/${event.totalBlocks} blocks used`,
+            elements.messageLog,
+          );
+          elements.receivedTextDisplay.textContent = event.payload;
+          elements.receivingProgressBar.style.width = '100%';
+          elements.receivingProgressBar.classList.add('complete');
+          elements.receivingProgressText.textContent = 'Done!';
+          elements.blockInfo.textContent = `Complete! Used ${event.blocksReceived} blocks for ${event.totalBlocks} original blocks`;
+          elements.indicesDisplay.textContent = 'All blocks received successfully';
+
+          // Don't auto-reset - stay in "Done" state until new message starts
+        });
+
+        qrProtocol.on('error', (event) => {
+          logMessage('system', 'error', event.message, elements.messageLog);
         });
       }
 
@@ -460,12 +561,40 @@
         elements.txData.addEventListener('input', function () {
           const text = elements.txData.value.trim();
           elements.messageLog.innerHTML = '';
-          elements.receivedTextDisplay.innerHTML = '';
+          elements.receivedTextDisplay.textContent = '';
 
-          qrProtocol.setMessage(text);
+          // Reset receiver state
+          qrProtocol.resetReceiver();
 
-          // Only reset the receiving progress
-          updateProgress(0, 0, elements.receivingProgressBar, elements.receivingProgressText);
+          qrProtocol.setMessage(text || null);
+
+          // Reset receiving UI
+          elements.receivingProgressBar.style.width = '0%';
+          elements.receivingProgressBar.classList.remove('complete');
+          elements.receivingProgressText.textContent = 'Waiting for blocks...';
+          elements.blockInfo.textContent = '';
+          elements.indicesDisplay.textContent = '';
+        });
+
+        // Block size control
+        elements.blockSize.addEventListener('change', function () {
+          const blockSize = parseInt(elements.blockSize.value);
+          const frameRate = parseInt(elements.frameRate.value);
+          qrProtocol = new QRTPV(blockSize, frameRate);
+          setupProtocolEvents(elements);
+
+          const text = elements.txData.value.trim();
+          if (text) {
+            qrProtocol.setMessage(text);
+          }
+          updateStatusInfo(elements);
+        });
+
+        // Frame rate control
+        elements.frameRate.addEventListener('change', function () {
+          const frameRate = parseInt(elements.frameRate.value);
+          qrProtocol.setFrameRate(frameRate);
+          updateStatusInfo(elements);
         });
 
         // Camera toggle handler
@@ -479,49 +608,44 @@
       }
 
       // Camera control functions
-      function startCamera(elements) {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          navigator.mediaDevices
-            .getUserMedia({ video: { facingMode: 'user' } })
-            .then(function (stream) {
-              videoStream = stream;
-              elements.video.srcObject = stream;
-              elements.video.setAttribute('playsinline', true);
-              elements.video.play();
+      async function startCamera(elements) {
+        try {
+          const video = elements.video;
 
-              // Set canvas size on video load
-              elements.video.onloadedmetadata = function () {
-                elements.canvas.width = elements.video.videoWidth;
-                elements.canvas.height = elements.video.videoHeight;
-              };
+          // Initialize QR Scanner
+          qrScanner = new QrScanner(
+            video,
+            (result) => {
+              // Process detected QR code
+              qrProtocol.parseCode(result.data);
+            },
+            {
+              returnDetailedScanResult: true,
+              highlightScanRegion: true,
+              highlightCodeOutline: true,
+            },
+          );
 
-              // Start scanning for QR codes
-              scanInterval = setInterval(() => scanQrCode(elements), 100);
+          await qrScanner.start();
 
-              // Update UI
-              cameraActive = true;
-              elements.videoContainer.classList.add('camera-active');
-              elements.cameraLabel.textContent = 'Stop Camera';
-            })
-            .catch(function (error) {
-              console.error('Camera error:', error);
-              logMessage('system', 'error', `Camera access error: ${error.message}`, elements.messageLog);
-            });
-        } else {
-          logMessage('system', 'error', 'Camera not supported on this device/browser', elements.messageLog);
+          // Update UI
+          cameraActive = true;
+          elements.videoContainer.classList.add('camera-active');
+          elements.cameraLabel.textContent = 'Stop Camera';
+
+          logMessage('system', 'info', 'Camera started, scanning for QR codes...', elements.messageLog);
+        } catch (error) {
+          console.error('Camera error:', error);
+          logMessage('system', 'error', `Camera access error: ${error.message}`, elements.messageLog);
         }
       }
 
       function stopCamera(elements) {
-        if (videoStream) {
-          videoStream.getTracks().forEach((track) => track.stop());
-          videoStream = null;
+        if (qrScanner) {
+          qrScanner.stop();
+          qrScanner.destroy();
+          qrScanner = null;
           logMessage('system', 'info', 'Camera stopped', elements.messageLog);
-        }
-
-        if (scanInterval) {
-          clearInterval(scanInterval);
-          scanInterval = null;
         }
 
         // Update UI
@@ -530,38 +654,17 @@
         elements.cameraLabel.textContent = 'Start Camera';
       }
 
-      // QR code scanning function
-      function scanQrCode(elements) {
-        if (elements.video.readyState === elements.video.HAVE_ENOUGH_DATA) {
-          const canvasContext = elements.canvas.getContext('2d');
-          elements.canvas.width = elements.video.videoWidth;
-          elements.canvas.height = elements.video.videoHeight;
-
-          // Draw video frame to canvas
-          canvasContext.drawImage(elements.video, 0, 0, elements.canvas.width, elements.canvas.height);
-
-          // Get image data from canvas
-          const imageData = canvasContext.getImageData(0, 0, elements.canvas.width, elements.canvas.height);
-
-          // Scan for QR code
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: 'dontInvert',
-          });
-
-          // Process QR code if found
-          if (code && code.data) {
-            const result = qrProtocol.parseCode(code.data);
-            if (result === null) {
-              logMessage('system', 'error', `Error processing QR code: ${result}`, elements.messageLog);
-            }
-          }
-        }
-      }
-
       // UI update helper functions
       function updateQRCode(qrData, container) {
         // Clear previous QR code
         container.innerHTML = '';
+
+        if (!qrData) {
+          container.innerHTML =
+            '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #999;">No data to encode</div>';
+          document.getElementById('qrDataPreview').textContent = '';
+          return;
+        }
 
         // Create a new canvas element
         const canvas = document.createElement('canvas');
@@ -574,55 +677,34 @@
           canvas,
           qrData,
           {
-            width: containerWidth, // Use the container width instead of fixed 400px
-            margin: 4,
+            width: containerWidth,
+            margin: 2,
+            errorCorrectionLevel: 'L', // Low error correction for maximum data
           },
           function (error) {
             if (error) {
               console.error(error);
-              logMessage('system', 'error', `Error generating QR code: ${error.message}`, elements.messageLog);
+              logMessage('system', 'error', `Error generating QR code: ${error.message}`, getElements().messageLog);
             }
           },
         );
 
         // Update text preview of QR data
         const qrDataPreview = document.getElementById('qrDataPreview');
-        qrDataPreview.textContent = qrData.length > 20 ? qrData.substring(0, 20) + '...' : qrData;
+        qrDataPreview.textContent = `${qrData.length} chars (base64 block)`;
       }
 
-      function updateProgress(current, total, progressBar, progressText) {
-        if (total > 0) {
-          const progress = Math.min(100, (current / total) * 100);
-          progressText.textContent = `${current}/${total}`;
-          progressBar.style.width = `${progress}%`;
-        } else {
-          progressText.textContent = '0/0';
-          progressBar.style.width = '0%';
-        }
+      function updateStatusInfo(elements) {
+        const status = qrProtocol.getStatus();
+        elements.statusInfo.textContent = `Block size: ${status.hasData ? qrProtocol.blockSize || 100 : 100} bytes | Frame rate: ${status.frameRate} fps | ${status.isTransmitting ? 'Transmitting' : 'Idle'}`;
       }
 
-      function updateReceivedText(chunkData, isComplete, displayElement) {
-        if (isComplete) {
-          // On complete, show the full message
-          displayElement.textContent = chunkData;
-        } else {
-          // For new chunks, append with highlight
-          const highlightSpan = document.createElement('span');
-          highlightSpan.className = 'highlight-chunk';
-          highlightSpan.textContent = chunkData;
-          displayElement.appendChild(highlightSpan);
-        }
-
-        // Scroll to the bottom
-        displayElement.scrollTop = displayElement.scrollHeight;
-      }
-
-      function logMessage(direction, type, message, logElement, data = null) {
+      function logMessage(direction, type, message, logElement) {
         const logEntry = document.createElement('div');
         logEntry.className = `log-entry log-entry-${direction}`;
 
         // Add specific styling for different message types
-        if (['error', 'warning', 'debug', 'hash'].includes(type)) {
+        if (['error', 'warning', 'debug'].includes(type)) {
           logEntry.className += ` log-entry-${type}`;
         }
 
@@ -632,10 +714,6 @@
         html += `<span class="log-direction">${direction.toUpperCase()}</span>`;
         html += `<span class="log-type">[${type}]</span>`;
         html += `<span class="log-message">${message}</span>`;
-
-        if (data && typeof data === 'string') {
-          html += `<div class="log-data">${data}</div>`;
-        }
 
         logEntry.innerHTML = html;
         logElement.appendChild(logEntry);
