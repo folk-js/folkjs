@@ -63,16 +63,6 @@
         max-width: none;
       }
 
-      .qr-data-preview {
-        text-align: center;
-        margin-top: 8px;
-        font-size: 12px;
-        color: #666;
-        word-break: break-all;
-        max-width: 100%;
-        overflow: hidden;
-      }
-
       #qrcode {
         width: 100%;
         flex-grow: 1;
@@ -255,66 +245,6 @@
         border: 1px solid #eee;
       }
 
-      .message-log {
-        max-height: 200px;
-        overflow-y: auto;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 12px;
-        line-height: 1.4;
-        padding: 8px;
-        background-color: #fafafa;
-        border: 1px solid #000;
-        margin-top: 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-
-      .log-entry {
-        padding: 4px 8px;
-        border: 1px solid #00000013;
-      }
-
-      .log-entry-outgoing {
-        border-left: 3px solid #0070f3;
-        background-color: #f5f9ff;
-      }
-
-      .log-entry-incoming {
-        border-left: 3px solid #4caf50;
-        background-color: #e8f5e9;
-      }
-
-      .log-entry-system {
-        border-left: 3px solid #999;
-        background-color: #f9f9f9;
-      }
-
-      .log-entry-error {
-        border-left: 3px solid #f44336;
-        background-color: #ffebee;
-      }
-
-      .log-timestamp {
-        color: #666;
-        font-size: 10px;
-        margin-right: 5px;
-      }
-
-      .log-direction {
-        font-weight: bold;
-        margin-right: 5px;
-      }
-
-      .log-type {
-        color: #666;
-        margin-right: 5px;
-      }
-
-      .log-message {
-        color: #333;
-      }
-
       /* Mobile responsiveness */
       @media (max-width: 768px) {
         .title {
@@ -340,11 +270,6 @@
         .progress-column {
           margin-bottom: 20px;
         }
-
-        .qr-data-preview {
-          font-size: 10px;
-          margin-top: 4px;
-        }
       }
     </style>
   </head>
@@ -356,7 +281,6 @@
       <div class="media-container">
         <div class="qr-container">
           <div id="qrcode"></div>
-          <div id="qrDataPreview" class="qr-data-preview"></div>
         </div>
 
         <!-- Camera view -->
@@ -380,14 +304,13 @@
           <div class="controls-section">
             <div class="control-group">
               <label>Block Size (bits):</label>
-              <input type="number" id="blockSize" value="500" min="100" max="2000" step="100" />
+              <input type="number" id="blockSize" value="1000" min="100" max="2000" step="100" />
             </div>
             <div class="control-group">
               <label>Frame Rate (fps):</label>
               <input type="number" id="frameRate" value="20" min="1" max="30" />
             </div>
           </div>
-          <div id="statusInfo" class="status-info"></div>
         </div>
         <div class="progress-column">
           <div class="progress-title">Receiving</div>
@@ -400,8 +323,6 @@
           <div id="indicesDisplay" class="indices-display"></div>
         </div>
       </div>
-
-      <div id="messageLog" class="message-log"></div>
     </div>
 
     <!-- QR Code libraries -->
@@ -423,6 +344,14 @@
       let senderIterator = null;
       let receiver = new QRTPVReceiver();
 
+      // Bitrate tracking
+      let receptionStartTime = null;
+      let totalBitsReceived = 0;
+
+      // Checksum tracking
+      let senderChecksum = '';
+      let receiverChecksum = '';
+
       // Initialize after DOM is loaded
       document.addEventListener('DOMContentLoaded', initApp);
 
@@ -434,7 +363,6 @@
         setupUIEvents(elements);
 
         // Initialize UI
-        updateStatusInfo(elements);
         updateQRCode('', elements.qrcodeContainer);
 
         // Set initial message from textarea
@@ -452,7 +380,6 @@
           videoContainer: document.getElementById('videoContainer'),
           cameraOverlay: document.getElementById('cameraOverlay'),
           cameraLabel: document.getElementById('cameraOverlay').querySelector('.camera-label'),
-          messageLog: document.getElementById('messageLog'),
           sendingProgressBar: document.getElementById('sendingProgressBar'),
           sendingProgressText: document.getElementById('sendingProgressText'),
           receivingProgressBar: document.getElementById('receivingProgressBar'),
@@ -460,10 +387,19 @@
           receivedTextDisplay: document.getElementById('receivedTextDisplay'),
           blockSize: document.getElementById('blockSize'),
           frameRate: document.getElementById('frameRate'),
-          statusInfo: document.getElementById('statusInfo'),
           blockInfo: document.getElementById('blockInfo'),
           indicesDisplay: document.getElementById('indicesDisplay'),
         };
+      }
+
+      // Checksum helper function
+      async function calculateChecksum(text) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(text);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+        return hashHex.substring(0, 8); // First 8 characters
       }
 
       // Setup UI event handlers
@@ -471,7 +407,6 @@
         // Text input handler
         elements.txData.addEventListener('input', function () {
           const text = elements.txData.value.trim();
-          elements.messageLog.innerHTML = '';
           elements.receivedTextDisplay.textContent = '';
 
           // Reset receiver state
@@ -491,7 +426,6 @@
           if (text) {
             startSending(text, elements);
           }
-          updateStatusInfo(elements);
         });
 
         elements.frameRate.addEventListener('change', function () {
@@ -499,7 +433,6 @@
           if (text) {
             startSending(text, elements);
           }
-          updateStatusInfo(elements);
         });
 
         // Camera toggle handler
@@ -523,23 +456,17 @@
           currentSender = new QRTPVSender(data, { blockSize, frameRate });
           senderIterator = currentSender[Symbol.asyncIterator]();
 
-          logMessage(
-            'outgoing',
-            'init',
-            `Starting transmission: ${data.length} chars, ${blockSize} bits/block, ${frameRate} fps`,
-            elements.messageLog,
-          );
+          // Calculate checksum for sender
+          senderChecksum = await calculateChecksum(data);
 
           elements.sendingProgressBar.style.width = '100%';
-          elements.sendingProgressText.textContent = 'Transmitting...';
+          elements.sendingProgressText.textContent = `Transmitting... ${senderChecksum}`;
 
           // Start the sending loop
           sendNextBlock(elements);
         } catch (error) {
-          logMessage('system', 'error', `Failed to start sender: ${error.message}`, elements.messageLog);
+          console.error('Failed to start sender:', error);
         }
-
-        updateStatusInfo(elements);
       }
 
       async function sendNextBlock(elements) {
@@ -549,59 +476,77 @@
           const result = await senderIterator.next();
           if (!result.done) {
             updateQRCode(result.value, elements.qrcodeContainer);
-            elements.sendingProgressText.textContent = 'Transmitting...';
 
             // Schedule next block
             setTimeout(() => sendNextBlock(elements), 0);
           }
         } catch (error) {
-          logMessage('system', 'error', `Sending error: ${error.message}`, elements.messageLog);
+          console.error('Sending error:', error);
         }
       }
 
       function stopSending(elements) {
         currentSender = null;
         senderIterator = null;
+        senderChecksum = '';
 
         updateQRCode('', elements.qrcodeContainer);
         elements.sendingProgressBar.style.width = '0%';
         elements.sendingProgressText.textContent = 'Idle';
-
-        updateStatusInfo(elements);
       }
 
       // Receiving functions
       async function processQRCode(qrData, elements) {
         try {
+          const previousProgress = receiver.getProgress();
           const progress = await receiver.addBlock(qrData);
+
+          // Track reception bitrate only when we get new data
+          if (progress.totalIndicesReceived > previousProgress.totalIndicesReceived) {
+            if (!receptionStartTime) {
+              receptionStartTime = Date.now();
+            }
+
+            // Calculate actual received data bits (not redundant blocks)
+            const newIndicesCount = progress.totalIndicesReceived - previousProgress.totalIndicesReceived;
+            const bitsPerIndex = (progress.originalBytes * 8) / progress.totalIndicesNeeded;
+            totalBitsReceived += newIndicesCount * bitsPerIndex;
+          }
 
           // Update progress
           const progressPercent = Math.round(progress.progress * 100);
           elements.receivingProgressBar.style.width = `${progressPercent}%`;
 
           if (progress.complete) {
+            // Calculate receiver checksum
+            receiverChecksum = await calculateChecksum(progress.data);
+            const checksumMatch = senderChecksum && receiverChecksum === senderChecksum;
+            const statusText = checksumMatch ? '✓' : senderChecksum ? '✗' : '';
+
             elements.receivingProgressBar.classList.add('complete');
-            elements.receivingProgressText.textContent = 'Done!';
+            elements.receivingProgressText.textContent = `Done! ${receiverChecksum} ${statusText}`;
             elements.receivedTextDisplay.textContent = progress.data;
             elements.blockInfo.textContent = `Complete! ${progress.totalIndicesReceived} indices used`;
             elements.indicesDisplay.textContent = 'All blocks received successfully';
-
-            logMessage('incoming', 'complete', `Message received: ${progress.data.length} chars`, elements.messageLog);
           } else {
-            elements.receivingProgressText.textContent = `${progress.totalIndicesReceived}/${progress.totalIndicesNeeded} indices (${progressPercent}%)`;
+            // Calculate and show reception bitrate
+            let bitrateText = '';
+            if (receptionStartTime && totalBitsReceived > 0) {
+              const elapsedSeconds = (Date.now() - receptionStartTime) / 1000;
+              const bitrate = Math.round(totalBitsReceived / elapsedSeconds);
+              bitrateText = ` (${formatBitrate(bitrate)})`;
+            }
+
+            elements.receivingProgressText.textContent = `${progress.totalIndicesReceived}/${progress.totalIndicesNeeded} indices (${progressPercent}%)${bitrateText}`;
             elements.blockInfo.textContent = `${progress.originalBytes} bytes | ${progressPercent}% complete`;
 
             // Show received indices
             const receivedCount = progress.totalIndicesReceived;
             const totalCount = progress.totalIndicesNeeded;
             elements.indicesDisplay.textContent = `Received ${receivedCount} of ${totalCount} unique indices`;
-
-            if (receivedCount > 0) {
-              logMessage('incoming', 'block', `Progress: ${receivedCount}/${totalCount} indices`, elements.messageLog);
-            }
           }
         } catch (error) {
-          logMessage('system', 'error', `QR processing error: ${error.message}`, elements.messageLog);
+          console.error('QR processing error:', error);
         }
       }
 
@@ -611,6 +556,11 @@
         elements.receivingProgressText.textContent = 'Waiting for blocks...';
         elements.blockInfo.textContent = '';
         elements.indicesDisplay.textContent = '';
+
+        // Reset reception tracking
+        receptionStartTime = null;
+        totalBitsReceived = 0;
+        receiverChecksum = '';
       }
 
       // Camera control functions
@@ -638,11 +588,8 @@
           cameraActive = true;
           elements.videoContainer.classList.add('camera-active');
           elements.cameraLabel.textContent = 'Stop Camera';
-
-          logMessage('system', 'info', 'Camera started, scanning for QR codes...', elements.messageLog);
         } catch (error) {
           console.error('Camera error:', error);
-          logMessage('system', 'error', `Camera access error: ${error.message}`, elements.messageLog);
         }
       }
 
@@ -651,7 +598,6 @@
           qrScanner.stop();
           qrScanner.destroy();
           qrScanner = null;
-          logMessage('system', 'info', 'Camera stopped', elements.messageLog);
         }
 
         // Update UI
@@ -668,7 +614,6 @@
         if (!qrData) {
           container.innerHTML =
             '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #999;">No data to encode</div>';
-          document.getElementById('qrDataPreview').textContent = '';
           return;
         }
 
@@ -690,45 +635,19 @@
           function (error) {
             if (error) {
               console.error(error);
-              logMessage('system', 'error', `Error generating QR code: ${error.message}`, getElements().messageLog);
             }
           },
         );
-
-        // Update text preview of QR data
-        const qrDataPreview = document.getElementById('qrDataPreview');
-        qrDataPreview.textContent = `${qrData.length} chars (base64 block)`;
       }
 
-      function updateStatusInfo(elements) {
-        const blockSize = parseInt(elements.blockSize.value);
-        const frameRate = parseInt(elements.frameRate.value);
-        const isTransmitting = !!currentSender;
-
-        elements.statusInfo.textContent = `Block size: ${blockSize} bits | Frame rate: ${frameRate} fps | ${isTransmitting ? 'Transmitting' : 'Idle'}`;
-      }
-
-      function logMessage(direction, type, message, logElement) {
-        const logEntry = document.createElement('div');
-        logEntry.className = `log-entry log-entry-${direction}`;
-
-        // Add specific styling for different message types
-        if (['error', 'warning', 'debug'].includes(type)) {
-          logEntry.className += ` log-entry-${type}`;
+      function formatBitrate(bitsPerSecond) {
+        if (bitsPerSecond >= 1000000) {
+          return `${(bitsPerSecond / 1000000).toFixed(1)} Mbps`;
+        } else if (bitsPerSecond >= 1000) {
+          return `${(bitsPerSecond / 1000).toFixed(1)} Kbps`;
+        } else {
+          return `${bitsPerSecond} bps`;
         }
-
-        const timestamp = new Date().toLocaleTimeString();
-
-        let html = `<span class="log-timestamp">${timestamp}</span>`;
-        html += `<span class="log-direction">${direction.toUpperCase()}</span>`;
-        html += `<span class="log-type">[${type}]</span>`;
-        html += `<span class="log-message">${message}</span>`;
-
-        logEntry.innerHTML = html;
-        logElement.appendChild(logEntry);
-
-        // Auto-scroll to bottom
-        logElement.scrollTop = logElement.scrollHeight;
       }
     </script>
   </body>

@@ -2,7 +2,7 @@ import type { EncodedBlock } from 'luby-transform';
 import { binaryToBlock, blockToBinary, createDecoder, createEncoder } from 'luby-transform';
 
 // Default configuration
-const DEFAULT_BLOCK_SIZE = 500; // bits -> bytes (500/8 = 62.5, so ~63 bytes)
+const DEFAULT_BLOCK_SIZE = 1000; // bits -> bytes (1000/8 = 125 bytes)
 const DEFAULT_FRAME_RATE = 20; // fps
 
 export interface QRTPVSenderOptions {
@@ -115,7 +115,7 @@ export class QRTPVReceiver {
 
       // If already completed this message, return current state
       if (this.#isCompleted && this.#currentMessageChecksum === block.checksum) {
-        return this.#getProgress();
+        return this.getProgress();
       }
 
       // Update state
@@ -143,7 +143,7 @@ export class QRTPVReceiver {
         }
       }
 
-      return this.#getProgress();
+      return this.getProgress();
     } catch (error) {
       throw new Error(`Failed to parse QR code: ${error}`);
     }
@@ -166,10 +166,6 @@ export class QRTPVReceiver {
    * Get current progress state
    */
   getProgress(): QRTPVReceiverProgress {
-    return this.#getProgress();
-  }
-
-  #getProgress(): QRTPVReceiverProgress {
     const progress = this.#totalBlocks > 0 ? this.#receivedIndices.size / this.#totalBlocks : 0;
 
     return {
@@ -190,22 +186,4 @@ export class QRTPVReceiver {
     }
     return uint8Array;
   }
-}
-
-/**
- * Legacy QRTPV class for backward compatibility (deprecated)
- */
-export class QRTPV {
-  constructor(blockSize: number = DEFAULT_BLOCK_SIZE, frameRate: number = DEFAULT_FRAME_RATE) {
-    console.warn('QRTPV class is deprecated. Use QRTPVSender and QRTPVReceiver instead.');
-  }
-}
-
-// Convenience functions
-export function createSender(data: string, options?: QRTPVSenderOptions): QRTPVSender {
-  return new QRTPVSender(data, options);
-}
-
-export function createReceiver(): QRTPVReceiver {
-  return new QRTPVReceiver();
 }
