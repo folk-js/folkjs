@@ -1,7 +1,7 @@
 import type { EncodedBlock, LtDecoder } from 'luby-transform';
 import { binaryToBlock, blockToBinary, createDecoder, createEncoder } from 'luby-transform';
 
-export interface QRTPVSenderOptions {
+export interface QRTPVOptions {
   blockSize?: number; // in bytes
   frameRate?: number; // fps
 }
@@ -14,47 +14,40 @@ export interface QRTPVProgress {
 }
 
 /**
- * QRTPV Sender - Creates an async iterable stream of QR code data
+ * QRTPV - Unified class for sending and receiving data over QR codes using Luby Transform
  */
-export class QRTPVSender {
-  #fountain: Generator<EncodedBlock, void, unknown>;
-  #frameRate: number;
+export class QRTPV {
+  // Receiver state
+  #decoder: LtDecoder = createDecoder();
+  #receivedIndices: Set<number> = new Set();
+  #checksum: number | null = null;
 
-  constructor(data: string, options: QRTPVSenderOptions = {}) {
+  /**
+   * Send data as an async iterable stream of QR code strings
+   */
+  async *send(data: string, options: QRTPVOptions = {}): AsyncIterableIterator<string> {
     const blockSize = options.blockSize || 500;
-    this.#frameRate = options.frameRate || 20;
+    const frameRate = options.frameRate || 20;
 
     const dataBytes = new TextEncoder().encode(data);
     const encoder = createEncoder(dataBytes, blockSize);
-    this.#fountain = encoder.fountain();
-  }
+    const fountain = encoder.fountain();
 
-  async *[Symbol.asyncIterator](): AsyncIterableIterator<string> {
     while (true) {
-      const { value: block } = this.#fountain.next();
+      const { value: block } = fountain.next();
       if (!block) break;
 
       const binaryData = blockToBinary(block);
       yield btoa(String.fromCharCode(...binaryData));
 
-      await new Promise((resolve) => setTimeout(resolve, 1000 / this.#frameRate));
+      await new Promise((resolve) => setTimeout(resolve, 1000 / frameRate));
     }
   }
-}
 
-/**
- * QRTPV Receiver - Accumulates blocks and tracks progress
- */
-export class QRTPVReceiver {
-  #decoder: LtDecoder;
-  #receivedIndices: Set<number> = new Set();
-  #checksum: number | null = null;
-
-  constructor() {
-    this.#decoder = createDecoder();
-  }
-
-  addBlock(qrData: string): QRTPVProgress {
+  /**
+   * Receive QR code data and return progress
+   */
+  receive(qrData: string): QRTPVProgress {
     const binary = atob(qrData);
     const data = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
@@ -85,6 +78,9 @@ export class QRTPVReceiver {
     };
   }
 
+  /**
+   * Reset receiver state for new message
+   */
   reset(): void {
     this.#decoder = createDecoder();
     this.#receivedIndices.clear();

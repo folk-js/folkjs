@@ -330,19 +330,17 @@
     <!-- Import QR Scanner and QRTPV module -->
     <script type="module">
       import QrScanner from 'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js';
-      import { QRTPVSender, QRTPVReceiver } from '@folkjs/labs/QRTP-V';
+      import { QRTPV } from '@folkjs/labs/QRTP-V';
 
       // Make modules available globally for debugging
-      window.QRTPVSender = QRTPVSender;
-      window.QRTPVReceiver = QRTPVReceiver;
+      window.QRTPV = QRTPV;
       window.QrScanner = QrScanner;
 
       // Core state
       let qrScanner = null;
       let cameraActive = false;
-      let currentSender = null;
       let senderIterator = null;
-      let receiver = new QRTPVReceiver();
+      let qrtpv = new QRTPV();
 
       // Bitrate tracking
       let receptionStartTime = null;
@@ -409,7 +407,7 @@
           elements.receivedTextDisplay.textContent = '';
 
           // Reset receiver state
-          receiver.reset();
+          qrtpv.reset();
           resetReceivingUI(elements);
 
           if (text) {
@@ -452,8 +450,7 @@
         const frameRate = parseInt(elements.frameRate.value);
 
         try {
-          currentSender = new QRTPVSender(data, { blockSize, frameRate });
-          senderIterator = currentSender[Symbol.asyncIterator]();
+          senderIterator = qrtpv.send(data, { blockSize, frameRate });
 
           // Calculate checksum for sender
           senderChecksum = await calculateChecksum(data);
@@ -485,7 +482,6 @@
       }
 
       function stopSending(elements) {
-        currentSender = null;
         senderIterator = null;
         senderChecksum = '';
 
@@ -497,7 +493,7 @@
       // Receiving functions
       async function processQRCode(qrData, elements) {
         try {
-          const progress = receiver.addBlock(qrData);
+          const progress = qrtpv.receive(qrData);
           const progressPercent = Math.round((progress.received / progress.needed) * 100);
 
           // Track reception bitrate
