@@ -1,4 +1,4 @@
-import type { ImmutableString } from '@automerge/automerge-repo';
+import type { ImmutableString } from '@automerge/vanillajs';
 
 // TODO: make this 1:1 correspondence with DOM node types
 // TODO: don't couple to Automerge types

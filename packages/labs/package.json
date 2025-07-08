@@ -58,8 +58,7 @@
     }
   },
   "dependencies": {
-    "@automerge/automerge": "^2.2.9",
-    "@automerge/vanillajs": "^2.0.7",
+    "@automerge/vanillajs": "^2.0.8",
     "@codemirror/lang-javascript": "^6.2.3",
     "@codemirror/view": "^6.36.5",
     "@dimforge/rapier2d": "^0.15.0",
