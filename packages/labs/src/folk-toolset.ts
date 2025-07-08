@@ -1,4 +1,4 @@
-import { Vector } from '@folkjs/canvas';
+import * as V from '@folkjs/geometry/Vector2';
 import { FolkEventPropagator } from './folk-event-propagator';
 import { FolkShape } from './folk-shape';
 
@@ -98,7 +98,7 @@ export class FolkPropagatorTool extends FolkInteractionHandler {
 
         const finalTarget = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement;
 
-        const distance = Vector.distance(this.#startPoint || { x: 0, y: 0 }, { x: event.clientX, y: event.clientY });
+        const distance = V.distance(this.#startPoint || { x: 0, y: 0 }, { x: event.clientX, y: event.clientY });
 
         if (
           !finalTarget ||

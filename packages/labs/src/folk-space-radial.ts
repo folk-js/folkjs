@@ -1,6 +1,7 @@
-import { TransformEvent, Vector } from '@folkjs/canvas';
+import { TransformEvent } from '@folkjs/canvas';
 import { canIUseMoveBefore } from '@folkjs/dom/CanIUse';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 
@@ -78,7 +79,7 @@ export class FolkSpaceRadial extends FolkBaseSet {
     const spaceCenter = { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
 
     // Calculate distance from shape center to circle center
-    const distance = Vector.distance(shapeCenter, spaceCenter);
+    const distance = V.distance(shapeCenter, spaceCenter);
 
     const circleRadius = bounds.width / 2;
     const isInsideCircle = distance <= circleRadius;
@@ -112,7 +113,7 @@ export class FolkSpaceRadial extends FolkBaseSet {
     // Convert the local rotateOrigin to parent space
     const rotateOriginParent = transform.toParentSpace(rotateOriginLocal);
 
-    const distance = Vector.distance(rotateOriginParent, spaceCenter);
+    const distance = V.distance(rotateOriginParent, spaceCenter);
 
     // if the shape is outside the circle, don't move it
     // tried using moveBefore, but will leave this here for now

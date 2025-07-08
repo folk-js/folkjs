@@ -1,7 +1,8 @@
 import type { Point } from '@folkjs/canvas';
-import { Gizmos, Vector } from '@folkjs/canvas';
+import { Gizmos } from '@folkjs/canvas';
 import { verticesToPolygon } from '@folkjs/canvas/utils';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseHyperedge } from './folk-base-hyperedge';
 
 declare global {
@@ -98,13 +99,13 @@ export class FolkHyperedge extends FolkBaseHyperedge {
       return;
     }
 
-    const midpoint = Vector.center([intersectionA, intersectionB]);
+    const midpoint = V.center(intersectionA, intersectionB);
 
     // Calculate centers and midpoint
     const centerA = calculateCentroid(this.#hullA);
     const centerB = calculateCentroid(this.#hullB);
-    const connectionVector = Vector.sub(centerB, centerA);
-    const midpointOfCentroids = Vector.center([centerA, centerB]);
+    const connectionVector = V.subtract(centerB, centerA);
+    const midpointOfCentroids = V.center(centerA, centerB);
 
     // Find and draw furthest visible points
     let [pointA1, pointA2] = findFurthestVisiblePoints(this.#hullA, midpoint, connectionVector);
@@ -116,9 +117,9 @@ export class FolkHyperedge extends FolkBaseHyperedge {
     }
 
     // Determine correct ordering for hull A
-    const toA1 = Vector.sub(pointA1, midpointOfCentroids);
-    const toA2 = Vector.sub(pointA2, midpointOfCentroids);
-    const toCenterA = Vector.sub(centerA, midpointOfCentroids);
+    const toA1 = V.subtract(pointA1, midpointOfCentroids);
+    const toA2 = V.subtract(pointA2, midpointOfCentroids);
+    const toCenterA = V.subtract(centerA, midpointOfCentroids);
     const angleA1 = Math.atan2(toA1.y, toA1.x);
     const angleA2 = Math.atan2(toA2.y, toA2.x);
     const zeroAngleA = Math.atan2(toCenterA.y, toCenterA.x);
@@ -127,9 +128,9 @@ export class FolkHyperedge extends FolkBaseHyperedge {
     const [leftA, rightA] = relativeA1 > 0 ? [pointA1, pointA2] : [pointA2, pointA1];
 
     // Determine correct ordering for hull B
-    const toB1 = Vector.sub(pointB1, midpointOfCentroids);
-    const toB2 = Vector.sub(pointB2, midpointOfCentroids);
-    const toCenterB = Vector.sub(centerB, midpointOfCentroids);
+    const toB1 = V.subtract(pointB1, midpointOfCentroids);
+    const toB2 = V.subtract(pointB2, midpointOfCentroids);
+    const toCenterB = V.subtract(centerB, midpointOfCentroids);
     const angleB1 = Math.atan2(toB1.y, toB1.x);
     const angleB2 = Math.atan2(toB2.y, toB2.x);
     const zeroAngleB = Math.atan2(toCenterB.y, toCenterB.x);
@@ -350,8 +351,8 @@ function findFurthestVisiblePoints(hull: Point[], from: Point, connectionVector:
   const rightPoints: Point[] = [];
 
   visiblePoints.forEach((point) => {
-    const toPoint = Vector.sub(point, from);
-    const dot = Vector.dot(toPoint, normal);
+    const toPoint = V.subtract(point, from);
+    const dot = V.dotProduct(toPoint, normal);
     if (dot > 0) {
       leftPoints.push(point);
     } else {
@@ -362,7 +363,7 @@ function findFurthestVisiblePoints(hull: Point[], from: Point, connectionVector:
   // Find the furthest point on each side
   const getMaxPoint = (points: Point[]) => {
     if (points.length === 0) return null;
-    return points.reduce((max, point) => (Vector.distance(point, from) > Vector.distance(max, from) ? point : max));
+    return points.reduce((max, point) => (V.distance(point, from) > V.distance(max, from) ? point : max));
   };
 
   return [getMaxPoint(leftPoints), getMaxPoint(rightPoints)];
@@ -400,23 +401,23 @@ function getHullPointsBetween(hull: Point[], start: Point, end: Point, otherHull
   }
 
   // Calculate which path is on the same side as the other hull's center
-  const connectionVector = Vector.sub(end, start);
-  const normal = Vector.normal(connectionVector);
+  const connectionVector = V.subtract(end, start);
+  const normal = V.normal(connectionVector);
 
   // Use the first point of each path to determine which side it's on
   const clockwisePoint = clockwise[0] || start;
   const targetPoint = otherHullCenter;
 
   // Project points onto the normal to determine which side they're on
-  const clockwiseSide = Vector.dot(Vector.sub(clockwisePoint, start), normal);
-  const targetSide = Vector.dot(Vector.sub(targetPoint, start), normal);
+  const clockwiseSide = V.dotProduct(V.subtract(clockwisePoint, start), normal);
+  const targetSide = V.dotProduct(V.subtract(targetPoint, start), normal);
 
   // Get the points on the correct side and sort them by projection onto the line between far points
   const points = Math.sign(clockwiseSide) === Math.sign(targetSide) ? clockwise : counterclockwise;
-  const farPointVector = Vector.sub(end, start);
+  const farPointVector = V.subtract(end, start);
   return points.sort((a, b) => {
-    const projA = Vector.dot(Vector.sub(a, start), farPointVector);
-    const projB = Vector.dot(Vector.sub(b, start), farPointVector);
+    const projA = V.dotProduct(V.subtract(a, start), farPointVector);
+    const projB = V.dotProduct(V.subtract(b, start), farPointVector);
     return projB - projA;
   });
 }

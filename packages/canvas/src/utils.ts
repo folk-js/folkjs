@@ -1,19 +1,19 @@
 // Adopted from: https://github.com/pshihn/bezier-points/blob/master/lib/index.ts
 
+import * as V from '@folkjs/geometry/Vector2';
 import type { Point } from './types.ts';
-import { Vector } from './Vector.ts';
 
 export const MAX_Z_INDEX = 2147483647;
 
 // Distance squared from a point p to the line segment vw
 function distanceToSegmentSq(p: Point, v: Point, w: Point): number {
-  const l2 = Vector.distanceSquared(v, w);
+  const l2 = V.distanceSquared(v, w);
   if (l2 === 0) {
-    return Vector.distanceSquared(p, v);
+    return V.distanceSquared(p, v);
   }
   let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
   t = Math.max(0, Math.min(1, t));
-  return Vector.distanceSquared(p, Vector.lerp(v, w, t));
+  return V.distanceSquared(p, V.lerp(v, w, t));
 }
 
 export function lerp(a: number, b: number, alpha: number): number {
@@ -57,7 +57,7 @@ function getPointsOnBezierCurveWithSplitting(
   if (flatness(points, offset) < tolerance) {
     const p0 = points[offset + 0]!;
     if (outPoints.length) {
-      const d = Vector.distance(outPoints[outPoints.length - 1]!, p0);
+      const d = V.distance(outPoints[outPoints.length - 1]!, p0);
       if (d > 1) {
         outPoints.push(p0);
       }
@@ -73,12 +73,12 @@ function getPointsOnBezierCurveWithSplitting(
     const p3 = points[offset + 2]!;
     const p4 = points[offset + 3]!;
 
-    const q1 = Vector.lerp(p1, p2, t);
-    const q2 = Vector.lerp(p2, p3, t);
-    const q3 = Vector.lerp(p3, p4, t);
-    const r1 = Vector.lerp(q1, q2, t);
-    const r2 = Vector.lerp(q2, q3, t);
-    const red = Vector.lerp(r1, r2, t);
+    const q1 = V.lerp(p1, p2, t);
+    const q2 = V.lerp(p2, p3, t);
+    const q3 = V.lerp(p3, p4, t);
+    const r1 = V.lerp(q1, q2, t);
+    const r2 = V.lerp(q2, q3, t);
+    const red = V.lerp(r1, r2, t);
 
     getPointsOnBezierCurveWithSplitting([p1, q1, r1, red], 0, tolerance, outPoints);
     getPointsOnBezierCurveWithSplitting([red, r2, q3, p4], 0, tolerance, outPoints);

@@ -57,7 +57,7 @@
     <folk-gizmos></folk-gizmos>
 
     <script type="module">
-      import { Vector } from '@folkjs/canvas/Vector';
+      import * as V from '@folkjs/geometry/Vector2';
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-physics';
       import '@folkjs/labs/standalone/folk-rope';
@@ -77,9 +77,9 @@
         const gamma = orientationEvent.gamma * (Math.PI / 180);
 
         const downwardVector = { x: Math.sin(gamma), y: Math.sin(beta) };
-        const magnitude = Vector.mag(downwardVector);
-        const direction = Vector.normalized(downwardVector);
-        const gravity = Vector.scale(direction, magnitude * GRAVITY_SCALE);
+        const magnitude = V.magnitude(downwardVector);
+        const direction = V.normalized(downwardVector);
+        const gravity = V.scale(direction, magnitude * GRAVITY_SCALE);
 
         physics.world.gravity = {
           x: gravity.x * 0.1,
@@ -87,7 +87,7 @@
         };
 
         ropes.forEach((rope) => {
-          rope.gravity = Vector.scale(gravity, 6);
+          rope.gravity = V.scale(gravity, 6);
         });
 
         const center = {

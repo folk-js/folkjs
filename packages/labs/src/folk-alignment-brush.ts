@@ -1,4 +1,5 @@
-import { Gizmos, type Point, Vector } from '@folkjs/canvas';
+import { Gizmos, type Point } from '@folkjs/canvas';
+import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 
@@ -200,9 +201,9 @@ export class FolkAlignmentBrush extends FolkBaseSet {
 
     // Calculate axis based on shape distribution
     const centers = Array.from(shapes).map((shape) => shape.getTransformDOMRect().center);
-    const bounds = Vector.bounds(centers);
+    const bounds = V.bounds(...centers);
     const isHorizontal = bounds.max.x - bounds.min.x > bounds.max.y - bounds.min.y;
-    const center = Vector.center(centers);
+    const center = V.center(...centers);
 
     const positions = this.#calculateLinePoints(shapes, isHorizontal, center);
     const alignment: AlignmentLine = {
@@ -432,9 +433,9 @@ export class FolkAlignmentBrush extends FolkBaseSet {
     // Show potential alignment
     if (this.#isPointerDown && this.#selectedShapes.size >= 2) {
       const centers = Array.from(this.#selectedShapes).map((shape) => shape.getTransformDOMRect().center);
-      const bounds = Vector.bounds(centers);
+      const bounds = V.bounds(...centers);
       const isHorizontal = bounds.max.x - bounds.min.x > bounds.max.y - bounds.min.y;
-      const center = Vector.center(centers);
+      const center = V.center(...centers);
 
       const positions = this.#calculateLinePoints(this.#selectedShapes, isHorizontal, center);
       const potential = {
@@ -470,7 +471,7 @@ export class FolkAlignmentBrush extends FolkBaseSet {
   // Helper methods to support the new functionality
   #determineAlignment(shapes: Set<FolkShape>): boolean {
     const centers = Array.from(shapes).map((shape) => shape.getTransformDOMRect().center);
-    const bounds = Vector.bounds(centers);
+    const bounds = V.bounds(...centers);
     return bounds.max.x - bounds.min.x > bounds.max.y - bounds.min.y;
   }
 

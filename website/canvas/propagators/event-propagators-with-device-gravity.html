@@ -67,8 +67,7 @@ rotation: from.x"
 
     <script type="module">
       import { requestAnimationFrame } from '@folkjs/dom/rAF';
-      import { Vector } from '@folkjs/canvas/Vector';
-
+      import * as V from '@folkjs/geometry/Vector2';
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-event-propagator';
       import { Gizmos } from '@folkjs/canvas/folk-gizmos';
@@ -104,11 +103,11 @@ rotation: from.x"
         const downwardVector = { x: Math.sin(gamma), y: Math.sin(beta) };
 
         // Compute magnitude and normalized direction
-        const magnitude = Vector.mag(downwardVector);
-        const direction = Vector.normalized(downwardVector);
+        const magnitude = V.magnitude(downwardVector);
+        const direction = V.normalized(downwardVector);
 
         // Scale the vector by gravity constant
-        const gravity = Vector.scale(direction, magnitude * gravitySlider.valueAsNumber);
+        const gravity = V.scale(direction, magnitude * gravitySlider.valueAsNumber);
 
         window.gravity.textContent = `${Math.round(gravity.x)}, ${Math.round(gravity.y)}`;
 

@@ -8,9 +8,10 @@ import {
   toDOMPrecision,
   TransformEvent,
   TransformStack,
-  Vector,
   type Point,
 } from '@folkjs/canvas';
+import * as V from '@folkjs/geometry/Vector2';
+
 import { ResizeManager } from '@folkjs/dom/ResizeManger';
 
 import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
@@ -420,7 +421,7 @@ export class FolkShape extends ReactiveElement {
           // Transform the mouse position through any folk-space ancestors
           const pageMousePos = { x: event.pageX, y: event.pageY };
           const transformedMousePos = this.#transformStack.mapPointToLocal(pageMousePos);
-          this.#startAngle = Vector.angleFromOrigin(transformedMousePos, parentRotateOrigin) - this.#rect.rotation;
+          this.#startAngle = V.angleFromOrigin(transformedMousePos, parentRotateOrigin) - this.#rect.rotation;
         }
 
         // If we're resizing and
@@ -524,7 +525,7 @@ export class FolkShape extends ReactiveElement {
       const pageMousePos = { x: event.pageX, y: event.pageY };
       const transformedMousePos = this.#transformStack.mapPointToLocal(pageMousePos);
 
-      const currentAngle = Vector.angleFromOrigin(transformedMousePos, parentRotateOrigin);
+      const currentAngle = V.angleFromOrigin(transformedMousePos, parentRotateOrigin);
 
       // Apply rotation relative to start angle
       // If the spaces had rotation, the angle would already be transformed correctly

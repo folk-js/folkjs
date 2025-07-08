@@ -1,6 +1,6 @@
+import * as V from '@folkjs/geometry/Vector2';
 import { DOMRectTransform } from './DOMRectTransform';
 import type { Point } from './types';
-import { Vector } from './Vector';
 
 class Rect {
   static center(rect: DOMRectReadOnly): Point {
@@ -59,15 +59,15 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
         if (overlap.width > 0 && overlap.height > 0) {
           const expandedOverlap = Rect.expand(overlap, 10);
 
-          const accumulated = forces.get(r1) || Vector.zero();
+          const accumulated = forces.get(r1) || V.zero();
 
           // Small random perturbation to handle blocks that perfectly overlap
-          const permutedCenter = Vector.add(r1.center, { x: Math.random(), y: Math.random() });
-          const direction = Vector.normalized(Vector.sub(permutedCenter, Rect.center(expandedOverlap)));
+          const permutedCenter = V.add(r1.center, { x: Math.random(), y: Math.random() });
+          const direction = V.normalized(V.subtract(permutedCenter, Rect.center(expandedOverlap)));
 
           // Divide by area so "heavier" blocks move less
-          const force = Vector.scale(direction, (Rect.area(expandedOverlap) / Rect.area(r1)) * 50.0);
-          forces.set(r1, Vector.add(accumulated, force));
+          const force = V.scale(direction, (Rect.area(expandedOverlap) / Rect.area(r1)) * 50.0);
+          forces.set(r1, V.add(accumulated, force));
         }
       }
     }
@@ -79,7 +79,7 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
   }
 
   // Find the average center
-  const center = Vector.center(rects.map((r) => r.center));
+  const center = V.center(...rects.map((r) => r.center));
 
   // Find block closest to center and keep it fixed
   const centerBlock = minBy(center, rects);
@@ -91,8 +91,8 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
     for (const r1 of rects) {
       if (r1 === centerBlock) continue;
 
-      const toCenter = Vector.sub(centerPosition, r1.center);
-      const step = Vector.scale(Vector.normalized(toCenter), Math.min(r1.width, r1.height, Vector.mag(toCenter)) * 0.1);
+      const toCenter = V.subtract(centerPosition, r1.center);
+      const step = V.scale(V.normalized(toCenter), Math.min(r1.width, r1.height, V.magnitude(toCenter)) * 0.1);
       Rect.translate(r1, step);
 
       // Solve collisions
@@ -122,10 +122,10 @@ export function arrange(rects: DOMRectTransform[], repulsionSteps: number, compa
 }
 
 function minBy(center: Point, [closest, ...rects]: DOMRectTransform[]): DOMRectTransform {
-  let distance = Vector.distanceSquared(center, closest.center);
+  let distance = V.distanceSquared(center, closest.center);
 
   for (const rect of rects) {
-    const d = Vector.distanceSquared(center, rect.center);
+    const d = V.distanceSquared(center, rect.center);
     if (d < distance) {
       distance = d;
       closest = rect;

@@ -1,7 +1,7 @@
 import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
+import * as V from '@folkjs/geometry/Vector2';
 import { DOMRectTransform } from './DOMRectTransform';
 import type { Point } from './types';
-import { Vector } from './Vector';
 
 interface GizmoOptions {
   color?: string;
@@ -187,14 +187,14 @@ export class Gizmos extends ReactiveElement {
     if (!ctx) return;
 
     // Convert local endpoint to global coordinates
-    const globalEndpoint = Vector.add(origin, localEndpoint);
+    const globalEndpoint = V.add(origin, localEndpoint);
 
     // Calculate angle and normalized direction
-    const angle = Vector.angle(localEndpoint);
-    const length = Vector.mag(localEndpoint);
+    const angle = V.angle(localEndpoint);
+    const length = V.magnitude(localEndpoint);
 
     // Calculate where the line should end (where arrow head begins)
-    const lineEnd = Vector.add(origin, Vector.scale(Vector.normalized(localEndpoint), length - size));
+    const lineEnd = V.add(origin, V.scale(V.normalized(localEndpoint), length - size));
 
     // Draw the main line
     ctx.beginPath();
@@ -206,8 +206,8 @@ export class Gizmos extends ReactiveElement {
 
     // Draw arrow head as a connected triangle
     const arrowAngle = Math.PI / 6; // 30 degrees
-    const leftPoint = Vector.add(globalEndpoint, Vector.rotate({ x: -size, y: 0 }, angle - arrowAngle));
-    const rightPoint = Vector.add(globalEndpoint, Vector.rotate({ x: -size, y: 0 }, angle + arrowAngle));
+    const leftPoint = V.add(globalEndpoint, V.rotate({ x: -size, y: 0 }, angle - arrowAngle));
+    const rightPoint = V.add(globalEndpoint, V.rotate({ x: -size, y: 0 }, angle + arrowAngle));
 
     ctx.beginPath();
     ctx.moveTo(globalEndpoint.x, globalEndpoint.y);

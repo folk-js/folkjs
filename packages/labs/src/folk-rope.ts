@@ -3,11 +3,11 @@
 import {
   AnimationFrameController,
   DOMRectTransform,
-  Vector,
   type AnimationFrameControllerHost,
   type Point,
 } from '@folkjs/canvas';
 import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseConnection } from './folk-base-connection';
 
 // Each rope part is one of these uses a high precision variant of Störmer–Verlet integration to keep the simulation consistent otherwise it would "explode"!
@@ -144,7 +144,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
     if (this.sourceRect === null || this.targetRect === null || this.#points.length < 2) return;
 
     // Calculate desired length based on source and target positions
-    const distance = Vector.distance(this.sourceRect, this.targetRect);
+    const distance = V.distance(this.sourceRect, this.targetRect);
     // Apply a nonlinear scaling to gradually increase point spacing with distance
     const scaleFactor = Math.log10(distance + 10) / 2; // adjust the '+10' and '/2' to tune the curve
     const effectiveResolution = FolkRope.#resolution * scaleFactor;
@@ -159,7 +159,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
         distanceToNextPoint: FolkRope.#resolution,
         mass: 1,
         damping: 0.99,
-        velocity: Vector.zero(),
+        velocity: V.zero(),
         isFixed: true,
         prev: lastPoint,
         next: null,
@@ -205,14 +205,14 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
   }
 
   #generatePoints(start: Point, end: Point) {
-    const delta = Vector.sub(end, start);
-    const len = Vector.mag(delta);
+    const delta = V.subtract(end, start);
+    const len = V.magnitude(delta);
     const points: RopePoint[] = [];
     const pointsLen = Math.floor(len / FolkRope.#resolution);
 
     for (let i = 0; i < pointsLen; i++) {
       const percentage = i / (pointsLen - 1);
-      const pos = Vector.lerp(start, end, percentage);
+      const pos = V.lerp(start, end, percentage);
 
       points.push({
         pos,
@@ -220,7 +220,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
         distanceToNextPoint: FolkRope.#resolution,
         mass: 1,
         damping: 0.99,
-        velocity: Vector.zero(),
+        velocity: V.zero(),
         isFixed: i === 0 || i === pointsLen - 1,
         prev: null,
         next: null,
@@ -242,16 +242,16 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
 
   #integratePoint(point: RopePoint, gravity: Point) {
     if (!point.isFixed) {
-      point.velocity = Vector.sub(point.pos, point.oldPos);
+      point.velocity = V.subtract(point.pos, point.oldPos);
       point.oldPos = { ...point.pos };
 
-      const accel = Vector.add(gravity, { x: 0, y: point.mass });
+      const accel = V.add(gravity, { x: 0, y: point.mass });
       const tsSq = this.#rAF.fixedTimestep ** 2;
 
       point.pos.x += point.velocity.x * point.damping + accel.x * tsSq;
       point.pos.y += point.velocity.y * point.damping + accel.y * tsSq;
     } else {
-      point.velocity = Vector.zero();
+      point.velocity = V.zero();
       point.oldPos = { ...point.pos };
     }
   }
@@ -304,9 +304,7 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
       if (nextPoint === null) return null;
 
       if (
-        Vector.distance(point.pos, hitPoint) +
-          Vector.distance(hitPoint, nextPoint.pos) -
-          Vector.distance(point.pos, nextPoint.pos) <
+        V.distance(point.pos, hitPoint) + V.distance(hitPoint, nextPoint.pos) - V.distance(point.pos, nextPoint.pos) <
         1
       ) {
         return i / this.#points.length;
@@ -317,20 +315,20 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
 }
 
 function applyConstraint(p1: RopePoint, p2: RopePoint) {
-  const delta = Vector.sub(p2.pos, p1.pos);
-  const len = Vector.mag(delta);
+  const delta = V.subtract(p2.pos, p1.pos);
+  const len = V.magnitude(delta);
 
   // Prevent division by zero
   if (len < 0.0001) return;
 
   const diff = len - p1.distanceToNextPoint;
-  const normal = Vector.normalized(delta);
-  const adjustment = Vector.scale(normal, diff * 0.75);
+  const normal = V.normalized(delta);
+  const adjustment = V.scale(normal, diff * 0.75);
 
   if (!p1.isFixed) {
-    p1.pos = Vector.add(p1.pos, adjustment);
+    p1.pos = V.add(p1.pos, adjustment);
   }
   if (!p2.isFixed) {
-    p2.pos = Vector.sub(p2.pos, adjustment);
+    p2.pos = V.subtract(p2.pos, adjustment);
   }
 }

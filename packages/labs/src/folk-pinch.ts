@@ -1,6 +1,7 @@
-import { Matrix, Vector } from '@folkjs/canvas';
+import { Matrix } from '@folkjs/canvas';
 import PointerTracker, { Pointer } from '@folkjs/dom/PointerTracker';
 import { ReactiveElement, css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import * as V from '@folkjs/geometry/Vector2';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -167,16 +168,16 @@ export class FolkPinch extends ReactiveElement {
     const currentPoints = currentPointers.slice(0, 2).map((pointer) => ({ x: pointer.clientX, y: pointer.clientY }));
 
     // For calculating panning movement
-    const prevMidpoint = Vector.center(previousPoints);
-    const newMidpoint = Vector.center(currentPoints);
+    const prevMidpoint = V.center(...previousPoints);
+    const newMidpoint = V.center(...currentPoints);
 
     // Midpoint within the element
     const originX = prevMidpoint.x - currentRect.left;
     const originY = prevMidpoint.y - currentRect.top;
 
     // Calculate the desired change in scale
-    const prevDistance = previousPoints.length === 1 ? 0 : Vector.distance(previousPoints[0], previousPoints[1]);
-    const newDistance = currentPoints.length === 1 ? 0 : Vector.distance(currentPoints[0], currentPoints[1]);
+    const prevDistance = previousPoints.length === 1 ? 0 : V.distance(previousPoints[0], previousPoints[1]);
+    const newDistance = currentPoints.length === 1 ? 0 : V.distance(currentPoints[0], currentPoints[1]);
     const scaleDiff = prevDistance ? newDistance / prevDistance : 1;
 
     this.#applyChange(newMidpoint.x - prevMidpoint.x, newMidpoint.y - prevMidpoint.y, scaleDiff, originX, originY);

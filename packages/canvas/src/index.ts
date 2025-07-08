@@ -3,7 +3,6 @@ export * from './folk-gizmos';
 export * from './Matrix';
 export * from './types';
 export * from './utils';
-export * from './Vector';
 
 // DOM and transformation
 export * from './DOMRectTransform';
