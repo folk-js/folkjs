@@ -1,13 +1,13 @@
-import type { EncodedBlock, LtEncoder } from 'luby-transform';
+import type { EncodedBlock, LtDecoder, LtEncoder } from 'luby-transform';
 import { binaryToBlock, blockToBinary, createDecoder, createEncoder } from 'luby-transform';
 
 // Default configuration
-const DEFAULT_BLOCK_SIZE = 1000; // bits -> bytes (1000/8 = 125 bytes)
+const DEFAULT_BLOCK_SIZE = 500; // bytes
 const DEFAULT_FRAME_RATE = 20; // fps
 
 export interface QRTPVSenderOptions {
-  blockSize?: number;
-  frameRate?: number;
+  blockSize?: number; // in bytes
+  frameRate?: number; // fps
 }
 
 export interface QRTPVReceiverProgress {
@@ -27,7 +27,7 @@ export class QRTPVSender {
   #frameRate: number;
 
   constructor(data: string, options: QRTPVSenderOptions = {}) {
-    const blockSize = Math.floor((options.blockSize || DEFAULT_BLOCK_SIZE) / 8); // Convert bits to bytes
+    const blockSize = options.blockSize || DEFAULT_BLOCK_SIZE;
     this.#frameRate = options.frameRate || DEFAULT_FRAME_RATE;
 
     const dataBytes = new TextEncoder().encode(data);
@@ -67,13 +67,11 @@ export class QRTPVSender {
  * QRTPV Receiver - Accumulates blocks and tracks progress
  */
 export class QRTPVReceiver {
-  #decoder: any;
+  #decoder: LtDecoder;
   #receivedIndices: Set<number> = new Set();
-  #totalBlocks: number = 0;
-  #originalBytes: number = 0;
-  #isCompleted: boolean = false;
   #currentMessageChecksum: number | null = null;
-  #decodedData: string | null = null;
+  #lastBlock: any = null;
+  #isComplete: boolean = false;
 
   constructor() {
     this.#decoder = createDecoder();
@@ -82,7 +80,7 @@ export class QRTPVReceiver {
   /**
    * Add a QR code block and return current progress
    */
-  async addBlock(qrData: string): Promise<QRTPVReceiverProgress> {
+  addBlock(qrData: string): QRTPVReceiverProgress {
     try {
       const binaryData = this.#base64ToUint8Array(qrData);
       const block = binaryToBlock(binaryData);
@@ -92,37 +90,27 @@ export class QRTPVReceiver {
         this.reset();
       }
 
-      // If already completed this message, return current state
-      if (this.#isCompleted && this.#currentMessageChecksum === block.checksum) {
-        return this.getProgress();
-      }
-
-      // Update state
       this.#currentMessageChecksum = block.checksum;
-      this.#totalBlocks = block.k;
-      this.#originalBytes = block.bytes;
+      this.#lastBlock = block;
 
-      // Track which indices we've received for progress display
-      const newIndices: number[] = [];
+      // Track unique indices for progress display
       for (const index of block.indices) {
-        if (!this.#receivedIndices.has(index)) {
-          this.#receivedIndices.add(index);
-          newIndices.push(index);
-        }
+        this.#receivedIndices.add(index);
       }
 
-      // Always try to decode (let the Luby decoder handle duplicates internally)
-      if (!this.#isCompleted) {
-        const isComplete = this.#decoder.addBlock(block);
+      // Try to decode
+      this.#isComplete = this.#decoder.addBlock(block);
 
-        if (isComplete) {
-          this.#isCompleted = true;
-          const decodedData = this.#decoder.getDecoded();
-          this.#decodedData = new TextDecoder().decode(decodedData);
-        }
-      }
+      const progress = this.#receivedIndices.size / block.k;
 
-      return this.getProgress();
+      return {
+        totalIndicesReceived: this.#receivedIndices.size,
+        totalIndicesNeeded: block.k,
+        originalBytes: block.bytes,
+        progress,
+        complete: this.#isComplete,
+        data: this.#isComplete ? new TextDecoder().decode(this.#decoder.getDecoded()) : undefined,
+      };
     } catch (error) {
       throw new Error(`Failed to parse QR code: ${error}`);
     }
@@ -134,26 +122,34 @@ export class QRTPVReceiver {
   reset(): void {
     this.#decoder = createDecoder();
     this.#receivedIndices.clear();
-    this.#totalBlocks = 0;
-    this.#originalBytes = 0;
-    this.#isCompleted = false;
     this.#currentMessageChecksum = null;
-    this.#decodedData = null;
+    this.#lastBlock = null;
+    this.#isComplete = false;
   }
 
   /**
    * Get current progress state
    */
   getProgress(): QRTPVReceiverProgress {
-    const progress = this.#totalBlocks > 0 ? this.#receivedIndices.size / this.#totalBlocks : 0;
+    if (!this.#lastBlock) {
+      return {
+        totalIndicesReceived: 0,
+        totalIndicesNeeded: 0,
+        originalBytes: 0,
+        progress: 0,
+        complete: false,
+      };
+    }
+
+    const progress = this.#receivedIndices.size / this.#lastBlock.k;
 
     return {
       totalIndicesReceived: this.#receivedIndices.size,
-      totalIndicesNeeded: this.#totalBlocks,
-      originalBytes: this.#originalBytes,
+      totalIndicesNeeded: this.#lastBlock.k,
+      originalBytes: this.#lastBlock.bytes,
       progress,
-      complete: this.#isCompleted,
-      data: this.#decodedData || undefined,
+      complete: this.#isComplete,
+      data: this.#isComplete ? new TextDecoder().decode(this.#decoder.getDecoded()) : undefined,
     };
   }
 

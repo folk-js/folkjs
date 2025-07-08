@@ -303,8 +303,8 @@
           <textarea id="txData" class="input-text">Hello from folkjs with Luby Transform codes!</textarea>
           <div class="controls-section">
             <div class="control-group">
-              <label>Block Size (bits):</label>
-              <input type="number" id="blockSize" value="1000" min="100" max="2000" step="100" />
+              <label>Block Size (bytes):</label>
+              <input type="number" id="blockSize" value="500" min="50" max="500" step="25" />
             </div>
             <div class="control-group">
               <label>Frame Rate (fps):</label>
@@ -499,7 +499,7 @@
       async function processQRCode(qrData, elements) {
         try {
           const previousProgress = receiver.getProgress();
-          const progress = await receiver.addBlock(qrData);
+          const progress = receiver.addBlock(qrData);
 
           // Track reception bitrate only when we get new data
           if (progress.totalIndicesReceived > previousProgress.totalIndicesReceived) {
