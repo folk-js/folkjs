@@ -80,14 +80,14 @@ type ExtractFields<T extends string> = T extends `${string}<${infer Field}:${inf
 type Expand<T> = T extends infer O ? { [K in keyof O]: O[K] } : never;
 
 // Main type that produces the decode return type and encode input type from a pattern string
-type HeaderData<T extends string> = Expand<
+type CodecData<T extends string> = Expand<
   ExtractFields<T> & {
     payload?: string;
   }
 >;
 
 // Add a separate type for internal use that includes the index signature
-type InternalHeaderData<T extends string> = HeaderData<T> & Record<string, any>;
+type InternalCodecData<T extends string> = CodecData<T> & Record<string, any>;
 
 interface Pattern {
   name: string;
@@ -104,23 +104,23 @@ const DELIMITERS = {
   PAIRS_ITEM: ';',
 };
 
-interface StringEncoding<T extends string> {
-  decode: (input: string) => HeaderData<T> | null;
-  encode: (data: HeaderData<T>) => string;
+interface StringCodec<T extends string> {
+  decode: (input: string) => CodecData<T> | null;
+  encode: (data: CodecData<T>) => string;
 }
 
-export function encodeString<T extends string>(pattern: T): Expand<StringEncoding<T>> {
+export function codec<T extends string>(pattern: T): Expand<StringCodec<T>> {
   const { staticParts, patterns, hasFixedHeader, hasDollarDelimiter } = parseTemplate(pattern);
 
   // Calculate fixed header length if needed
   const fixedHeaderLength = hasFixedHeader ? patterns.reduce((sum, p) => sum + (p.size || 0), 0) : 0;
 
   return {
-    encode(data: HeaderData<T>): string {
+    encode(data: CodecData<T>): string {
       // SETUP
       let result = staticParts[0];
       // Cast to internal type to allow dynamic property access
-      const internalData = data as InternalHeaderData<T>;
+      const internalData = data as InternalCodecData<T>;
 
       // MAIN LOOP: Format each pattern
       for (let i = 0; i < patterns.length; i++) {
@@ -173,10 +173,10 @@ export function encodeString<T extends string>(pattern: T): Expand<StringEncodin
       return addPayload(result, internalData.payload, hasFixedHeader, hasDollarDelimiter);
     },
 
-    decode(input: string): HeaderData<T> | null {
+    decode(input: string): CodecData<T> | null {
       // SETUP
       // Use internal type for dynamic property access
-      const result = {} as InternalHeaderData<T>;
+      const result = {} as InternalCodecData<T>;
 
       // Check input for fixed header patterns
       if (hasFixedHeader && !input.startsWith(staticParts[0])) {
@@ -262,9 +262,9 @@ export function encodeString<T extends string>(pattern: T): Expand<StringEncodin
       }
 
       // Cast back to clean public interface
-      return result as HeaderData<T>;
+      return result as CodecData<T>;
     },
-  } as Expand<StringEncoding<T>>;
+  } as Expand<StringCodec<T>>;
 }
 
 function extractPatternValue(

@@ -1,10 +1,10 @@
 import { expect } from 'expect';
 import { describe, test } from 'node:test';
-import { encodeBits } from '../src/utils/encodeBits.ts';
+import { codec } from '../src/utils/codecBits.ts';
 
-describe('encodeBits', () => {
+describe('codec', () => {
   describe('basic functionality', () => {
-    const encoder = encodeBits('<flag:bool-1><count:num-3><type-4>');
+    const encoder = codec('<flag:bool-1><count:num-3><type-4>');
 
     test('should encode bit fields correctly', () => {
       const result = encoder.encode({
@@ -34,7 +34,7 @@ describe('encodeBits', () => {
   });
 
   describe('validation', () => {
-    const encoder = encodeBits('<status-2><data-6>');
+    const encoder = codec('<status-2><data-6>');
 
     test('should reject invalid binary strings during encoding', () => {
       expect(() =>
@@ -75,7 +75,7 @@ describe('encodeBits', () => {
 
   describe('edge cases', () => {
     test('should handle single-bit fields with booleans', () => {
-      const encoder = encodeBits('<a:bool-1><b:bool-1><c:bool-1>');
+      const encoder = codec('<a:bool-1><b:bool-1><c:bool-1>');
       const encoded = encoder.encode({
         a: true,
         b: false,
@@ -86,7 +86,7 @@ describe('encodeBits', () => {
     });
 
     test('should handle byte-aligned numeric fields', () => {
-      const encoder = encodeBits('<byte1:num-8><byte2:num-8>');
+      const encoder = codec('<byte1:num-8><byte2:num-8>');
       const encoded = encoder.encode({
         byte1: 255, // 11111111
         byte2: 0, // 00000000
@@ -96,7 +96,7 @@ describe('encodeBits', () => {
     });
 
     test('should handle non-byte-aligned fields with padding', () => {
-      const encoder = encodeBits('<field:num-3>');
+      const encoder = codec('<field:num-3>');
       const encoded = encoder.encode({
         field: 5, // 101 in binary
       });
@@ -106,7 +106,7 @@ describe('encodeBits', () => {
   });
 
   describe('complex patterns', () => {
-    const encoder = encodeBits('<version:num-3><flags-5><payload-16>');
+    const encoder = codec('<version:num-3><flags-5><payload-16>');
 
     test('should handle multi-byte patterns with mixed types', () => {
       const encoded = encoder.encode({
@@ -130,7 +130,7 @@ describe('encodeBits', () => {
 
   describe('space efficiency', () => {
     test('should efficiently pack multiple small fields with mixed types', () => {
-      const encoder = encodeBits('<a:num-2><b:num-3><c:bool-1><d:bool-1><e:num-3><f:num-2><g:bool-1><h:num-3>');
+      const encoder = codec('<a:num-2><b:num-3><c:bool-1><d:bool-1><e:num-3><f:num-2><g:bool-1><h:num-3>');
       // Total bits: 16 bits (2 bytes)
       // As typed values, even more concise than binary strings
 
@@ -166,7 +166,7 @@ describe('encodeBits', () => {
 
   describe('typed fields', () => {
     test('should handle boolean and numeric fields', () => {
-      const encoder = encodeBits('<flag:bool-1><count:num-8><type-4>');
+      const encoder = codec('<flag:bool-1><count:num-8><type-4>');
 
       const encoded = encoder.encode({
         flag: true,
@@ -186,7 +186,7 @@ describe('encodeBits', () => {
     });
 
     test('should validate numeric ranges', () => {
-      const encoder = encodeBits('<value:num-3>');
+      const encoder = codec('<value:num-3>');
 
       // Valid range for 3 bits is 0-7
       expect(() => encoder.encode({ value: 8 })).toThrow();
@@ -199,10 +199,10 @@ describe('encodeBits', () => {
 
     test('should validate boolean fields are always 1 bit', () => {
       // This should throw because bool fields must be 1 bit
-      expect(() => encodeBits('<flag:bool-2>')).toThrow();
+      expect(() => codec('<flag:bool-2>')).toThrow();
 
       // This should NOT throw - proper bool field declaration
-      const encoder = encodeBits('<flag:bool-1>');
+      const encoder = codec('<flag:bool-1>');
       expect(() => encoder.encode({ flag: true })).not.toThrow();
       expect(() => encoder.encode({ flag: false })).not.toThrow();
 
@@ -216,26 +216,26 @@ describe('encodeBits', () => {
 
     test('should validate number fields cannot exceed 8 bits', () => {
       // This should throw because num fields cannot exceed 8 bits
-      expect(() => encodeBits('<value:num-9>')).toThrow();
+      expect(() => codec('<value:num-9>')).toThrow();
 
       // This should NOT throw - valid 8-bit number field
-      const encoder = encodeBits('<value:num-8>');
+      const encoder = codec('<value:num-8>');
       expect(() => encoder.encode({ value: 255 })).not.toThrow(); // Max 8-bit value
     });
 
     test('should validate number values are within range for different bit sizes', () => {
       // Test 2-bit field (range: 0-3)
-      const bits2 = encodeBits('<value:num-2>');
+      const bits2 = codec('<value:num-2>');
       expect(() => bits2.encode({ value: 4 })).toThrow(); // Too large
       expect(() => bits2.encode({ value: 3 })).not.toThrow(); // Max value
 
       // Test 4-bit field (range: 0-15)
-      const bits4 = encodeBits('<value:num-4>');
+      const bits4 = codec('<value:num-4>');
       expect(() => bits4.encode({ value: 16 })).toThrow(); // Too large
       expect(() => bits4.encode({ value: 15 })).not.toThrow(); // Max value
 
       // Test 8-bit field (range: 0-255)
-      const bits8 = encodeBits('<value:num-8>');
+      const bits8 = codec('<value:num-8>');
       expect(() => bits8.encode({ value: 256 })).toThrow(); // Too large
       expect(() => bits8.encode({ value: 255 })).not.toThrow(); // Max value
 
@@ -246,7 +246,7 @@ describe('encodeBits', () => {
 
     test('should combine multiple typed fields in a practical example', () => {
       // Example: Protocol message with bit fields
-      const protocol = encodeBits(
+      const protocol = codec(
         '<version:num-3><isRequest:bool-1><hasPayload:bool-1><messageType:num-3><sequenceId:num-8>',
       );
 
@@ -281,7 +281,7 @@ describe('encodeBits', () => {
       // <messageType:num-3>     - Message type (0-7)
       // <errorCode:num-3>       - Error code (0-7)
       // <sequenceId:num-4>      - Sequence number (0-15)
-      const protocol = encodeBits(
+      const protocol = codec(
         '<version:num-2><priority:num-2><isRequest:bool-1><hasPayload:bool-1><messageType:num-3><errorCode:num-3><sequenceId:num-4>',
       );
 

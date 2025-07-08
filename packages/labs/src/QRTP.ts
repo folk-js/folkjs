@@ -1,5 +1,5 @@
 import EventEmitter from 'eventemitter3';
-import { encodeString } from './utils/encodeString.ts';
+import { codec } from './utils/codecString.ts';
 import { hash } from './utils/hash.ts';
 
 /** QRTP - A tiny QR Transfer Protocol
@@ -16,7 +16,7 @@ export class QRTP extends EventEmitter {
   #sendingIndex: number = 0; // Current send position
   #receivedData: string[] = []; // Received data chunks
   #receivedAck: string = ''; // Last computed hash for ack
-  #header = encodeString('QRTP<index:num>/<total:num>:<ack:text>');
+  #header = codec('QRTP<index:num>/<total:num>:<ack:text>');
 
   get isSending(): boolean {
     return this.#sendingData.length > 0 && this.#sendingIndex < this.#sendingData.length;

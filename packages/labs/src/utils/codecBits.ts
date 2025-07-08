@@ -35,7 +35,7 @@ interface BitPattern {
   startBit: number;
 }
 
-interface BitEncoding<T extends string> {
+interface BitCodec<T extends string> {
   decode: (input: Uint8Array) => BitEncodingData<T> | null;
   encode: (data: BitEncodingData<T>) => Uint8Array;
   toBinaryString: (data: Uint8Array) => string;
@@ -63,7 +63,7 @@ function decodeNum(bits: string): number {
   return parseInt(bits, 2);
 }
 
-export function encodeBits<T extends string>(pattern: T): BitEncoding<T> {
+export function codec<T extends string>(pattern: T): BitCodec<T> {
   const patterns = parsePattern(pattern);
   const totalBits = patterns.reduce((sum, p) => sum + p.size, 0);
   const totalBytes = Math.ceil(totalBits / 8);
