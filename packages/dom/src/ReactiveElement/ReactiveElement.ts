@@ -11,12 +11,12 @@
  */
 
 import { adoptStyles, type CSSResultGroup, type CSSResultOrNative, getCompatibleStyle } from './css-tag.js';
-import type { ReactiveController, ReactiveControllerHost } from './reactive-controller.js';
+import type { ReactiveController, ReactiveControllerHost } from './ReactiveController.js';
 
 // In the Node build, this import will be injected by Rollup:
 // import {HTMLElement, customElements} from '@lit-labs/ssr-dom-shim';
 
-export type { ReactiveController, ReactiveControllerHost } from './reactive-controller.js';
+export type { ReactiveController, ReactiveControllerHost } from './ReactiveController.js';
 
 /**
  * Removes the `readonly` modifier from properties in the union K.

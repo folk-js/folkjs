@@ -12,7 +12,7 @@
  * an @ExportDecoratedItems annotation must be defined as a regular function,
  * not an arrow function.
  */
-import type { ReactiveElement } from '../reactive-element.js';
+import type { ReactiveElement } from '../ReactiveElement.js';
 import { desc, type Interface } from './base.js';
 
 const DEV_MODE = true;

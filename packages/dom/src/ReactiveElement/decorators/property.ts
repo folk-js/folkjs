@@ -11,7 +11,7 @@
  * not an arrow function.
  */
 
-import { type PropertyDeclaration, type ReactiveElement, defaultConverter, notEqual } from '../reactive-element.js';
+import { type PropertyDeclaration, type ReactiveElement, defaultConverter, notEqual } from '../ReactiveElement.js';
 import type { Interface } from './base.js';
 
 const DEV_MODE = true;
