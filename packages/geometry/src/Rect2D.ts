@@ -21,6 +21,10 @@ export function center(rect: Rect2D) {
   };
 }
 
+export function area(rect: Rect2D): number {
+  return rect.width * rect.height;
+}
+
 export type Hit = Readonly<{
   /** The point of contact between the two objects. */
   pos: Vector2;
@@ -63,7 +67,7 @@ export function hitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly): Hi
   return hit;
 }
 
-export function intersecting(rect1: Rect2D, rect2: Rect2D): boolean {
+export function intersects(rect1: Rect2D, rect2: Rect2D): boolean {
   return (
     rect1.x <= rect2.x + rect2.width &&
     rect1.x + rect1.width >= rect2.x &&
@@ -72,13 +76,31 @@ export function intersecting(rect1: Rect2D, rect2: Rect2D): boolean {
   );
 }
 
+export function intersection(rect1: Rect2D, rect2: Rect2D) {
+  const x = Math.max(rect1.x, rect2.x);
+  const y = Math.max(rect1.y, rect2.y);
+  const width = Math.min(rect1.x + rect1.width, rect2.x + rect2.width);
+  const height = Math.min(rect1.x + rect1.width, rect2.x + rect2.width);
+
+  return fromValues(x, y, width, height);
+}
+
 export function proximal(rect1: Rect2D, rect2: Rect2D, proximity: number): boolean {
   return (
     rect1.x - (rect2.x + rect2.width) < proximity &&
     rect2.x - (rect1.x + rect1.width) < proximity &&
     rect1.y - (rect2.y + rect2.height) < proximity &&
-    rect2.y - (rect1.y + rect1.height) < proximity
+    rect2.y - (rect1.x + rect1.width) < proximity
   );
+}
+
+export function translateSelf(rect: Rect2D, vector: Vector2): void {
+  rect.x += vector.x;
+  rect.y += vector.y;
+}
+
+export function expand(rect: Rect2D, padding: number): Rect2D {
+  return fromValues(rect.x - padding, rect.y - padding, rect.width + padding, rect.height + padding);
 }
 
 export function bounds(rect1: Rect2D, rect2: Rect2D): Rect2D {

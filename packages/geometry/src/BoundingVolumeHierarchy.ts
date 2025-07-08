@@ -82,7 +82,7 @@ export function intersections<T>(root: BVHNode<T>, value: T, rect: R.Rect2D): T[
   const collisions: T[] = [];
 
   while ((node = stack.pop())) {
-    if (value === node.value || !R.intersecting(rect, node.aabb)) continue;
+    if (value === node.value || !R.intersects(rect, node.aabb)) continue;
 
     if (node.isLeaf) {
       collisions.push(node.value);
