@@ -25,7 +25,7 @@ export class QRTPB extends EventEmitter {
   #audioWave: GGWave | null = null;
   #audioAckTimer: ReturnType<typeof setInterval> | null = null; // Timer for periodic audio acknowledgments
   #role: 'sender' | 'receiver' | null = null;
-  #cycleInterval: number = 600; // Cycle every 0.6 seconds by default
+  #cycleInterval: number = 67; // Cycle every ~67ms for 15fps by default
   #audioAckInterval: number = 2000; // Send audio acks every 2 seconds
   #isAudioInitialized: boolean = false;
   #isAudioSending: boolean = false;
@@ -54,7 +54,7 @@ export class QRTPB extends EventEmitter {
    * @param chunkSize Size of each chunk in characters
    * @param cycleInterval Milliseconds between QR code changes
    */
-  async configureSender(data: string, chunkSize = 800, cycleInterval = 400): Promise<void> {
+  async configureSender(data: string, chunkSize = 500, cycleInterval = 67): Promise<void> {
     this.#role = 'sender';
     this.#chunksMap = new Map();
     this.#currentIndex = 0;

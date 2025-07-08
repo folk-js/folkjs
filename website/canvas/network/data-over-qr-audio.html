@@ -492,7 +492,6 @@
           <div id="cameraOverlay" class="camera-overlay">
             <div class="camera-label">Start Camera</div>
           </div>
-          <canvas id="canvas" style="display: none"></canvas>
         </div>
       </div>
 
@@ -538,14 +537,17 @@
 
     <!-- QR Code libraries -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
     <script type="module">
+      import QrScanner from 'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js';
       import { QRTPB } from '@folkjs/labs/QRTP-B';
 
+      // Make available globally for debugging
+      window.QrScanner = QrScanner;
+      window.QRTPB = QRTPB;
+
       // Core elements and state
-      let videoStream = null;
-      let scanInterval = null;
+      let qrScanner = null;
       let cameraActive = false;
       let qrProtocol;
       let currentMode = 'sender';
@@ -576,7 +578,6 @@
           txData: document.getElementById('txData'),
           qrcodeContainer: document.getElementById('qrcode'),
           video: document.getElementById('video'),
-          canvas: document.getElementById('canvas'),
           videoContainer: document.getElementById('videoContainer'),
           cameraOverlay: document.getElementById('cameraOverlay'),
           cameraLabel: document.getElementById('cameraOverlay').querySelector('.camera-label'),
@@ -868,8 +869,8 @@
           if (currentMode === 'sender') {
             const text = elements.txData.value.trim();
             if (text) {
-              // Use the default values from QRTPB (400 bytes, 400ms)
-              qrProtocol.configureSender(text);
+              // Use 15fps (67ms cycle interval) for rapid QR codes
+              qrProtocol.configureSender(text, 500, 67);
             }
           }
         });
@@ -930,8 +931,9 @@
         // Configure protocol as sender
         const text = elements.txData.value.trim();
         if (text) {
-          await qrProtocol.configureSender(text);
-          logMessage('system', 'mode', 'Configured as sender', elements.messageLog);
+          // Use 15fps (67ms cycle interval) for rapid QR codes
+          await qrProtocol.configureSender(text, 500, 67);
+          logMessage('system', 'mode', 'Configured as sender (15fps)', elements.messageLog);
         } else {
           logMessage('system', 'mode', 'Configured as sender - enter text to start', elements.messageLog);
         }
@@ -1008,92 +1010,52 @@
       }
 
       // Camera control functions
-      function startCamera(elements) {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          // Use the environment facing (back) camera on mobile devices
-          const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-          const facingMode = isMobile ? 'environment' : 'user';
+      async function startCamera(elements) {
+        try {
+          const video = elements.video;
 
-          navigator.mediaDevices
-            .getUserMedia({
-              video: {
-                facingMode: facingMode,
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-              },
-            })
-            .then(function (stream) {
-              videoStream = stream;
-              elements.video.srcObject = stream;
-              elements.video.setAttribute('playsinline', true);
-              elements.video.play();
+          // Initialize QR Scanner
+          qrScanner = new QrScanner(
+            video,
+            (result) => {
+              // Process detected QR code
+              qrProtocol.parseCode(result.data);
+            },
+            {
+              returnDetailedScanResult: true,
+              highlightScanRegion: true,
+              highlightCodeOutline: true,
+              // Use environment facing camera on mobile
+              preferredCamera: 'environment',
+            },
+          );
 
-              // Set canvas size on video load
-              elements.video.onloadedmetadata = function () {
-                elements.canvas.width = elements.video.videoWidth;
-                elements.canvas.height = elements.video.videoHeight;
-              };
+          await qrScanner.start();
 
-              // Start scanning for QR codes
-              scanInterval = setInterval(() => scanQrCode(elements), 100);
+          // Update UI
+          cameraActive = true;
+          elements.videoContainer.classList.add('camera-active');
+          elements.cameraLabel.textContent = 'Stop Camera';
 
-              // Update UI
-              cameraActive = true;
-              elements.videoContainer.classList.add('camera-active');
-              elements.cameraLabel.textContent = 'Stop Camera';
-
-              logMessage('system', 'camera', `Camera started (${facingMode} facing)`, elements.messageLog);
-            })
-            .catch(function (error) {
-              console.error('Camera error:', error);
-              logMessage('system', 'error', `Camera access error: ${error.message}`, elements.messageLog);
-            });
-        } else {
-          logMessage('system', 'error', 'Camera not supported on this device/browser', elements.messageLog);
+          logMessage('system', 'camera', 'Camera started with QR Scanner', elements.messageLog);
+        } catch (error) {
+          console.error('Camera error:', error);
+          logMessage('system', 'error', `Camera access error: ${error.message}`, elements.messageLog);
         }
       }
 
       function stopCamera(elements) {
-        if (videoStream) {
-          videoStream.getTracks().forEach((track) => track.stop());
-          videoStream = null;
+        if (qrScanner) {
+          qrScanner.stop();
+          qrScanner.destroy();
+          qrScanner = null;
           logMessage('system', 'camera', 'Camera stopped', elements.messageLog);
-        }
-
-        if (scanInterval) {
-          clearInterval(scanInterval);
-          scanInterval = null;
         }
 
         // Update UI
         cameraActive = false;
         elements.videoContainer.classList.remove('camera-active');
         elements.cameraLabel.textContent = 'Start Camera';
-      }
-
-      // QR code scanning function
-      function scanQrCode(elements) {
-        if (elements.video.readyState === elements.video.HAVE_ENOUGH_DATA) {
-          const canvasContext = elements.canvas.getContext('2d');
-          elements.canvas.width = elements.video.videoWidth;
-          elements.canvas.height = elements.video.videoHeight;
-
-          // Draw video frame to canvas
-          canvasContext.drawImage(elements.video, 0, 0, elements.canvas.width, elements.canvas.height);
-
-          // Get image data from canvas
-          const imageData = canvasContext.getImageData(0, 0, elements.canvas.width, elements.canvas.height);
-
-          // Scan for QR code
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: 'dontInvert',
-          });
-
-          // Process QR code if found
-          if (code && code.data) {
-            qrProtocol.parseCode(code.data);
-          }
-        }
       }
 
       // UI update helper functions
