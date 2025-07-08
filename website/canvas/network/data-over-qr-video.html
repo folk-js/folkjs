@@ -346,7 +346,6 @@
 
       // Bitrate tracking
       let receptionStartTime = null;
-      let totalBitsReceived = 0;
 
       // Checksum tracking
       let senderChecksum = '';
@@ -498,23 +497,14 @@
       // Receiving functions
       async function processQRCode(qrData, elements) {
         try {
-          const previousProgress = receiver.getProgress();
           const progress = receiver.addBlock(qrData);
+          const progressPercent = Math.round((progress.received / progress.needed) * 100);
 
-          // Track reception bitrate only when we get new data
-          if (progress.totalIndicesReceived > previousProgress.totalIndicesReceived) {
-            if (!receptionStartTime) {
-              receptionStartTime = Date.now();
-            }
-
-            // Calculate actual received data bits (not redundant blocks)
-            const newIndicesCount = progress.totalIndicesReceived - previousProgress.totalIndicesReceived;
-            const bitsPerIndex = (progress.originalBytes * 8) / progress.totalIndicesNeeded;
-            totalBitsReceived += newIndicesCount * bitsPerIndex;
+          // Track reception bitrate
+          if (!receptionStartTime) {
+            receptionStartTime = Date.now();
           }
 
-          // Update progress
-          const progressPercent = Math.round(progress.progress * 100);
           elements.receivingProgressBar.style.width = `${progressPercent}%`;
 
           if (progress.complete) {
@@ -526,24 +516,18 @@
             elements.receivingProgressBar.classList.add('complete');
             elements.receivingProgressText.textContent = `Done! ${receiverChecksum} ${statusText}`;
             elements.receivedTextDisplay.textContent = progress.data;
-            elements.blockInfo.textContent = `Complete! ${progress.totalIndicesReceived} indices used`;
+            elements.blockInfo.textContent = `Complete! ${progress.received} indices used`;
             elements.indicesDisplay.textContent = 'All blocks received successfully';
           } else {
-            // Calculate and show reception bitrate
-            let bitrateText = '';
-            if (receptionStartTime && totalBitsReceived > 0) {
-              const elapsedSeconds = (Date.now() - receptionStartTime) / 1000;
-              const bitrate = Math.round(totalBitsReceived / elapsedSeconds);
-              bitrateText = ` (${formatBitrate(bitrate)})`;
-            }
+            // Simple bitrate estimation
+            const elapsedSeconds = (Date.now() - receptionStartTime) / 1000;
+            const estimatedBytes = progress.data?.length || 0;
+            const bitrate = elapsedSeconds > 0 ? Math.round((estimatedBytes * 8) / elapsedSeconds) : 0;
+            const bitrateText = bitrate > 0 ? ` (${formatBitrate(bitrate)})` : '';
 
-            elements.receivingProgressText.textContent = `${progress.totalIndicesReceived}/${progress.totalIndicesNeeded} indices (${progressPercent}%)${bitrateText}`;
-            elements.blockInfo.textContent = `${progress.originalBytes} bytes | ${progressPercent}% complete`;
-
-            // Show received indices
-            const receivedCount = progress.totalIndicesReceived;
-            const totalCount = progress.totalIndicesNeeded;
-            elements.indicesDisplay.textContent = `Received ${receivedCount} of ${totalCount} unique indices`;
+            elements.receivingProgressText.textContent = `${progress.received}/${progress.needed} indices (${progressPercent}%)${bitrateText}`;
+            elements.blockInfo.textContent = `${progressPercent}% complete`;
+            elements.indicesDisplay.textContent = `Received ${progress.received} of ${progress.needed} unique indices`;
           }
         } catch (error) {
           console.error('QR processing error:', error);
@@ -559,7 +543,6 @@
 
         // Reset reception tracking
         receptionStartTime = null;
-        totalBitsReceived = 0;
         receiverChecksum = '';
       }
 
