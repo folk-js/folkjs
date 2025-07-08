@@ -1,4 +1,4 @@
-import type { EncodedBlock } from 'luby-transform';
+import type { EncodedBlock, LtEncoder } from 'luby-transform';
 import { binaryToBlock, blockToBinary, createDecoder, createEncoder } from 'luby-transform';
 
 // Default configuration
@@ -23,51 +23,30 @@ export interface QRTPVReceiverProgress {
  * QRTPV Sender - Creates an async iterable stream of QR code data
  */
 export class QRTPVSender {
-  #encoder: any;
+  #fountain: Generator<EncodedBlock, void, unknown>;
   #frameRate: number;
-  #currentIndex: number = 0;
-  #encodedBlocks: EncodedBlock[] = [];
 
   constructor(data: string, options: QRTPVSenderOptions = {}) {
     const blockSize = Math.floor((options.blockSize || DEFAULT_BLOCK_SIZE) / 8); // Convert bits to bytes
     this.#frameRate = options.frameRate || DEFAULT_FRAME_RATE;
 
     const dataBytes = new TextEncoder().encode(data);
-    this.#encoder = createEncoder(dataBytes, blockSize);
-
-    // Pre-generate initial blocks
-    this.#generateBlocks(20);
+    const encoder = createEncoder(dataBytes, blockSize);
+    this.#fountain = encoder.fountain();
   }
 
   async *[Symbol.asyncIterator](): AsyncIterableIterator<string> {
     while (true) {
-      // Generate more blocks if running low
-      if (this.#currentIndex >= this.#encodedBlocks.length - 5) {
-        this.#generateBlocks(20);
-      }
+      const { value: block } = this.#fountain.next();
+      if (!block) break;
 
-      if (this.#currentIndex < this.#encodedBlocks.length) {
-        const block = this.#encodedBlocks[this.#currentIndex];
-        const binaryData = blockToBinary(block);
-        const base64Data = this.#uint8ArrayToBase64(binaryData);
+      const binaryData = blockToBinary(block);
+      const base64Data = this.#uint8ArrayToBase64(binaryData);
 
-        this.#currentIndex++;
+      // Wait for next frame
+      await this.#wait(1000 / this.#frameRate);
 
-        // Wait for next frame
-        await this.#wait(1000 / this.#frameRate);
-
-        yield base64Data;
-      }
-    }
-  }
-
-  #generateBlocks(count: number): void {
-    const fountain = this.#encoder.fountain();
-    for (let i = 0; i < count; i++) {
-      const block = fountain.next().value;
-      if (block) {
-        this.#encodedBlocks.push(block);
-      }
+      yield base64Data;
     }
   }
 
