@@ -167,6 +167,7 @@ export class QRTPB extends EventEmitter {
           payload: packet.payload,
           receivedCount: this.#receivedIndices.size,
           receivedIndices: Array.from(this.#receivedIndices),
+          unacknowledgedIndices: Array.from(this.#unacknowledgedIndices),
         });
 
         // Check if we received all chunks
@@ -224,6 +225,7 @@ export class QRTPB extends EventEmitter {
 
   /**
    * Convert indices to optimized ranges using full received context
+   * Supports wrapped ranges that span across the end/beginning boundary
    */
   #optimizeRanges(indicesToAck: number[]): [number, number][] {
     if (indicesToAck.length === 0) return [];
@@ -252,6 +254,21 @@ export class QRTPB extends EventEmitter {
       // Skip past all indices we've included in this range
       while (i < sortedIndices.length && sortedIndices[i] <= rangeEnd) {
         i++;
+      }
+    }
+
+    // Check if we can merge the first and last ranges into a wrapped range
+    if (optimizedRanges.length >= 2) {
+      const firstRange = optimizedRanges[0];
+      const lastRange = optimizedRanges[optimizedRanges.length - 1];
+
+      // Can wrap if last range ends at the boundary and first range starts at 0
+      if (lastRange[1] === this.#totalChunks - 1 && firstRange[0] === 0) {
+        // Create wrapped range: [lastRangeStart, firstRangeEnd]
+        const wrappedRange: [number, number] = [lastRange[0], firstRange[1]];
+
+        // Replace first and last ranges with the wrapped range
+        return [wrappedRange, ...optimizedRanges.slice(1, -1)];
       }
     }
 
@@ -320,12 +337,24 @@ export class QRTPB extends EventEmitter {
 
   /**
    * Convert ranges to individual indices
+   * Handles both normal ranges [start, end] and wrapped ranges where start > end
    */
   #rangesToIndices(ranges: [number, number][]): number[] {
     const indices: number[] = [];
     for (const [start, end] of ranges) {
-      for (let i = start; i <= end; i++) {
-        indices.push(i);
+      if (start <= end) {
+        // Normal range
+        for (let i = start; i <= end; i++) {
+          indices.push(i);
+        }
+      } else {
+        // Wrapped range: from start to end of chunks, then from 0 to end
+        for (let i = start; i < this.#totalChunks; i++) {
+          indices.push(i);
+        }
+        for (let i = 0; i <= end; i++) {
+          indices.push(i);
+        }
       }
     }
     return indices;

@@ -159,6 +159,10 @@
         background-color: #4caf50;
       }
 
+      .progress-segment.unacknowledged {
+        background-color: #ffa726;
+      }
+
       .progress-segment.missing {
         background-color: #f44336;
       }
@@ -169,6 +173,10 @@
 
       .progress-segment.current.received {
         background-color: #4caf50;
+      }
+
+      .progress-segment.current.unacknowledged {
+        background-color: #ff9800;
       }
 
       .progress-text {
@@ -608,10 +616,27 @@
               initProgressSegments(elements.receivingProgress, event.total);
             }
 
+            // First, clear all previous states
+            for (let i = 0; i < event.total; i++) {
+              const segment = elements.receivingProgress.querySelector(`.progress-segment[data-index="${i}"]`);
+              if (segment) {
+                segment.classList.remove('received', 'unacknowledged', 'missing');
+              }
+            }
+
+            // Mark received chunks
             event.receivedIndices.forEach((idx) => {
               updateProgressSegment(elements.receivingProgress, idx, 'received');
             });
 
+            // Mark unacknowledged chunks (received but not yet acknowledged)
+            if (event.unacknowledgedIndices && event.unacknowledgedIndices.length > 0) {
+              event.unacknowledgedIndices.forEach((idx) => {
+                updateProgressSegment(elements.receivingProgress, idx, 'unacknowledged');
+              });
+            }
+
+            // Mark missing chunks (only in sender mode)
             if (currentMode === 'sender') {
               for (let i = 0; i < event.total; i++) {
                 if (!event.receivedIndices.includes(i)) {
@@ -658,6 +683,15 @@
                 initProgressSegments(elements.receivingProgress, event.totalChunks);
               }
 
+              // Clear all previous states
+              for (let i = 0; i < event.totalChunks; i++) {
+                const segment = elements.receivingProgress.querySelector(`.progress-segment[data-index="${i}"]`);
+                if (segment) {
+                  segment.classList.remove('received', 'unacknowledged', 'missing');
+                }
+              }
+
+              // Mark all received chunks as received (transfer is complete)
               event.receivedIndices.forEach((idx) => {
                 updateProgressSegment(elements.receivingProgress, idx, 'received');
               });
@@ -882,12 +916,16 @@
         if (segment) {
           segment.title = `Chunk ${parseInt(index) + 1}: ${status}`;
 
+          // Clear previous status classes
+          segment.classList.remove('received', 'unacknowledged', 'missing');
+
+          // Add new status class
           if (status === 'received') {
             segment.classList.add('received');
-            segment.classList.remove('missing');
+          } else if (status === 'unacknowledged') {
+            segment.classList.add('unacknowledged');
           } else if (status === 'missing') {
             segment.classList.add('missing');
-            segment.classList.remove('received');
           }
 
           updateProgressCounter(container);
