@@ -725,14 +725,6 @@
           }
         });
 
-        qrProtocol.on('qrUpdate', (event) => {
-          updateQRCode(event.data, elements.qrcodeContainer);
-          // Removed the QR data preview update, but keep the current segment update
-
-          // Update current segment indicator
-          updateCurrentSegment(elements.sendingProgressBarContainer, event.index, event.total);
-        });
-
         qrProtocol.on('complete', (event) => {
           if (event && event.message) {
             // Calculate overall average bitrate
@@ -870,14 +862,17 @@
 
         // Process the stream
         try {
-          for await (const qrData of stream) {
+          for await (const qrItem of stream) {
             // Check if we should stop
             if (currentSendingStream?.stop) {
               break;
             }
 
             // Update QR code display
-            updateQRCode(qrData, elements.qrcodeContainer);
+            updateQRCode(qrItem.data, elements.qrcodeContainer);
+
+            // Update current segment indicator
+            updateCurrentSegment(elements.sendingProgressBarContainer, qrItem.index, qrItem.total);
           }
         } catch (error) {
           console.error('Error during QR streaming:', error);

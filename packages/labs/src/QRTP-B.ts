@@ -10,7 +10,7 @@ import { codec } from './utils/codecString';
  * - Listens for audio signals from receiver to know which chunks to skip
  *
  * Device B (Receiver):
- * - Scans QR codes from sender
+ * - Uses async generator to yield received chunks as they come in
  * - Periodically sends acknowledgments via audio for all unacknowledged chunks
  */
 export class QRTPB extends EventEmitter {
@@ -20,7 +20,7 @@ export class QRTPB extends EventEmitter {
   #acknowledgedIndices: Set<number> = new Set(); // Indices acknowledged by receiver
   #header = codec('QRTPB<index:num>/<total:num>');
   #ackHeader = codec('QB<ranges:numPairs>');
-  #audioWave: GGWave | null = null;
+  #ggwave: GGWave | null = new GGWave();
   #audioAckTimer: ReturnType<typeof setInterval> | null = null;
   #role: 'sender' | 'receiver' | null = null;
   #audioAckInterval: number = 2000; // Send audio acks every 2 seconds
@@ -28,47 +28,40 @@ export class QRTPB extends EventEmitter {
   #audioVolume: number = 80; // Volume (1-100)
   #totalChunks: number = 0; // Total number of chunks
   #frameRate: number = 15; // 15fps for QR codes
-  #originalData: string = ''; // Store original data for checksum
-
-  constructor() {
-    super();
-    this.#audioWave = new GGWave();
-  }
+  #message: string = ''; // Complete message (set when all chunks received)
+  #checksum: string = ''; // Checksum of complete message
 
   /**
-   * Compute a short checksum of the given data
+   * Compute a simple synchronous checksum
    */
-  async #computeChecksum(data: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const dataBuffer = encoder.encode(data);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
-    const hashArray = new Uint8Array(hashBuffer);
-
-    // Take first 4 bytes and convert to hex
-    const shortHash = Array.from(hashArray.slice(0, 4))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-
-    return shortHash;
+  #computeChecksum(data: string): string {
+    let hash = 0;
+    for (let i = 0; i < data.length; i++) {
+      const char = data.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(16).padStart(8, '0').slice(-8);
   }
 
   /**
    * Set a visualizer function for the audio channel
    */
   setAudioVisualizer(visualizerFn: (node: AudioNode | null, context: AudioContext) => void): void {
-    if (this.#audioWave) {
-      this.#audioWave.setVisualizer(visualizerFn);
+    if (this.#ggwave) {
+      this.#ggwave.setVisualizer(visualizerFn);
     }
   }
 
   /**
-   * Send data as an async iterable stream of QR code strings
+   * Send data as an async iterable stream of QR code data
    */
-  async *send(data: string, chunkSize = 500): AsyncIterableIterator<string> {
+  async *send(data: string, chunkSize = 500): AsyncIterableIterator<{ data: string; index: number; total: number }> {
     this.#role = 'sender';
     this.#chunksMap = new Map();
     this.#acknowledgedIndices = new Set();
-    this.#originalData = data;
+    this.#message = data;
+    this.#checksum = this.#computeChecksum(data);
 
     // Break data into chunks
     for (let i = 0; i < data.length; i += chunkSize) {
@@ -77,20 +70,17 @@ export class QRTPB extends EventEmitter {
 
     this.#totalChunks = this.#chunksMap.size;
 
-    // Compute checksum
-    const checksum = await this.#computeChecksum(data);
-
     this.emit('init', {
       total: this.#totalChunks,
       size: chunkSize,
       dataLength: data.length,
-      checksum,
+      checksum: this.#checksum,
     });
 
     // Initialize audio for listening to acknowledgments
     if (!this.#isAudioInitialized) {
-      await this.#audioWave!.ready();
-      this.#audioWave!.startListening(this.#handleAudioReceived.bind(this));
+      await this.#ggwave!.ready();
+      this.#ggwave!.startListening(this.#handleAudioReceived.bind(this));
       this.#isAudioInitialized = true;
     }
 
@@ -119,14 +109,7 @@ export class QRTPB extends EventEmitter {
         payload,
       });
 
-      this.emit('qrUpdate', {
-        data: qrData,
-        index: nextIndex,
-        total: this.#totalChunks,
-        acknowledged: Array.from(this.#acknowledgedIndices),
-      });
-
-      yield qrData;
+      yield { data: qrData, index: nextIndex, total: this.#totalChunks };
 
       currentIndex = (nextIndex + 1) % this.#totalChunks;
       await new Promise((resolve) => setTimeout(resolve, 1000 / this.#frameRate));
@@ -142,45 +125,19 @@ export class QRTPB extends EventEmitter {
     this.#totalChunks = 0;
     this.#receivedIndices = new Set();
     this.#unacknowledgedIndices = new Set();
+    this.#message = '';
+    this.#checksum = '';
 
     // Initialize audio for sending acknowledgments
     if (!this.#isAudioInitialized) {
-      await this.#audioWave!.ready();
-      this.#audioWave!.setProtocol(GGWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
+      await this.#ggwave!.ready();
+      this.#ggwave!.setProtocol(GGWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
       await this.#warmUpAudio();
       this.#isAudioInitialized = true;
     }
 
     // Start periodic audio acknowledgments
     this.#startPeriodicAcks();
-  }
-
-  /**
-   * Warm up the audio system
-   */
-  async #warmUpAudio(): Promise<void> {
-    if (!this.#audioWave) return;
-
-    try {
-      await this.#audioWave.send('warmup', 5); // Very low volume (5%)
-    } catch (error) {
-      console.warn('Failed to warm up audio:', error);
-    }
-  }
-
-  /**
-   * Start periodic audio acknowledgments - simple flush system
-   */
-  #startPeriodicAcks(): void {
-    if (this.#audioAckTimer) {
-      clearInterval(this.#audioAckTimer);
-    }
-
-    this.#audioAckTimer = setInterval(() => {
-      if (this.#role === 'receiver' && this.#unacknowledgedIndices.size > 0) {
-        this.#sendAudioAck();
-      }
-    }, this.#audioAckInterval);
   }
 
   /**
@@ -216,49 +173,68 @@ export class QRTPB extends EventEmitter {
 
         // Check if we received all chunks
         if (this.#receivedIndices.size === packet.total) {
-          const message = this.#getOrderedMessage();
-          this.#emitComplete(message);
+          this.#updateCompleteMessage();
         }
       }
     }
   }
 
   /**
-   * Emit complete event with checksum
+   * Update the complete message when all chunks are received
    */
-  async #emitComplete(message: string): Promise<void> {
-    const checksum = await this.#computeChecksum(message);
-
-    this.emit('complete', {
-      message,
-      receivedIndices: Array.from(this.#receivedIndices),
-      totalChunks: this.#totalChunks,
-      checksum,
-    });
-  }
-
-  /**
-   * Get the complete message from the ordered chunks
-   */
-  #getOrderedMessage(): string {
+  #updateCompleteMessage(): void {
     const orderedChunks: string[] = [];
-    const missingChunks: number[] = [];
+    let hasAllChunks = true;
 
     for (let i = 0; i < this.#totalChunks; i++) {
       const chunk = this.#chunksMap.get(i);
       if (chunk) {
         orderedChunks.push(chunk);
       } else {
-        missingChunks.push(i);
-        orderedChunks.push('');
+        hasAllChunks = false;
+        break;
       }
     }
 
-    if (missingChunks.length > 0) {
-      console.warn(`Missing chunks: ${missingChunks.join(', ')}`);
+    if (hasAllChunks) {
+      this.#message = orderedChunks.join('');
+      this.#checksum = this.#computeChecksum(this.#message);
+
+      this.emit('complete', {
+        message: this.#message,
+        receivedIndices: Array.from(this.#receivedIndices),
+        totalChunks: this.#totalChunks,
+        checksum: this.#checksum,
+      });
+    }
+  }
+
+  /**
+   * Warm up the audio system
+   */
+  async #warmUpAudio(): Promise<void> {
+    if (!this.#ggwave) return;
+
+    try {
+      await this.#ggwave.send('warmup', 5); // Very low volume (5%)
+    } catch (error) {
+      console.warn('Failed to warm up audio:', error);
+    }
+  }
+
+  /**
+   * Start periodic audio acknowledgments - simple flush system
+   */
+  #startPeriodicAcks(): void {
+    if (this.#audioAckTimer) {
+      clearInterval(this.#audioAckTimer);
     }
 
-    return orderedChunks.join('');
+    this.#audioAckTimer = setInterval(() => {
+      if (this.#role === 'receiver' && this.#unacknowledgedIndices.size > 0) {
+        this.#sendAudioAck();
+      }
+    }, this.#audioAckInterval);
   }
 
   /**
@@ -301,7 +277,7 @@ export class QRTPB extends EventEmitter {
    * Send acknowledgment via audio - simplified flush system
    */
   async #sendAudioAck(): Promise<void> {
-    if (!this.#audioWave || this.#role !== 'receiver' || this.#unacknowledgedIndices.size === 0) {
+    if (!this.#ggwave || this.#role !== 'receiver' || this.#unacknowledgedIndices.size === 0) {
       return;
     }
 
@@ -314,7 +290,7 @@ export class QRTPB extends EventEmitter {
 
       if (ranges.length > 0) {
         const ackMessage = this.#ackHeader.encode({ ranges });
-        await this.#audioWave.send(ackMessage, this.#audioVolume);
+        await this.#ggwave.send(ackMessage, this.#audioVolume);
       }
 
       // Clear the unacknowledged set - we've sent everything
@@ -379,10 +355,10 @@ export class QRTPB extends EventEmitter {
       this.#audioAckTimer = null;
     }
 
-    if (this.#audioWave) {
-      this.#audioWave.stopListening();
-      this.#audioWave.dispose();
-      this.#audioWave = null;
+    if (this.#ggwave) {
+      this.#ggwave.stopListening();
+      this.#ggwave.dispose();
+      this.#ggwave = null;
     }
 
     this.#isAudioInitialized = false;
@@ -390,24 +366,23 @@ export class QRTPB extends EventEmitter {
   }
 
   /**
-   * Get the message that has been received so far
+   * Get the complete message (only available after all chunks received)
    */
-  getReceivedMessage(): string {
-    return this.#getOrderedMessage();
+  get message(): string {
+    return this.#message;
   }
 
   /**
-   * Get checksum of the received message
+   * Get the checksum of the complete message
    */
-  async getReceivedChecksum(): Promise<string> {
-    const message = this.#getOrderedMessage();
-    return await this.#computeChecksum(message);
+  get checksum(): string {
+    return this.#checksum;
   }
 
   /**
    * Check if all chunks have been received
    */
-  isComplete(): boolean {
+  get isComplete(): boolean {
     return this.#receivedIndices.size === this.#totalChunks && this.#totalChunks > 0;
   }
 }
