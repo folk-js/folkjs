@@ -47,10 +47,18 @@ export function dragImageOutOfVideoFrame(
       event.stopPropagation();
       event.stopImmediatePropagation();
 
-      if (figure?.shape === undefined) return;
+      const shape = figure?.shape;
+      if (shape === undefined) return;
 
-      figure.shape.x += event.movementX;
-      figure.shape.y += event.movementY;
+      const parentPoint = shape.transformStack.mapPointToParent({ x: shape.x, y: shape.y });
+
+      const { x, y } = shape.transformStack.mapPointToLocal({
+        x: parentPoint.x + event.movementX,
+        y: parentPoint.y + event.movementY,
+      });
+
+      shape.x = x;
+      shape.y = y;
     }
 
     function onPointerUp(event: PointerEvent) {
