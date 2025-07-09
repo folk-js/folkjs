@@ -20,13 +20,13 @@ export class QRTPB {
   #ackHeader = codec('QB<ranges:numPairs>');
   #ggwave: GGWave | null = new GGWave();
   #audioAckTimer: ReturnType<typeof setInterval> | null = null;
-  #role: 'sender' | 'receiver' | null = null;
+
   #audioAckInterval: number;
   #isAudioInitialized: boolean = false;
   #audioVolume: number;
   #totalChunks: number = 0;
   #frameRate: number;
-  #message: string = '';
+  #message: string | null = null;
   #checksum: string = '';
 
   constructor(options: QRTPBOptions = {}) {
@@ -40,8 +40,6 @@ export class QRTPB {
   }
 
   #processQRCode(data: string) {
-    if (this.#role !== 'receiver') return null;
-
     const packet = this.#header.decode(data);
     if (!packet) return null;
 
@@ -57,8 +55,6 @@ export class QRTPB {
         this.#receivedIndices.add(packet.index);
         this.#unacknowledgedIndices.add(packet.index);
 
-        // Chunk received - handled via receive() iterator
-
         const isComplete = this.#receivedIndices.size === packet.total;
         if (isComplete) {
           this.#updateCompleteMessage();
@@ -69,7 +65,7 @@ export class QRTPB {
           payload: packet.payload,
           total: packet.total,
           isComplete,
-          message: isComplete ? this.#message : undefined,
+          message: this.#message,
         };
       }
     }
@@ -104,7 +100,6 @@ export class QRTPB {
     acknowledged: number[];
     isComplete: boolean;
   }> {
-    this.#role = 'sender';
     this.#chunksMap = new Map();
     this.#acknowledgedIndices = new Set();
     this.#message = data;
@@ -162,8 +157,7 @@ export class QRTPB {
    * Returns progress updates including chunks, completion status, and final message
    */
   async *receive(qrDataStream: AsyncIterable<string>): AsyncIterableIterator<{
-    // Current chunk (if any)
-    chunk?: { index: number; payload: string; isNew: boolean };
+    chunk?: { index: number; payload: string };
     // Overall progress
     received: number;
     total: number;
@@ -173,12 +167,11 @@ export class QRTPB {
     message?: string;
     checksum?: string;
   }> {
-    this.#role = 'receiver';
     this.#chunksMap = new Map();
     this.#totalChunks = 0;
     this.#receivedIndices = new Set();
     this.#unacknowledgedIndices = new Set();
-    this.#message = '';
+    this.#message = null;
     this.#checksum = '';
 
     // Initialize audio for acknowledgments
@@ -193,22 +186,21 @@ export class QRTPB {
     // Process incoming QR codes
     for await (const qrData of qrDataStream) {
       const result = this.#processQRCode(qrData);
-      if (result) {
-        // Always yield progress, whether new chunk or not
-        yield {
-          chunk: {
-            index: result.index,
-            payload: result.payload,
-            isNew: true, // processQRCode only returns results for new chunks
-          },
-          received: this.#receivedIndices.size,
-          total: this.#totalChunks,
-          receivedIndices: Array.from(this.#receivedIndices),
-          isComplete: result.isComplete,
-          message: result.message,
-          checksum: this.#checksum || undefined,
-        };
+      if (!result) {
+        continue;
       }
+      yield {
+        chunk: {
+          index: result.index,
+          payload: result.payload,
+        },
+        received: this.#receivedIndices.size,
+        total: this.#totalChunks,
+        receivedIndices: Array.from(this.#receivedIndices),
+        isComplete: result.isComplete,
+        message: result.message || undefined,
+        checksum: this.#checksum || undefined,
+      };
     }
   }
 
@@ -235,16 +227,13 @@ export class QRTPB {
     }
   }
 
-  /**
-   * Start periodic audio acknowledgments - simple flush system
-   */
   #startPeriodicAcks(): void {
     if (this.#audioAckTimer) {
       clearInterval(this.#audioAckTimer);
     }
 
     this.#audioAckTimer = setInterval(() => {
-      if (this.#role === 'receiver' && this.#unacknowledgedIndices.size > 0) {
+      if (this.#unacknowledgedIndices.size > 0) {
         this.#sendAudioAck();
       }
     }, this.#audioAckInterval);
@@ -313,27 +302,26 @@ export class QRTPB {
     return ranges;
   }
 
-  /**
-   * Send acknowledgment via audio - simplified flush system
-   */
   async #sendAudioAck(): Promise<void> {
-    if (!this.#ggwave || this.#role !== 'receiver' || this.#unacknowledgedIndices.size === 0) {
+    if (!this.#ggwave || this.#unacknowledgedIndices.size === 0) {
       return;
     }
 
+    // Get all unacknowledged indices
+    const indicesToAck = Array.from(this.#unacknowledgedIndices);
+
+    // Convert to optimized ranges using full received context
+    const ranges = this.#floodFillRanges(indicesToAck);
+
+    if (ranges.length === 0) {
+      return;
+    }
+
+    const ackMessage = this.#ackHeader.encode({ ranges });
+    // Clear the unacknowledged set which we're about to send
+    this.#unacknowledgedIndices.clear();
     try {
-      // Get all unacknowledged indices
-      const indicesToAck = Array.from(this.#unacknowledgedIndices);
-
-      // Convert to optimized ranges using full received context
-      const ranges = this.#floodFillRanges(indicesToAck);
-
-      if (ranges.length > 0) {
-        const ackMessage = this.#ackHeader.encode({ ranges });
-        // Clear the unacknowledged set which we're about to send
-        this.#unacknowledgedIndices.clear();
-        await this.#ggwave.send(ackMessage, this.#audioVolume);
-      }
+      await this.#ggwave.send(ackMessage, this.#audioVolume);
     } catch (error) {
       console.error('Failed to send audio acknowledgment:', error);
     }
@@ -343,22 +331,16 @@ export class QRTPB {
    * Handle received audio message containing acknowledgments
    */
   #handleAudioReceived(message: string): void {
-    if (this.#role !== 'sender') return;
-
     const packet = this.#ackHeader.decode(message);
     if (!packet) return;
 
-    try {
-      // Convert ranges to individual indices
-      const indices = this.#rangesToIndices(packet.ranges);
+    // Convert ranges to individual indices
+    const indices = this.#rangesToIndices(packet.ranges);
 
-      for (const index of indices) {
-        if (!this.#acknowledgedIndices.has(index) && index >= 0 && index < this.#totalChunks) {
-          this.#acknowledgedIndices.add(index);
-        }
+    for (const index of indices) {
+      if (!this.#acknowledgedIndices.has(index) && index >= 0 && index < this.#totalChunks) {
+        this.#acknowledgedIndices.add(index);
       }
-    } catch (error) {
-      console.error('Failed to parse audio acknowledgment:', error);
     }
   }
 
@@ -405,23 +387,14 @@ export class QRTPB {
     this.#isAudioInitialized = false;
   }
 
-  /**
-   * Get the complete message (only available after all chunks received)
-   */
-  get message(): string {
+  get message(): string | null {
     return this.#message;
   }
 
-  /**
-   * Get the checksum of the complete message
-   */
   get checksum(): string {
     return this.#checksum;
   }
 
-  /**
-   * Check if all chunks have been received
-   */
   get isComplete(): boolean {
     return this.#receivedIndices.size === this.#totalChunks && this.#totalChunks > 0;
   }

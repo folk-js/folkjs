@@ -573,33 +573,29 @@
         // Initialize sender progress
         transferStats = { startTime: Date.now(), totalBytes: 0, chunkSize: 500 };
 
-        try {
-          for await (const progress of qrProtocol.send(text, 500)) {
-            updateQRCode(progress.qr);
+        for await (const progress of qrProtocol.send(text, 500)) {
+          updateQRCode(progress.qr);
 
-            // Initialize progress bar on first iteration
-            if (sendingProgress.querySelectorAll('.progress-segment').length !== progress.total) {
-              initProgressSegments(sendingProgress, progress.total);
-              senderChecksum.style.display = 'block';
-              senderChecksum.textContent = `Sender checksum: ${qrProtocol.checksum}`;
-            }
-
-            updateCurrentSegment(sendingProgress, progress.index, progress.total);
-
-            // Update acknowledgment progress
-            progress.acknowledged.forEach((index) => updateProgressSegment(sendingProgress, index, 'received'));
-
-            if (progress.isComplete) {
-              const total = sendingProgress.querySelectorAll('.progress-segment').length;
-              updateProgressText(sendingProgress, total, total);
-              showSuccessMessage();
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, 1000 / 15)); // frame rate
+          // Initialize progress bar on first iteration
+          if (sendingProgress.querySelectorAll('.progress-segment').length !== progress.total) {
+            initProgressSegments(sendingProgress, progress.total);
+            senderChecksum.style.display = 'block';
+            senderChecksum.textContent = `Sender checksum: ${qrProtocol.checksum}`;
           }
-        } catch (error) {
-          console.error('Sending error:', error);
+
+          updateCurrentSegment(sendingProgress, progress.index, progress.total);
+
+          // Update acknowledgment progress
+          progress.acknowledged.forEach((index) => updateProgressSegment(sendingProgress, index, 'received'));
+
+          if (progress.isComplete) {
+            const total = sendingProgress.querySelectorAll('.progress-segment').length;
+            updateProgressText(sendingProgress, total, total);
+            showSuccessMessage();
+            break;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 1000 / 15)); // frame rate
         }
       }
 
@@ -623,48 +619,44 @@
           qrData = data;
         };
 
-        try {
-          // Initialize receiver
-          transferStats = { startTime: Date.now(), totalBytes: 0, chunkSize: 0 };
+        // Initialize receiver
+        transferStats = { startTime: Date.now(), totalBytes: 0, chunkSize: 0 };
 
-          for await (const progress of qrProtocol.receive(qrStream)) {
-            // Update progress from iterator data
-            if (progress.chunk) {
-              transferStats.totalBytes += progress.chunk.payload.length;
-              updateReceivedText(progress.chunk.payload, false);
-            }
-
-            if (receivingProgress.querySelectorAll('.progress-segment').length !== progress.total) {
-              initProgressSegments(receivingProgress, progress.total);
-            }
-
-            // Update progress segments
-            for (let i = 0; i < progress.total; i++) {
-              const segment = receivingProgress.querySelector(`.progress-segment[data-index="${i}"]`);
-              if (segment) segment.classList.remove('received', 'unacknowledged', 'missing');
-            }
-
-            progress.receivedIndices.forEach((idx) => updateProgressSegment(receivingProgress, idx, 'received'));
-
-            if (progress.isComplete && progress.message) {
-              updateReceivedText(progress.message, true);
-              if (progress.checksum) {
-                receiverChecksum.style.display = 'block';
-                receiverChecksum.textContent = `Receiver checksum: ${progress.checksum}`;
-                const senderText = senderChecksum.textContent;
-                if (senderText && senderText.includes(progress.checksum)) {
-                  receiverChecksum.classList.add('match');
-                  receiverChecksum.textContent += ' ✓';
-                } else if (senderText) {
-                  receiverChecksum.classList.add('mismatch');
-                  receiverChecksum.textContent += ' ✗';
-                }
-              }
-              break; // Transfer complete
-            }
+        for await (const progress of qrProtocol.receive(qrStream)) {
+          // Update progress from iterator data
+          if (progress.chunk) {
+            transferStats.totalBytes += progress.chunk.payload.length;
+            updateReceivedText(progress.chunk.payload, false);
           }
-        } catch (error) {
-          console.error('Receiving error:', error);
+
+          if (receivingProgress.querySelectorAll('.progress-segment').length !== progress.total) {
+            initProgressSegments(receivingProgress, progress.total);
+          }
+
+          // Update progress segments
+          for (let i = 0; i < progress.total; i++) {
+            const segment = receivingProgress.querySelector(`.progress-segment[data-index="${i}"]`);
+            if (segment) segment.classList.remove('received', 'unacknowledged', 'missing');
+          }
+
+          progress.receivedIndices.forEach((idx) => updateProgressSegment(receivingProgress, idx, 'received'));
+
+          if (progress.isComplete && progress.message) {
+            updateReceivedText(progress.message, true);
+            if (progress.checksum) {
+              receiverChecksum.style.display = 'block';
+              receiverChecksum.textContent = `Receiver checksum: ${progress.checksum}`;
+              const senderText = senderChecksum.textContent;
+              if (senderText && senderText.includes(progress.checksum)) {
+                receiverChecksum.classList.add('match');
+                receiverChecksum.textContent += ' ✓';
+              } else if (senderText) {
+                receiverChecksum.classList.add('mismatch');
+                receiverChecksum.textContent += ' ✗';
+              }
+            }
+            break; // Transfer complete
+          }
         }
       }
 
