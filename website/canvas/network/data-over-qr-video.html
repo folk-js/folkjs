@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>Data over QR Video (Luby Transform)</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        font-family: system-ui, sans-serif;
+        background-color: #f5f5f5;
+        overflow-x: hidden;
+        min-height: 100vh;
+        position: relative;
+      }
+
+      .app-container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 24px 16px;
+      }
+
+      .title {
+        font-size: 24px;
+        font-weight: 600;
+        text-align: center;
+        margin-bottom: 24px;
+        color: #000;
+      }
+
+      textarea {
+        width: 100%;
+        border: 1px solid #000;
+        padding: 12px;
+        margin-bottom: 15px;
+        font-size: 14px;
+        resize: none;
+        font-family: inherit;
+      }
+
+      .media-container {
+        display: flex;
+        flex-direction: row;
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+
+      .qr-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        margin: 0;
+        aspect-ratio: 1;
+        max-width: none;
+      }
+
+      #qrcode {
+        width: 100%;
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #00000024;
+      }
+
+      #qrcode canvas {
+        max-width: 100%;
+        max-height: 100%;
+      }
+
+      #videoContainer {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        background-color: #000;
+        cursor: pointer;
+        aspect-ratio: 1;
+        margin: 0;
+      }
+
+      #video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .camera-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: rgba(0, 0, 0, 0.5);
+        transition: opacity 0.3s ease;
+      }
+
+      .camera-label {
+        color: white;
+        font-size: 16px;
+        font-weight: 500;
+        text-align: center;
+        padding: 10px;
+      }
+
+      /* Show stop camera text on hover when camera is active */
+      .camera-active .camera-overlay {
+        opacity: 0;
+        visibility: hidden;
+      }
+
+      @media (hover: hover) {
+        .camera-active:hover .camera-overlay {
+          opacity: 1;
+          visibility: visible;
+          background-color: rgba(0, 0, 0, 0.7);
+        }
+      }
+
+      .progress-bar-container {
+        height: 40px;
+        background-color: #f0f0f0;
+        margin-top: 10px;
+        overflow: hidden;
+        position: relative;
+        border: 1px solid #000;
+      }
+
+      .progress-bar {
+        height: 100%;
+        background-color: #000;
+        width: 0%;
+        transition: width 0.3s ease;
+      }
+
+      .progress-bar.complete {
+        background-color: #4caf50;
+      }
+
+      .progress-text {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 500;
+        mix-blend-mode: difference;
+      }
+
+      .progress-section {
+        margin-top: 20px;
+        display: flex;
+        gap: 20px;
+      }
+
+      .progress-column {
+        flex: 1;
+      }
+
+      .progress-title {
+        font-size: 14px;
+        margin-bottom: 8px;
+        color: #000;
+        font-weight: 500;
+      }
+
+      .received-text {
+        margin-top: 10px;
+        padding: 12px;
+        background-color: #f9f9f9;
+        border: 1px solid #000;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 14px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-all;
+        height: 100px;
+        overflow-y: auto;
+      }
+
+      .input-text {
+        margin-top: 10px;
+        width: 100%;
+        height: 100px;
+        border: 1px solid #000;
+        padding: 12px;
+        font-size: 14px;
+        resize: none;
+        margin-bottom: 0px;
+      }
+
+      .controls-section {
+        margin-top: 15px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .control-group {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .control-group label {
+        font-size: 12px;
+        color: #666;
+      }
+
+      .control-group input {
+        width: 60px;
+        padding: 4px;
+        border: 1px solid #ccc;
+        font-size: 12px;
+      }
+
+      .status-info {
+        font-size: 11px;
+        color: #666;
+        margin-top: 5px;
+      }
+
+      .indices-display {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        color: #888;
+        margin-top: 5px;
+        max-height: 40px;
+        overflow-y: auto;
+        padding: 4px;
+        background-color: #f8f8f8;
+        border: 1px solid #eee;
+      }
+
+      /* Mobile responsiveness */
+      @media (max-width: 768px) {
+        .title {
+          display: none;
+        }
+
+        .media-container {
+          flex-direction: column;
+          margin-bottom: 0px;
+        }
+
+        .qr-container,
+        #videoContainer {
+          width: 100%;
+          max-width: 400px;
+          margin: 0 auto;
+        }
+
+        .progress-section {
+          flex-direction: column;
+        }
+
+        .progress-column {
+          margin-bottom: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-container">
+      <div class="title">Data over QR Video (Luby Transform)</div>
+
+      <!-- Container for QR and camera side-by-side -->
+      <div class="media-container">
+        <div class="qr-container">
+          <div id="qrcode"></div>
+        </div>
+
+        <!-- Camera view -->
+        <div id="videoContainer">
+          <video id="video" playsinline></video>
+          <div id="cameraOverlay" class="camera-overlay">
+            <div class="camera-label">Start Camera</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress bars for sending and receiving -->
+      <div class="progress-section">
+        <div class="progress-column">
+          <div class="progress-title">Sending (Luby Transform)</div>
+          <div class="progress-bar-container">
+            <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
+            <div id="sendingProgressText" class="progress-text">Idle</div>
+          </div>
+          <textarea id="txData" class="input-text">Hello from folkjs with Luby Transform codes!</textarea>
+          <div class="controls-section">
+            <div class="control-group">
+              <label>Block Size (bytes):</label>
+              <input type="number" id="blockSize" value="500" min="50" max="500" step="25" />
+            </div>
+            <div class="control-group">
+              <label>Frame Rate (fps):</label>
+              <input type="number" id="frameRate" value="20" min="1" max="30" />
+            </div>
+          </div>
+        </div>
+        <div class="progress-column">
+          <div class="progress-title">Receiving</div>
+          <div class="progress-bar-container">
+            <div id="receivingProgressBar" class="progress-bar" style="width: 0%"></div>
+            <div id="receivingProgressText" class="progress-text">Waiting for blocks...</div>
+          </div>
+          <div id="receivedTextDisplay" class="received-text"></div>
+          <div id="blockInfo" class="status-info"></div>
+          <div id="indicesDisplay" class="indices-display"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- QR Code libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+    <!-- Import QR Scanner and QRTPV module -->
+    <script type="module">
+      import QrScanner from 'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js';
+      import { QRTPV } from '@folkjs/labs/QRTP-V';
+
+      // Make modules available globally for debugging
+      window.QRTPV = QRTPV;
+      window.QrScanner = QrScanner;
+
+      // Core state
+      let qrScanner = null;
+      let cameraActive = false;
+      let senderIterator = null;
+      let qrtpv = new QRTPV();
+
+      // Bitrate tracking
+      let receptionStartTime = null;
+
+      // Checksum tracking
+      let senderChecksum = '';
+      let receiverChecksum = '';
+
+      // Initialize after DOM is loaded
+      document.addEventListener('DOMContentLoaded', initApp);
+
+      function initApp() {
+        // Get DOM elements
+        const elements = getElements();
+
+        // Setup event handlers
+        setupUIEvents(elements);
+
+        // Initialize UI
+        updateQRCode('', elements.qrcodeContainer);
+
+        // Set initial message from textarea
+        const initialText = elements.txData.value.trim();
+        if (initialText) {
+          startSending(initialText, elements);
+        }
+      }
+
+      function getElements() {
+        return {
+          txData: document.getElementById('txData'),
+          qrcodeContainer: document.getElementById('qrcode'),
+          video: document.getElementById('video'),
+          videoContainer: document.getElementById('videoContainer'),
+          cameraOverlay: document.getElementById('cameraOverlay'),
+          cameraLabel: document.getElementById('cameraOverlay').querySelector('.camera-label'),
+          sendingProgressBar: document.getElementById('sendingProgressBar'),
+          sendingProgressText: document.getElementById('sendingProgressText'),
+          receivingProgressBar: document.getElementById('receivingProgressBar'),
+          receivingProgressText: document.getElementById('receivingProgressText'),
+          receivedTextDisplay: document.getElementById('receivedTextDisplay'),
+          blockSize: document.getElementById('blockSize'),
+          frameRate: document.getElementById('frameRate'),
+          blockInfo: document.getElementById('blockInfo'),
+          indicesDisplay: document.getElementById('indicesDisplay'),
+        };
+      }
+
+      // Checksum helper function
+      async function calculateChecksum(text) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(text);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+        return hashHex.substring(0, 8); // First 8 characters
+      }
+
+      // Setup UI event handlers
+      function setupUIEvents(elements) {
+        // Text input handler
+        elements.txData.addEventListener('input', function () {
+          const text = elements.txData.value.trim();
+          elements.receivedTextDisplay.textContent = '';
+
+          // Reset receiver state
+          qrtpv.reset();
+          resetReceivingUI(elements);
+
+          if (text) {
+            startSending(text, elements);
+          } else {
+            stopSending(elements);
+          }
+        });
+
+        // Control change handlers
+        elements.blockSize.addEventListener('change', function () {
+          const text = elements.txData.value.trim();
+          if (text) {
+            startSending(text, elements);
+          }
+        });
+
+        elements.frameRate.addEventListener('change', function () {
+          const text = elements.txData.value.trim();
+          if (text) {
+            startSending(text, elements);
+          }
+        });
+
+        // Camera toggle handler
+        elements.videoContainer.addEventListener('click', function () {
+          if (cameraActive) {
+            stopCamera(elements);
+          } else {
+            startCamera(elements);
+          }
+        });
+      }
+
+      // Sending functions
+      async function startSending(data, elements) {
+        stopSending(elements);
+
+        const blockSize = parseInt(elements.blockSize.value);
+        const frameRate = parseInt(elements.frameRate.value);
+
+        try {
+          senderIterator = qrtpv.send(data, { blockSize, frameRate });
+
+          // Calculate checksum for sender
+          senderChecksum = await calculateChecksum(data);
+
+          elements.sendingProgressBar.style.width = '100%';
+          elements.sendingProgressText.textContent = `Transmitting... ${senderChecksum}`;
+
+          // Start the sending loop
+          sendNextBlock(elements);
+        } catch (error) {
+          console.error('Failed to start sender:', error);
+        }
+      }
+
+      async function sendNextBlock(elements) {
+        if (!senderIterator) return;
+
+        try {
+          const result = await senderIterator.next();
+          if (!result.done) {
+            updateQRCode(result.value, elements.qrcodeContainer);
+
+            // Schedule next block
+            setTimeout(() => sendNextBlock(elements), 0);
+          }
+        } catch (error) {
+          console.error('Sending error:', error);
+        }
+      }
+
+      function stopSending(elements) {
+        senderIterator = null;
+        senderChecksum = '';
+
+        updateQRCode('', elements.qrcodeContainer);
+        elements.sendingProgressBar.style.width = '0%';
+        elements.sendingProgressText.textContent = 'Idle';
+      }
+
+      // Receiving functions
+      async function processQRCode(qrData, elements) {
+        try {
+          const progress = qrtpv.receive(qrData);
+          const progressPercent = Math.round((progress.received / progress.needed) * 100);
+
+          // Track reception bitrate
+          if (!receptionStartTime) {
+            receptionStartTime = Date.now();
+          }
+
+          elements.receivingProgressBar.style.width = `${progressPercent}%`;
+
+          if (progress.complete) {
+            // Calculate receiver checksum
+            receiverChecksum = await calculateChecksum(progress.data);
+            const checksumMatch = senderChecksum && receiverChecksum === senderChecksum;
+            const statusText = checksumMatch ? '✓' : senderChecksum ? '✗' : '';
+
+            elements.receivingProgressBar.classList.add('complete');
+            elements.receivingProgressText.textContent = `Done! ${receiverChecksum} ${statusText}`;
+            elements.receivedTextDisplay.textContent = progress.data;
+            elements.blockInfo.textContent = `Complete! ${progress.received} indices used`;
+            elements.indicesDisplay.textContent = 'All blocks received successfully';
+          } else {
+            // Simple bitrate estimation
+            const elapsedSeconds = (Date.now() - receptionStartTime) / 1000;
+            const estimatedBytes = progress.data?.length || 0;
+            const bitrate = elapsedSeconds > 0 ? Math.round((estimatedBytes * 8) / elapsedSeconds) : 0;
+            const bitrateText = bitrate > 0 ? ` (${formatBitrate(bitrate)})` : '';
+
+            elements.receivingProgressText.textContent = `${progress.received}/${progress.needed} indices (${progressPercent}%)${bitrateText}`;
+            elements.blockInfo.textContent = `${progressPercent}% complete`;
+            elements.indicesDisplay.textContent = `Received ${progress.received} of ${progress.needed} unique indices`;
+          }
+        } catch (error) {
+          console.error('QR processing error:', error);
+        }
+      }
+
+      function resetReceivingUI(elements) {
+        elements.receivingProgressBar.style.width = '0%';
+        elements.receivingProgressBar.classList.remove('complete');
+        elements.receivingProgressText.textContent = 'Waiting for blocks...';
+        elements.blockInfo.textContent = '';
+        elements.indicesDisplay.textContent = '';
+
+        // Reset reception tracking
+        receptionStartTime = null;
+        receiverChecksum = '';
+      }
+
+      // Camera control functions
+      async function startCamera(elements) {
+        try {
+          const video = elements.video;
+
+          // Initialize QR Scanner
+          qrScanner = new QrScanner(
+            video,
+            (result) => {
+              // Process detected QR code
+              processQRCode(result.data, elements);
+            },
+            {
+              returnDetailedScanResult: true,
+              highlightScanRegion: true,
+              highlightCodeOutline: true,
+            },
+          );
+
+          await qrScanner.start();
+
+          // Update UI
+          cameraActive = true;
+          elements.videoContainer.classList.add('camera-active');
+          elements.cameraLabel.textContent = 'Stop Camera';
+        } catch (error) {
+          console.error('Camera error:', error);
+        }
+      }
+
+      function stopCamera(elements) {
+        if (qrScanner) {
+          qrScanner.stop();
+          qrScanner.destroy();
+          qrScanner = null;
+        }
+
+        // Update UI
+        cameraActive = false;
+        elements.videoContainer.classList.remove('camera-active');
+        elements.cameraLabel.textContent = 'Start Camera';
+      }
+
+      // UI update helper functions
+      function updateQRCode(qrData, container) {
+        // Clear previous QR code
+        container.innerHTML = '';
+
+        if (!qrData) {
+          container.innerHTML =
+            '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #999;">No data to encode</div>';
+          return;
+        }
+
+        // Create a new canvas element
+        const canvas = document.createElement('canvas');
+        container.appendChild(canvas);
+
+        // Calculate container size to determine QR code size
+        const containerWidth = container.clientWidth;
+
+        QRCode.toCanvas(
+          canvas,
+          qrData,
+          {
+            width: containerWidth,
+            margin: 2,
+            errorCorrectionLevel: 'L', // Low error correction for maximum data
+          },
+          function (error) {
+            if (error) {
+              console.error(error);
+            }
+          },
+        );
+      }
+
+      function formatBitrate(bitsPerSecond) {
+        if (bitsPerSecond >= 1000000) {
+          return `${(bitsPerSecond / 1000000).toFixed(1)} Mbps`;
+        } else if (bitsPerSecond >= 1000) {
+          return `${(bitsPerSecond / 1000).toFixed(1)} Kbps`;
+        } else {
+          return `${bitsPerSecond} bps`;
+        }
+      }
+    </script>
+  </body>
+</html>

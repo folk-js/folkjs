@@ -1,8 +1,8 @@
-import { getObjectId, type ObjID } from '@automerge/automerge';
-import type { Doc, Patch, PeerId, Prop } from '@automerge/vanillajs';
+import type { Doc, ObjID, Patch, PeerId, Prop } from '@automerge/vanillajs';
 import {
   DocHandle,
   generateAutomergeUrl,
+  getObjectId,
   ImmutableString,
   isValidAutomergeUrl,
   Repo,

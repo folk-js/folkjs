@@ -58,8 +58,7 @@
     }
   },
   "dependencies": {
-    "@automerge/automerge": "^2.2.9",
-    "@automerge/vanillajs": "^2.0.7",
+    "@automerge/vanillajs": "^2.0.8",
     "@codemirror/lang-javascript": "^6.2.3",
     "@codemirror/view": "^6.36.5",
     "@dimforge/rapier2d": "^0.15.0",
@@ -73,9 +72,11 @@
     "eventemitter3": "^5.0.1",
     "gun": "^0.2020.1240",
     "leaflet": "^1.9.4",
+    "luby-transform": "^0.2.0",
     "peerjs": "^1.5.4",
     "perfect-arrows": "^0.3.7",
     "perfect-freehand": "^1.2.2",
+    "qr-scanner": "^1.4.2",
     "recast": "^0.23.11",
     "uhtml": "^4.5.11",
     "vscode-css-languageservice": "^6.3.5",
