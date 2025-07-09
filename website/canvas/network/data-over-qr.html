@@ -364,11 +364,11 @@
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <!-- Import QRTP module -->
     <script type="module">
-      import { QRTPA } from '@folkjs/labs/QRTP-A';
+      import { QRTP } from '@folkjs/labs/QRTP-A';
       import '@folkjs/labs/BraceLabel';
 
       // Make QRTP available globally for debugging
-      window.QRTP = QRTPA;
+      window.QRTP = QRTP;
 
       // Core elements and state
       let videoStream = null;

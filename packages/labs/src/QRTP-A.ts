@@ -11,7 +11,7 @@ import { hash } from './utils/hash.ts';
  * 1. If the ACK matches the currently shown message, show the next chunk (advance our own message)
  * 2. If there is a payload with higher index, append it to the incoming chunks
  */
-export class QRTPA extends EventEmitter {
+export class QRTP extends EventEmitter {
   #sendingData: string[] = []; // Data chunks to send
   #sendingIndex: number = 0; // Current send position
   #receivedData: string[] = []; // Received data chunks
