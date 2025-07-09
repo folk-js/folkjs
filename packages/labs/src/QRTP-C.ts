@@ -27,7 +27,7 @@ export class QRTPC {
    */
   async *send(data: string, options: QRTPVOptions = {}): AsyncIterableIterator<string> {
     const blockSize = options.blockSize || 500;
-    const frameRate = options.frameRate || 20;
+    const frameRate = options.frameRate || 30;
 
     const dataBytes = new TextEncoder().encode(data);
     const encoder = createEncoder(dataBytes, blockSize);

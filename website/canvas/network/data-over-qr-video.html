@@ -36,6 +36,27 @@
         color: #000;
       }
 
+      .mode-selector {
+        display: none; /* Hidden on desktop */
+        justify-content: center;
+        margin-bottom: 20px;
+        gap: 10px;
+      }
+
+      .mode-btn {
+        padding: 10px 20px;
+        background-color: #eee;
+        border: 1px solid #000;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background-color 0.2s ease;
+      }
+
+      .mode-btn.active {
+        background-color: #000;
+        color: #fff;
+      }
+
       textarea {
         width: 100%;
         border: 1px solid #000;
@@ -248,7 +269,12 @@
       /* Mobile responsiveness */
       @media (max-width: 768px) {
         .title {
-          display: none;
+          font-size: 20px;
+          margin-bottom: 16px;
+        }
+
+        .mode-selector {
+          display: flex; /* Show mode selector on mobile */
         }
 
         .media-container {
@@ -270,12 +296,52 @@
         .progress-column {
           margin-bottom: 20px;
         }
+
+        /* Default to sender mode on mobile */
+        #videoContainer,
+        .progress-column.receiving-column {
+          display: none;
+        }
+
+        #scanRateDisplay {
+          display: none;
+        }
+
+        .qr-container {
+          flex: 1;
+          max-width: 100%;
+          margin: 0 auto;
+        }
+
+        /* Receiver mode overrides */
+        .receiver-mode .qr-container,
+        .receiver-mode .progress-column.sending-column {
+          display: none;
+        }
+
+        .receiver-mode #videoContainer,
+        .receiver-mode #scanRateDisplay,
+        .receiver-mode .progress-column.receiving-column {
+          display: block;
+        }
+
+        .receiver-mode #videoContainer {
+          flex: 1;
+          max-width: 100%;
+          margin: 0 auto;
+        }
       }
     </style>
   </head>
   <body>
     <div class="app-container">
       <div class="title">Data over QR (Fountain Codes)</div>
+
+      <!-- Mode selector (mobile only) -->
+      <div class="mode-selector">
+        <div id="senderBtn" class="mode-btn active">Send</div>
+        <div id="receiverBtn" class="mode-btn">Receive</div>
+      </div>
 
       <!-- Container for QR and camera side-by-side -->
       <div class="media-container">
@@ -294,7 +360,7 @@
 
       <!-- Progress bars for sending and receiving -->
       <div class="progress-section">
-        <div class="progress-column">
+        <div class="progress-column sending-column">
           <div class="progress-title">Sending</div>
           <div class="progress-bar-container">
             <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
@@ -312,7 +378,7 @@
             </div>
           </div>
         </div>
-        <div class="progress-column">
+        <div class="progress-column receiving-column">
           <div class="progress-title">Receiving</div>
           <div class="progress-bar-container">
             <div id="receivingProgressBar" class="progress-bar" style="width: 0%"></div>
@@ -321,6 +387,9 @@
           <div id="receivedTextDisplay" class="received-text"></div>
           <div id="blockInfo" class="status-info"></div>
           <div id="indicesDisplay" class="indices-display"></div>
+          <div id="scanRateDisplay" class="status-info" style="margin-top: 8px; font-family: monospace">
+            Scan rate: 0 fps | Success rate: 0 fps (0%)
+          </div>
         </div>
       </div>
     </div>
@@ -341,6 +410,13 @@
       let cameraActive = false;
       let senderIterator = null;
       let qrtpc = new QRTPC();
+      let currentMode = 'sender';
+
+      // Scan rate tracking
+      let scanSuccesses = 0;
+      let scanHistory = []; // Array of {timestamp, successes}
+      let scanRateInterval = null;
+      const ASSUMED_SCAN_RATE = 25; // fps from maxScansPerSecond
 
       // Bitrate tracking
       let receptionStartTime = null;
@@ -386,10 +462,99 @@
           frameRate: document.getElementById('frameRate'),
           blockInfo: document.getElementById('blockInfo'),
           indicesDisplay: document.getElementById('indicesDisplay'),
+          senderBtn: document.getElementById('senderBtn'),
+          receiverBtn: document.getElementById('receiverBtn'),
+          scanRateDisplay: document.getElementById('scanRateDisplay'),
         };
       }
 
-      // Checksum helper function
+      // Mode switching function
+      function setMode(mode, elements) {
+        if (currentMode === mode) return;
+
+        currentMode = mode;
+
+        // Update UI classes
+        document.body.classList.toggle('receiver-mode', mode === 'receiver');
+
+        // Update button states
+        elements.senderBtn.classList.toggle('active', mode === 'sender');
+        elements.receiverBtn.classList.toggle('active', mode === 'receiver');
+
+        // Reset protocol state
+        qrtpc.reset();
+        resetReceivingUI(elements);
+
+        // Reset scan rate tracking
+        stopScanRateTracking(elements);
+
+        if (mode === 'sender') {
+          // Stop camera if active
+          if (cameraActive) {
+            stopCamera(elements);
+          }
+          // Start sending if there's text
+          const text = elements.txData.value.trim();
+          if (text) {
+            startSending(text, elements);
+          }
+        } else {
+          // receiver mode
+          // Stop sending
+          stopSending(elements);
+          // Start camera if not active
+          if (!cameraActive) {
+            startCamera(elements);
+          }
+        }
+      }
+
+      function startScanRateTracking(elements) {
+        // Reset tracking
+        scanSuccesses = 0;
+        scanHistory = [];
+
+        // Update display every 500ms
+        scanRateInterval = setInterval(() => updateScanRateDisplay(elements), 500);
+      }
+
+      function stopScanRateTracking(elements) {
+        if (scanRateInterval) {
+          clearInterval(scanRateInterval);
+          scanRateInterval = null;
+        }
+        // Reset display
+        elements.scanRateDisplay.textContent = 'Scan rate: 25.0 fps | Success rate: 0.0 fps (0%)';
+      }
+
+      function updateScanRateDisplay(elements) {
+        const now = Date.now();
+        const windowMs = 3000; // 3 second rolling window
+
+        // Add current snapshot to history
+        scanHistory.push({ timestamp: now, successes: scanSuccesses });
+
+        // Remove old entries outside the window
+        scanHistory = scanHistory.filter((entry) => now - entry.timestamp <= windowMs);
+
+        if (scanHistory.length < 2) {
+          elements.scanRateDisplay.textContent = 'Scan rate: 25.0 fps | Success rate: 0.0 fps (0%)';
+          return;
+        }
+
+        // Calculate success rate over the window
+        const oldest = scanHistory[0];
+        const newest = scanHistory[scanHistory.length - 1];
+        const timeSpanSec = (newest.timestamp - oldest.timestamp) / 1000;
+
+        if (timeSpanSec <= 0) return;
+
+        const successRate = (newest.successes - oldest.successes) / timeSpanSec;
+        const successPercent = (successRate / ASSUMED_SCAN_RATE) * 100;
+
+        elements.scanRateDisplay.textContent = `Scan rate: ${ASSUMED_SCAN_RATE.toFixed(1)} fps | Success rate: ${successRate.toFixed(1)} fps (${successPercent.toFixed(0)}%)`;
+      }
+
       async function calculateChecksum(text) {
         const encoder = new TextEncoder();
         const data = encoder.encode(text);
@@ -410,24 +575,27 @@
           qrtpc.reset();
           resetReceivingUI(elements);
 
-          if (text) {
-            startSending(text, elements);
-          } else {
-            stopSending(elements);
+          // Only start sending if in sender mode
+          if (currentMode === 'sender') {
+            if (text) {
+              startSending(text, elements);
+            } else {
+              stopSending(elements);
+            }
           }
         });
 
         // Control change handlers
         elements.blockSize.addEventListener('change', function () {
           const text = elements.txData.value.trim();
-          if (text) {
+          if (text && currentMode === 'sender') {
             startSending(text, elements);
           }
         });
 
         elements.frameRate.addEventListener('change', function () {
           const text = elements.txData.value.trim();
-          if (text) {
+          if (text && currentMode === 'sender') {
             startSending(text, elements);
           }
         });
@@ -439,6 +607,15 @@
           } else {
             startCamera(elements);
           }
+        });
+
+        // Mode switcher handlers (mobile only)
+        elements.senderBtn.addEventListener('click', function () {
+          setMode('sender', elements);
+        });
+
+        elements.receiverBtn.addEventListener('click', function () {
+          setMode('receiver', elements);
         });
       }
 
@@ -494,6 +671,10 @@
       async function processQRCode(qrData, elements) {
         try {
           const progress = qrtpc.receive(qrData);
+
+          // Track successful scan (QR data was valid and processable)
+          scanSuccesses++;
+
           const progressPercent = Math.round((progress.received / progress.needed) * 100);
 
           // Track reception bitrate
@@ -527,6 +708,7 @@
           }
         } catch (error) {
           console.error('QR processing error:', error);
+          // Don't increment scanSuccesses for failed processing
         }
       }
 
@@ -540,6 +722,9 @@
         // Reset reception tracking
         receptionStartTime = null;
         receiverChecksum = '';
+
+        // Reset scan rate display
+        elements.scanRateDisplay.textContent = 'Scan rate: 25.0 fps | Success rate: 0.0 fps (0%)';
       }
 
       // Camera control functions
@@ -558,10 +743,18 @@
               returnDetailedScanResult: true,
               highlightScanRegion: true,
               highlightCodeOutline: true,
+              maxScansPerSecond: 25,
+              onDecodeError: (error) => {
+                // Optional: log decode errors for debugging
+                // console.log('QR Decode Error:', error);
+              },
             },
           );
 
           await qrScanner.start();
+
+          // Start scan rate tracking
+          startScanRateTracking(elements);
 
           // Update UI
           cameraActive = true;
@@ -578,6 +771,9 @@
           qrScanner.destroy();
           qrScanner = null;
         }
+
+        // Stop scan rate tracking
+        stopScanRateTracking(elements);
 
         // Update UI
         cameraActive = false;
