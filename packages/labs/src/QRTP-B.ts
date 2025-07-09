@@ -2,34 +2,95 @@ import EventEmitter from 'eventemitter3';
 import { GGWave } from './ggwave';
 import { codec } from './utils/codecString';
 
+interface QRTPBOptions {
+  audioVisualizer?: (node: AudioNode | null, context: AudioContext) => void;
+  audioVolume?: number;
+  frameRate?: number;
+  ackInterval?: number;
+}
+
 /**
  * QRTP-B - QR Transfer Protocol with Audio Backchannel
  *
- * Device A (Sender):
- * - Uses async generator to yield QR codes with chunk index + payload
- * - Listens for audio signals from receiver to know which chunks to skip
- *
- * Device B (Receiver):
- * - Uses async generator to yield received chunks as they come in
- * - Periodically sends acknowledgments via audio for all unacknowledged chunks
+ * Clean API:
+ * - new QRTPB(options) - unified constructor
+ * - send(data, chunkSize) - returns async iterator for QR codes
+ * - receive(qrDataStream) - returns async iterator for received chunks
+ * - dispose() - cleanup
  */
 export class QRTPB extends EventEmitter {
-  #chunksMap: Map<number, string> = new Map(); // Data chunks map (index -> chunk)
-  #receivedIndices: Set<number> = new Set(); // Indices that have been received
-  #unacknowledgedIndices: Set<number> = new Set(); // Indices not yet acknowledged via audio
-  #acknowledgedIndices: Set<number> = new Set(); // Indices acknowledged by receiver
+  #chunksMap: Map<number, string> = new Map();
+  #receivedIndices: Set<number> = new Set();
+  #unacknowledgedIndices: Set<number> = new Set();
+  #acknowledgedIndices: Set<number> = new Set();
   #header = codec('QRTPB<index:num>/<total:num>');
   #ackHeader = codec('QB<ranges:numPairs>');
   #ggwave: GGWave | null = new GGWave();
   #audioAckTimer: ReturnType<typeof setInterval> | null = null;
   #role: 'sender' | 'receiver' | null = null;
-  #audioAckInterval: number = 2000; // Send audio acks every 2 seconds
+  #audioAckInterval: number;
   #isAudioInitialized: boolean = false;
-  #audioVolume: number = 80; // Volume (1-100)
-  #totalChunks: number = 0; // Total number of chunks
-  #frameRate: number = 15; // 15fps for QR codes
-  #message: string = ''; // Complete message (set when all chunks received)
-  #checksum: string = ''; // Checksum of complete message
+  #audioVolume: number;
+  #totalChunks: number = 0;
+  #frameRate: number;
+  #message: string = '';
+  #checksum: string = '';
+
+  constructor(options: QRTPBOptions = {}) {
+    super();
+    this.#audioVolume = options.audioVolume ?? 80;
+    this.#frameRate = options.frameRate ?? 15;
+    this.#audioAckInterval = options.ackInterval ?? 2000;
+
+    if (options.audioVisualizer) {
+      this.#ggwave?.setVisualizer(options.audioVisualizer);
+    }
+  }
+
+  #processQRCode(data: string) {
+    if (this.#role !== 'receiver') return null;
+
+    const packet = this.#header.decode(data);
+    if (!packet) return null;
+
+    if (packet.total > this.#totalChunks) {
+      this.#totalChunks = packet.total;
+    }
+
+    if (packet.payload && packet.index >= 0 && packet.index < packet.total) {
+      const isNewChunk = !this.#receivedIndices.has(packet.index);
+
+      if (isNewChunk) {
+        this.#chunksMap.set(packet.index, packet.payload);
+        this.#receivedIndices.add(packet.index);
+        this.#unacknowledgedIndices.add(packet.index);
+
+        this.emit('chunk', {
+          index: packet.index,
+          total: packet.total,
+          payload: packet.payload,
+          receivedCount: this.#receivedIndices.size,
+          receivedIndices: Array.from(this.#receivedIndices),
+          unacknowledgedIndices: Array.from(this.#unacknowledgedIndices),
+        });
+
+        const isComplete = this.#receivedIndices.size === packet.total;
+        if (isComplete) {
+          this.#updateCompleteMessage();
+        }
+
+        return {
+          index: packet.index,
+          payload: packet.payload,
+          total: packet.total,
+          isComplete,
+          message: isComplete ? this.#message : undefined,
+        };
+      }
+    }
+
+    return null;
+  }
 
   /**
    * Compute a simple synchronous checksum
@@ -45,16 +106,8 @@ export class QRTPB extends EventEmitter {
   }
 
   /**
-   * Set a visualizer function for the audio channel
-   */
-  setAudioVisualizer(visualizerFn: (node: AudioNode | null, context: AudioContext) => void): void {
-    if (this.#ggwave) {
-      this.#ggwave.setVisualizer(visualizerFn);
-    }
-  }
-
-  /**
-   * Send data as an async iterable stream of QR code data
+   * Send data as QR codes with audio backchannel
+   * Returns async iterator of QR code data
    */
   async *send(data: string, chunkSize = 500): AsyncIterableIterator<{ data: string; index: number; total: number }> {
     this.#role = 'sender';
@@ -77,17 +130,16 @@ export class QRTPB extends EventEmitter {
       checksum: this.#checksum,
     });
 
-    // Initialize audio for listening to acknowledgments
+    // Initialize audio for acknowledgments
     if (!this.#isAudioInitialized) {
       await this.#ggwave!.ready();
       this.#ggwave!.startListening(this.#handleAudioReceived.bind(this));
       this.#isAudioInitialized = true;
     }
 
-    // Continuously cycle through chunks, prioritizing unacknowledged ones
+    // Stream QR codes
     let currentIndex = 0;
     while (this.#acknowledgedIndices.size < this.#totalChunks) {
-      // Find next unacknowledged chunk
       let nextIndex = currentIndex;
       let attempts = 0;
 
@@ -96,10 +148,7 @@ export class QRTPB extends EventEmitter {
         attempts++;
       }
 
-      // If all chunks are acknowledged, we're done
-      if (attempts >= this.#totalChunks) {
-        break;
-      }
+      if (attempts >= this.#totalChunks) break;
 
       const payload = this.#chunksMap.get(nextIndex) || '';
       const qrData = this.#header.encode({
@@ -116,9 +165,17 @@ export class QRTPB extends EventEmitter {
   }
 
   /**
-   * Configure as a receiver
+   * Receive data from QR codes with audio backchannel
+   * Pass in an async iterable of QR code strings (e.g., from camera)
+   * Returns async iterator of received message chunks
    */
-  async configureReceiver(): Promise<void> {
+  async *receive(qrDataStream: AsyncIterable<string>): AsyncIterableIterator<{
+    index: number;
+    payload: string;
+    total: number;
+    isComplete: boolean;
+    message?: string;
+  }> {
     this.#role = 'receiver';
     this.#chunksMap = new Map();
     this.#totalChunks = 0;
@@ -127,53 +184,20 @@ export class QRTPB extends EventEmitter {
     this.#message = '';
     this.#checksum = '';
 
-    // Initialize audio for sending acknowledgments
+    // Initialize audio for acknowledgments
     if (!this.#isAudioInitialized) {
       await this.#ggwave!.ready();
       this.#ggwave!.setProtocol(GGWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
       this.#isAudioInitialized = true;
     }
 
-    // Start periodic audio acknowledgments
     this.#startPeriodicAcks();
-  }
 
-  /**
-   * Process incoming QR code when detected
-   */
-  parseCode(data: string): void {
-    if (this.#role !== 'receiver') return;
-
-    const packet = this.#header.decode(data);
-    if (!packet) return;
-
-    // Update total chunks if needed
-    if (packet.total > this.#totalChunks) {
-      this.#totalChunks = packet.total;
-    }
-
-    // Store the received chunk if it's valid and new
-    if (packet.payload && packet.index >= 0 && packet.index < packet.total) {
-      const isNewChunk = !this.#receivedIndices.has(packet.index);
-
-      if (isNewChunk) {
-        this.#chunksMap.set(packet.index, packet.payload);
-        this.#receivedIndices.add(packet.index);
-        this.#unacknowledgedIndices.add(packet.index); // Mark for acknowledgment
-
-        this.emit('chunk', {
-          index: packet.index,
-          total: packet.total,
-          payload: packet.payload,
-          receivedCount: this.#receivedIndices.size,
-          receivedIndices: Array.from(this.#receivedIndices),
-          unacknowledgedIndices: Array.from(this.#unacknowledgedIndices),
-        });
-
-        // Check if we received all chunks
-        if (this.#receivedIndices.size === packet.total) {
-          this.#updateCompleteMessage();
-        }
+    // Process incoming QR codes
+    for await (const qrData of qrDataStream) {
+      const result = this.#processQRCode(qrData);
+      if (result) {
+        yield result;
       }
     }
   }

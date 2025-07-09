@@ -434,228 +434,80 @@
       import QrScanner from 'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js';
       import { QRTPB } from '@folkjs/labs/QRTP-B';
 
-      // Core state
+      // Simple state
       let qrScanner = null;
-      let cameraActive = false;
-      let qrProtocol = new QRTPB();
+      let qrProtocol = null;
       let currentMode = 'sender';
-      let currentSendingStream = null;
-      let silenceAudio = document.querySelector('.iphone-silence');
-      let audioInitialized = false;
-
-      // Transfer statistics
-      let transferStats = {
-        startTime: null,
-        totalBytes: 0,
-        chunkSize: 0,
-      };
+      let transferStats = { startTime: null, totalBytes: 0, chunkSize: 0 };
 
       // DOM elements
-      const elements = {
-        txData: document.getElementById('txData'),
-        qrcode: document.getElementById('qrcode'),
-        video: document.getElementById('video'),
-        videoContainer: document.getElementById('videoContainer'),
-        cameraLabel: document.querySelector('.camera-label'),
-        sendingProgress: document.getElementById('sendingProgress'),
-        receivingProgress: document.getElementById('receivingProgress'),
-        receivedText: document.getElementById('receivedText'),
-        senderBtn: document.getElementById('senderBtn'),
-        receiverBtn: document.getElementById('receiverBtn'),
-        audioVisualizer: document.getElementById('audioVisualizer'),
-        senderChecksum: document.getElementById('senderChecksum'),
-        receiverChecksum: document.getElementById('receiverChecksum'),
-        senderSpeed: document.getElementById('senderSpeed'),
-        receiverSpeed: document.getElementById('receiverSpeed'),
-      };
+      const $ = (id) => document.getElementById(id);
+      const txData = $('txData');
+      const qrcode = $('qrcode');
+      const video = $('video');
+      const videoContainer = $('videoContainer');
+      const sendingProgress = $('sendingProgress');
+      const receivingProgress = $('receivingProgress');
+      const receivedText = $('receivedText');
+      const senderBtn = $('senderBtn');
+      const receiverBtn = $('receiverBtn');
+      const audioVisualizer = $('audioVisualizer');
+      const senderChecksum = $('senderChecksum');
+      const receiverChecksum = $('receiverChecksum');
+      const senderSpeed = $('senderSpeed');
+      const receiverSpeed = $('receiverSpeed');
 
-      // Initialize app
-      document.addEventListener('DOMContentLoaded', init);
-
-      function init() {
-        setupProtocolEvents();
-        setupUIEvents();
+      // Initialize everything
+      document.addEventListener('DOMContentLoaded', async () => {
+        // Setup audio visualizer
         setupVisualizer();
-        setupAudioInitialization();
-        setupVisibilityHandling();
 
-        updateQRCode('Initializing...');
-        configureSenderWithoutAudio();
-
-        // Update speed labels periodically
-        setInterval(updateSpeedLabels, 1000);
-      }
-
-      // Audio initialization
-      async function initializeAudioContext() {
-        if (audioInitialized) return;
-
-        try {
-          if (silenceAudio) {
-            await silenceAudio.play();
-          }
-          audioInitialized = true;
-        } catch (error) {
-          console.warn('Audio initialization failed:', error);
-        }
-      }
-
-      function setupAudioInitialization() {
-        const initializeOnInteraction = async () => {
-          await initializeAudioContext();
-          document.removeEventListener('click', initializeOnInteraction);
-          document.removeEventListener('touchstart', initializeOnInteraction);
-          document.removeEventListener('keydown', initializeOnInteraction);
-        };
-
-        document.addEventListener('click', initializeOnInteraction);
-        document.addEventListener('touchstart', initializeOnInteraction);
-        document.addEventListener('keydown', initializeOnInteraction);
-      }
-
-      function setupVisibilityHandling() {
-        document.addEventListener('visibilitychange', () => {
-          if (document.hidden) {
-            if (silenceAudio && !qrProtocol?.isActive) {
-              silenceAudio.pause();
-              silenceAudio.load();
-              if (silenceAudio.parentNode) {
-                silenceAudio.parentNode.removeChild(silenceAudio);
-              }
-            }
-          } else {
-            if (silenceAudio && !silenceAudio.parentNode) {
-              document.body.appendChild(silenceAudio);
-              if (audioInitialized) {
-                silenceAudio.play().catch((e) => console.warn('Could not restart silent audio:', e));
-              }
-            }
-          }
+        // Create protocol
+        qrProtocol = new QRTPB({
+          audioVisualizer: window.visualizeAudio,
+          audioVolume: 80,
+          frameRate: 15,
+          ackInterval: 2000,
         });
-      }
 
-      // Audio visualizer setup
-      function setupVisualizer() {
-        const canvas = elements.audioVisualizer;
-        const ctx = canvas.getContext('2d');
-        const WIDTH = (canvas.width = canvas.parentElement.clientWidth);
-        const HEIGHT = (canvas.height = canvas.parentElement.clientHeight);
-
-        let visualizationActive = false;
-        let analyser = null;
-
-        window.visualizeAudio = (node, context) => {
-          if (!node || !context) {
-            ctx.clearRect(0, 0, WIDTH, HEIGHT);
-            visualizationActive = false;
-            return;
-          }
-
-          if (!visualizationActive) {
-            analyser = context.createAnalyser();
-            analyser.fftSize = 256;
-            node.connect(analyser);
-            visualizationActive = true;
-          }
-
-          const bufferLength = analyser.frequencyBinCount;
-          const dataArray = new Uint8Array(bufferLength);
-
-          function draw() {
-            if (!visualizationActive) return;
-
-            requestAnimationFrame(draw);
-            analyser.getByteFrequencyData(dataArray);
-
-            ctx.fillStyle = 'rgb(0, 0, 0)';
-            ctx.fillRect(0, 0, WIDTH, HEIGHT);
-
-            const barWidth = (WIDTH / bufferLength) * 2.5;
-            let x = 0;
-
-            for (let i = 0; i < bufferLength; i++) {
-              const barHeight = (dataArray[i] / 255) * HEIGHT;
-              ctx.fillStyle = `rgb(${dataArray[i]}, 100, 200)`;
-              ctx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
-              x += barWidth + 1;
-            }
-          }
-
-          draw();
-        };
-
-        qrProtocol.setAudioVisualizer(window.visualizeAudio);
-      }
-
-      // Protocol event handlers
-      function setupProtocolEvents() {
+        // Setup protocol events
         qrProtocol.on('init', (event) => {
-          initProgressSegments(elements.sendingProgress, event.total);
-          updateProgressText(elements.sendingProgress, 0, event.total);
-
+          initProgressSegments(sendingProgress, event.total);
+          updateProgressText(sendingProgress, 0, event.total);
           if (event.checksum) {
-            elements.senderChecksum.style.display = 'block';
-            elements.senderChecksum.textContent = `Sender checksum: ${event.checksum}`;
+            senderChecksum.style.display = 'block';
+            senderChecksum.textContent = `Sender checksum: ${event.checksum}`;
           }
-
-          transferStats = {
-            startTime: Date.now(),
-            totalBytes: 0,
-            chunkSize: event.size,
-          };
+          transferStats = { startTime: Date.now(), totalBytes: 0, chunkSize: event.size };
         });
 
         qrProtocol.on('chunk', (event) => {
           transferStats.totalBytes += event.payload.length;
-
           updateReceivedText(event.payload, false);
-          updateProgressSegment(elements.receivingProgress, event.index, 'received');
 
-          if (event.receivedIndices && event.receivedIndices.length > 0) {
-            if (elements.receivingProgress.querySelectorAll('.progress-segment').length !== event.total) {
-              initProgressSegments(elements.receivingProgress, event.total);
-            }
+          if (receivingProgress.querySelectorAll('.progress-segment').length !== event.total) {
+            initProgressSegments(receivingProgress, event.total);
+          }
 
-            // First, clear all previous states
-            for (let i = 0; i < event.total; i++) {
-              const segment = elements.receivingProgress.querySelector(`.progress-segment[data-index="${i}"]`);
-              if (segment) {
-                segment.classList.remove('received', 'unacknowledged', 'missing');
-              }
-            }
+          // Update progress
+          for (let i = 0; i < event.total; i++) {
+            const segment = receivingProgress.querySelector(`.progress-segment[data-index="${i}"]`);
+            if (segment) segment.classList.remove('received', 'unacknowledged', 'missing');
+          }
 
-            // Mark received chunks
-            event.receivedIndices.forEach((idx) => {
-              updateProgressSegment(elements.receivingProgress, idx, 'received');
-            });
-
-            // Mark unacknowledged chunks (received but not yet acknowledged)
-            if (event.unacknowledgedIndices && event.unacknowledgedIndices.length > 0) {
-              event.unacknowledgedIndices.forEach((idx) => {
-                updateProgressSegment(elements.receivingProgress, idx, 'unacknowledged');
-              });
-            }
-
-            // Mark missing chunks (only in sender mode)
-            if (currentMode === 'sender') {
-              for (let i = 0; i < event.total; i++) {
-                if (!event.receivedIndices.includes(i)) {
-                  updateProgressSegment(elements.receivingProgress, i, 'missing');
-                }
-              }
-            }
+          event.receivedIndices.forEach((idx) => updateProgressSegment(receivingProgress, idx, 'received'));
+          if (event.unacknowledgedIndices) {
+            event.unacknowledgedIndices.forEach((idx) =>
+              updateProgressSegment(receivingProgress, idx, 'unacknowledged'),
+            );
           }
         });
 
         qrProtocol.on('ack', (event) => {
-          event.acknowledged.forEach((index) => {
-            updateProgressSegment(elements.sendingProgress, index, 'received');
-          });
-
+          event.acknowledged.forEach((index) => updateProgressSegment(sendingProgress, index, 'received'));
           if (event.remaining === 0) {
-            // Update progress text to show completion
-            const totalSegments = elements.sendingProgress.querySelectorAll('.progress-segment').length;
-            updateProgressText(elements.sendingProgress, totalSegments, totalSegments);
+            const total = sendingProgress.querySelectorAll('.progress-segment').length;
+            updateProgressText(sendingProgress, total, total);
             showSuccessMessage();
           }
         });
@@ -663,183 +515,168 @@
         qrProtocol.on('complete', (event) => {
           if (event?.message) {
             updateReceivedText(event.message, true);
-
             if (event.checksum) {
-              elements.receiverChecksum.style.display = 'block';
-              elements.receiverChecksum.textContent = `Receiver checksum: ${event.checksum}`;
-
-              const senderChecksum = elements.senderChecksum.textContent;
-              if (senderChecksum && senderChecksum.includes(event.checksum)) {
-                elements.receiverChecksum.classList.add('match');
-                elements.receiverChecksum.textContent += ' ✓';
-              } else if (senderChecksum) {
-                elements.receiverChecksum.classList.add('mismatch');
-                elements.receiverChecksum.textContent += ' ✗';
-              }
-            }
-
-            if (event.receivedIndices && event.totalChunks) {
-              if (elements.receivingProgress.querySelectorAll('.progress-segment').length !== event.totalChunks) {
-                initProgressSegments(elements.receivingProgress, event.totalChunks);
-              }
-
-              // Clear all previous states
-              for (let i = 0; i < event.totalChunks; i++) {
-                const segment = elements.receivingProgress.querySelector(`.progress-segment[data-index="${i}"]`);
-                if (segment) {
-                  segment.classList.remove('received', 'unacknowledged', 'missing');
-                }
-              }
-
-              // Mark all received chunks as received (transfer is complete)
-              event.receivedIndices.forEach((idx) => {
-                updateProgressSegment(elements.receivingProgress, idx, 'received');
-              });
-
-              updateProgressText(elements.receivingProgress, event.receivedIndices.length, event.totalChunks);
-
-              if (currentMode === 'sender') {
-                for (let i = 0; i < event.totalChunks; i++) {
-                  if (!event.receivedIndices.includes(i)) {
-                    updateProgressSegment(elements.receivingProgress, i, 'missing');
-                  }
-                }
+              receiverChecksum.style.display = 'block';
+              receiverChecksum.textContent = `Receiver checksum: ${event.checksum}`;
+              const senderText = senderChecksum.textContent;
+              if (senderText && senderText.includes(event.checksum)) {
+                receiverChecksum.classList.add('match');
+                receiverChecksum.textContent += ' ✓';
+              } else if (senderText) {
+                receiverChecksum.classList.add('mismatch');
+                receiverChecksum.textContent += ' ✗';
               }
             }
           }
         });
+
+        // Setup UI events
+        txData.addEventListener('input', () => {
+          if (currentMode === 'sender' && txData.value.trim()) {
+            startSending(txData.value);
+          }
+        });
+
+        videoContainer.addEventListener('click', () => {
+          qrScanner ? stopCamera() : startCamera();
+        });
+
+        senderBtn.addEventListener('click', () => setMode('sender'));
+        receiverBtn.addEventListener('click', () => setMode('receiver'));
+
+        // Audio context initialization (simple version)
+        const initAudio = () => {
+          const audio = document.querySelector('.iphone-silence');
+          if (audio) audio.play().catch(() => {});
+        };
+        document.addEventListener('click', initAudio, { once: true });
+
+        // Initial state
+        updateQRCode('Ready to send...');
+        setInterval(() => updateSpeedLabels(), 1000);
+      });
+
+      function setupVisualizer() {
+        const canvas = audioVisualizer;
+        const ctx = canvas.getContext('2d');
+        const WIDTH = (canvas.width = canvas.parentElement.clientWidth);
+        const HEIGHT = (canvas.height = canvas.parentElement.clientHeight);
+
+        let analyser = null;
+        let active = false;
+
+        window.visualizeAudio = (node, context) => {
+          if (!node || !context) {
+            ctx.clearRect(0, 0, WIDTH, HEIGHT);
+            active = false;
+            return;
+          }
+
+          if (!active) {
+            analyser = context.createAnalyser();
+            analyser.fftSize = 256;
+            node.connect(analyser);
+            active = true;
+            draw();
+          }
+        };
+
+        function draw() {
+          if (!active) return;
+          requestAnimationFrame(draw);
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          analyser.getByteFrequencyData(dataArray);
+
+          ctx.fillStyle = 'rgb(0, 0, 0)';
+          ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+          const barWidth = (WIDTH / dataArray.length) * 2.5;
+          let x = 0;
+
+          for (let i = 0; i < dataArray.length; i++) {
+            const barHeight = (dataArray[i] / 255) * HEIGHT;
+            ctx.fillStyle = `rgb(${dataArray[i]}, 100, 200)`;
+            ctx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+            x += barWidth + 1;
+          }
+        }
       }
 
-      // UI event handlers
-      function setupUIEvents() {
-        elements.txData.addEventListener('input', async () => {
-          if (currentMode === 'sender') {
-            const text = elements.txData.value.trim();
-            if (text) {
-              await startSending(text);
-            }
-          }
-        });
+      async function setMode(mode) {
+        if (currentMode === mode) return;
 
-        elements.videoContainer.addEventListener('click', () => {
-          cameraActive ? stopCamera() : startCamera();
-        });
+        // Cleanup
+        if (qrScanner) stopCamera();
 
-        elements.senderBtn.addEventListener('click', async () => {
-          if (currentMode !== 'sender') {
-            currentMode = 'sender';
-            elements.senderBtn.classList.add('active');
-            elements.receiverBtn.classList.remove('active');
-            await configureAsSender();
-          }
-        });
+        currentMode = mode;
+        clearUI();
 
-        elements.receiverBtn.addEventListener('click', async () => {
-          if (currentMode !== 'receiver') {
-            currentMode = 'receiver';
-            elements.receiverBtn.classList.add('active');
-            elements.senderBtn.classList.remove('active');
-            await configureAsReceiver();
-          }
-        });
-      }
+        // Update UI
+        senderBtn.classList.toggle('active', mode === 'sender');
+        receiverBtn.classList.toggle('active', mode === 'receiver');
+        document.body.classList.toggle('receiver-mode', mode === 'receiver');
 
-      // Sending functions
-      function stopSending() {
-        if (currentSendingStream) {
-          currentSendingStream.stop = true;
-          currentSendingStream = null;
+        if (mode === 'sender') {
+          txData.disabled = false;
+          if (txData.value.trim()) startSending(txData.value);
+        } else {
+          txData.disabled = true;
+          await startCamera();
+          startReceiving();
         }
       }
 
       async function startSending(text) {
-        stopSending();
-        await initializeAudioContext();
-
-        const stream = qrProtocol.send(text, 500);
-        currentSendingStream = { stream, stop: false };
-
         try {
-          for await (const qrItem of stream) {
-            if (currentSendingStream?.stop) break;
-
+          for await (const qrItem of qrProtocol.send(text, 500)) {
             updateQRCode(qrItem.data);
-            updateCurrentSegment(elements.sendingProgress, qrItem.index, qrItem.total);
+            updateCurrentSegment(sendingProgress, qrItem.index, qrItem.total);
+            await new Promise((resolve) => setTimeout(resolve, 1000 / 15)); // frame rate
           }
         } catch (error) {
-          console.error('Error during QR streaming:', error);
+          console.error('Sending error:', error);
         }
       }
 
-      // Mode configuration
-      function configureSenderWithoutAudio() {
-        if (qrScanner) stopCamera();
-        stopSending();
+      async function startReceiving() {
+        let qrData = null;
 
-        clearUI();
-        document.body.classList.remove('receiver-mode');
-        elements.txData.disabled = false;
-      }
+        const qrStream = {
+          async *[Symbol.asyncIterator]() {
+            while (currentMode === 'receiver') {
+              if (qrData) {
+                yield qrData;
+                qrData = null;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+          },
+        };
 
-      async function configureAsSender() {
-        if (qrScanner) stopCamera();
-        stopSending();
+        // Simple QR handler
+        window.onQRDetected = (data) => {
+          qrData = data;
+        };
 
-        clearUI();
-        document.body.classList.remove('receiver-mode');
-        elements.txData.disabled = false;
-
-        const text = elements.txData.value.trim();
-        if (text) {
-          await startSending(text);
+        try {
+          for await (const chunk of qrProtocol.receive(qrStream)) {
+            // Chunk processing is handled by events
+          }
+        } catch (error) {
+          console.error('Receiving error:', error);
         }
       }
 
-      async function configureAsReceiver() {
-        stopSending();
-
-        elements.txData.value = '';
-        elements.txData.disabled = true;
-        clearUI();
-
-        document.body.classList.add('receiver-mode');
-
-        await initializeAudioContext();
-        await qrProtocol.configureReceiver();
-
-        startCamera();
-      }
-
-      function clearUI() {
-        elements.receivedText.innerHTML = '';
-        clearProgressSegments(elements.receivingProgress);
-        clearProgressSegments(elements.sendingProgress);
-        updateProgressText(elements.receivingProgress, 0, 0);
-        updateProgressText(elements.sendingProgress, 0, 0);
-
-        elements.senderChecksum.style.display = 'none';
-        elements.senderChecksum.classList.remove('match', 'mismatch');
-        elements.receiverChecksum.style.display = 'none';
-        elements.receiverChecksum.classList.remove('match', 'mismatch');
-
-        transferStats = { startTime: null, totalBytes: 0, chunkSize: 0 };
-      }
-
-      // Camera functions
       async function startCamera() {
         try {
-          qrScanner = new QrScanner(elements.video, (result) => qrProtocol.parseCode(result.data), {
+          qrScanner = new QrScanner(video, (result) => window.onQRDetected?.(result.data), {
             returnDetailedScanResult: true,
-            highlightScanRegion: true,
-            highlightCodeOutline: true,
             preferredCamera: 'environment',
           });
-
           await qrScanner.start();
-
-          cameraActive = true;
-          elements.videoContainer.classList.add('camera-active');
-          elements.cameraLabel.textContent = 'Stop Camera';
+          videoContainer.classList.add('camera-active');
+          videoContainer.querySelector('.camera-label').textContent = 'Stop Camera';
         } catch (error) {
           console.error('Camera error:', error);
         }
@@ -851,43 +688,55 @@
           qrScanner.destroy();
           qrScanner = null;
         }
-
-        cameraActive = false;
-        elements.videoContainer.classList.remove('camera-active');
-        elements.cameraLabel.textContent = 'Start Camera';
+        videoContainer.classList.remove('camera-active');
+        videoContainer.querySelector('.camera-label').textContent = 'Start Camera';
       }
 
-      // UI update functions
-      function updateQRCode(qrData) {
-        elements.qrcode.innerHTML = '';
-        const canvas = document.createElement('canvas');
-        elements.qrcode.appendChild(canvas);
-
-        QRCode.toCanvas(canvas, qrData, {
-          width: elements.qrcode.clientWidth,
-          margin: 4,
+      function clearUI() {
+        receivedText.innerHTML = '';
+        [sendingProgress, receivingProgress].forEach((container) => {
+          const text = container.querySelector('.progress-text');
+          container.innerHTML = '';
+          if (text) container.appendChild(text);
         });
+        updateProgressText(sendingProgress, 0, 0);
+        updateProgressText(receivingProgress, 0, 0);
+
+        [senderChecksum, receiverChecksum].forEach((el) => {
+          el.style.display = 'none';
+          el.classList.remove('match', 'mismatch');
+        });
+
+        transferStats = { startTime: null, totalBytes: 0, chunkSize: 0 };
       }
 
-      function updateReceivedText(chunkData, isComplete) {
+      function updateQRCode(data) {
+        qrcode.innerHTML = '';
+        const canvas = document.createElement('canvas');
+        qrcode.appendChild(canvas);
+        QRCode.toCanvas(canvas, data, { width: qrcode.clientWidth, margin: 4 });
+      }
+
+      function updateReceivedText(text, isComplete) {
         if (isComplete) {
-          elements.receivedText.textContent = chunkData;
+          receivedText.textContent = text;
         } else {
           const span = document.createElement('span');
           span.className = 'highlight-chunk';
-          span.textContent = chunkData;
-          elements.receivedText.appendChild(span);
+          span.textContent = text;
+          receivedText.appendChild(span);
         }
-        elements.receivedText.scrollTop = elements.receivedText.scrollHeight;
+        receivedText.scrollTop = receivedText.scrollHeight;
       }
 
       function initProgressSegments(container, total) {
+        const text = container.querySelector('.progress-text');
         container.innerHTML = '';
 
-        const textElement = document.createElement('div');
-        textElement.className = 'progress-text';
-        textElement.textContent = `0/${total}`;
-        container.appendChild(textElement);
+        const textEl = document.createElement('div');
+        textEl.className = 'progress-text';
+        textEl.textContent = `0/${total}`;
+        container.appendChild(textEl);
 
         for (let i = 0; i < total; i++) {
           const segment = document.createElement('div');
@@ -898,36 +747,11 @@
         }
       }
 
-      function clearProgressSegments(container) {
-        const textElement = container.querySelector('.progress-text');
-        container.innerHTML = '';
-        if (textElement) {
-          container.appendChild(textElement);
-        }
-      }
-
       function updateProgressSegment(container, index, status) {
         const segment = container.querySelector(`.progress-segment[data-index="${index}"]`);
-        if (!segment && container.querySelectorAll('.progress-segment').length === 0) {
-          initProgressSegments(container, Math.max(25, index + 1));
-          return updateProgressSegment(container, index, status);
-        }
-
         if (segment) {
-          segment.title = `Chunk ${parseInt(index) + 1}: ${status}`;
-
-          // Clear previous status classes
           segment.classList.remove('received', 'unacknowledged', 'missing');
-
-          // Add new status class
-          if (status === 'received') {
-            segment.classList.add('received');
-          } else if (status === 'unacknowledged') {
-            segment.classList.add('unacknowledged');
-          } else if (status === 'missing') {
-            segment.classList.add('missing');
-          }
-
+          segment.classList.add(status);
           updateProgressCounter(container);
         }
       }
@@ -939,65 +763,45 @@
       }
 
       function updateProgressText(container, received, total) {
-        const textElement = container.querySelector('.progress-text');
-        if (textElement) {
-          textElement.textContent = `${received}/${total}`;
-        }
+        const text = container.querySelector('.progress-text');
+        if (text) text.textContent = `${received}/${total}`;
       }
 
-      function updateCurrentSegment(container, currentIndex, totalSegments) {
+      function updateCurrentSegment(container, index, total) {
         if (container.querySelectorAll('.progress-segment').length === 0) {
-          initProgressSegments(container, totalSegments);
+          initProgressSegments(container, total);
         }
-
         container.querySelectorAll('.current').forEach((el) => el.classList.remove('current'));
-
-        const segment = container.querySelector(`.progress-segment[data-index="${currentIndex}"]`);
-        if (segment) {
-          segment.classList.add('current');
-        }
+        const segment = container.querySelector(`.progress-segment[data-index="${index}"]`);
+        if (segment) segment.classList.add('current');
       }
 
       function showSuccessMessage() {
-        elements.qrcode.innerHTML = '';
-
-        const successDiv = document.createElement('div');
-        successDiv.className = 'qr-success-message';
-
-        const icon = document.createElement('div');
-        icon.className = 'icon';
-        icon.innerHTML = '✓';
-        successDiv.appendChild(icon);
-
-        const text = document.createElement('div');
-        text.className = 'text';
-        text.textContent = 'Transfer Complete!';
-        successDiv.appendChild(text);
-
-        elements.qrcode.appendChild(successDiv);
-      }
-
-      // Speed calculation
-      function formatBitrate(bitsPerSecond) {
-        if (bitsPerSecond < 1000) return `${Math.round(bitsPerSecond)} b/s`;
-        if (bitsPerSecond < 1000000) return `${(bitsPerSecond / 1000).toFixed(1)} Kb/s`;
-        return `${(bitsPerSecond / 1000000).toFixed(1)} Mb/s`;
+        qrcode.innerHTML = `
+          <div class="qr-success-message">
+            <div class="icon">✓</div>
+            <div class="text">Transfer Complete!</div>
+          </div>
+        `;
       }
 
       function updateSpeedLabels() {
         if (transferStats.startTime) {
-          const totalTime = (Date.now() - transferStats.startTime) / 1000;
-          if (totalTime > 0) {
-            const avgBitrate = (transferStats.totalBytes * 8) / totalTime;
+          const elapsed = (Date.now() - transferStats.startTime) / 1000;
+          const bitrate = (transferStats.totalBytes * 8) / elapsed;
+          const formatBitrate = (bps) =>
+            bps < 1000
+              ? `${Math.round(bps)} b/s`
+              : bps < 1000000
+                ? `${(bps / 1000).toFixed(1)} Kb/s`
+                : `${(bps / 1000000).toFixed(1)} Mb/s`;
 
-            if (currentMode === 'receiver') {
-              elements.receiverSpeed.textContent = `Average: ${formatBitrate(avgBitrate)}`;
-            } else {
-              const acknowledgedSegments = elements.sendingProgress.querySelectorAll('.progress-segment.received');
-              const bytesTransferred = acknowledgedSegments.length * transferStats.chunkSize;
-              const senderBitrate = (bytesTransferred * 8) / totalTime;
-              elements.senderSpeed.textContent = `Average: ${formatBitrate(senderBitrate)}`;
-            }
+          if (currentMode === 'receiver') {
+            receiverSpeed.textContent = `Average: ${formatBitrate(bitrate)}`;
+          } else {
+            const acknowledged = sendingProgress.querySelectorAll('.progress-segment.received').length;
+            const senderBitrate = (acknowledged * transferStats.chunkSize * 8) / elapsed;
+            senderSpeed.textContent = `Average: ${formatBitrate(senderBitrate)}`;
           }
         }
       }
