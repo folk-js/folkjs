@@ -478,6 +478,7 @@ export class FolkShapeAttribute extends CustomAttribute {
 
   handleEvent(event: FocusEvent) {
     // If someone is tabbing backwards and hits an element with a shadow DOM, we cant tell the difference between is that element is focused of if something in it is.
+    // FIX: Safari doesnt focus audio and video elements from pointer events
     if (event.type === 'focus') {
       // this is a hack until we observe the position changing
       if (this.autoPosition) {
