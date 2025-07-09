@@ -132,7 +132,6 @@ export class QRTPB extends EventEmitter {
     if (!this.#isAudioInitialized) {
       await this.#ggwave!.ready();
       this.#ggwave!.setProtocol(GGWave.GGWAVE_PROTOCOL_AUDIBLE_FASTEST);
-      await this.#warmUpAudio();
       this.#isAudioInitialized = true;
     }
 
@@ -206,19 +205,6 @@ export class QRTPB extends EventEmitter {
         totalChunks: this.#totalChunks,
         checksum: this.#checksum,
       });
-    }
-  }
-
-  /**
-   * Warm up the audio system
-   */
-  async #warmUpAudio(): Promise<void> {
-    if (!this.#ggwave) return;
-
-    try {
-      await this.#ggwave.send('warmup', 5); // Very low volume (5%)
-    } catch (error) {
-      console.warn('Failed to warm up audio:', error);
     }
   }
 
