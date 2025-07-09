@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lo-fi Photo Booth</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100vh;
+        overscroll-behavior: none;
+        touch-action: none;
+        margin: 0;
+      }
+
+      video {
+        object-fit: cover;
+        object-position: center;
+        border: 1px lightgrey solid;
+        border-radius: 5px;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body folk-zoomable="grid: true">
+    <video folk-camera folk-shape="x: 25; y: 25; height: 250; width: 350;"></video>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-zoomable';
+      import '@folkjs/labs/standalone/folk-camera-attribute';
+      import '@folkjs/labs/standalone/folk-shape-attribute';
+      import { videoFrameToImage } from '@folkjs/labs/utils/video';
+
+      const GAP = 25;
+      const video = document.querySelector('video');
+      let lastShape = video;
+
+      document.addEventListener('keypress', (e) => {
+        if (e.code !== 'Space') return;
+
+        const image = videoFrameToImage(video);
+        image.setAttribute('folk-shape', `x: ${lastShape.shape.x}; y: ${lastShape.shape.bottom + GAP}`);
+        document.body.appendChild(image);
+        lastShape = image;
+      });
+    </script>
+  </body>
+</html>

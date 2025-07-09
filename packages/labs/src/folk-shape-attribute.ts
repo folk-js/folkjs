@@ -315,6 +315,22 @@ export class FolkShapeAttribute extends CustomAttribute {
     this.#requestUpdate();
   }
 
+  get top() {
+    return this.y;
+  }
+
+  get right() {
+    return this.x + this.width;
+  }
+
+  get bottom() {
+    return this.y + this.height;
+  }
+
+  get left() {
+    return this.x;
+  }
+
   get vertices() {
     return this.#shape.vertices;
   }
