@@ -1,4 +1,3 @@
-import type { Doc, ObjID, Patch, PeerId, Prop } from '@automerge/vanillajs';
 import {
   DocHandle,
   generateAutomergeUrl,
@@ -7,6 +6,11 @@ import {
   isValidAutomergeUrl,
   Repo,
   WebSocketClientAdapter,
+  type Doc,
+  type ObjID,
+  type Patch,
+  type PeerId,
+  type Prop,
 } from '@automerge/vanillajs';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import type { DOMJElement, DOMJNode } from '@folkjs/labs/dom-json';
