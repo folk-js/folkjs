@@ -16,7 +16,7 @@ export interface QRTPVProgress {
 /**
  * QRTPV - Unified class for sending and receiving data over QR codes using Luby Transform
  */
-export class QRTPV {
+export class QRTPC {
   // Receiver state
   #decoder: LtDecoder = createDecoder();
   #receivedIndices: Set<number> = new Set();

@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en-us">
   <head>
-    <title>Data over QR Video (Luby Transform)</title>
+    <title>Data over QR (Fountain Codes)</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
@@ -275,7 +275,7 @@
   </head>
   <body>
     <div class="app-container">
-      <div class="title">Data over QR Video (Luby Transform)</div>
+      <div class="title">Data over QR (Fountain Codes)</div>
 
       <!-- Container for QR and camera side-by-side -->
       <div class="media-container">
@@ -295,7 +295,7 @@
       <!-- Progress bars for sending and receiving -->
       <div class="progress-section">
         <div class="progress-column">
-          <div class="progress-title">Sending (Luby Transform)</div>
+          <div class="progress-title">Sending</div>
           <div class="progress-bar-container">
             <div id="sendingProgressBar" class="progress-bar" style="width: 0%"></div>
             <div id="sendingProgressText" class="progress-text">Idle</div>
@@ -327,20 +327,20 @@
 
     <!-- QR Code libraries -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-    <!-- Import QR Scanner and QRTPV module -->
+    <!-- Import QR Scanner and QRTPC module -->
     <script type="module">
       import QrScanner from 'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js';
-      import { QRTPV } from '@folkjs/labs/QRTP-V';
+      import { QRTPC } from '@folkjs/labs/QRTP-C';
 
       // Make modules available globally for debugging
-      window.QRTPV = QRTPV;
+      window.QRTPC = QRTPC;
       window.QrScanner = QrScanner;
 
       // Core state
       let qrScanner = null;
       let cameraActive = false;
       let senderIterator = null;
-      let qrtpv = new QRTPV();
+      let qrtpc = new QRTPC();
 
       // Bitrate tracking
       let receptionStartTime = null;
@@ -407,7 +407,7 @@
           elements.receivedTextDisplay.textContent = '';
 
           // Reset receiver state
-          qrtpv.reset();
+          qrtpc.reset();
           resetReceivingUI(elements);
 
           if (text) {
@@ -450,7 +450,7 @@
         const frameRate = parseInt(elements.frameRate.value);
 
         try {
-          senderIterator = qrtpv.send(data, { blockSize, frameRate });
+          senderIterator = qrtpc.send(data, { blockSize, frameRate });
 
           // Calculate checksum for sender
           senderChecksum = await calculateChecksum(data);
@@ -493,7 +493,7 @@
       // Receiving functions
       async function processQRCode(qrData, elements) {
         try {
-          const progress = qrtpv.receive(qrData);
+          const progress = qrtpc.receive(qrData);
           const progressPercent = Math.round((progress.received / progress.needed) * 100);
 
           // Track reception bitrate
