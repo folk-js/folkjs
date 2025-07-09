@@ -118,7 +118,6 @@ export class QRTPB extends EventEmitter {
     try {
       // Play a very quiet tone - almost silent but enough to initialize audio
       await this.#audioWave.send('warmup', 5); // Very low volume (5%)
-      console.log('Audio system warmed up');
     } catch (error) {
       console.warn('Failed to warm up audio:', error);
     }
@@ -166,9 +165,6 @@ export class QRTPB extends EventEmitter {
         this.#chunksMap.set(packet.index, packet.payload);
         this.#receivedIndices.add(packet.index);
 
-        // Log the current state for debugging
-        console.log(`Received chunk ${packet.index}/${packet.total}, total received: ${this.#receivedIndices.size}`);
-
         // Notify about the new chunk
         this.emit('chunk', {
           index: packet.index,
@@ -180,7 +176,6 @@ export class QRTPB extends EventEmitter {
 
         // Check if we received all chunks
         if (this.#receivedIndices.size === packet.total) {
-          console.log(`All ${packet.total} chunks received!`);
           const message = this.#getOrderedMessage();
           this.emit('complete', {
             message,
@@ -303,36 +298,51 @@ export class QRTPB extends EventEmitter {
   }
 
   /**
-   * Convert array of indices to ranges for more efficient transmission
-   * e.g. [1,2,3,4,5,9,10,11,15] becomes [[1,5],[9,11],[15,15]]
+   * Convert array of indices to optimized ranges for efficient transmission.
+   * Uses the full context of received chunks to create the most efficient ranges.
+   *
+   * @param indicesToAck - The specific indices we want to acknowledge
+   *
+   * For example:
+   * - indicesToAck: [3,4,5,10], receivedIndices: [0,2,3,4,5,10,15]
+   *   -> Output: [[0,5],[10,10]] (extends 3,4,5 to include adjacent 0,2)
+   * - indicesToAck: [10], receivedIndices: [0,1,2,3,4,5,6,7,8,9,10,11,12]
+   *   -> Output: [[0,12]] (extends 10 to the full contiguous range)
    */
-  #indicesToRanges(indices: number[]): [number, number][] {
-    if (indices.length === 0) return [];
+  #optimizeRanges(indicesToAck: number[]): [number, number][] {
+    if (indicesToAck.length === 0) return [];
 
-    // Sort the indices first
-    const sortedIndices = [...indices].sort((a, b) => a - b);
+    // Sort the indices to acknowledge
+    const sortedIndicesToAck = [...indicesToAck].sort((a, b) => a - b);
 
-    const ranges: [number, number][] = [];
-    let rangeStart = sortedIndices[0];
-    let rangeLast = sortedIndices[0];
+    const optimizedRanges: [number, number][] = [];
+    let i = 0;
 
-    for (let i = 1; i < sortedIndices.length; i++) {
-      const current = sortedIndices[i];
-      // If current index is consecutive, extend the range
-      if (current === (rangeLast ?? 0) + 1) {
-        rangeLast = current;
-      } else {
-        // Otherwise close the current range and start a new one
-        ranges.push([rangeStart, rangeLast] as [number, number]);
-        rangeStart = current;
-        rangeLast = current;
+    while (i < sortedIndicesToAck.length) {
+      const currentIndex = sortedIndicesToAck[i];
+
+      // Expand left as far as possible using full received set
+      let rangeStart = currentIndex;
+      while (rangeStart - 1 >= 0 && this.#receivedIndices.has(rangeStart - 1)) {
+        rangeStart--;
+      }
+
+      // Expand right as far as possible using full received set
+      let rangeEnd = currentIndex;
+      while (rangeEnd + 1 <= this.#totalChunks - 1 && this.#receivedIndices.has(rangeEnd + 1)) {
+        rangeEnd++;
+      }
+
+      // Add this optimized range
+      optimizedRanges.push([rangeStart, rangeEnd]);
+
+      // Skip past all indices we've already included in this range
+      while (i < sortedIndicesToAck.length && sortedIndicesToAck[i] <= rangeEnd) {
+        i++;
       }
     }
 
-    // Add the last range
-    ranges.push([rangeStart, rangeLast] as [number, number]);
-
-    return ranges;
+    return optimizedRanges;
   }
 
   /**
@@ -373,8 +383,8 @@ export class QRTPB extends EventEmitter {
       // Mark as acknowledged so we don't send duplicate ranges
       allReceivedIndices.forEach((index) => this.#acknowledgedIndices.add(index));
 
-      // Convert to ranges and send
-      const ranges = this.#indicesToRanges(allReceivedIndices);
+      // Convert to optimized ranges for more efficient transmission
+      const ranges = this.#optimizeRanges(allReceivedIndices);
 
       // Split ranges into manageable batches
       const MAX_RANGES_PER_BATCH = 5;
@@ -397,8 +407,8 @@ export class QRTPB extends EventEmitter {
       // Mark these indices as acknowledged
       unacknowledgedIndices.forEach((index) => this.#acknowledgedIndices.add(index));
 
-      // Convert indices to ranges
-      const ranges = this.#indicesToRanges(unacknowledgedIndices);
+      // Convert indices to optimized ranges using full received context
+      const ranges = this.#optimizeRanges(unacknowledgedIndices);
 
       // Split ranges into manageable batches
       const MAX_RANGES_PER_BATCH = 5;
@@ -438,9 +448,9 @@ export class QRTPB extends EventEmitter {
       // Clear the queue
       this.#audioQueue = [];
 
-      // Convert indices back to ranges
+      // Convert indices back to optimized ranges using full received context
       const mergedIndices = Array.from(allIndices).sort((a, b) => a - b);
-      const mergedRanges = this.#indicesToRanges(mergedIndices);
+      const mergedRanges = this.#optimizeRanges(mergedIndices);
 
       // Add back to queue in batches
       const MAX_RANGES_PER_BATCH = 5;
@@ -464,16 +474,7 @@ export class QRTPB extends EventEmitter {
       const ranges = this.#audioQueue.shift();
       if (ranges && ranges.length > 0 && this.#audioWave) {
         const ackMessage = this.#ackHeader.encode({ ranges });
-
-        // Calculate the total indices being acknowledged in this message
-        const totalIndices = ranges.reduce((sum, [start, end]) => sum + (end - start + 1), 0);
-
-        // Convert ranges back to indices for backward compatibility
-        const indices = this.#rangesToIndices(ranges);
-
-        this.emit('audioSending', { ranges, totalIndices, indices });
         await this.#audioWave.send(ackMessage, this.#audioVolume);
-        this.emit('audioSent', { ranges, totalIndices, indices });
 
         // Add a short delay after each audio message to ensure clean playback
         await new Promise((resolve) => setTimeout(resolve, 200));
@@ -564,8 +565,8 @@ export class QRTPB extends EventEmitter {
     // Mark all as acknowledged but we'll still send them one more time
     allIndices.forEach((index) => this.#acknowledgedIndices.add(index));
 
-    // Convert to ranges and send immediately (bypass queue)
-    const ranges = this.#indicesToRanges(allIndices);
+    // Convert to optimized ranges using full received context
+    const ranges = this.#optimizeRanges(allIndices);
 
     // Split into manageable batches if needed
     const MAX_RANGES_PER_BATCH = 5;
@@ -575,20 +576,14 @@ export class QRTPB extends EventEmitter {
       batches.push(ranges.slice(i, i + MAX_RANGES_PER_BATCH));
     }
 
-    // Log the completion acknowledgment
-    console.log(`Sending complete acknowledgment with ${allIndices.length} indices in ${batches.length} batches`);
-
     // Send each batch with a small delay between them
     for (const batch of batches) {
       if (batch.length > 0) {
         try {
           this.#isAudioSending = true;
           const ackMessage = this.#ackHeader.encode({ ranges: batch });
-          const indices = this.#rangesToIndices(batch);
 
-          this.emit('audioSending', { ranges: batch, totalIndices: indices.length, indices });
           await this.#audioWave.send(ackMessage, this.#audioVolume);
-          this.emit('audioSent', { ranges: batch, totalIndices: indices.length, indices });
 
           // Small delay between batches
           await new Promise((resolve) => setTimeout(resolve, 200));
