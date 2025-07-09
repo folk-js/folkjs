@@ -28,10 +28,28 @@ export class QRTPB extends EventEmitter {
   #audioVolume: number = 80; // Volume (1-100)
   #totalChunks: number = 0; // Total number of chunks
   #frameRate: number = 15; // 15fps for QR codes
+  #originalData: string = ''; // Store original data for checksum
 
   constructor() {
     super();
     this.#audioWave = new GGWave();
+  }
+
+  /**
+   * Compute a short checksum of the given data
+   */
+  async #computeChecksum(data: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const dataBuffer = encoder.encode(data);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
+    const hashArray = new Uint8Array(hashBuffer);
+
+    // Take first 4 bytes and convert to hex
+    const shortHash = Array.from(hashArray.slice(0, 4))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    return shortHash;
   }
 
   /**
@@ -50,6 +68,7 @@ export class QRTPB extends EventEmitter {
     this.#role = 'sender';
     this.#chunksMap = new Map();
     this.#acknowledgedIndices = new Set();
+    this.#originalData = data;
 
     // Break data into chunks
     for (let i = 0; i < data.length; i += chunkSize) {
@@ -58,10 +77,14 @@ export class QRTPB extends EventEmitter {
 
     this.#totalChunks = this.#chunksMap.size;
 
+    // Compute checksum
+    const checksum = await this.#computeChecksum(data);
+
     this.emit('init', {
       total: this.#totalChunks,
       size: chunkSize,
       dataLength: data.length,
+      checksum,
     });
 
     // Initialize audio for listening to acknowledgments
@@ -194,14 +217,24 @@ export class QRTPB extends EventEmitter {
         // Check if we received all chunks
         if (this.#receivedIndices.size === packet.total) {
           const message = this.#getOrderedMessage();
-          this.emit('complete', {
-            message,
-            receivedIndices: Array.from(this.#receivedIndices),
-            totalChunks: this.#totalChunks,
-          });
+          this.#emitComplete(message);
         }
       }
     }
+  }
+
+  /**
+   * Emit complete event with checksum
+   */
+  async #emitComplete(message: string): Promise<void> {
+    const checksum = await this.#computeChecksum(message);
+
+    this.emit('complete', {
+      message,
+      receivedIndices: Array.from(this.#receivedIndices),
+      totalChunks: this.#totalChunks,
+      checksum,
+    });
   }
 
   /**
@@ -361,6 +394,14 @@ export class QRTPB extends EventEmitter {
    */
   getReceivedMessage(): string {
     return this.#getOrderedMessage();
+  }
+
+  /**
+   * Get checksum of the received message
+   */
+  async getReceivedChecksum(): Promise<string> {
+    const message = this.#getOrderedMessage();
+    return await this.#computeChecksum(message);
   }
 
   /**

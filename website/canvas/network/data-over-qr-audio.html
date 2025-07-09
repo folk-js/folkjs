@@ -403,6 +403,27 @@
       .speed-indicator {
         display: none;
       }
+
+      /* Checksum display styling */
+      .checksum-display {
+        padding: 4px 8px;
+        background-color: #f0f0f0;
+        border-left: 3px solid #666;
+        border-radius: 3px;
+        font-weight: 500;
+      }
+
+      .checksum-display.match {
+        background-color: #e8f5e8;
+        border-left-color: #4caf50;
+        color: #2e7d32;
+      }
+
+      .checksum-display.mismatch {
+        background-color: #ffeaea;
+        border-left-color: #f44336;
+        color: #c62828;
+      }
     </style>
   </head>
   <body>
@@ -447,6 +468,11 @@
           <div id="sendingChunksGrid" class="chunks-grid"></div>
           <textarea id="txData" class="input-text">Hello from QRTPB!</textarea>
           <div id="chunkSizeInfo" style="display: none"></div>
+          <div
+            id="senderChecksum"
+            class="checksum-display"
+            style="display: none; font-family: monospace; font-size: 12px; color: #666; margin-top: 8px"
+          ></div>
           <div class="speed-indicator" style="display: none">
             <span class="current">Current: 0 b/s</span>
             <span class="average">Average: 0 b/s</span>
@@ -460,6 +486,11 @@
           </div>
           <div id="receivingChunksGrid" class="chunks-grid"></div>
           <div id="receivedTextDisplay" class="received-text"></div>
+          <div
+            id="receiverChecksum"
+            class="checksum-display"
+            style="display: none; font-family: monospace; font-size: 12px; color: #666; margin-top: 8px"
+          ></div>
           <div class="speed-indicator" style="display: none">
             <span class="current">Current: 0 b/s</span>
             <span class="average">Average: 0 b/s</span>
@@ -527,6 +558,8 @@
           receiverBtn: document.getElementById('receiverBtn'),
           audioVisualizer: document.getElementById('audioVisualizer'),
           audioTestButton: document.getElementById('audioTestButton'),
+          senderChecksum: document.getElementById('senderChecksum'),
+          receiverChecksum: document.getElementById('receiverChecksum'),
         };
 
         // Create speed labels
@@ -633,6 +666,12 @@
           // Make sure the sending progress text shows 0/total
           elements.sendingProgressText.textContent = `0/${event.total}`;
 
+          // Display sender checksum
+          if (event.checksum) {
+            elements.senderChecksum.style.display = 'block';
+            elements.senderChecksum.textContent = `Sender checksum: ${event.checksum}`;
+          }
+
           // Reset transfer stats
           resetTransferStats();
         });
@@ -701,6 +740,24 @@
             const avgBitrate = (transferStats.totalBytesReceived * 8) / totalTime;
 
             updateReceivedText(event.message, true, elements.receivedTextDisplay);
+
+            // Display receiver checksum
+            if (event.checksum) {
+              elements.receiverChecksum.style.display = 'block';
+              elements.receiverChecksum.textContent = `Receiver checksum: ${event.checksum}`;
+
+              // Check if checksums match by comparing with sender checksum
+              const senderChecksum = elements.senderChecksum.textContent;
+              if (senderChecksum && senderChecksum.includes(event.checksum)) {
+                elements.receiverChecksum.classList.add('match');
+                elements.receiverChecksum.classList.remove('mismatch');
+                elements.receiverChecksum.textContent += ' ✓';
+              } else if (senderChecksum) {
+                elements.receiverChecksum.classList.add('mismatch');
+                elements.receiverChecksum.classList.remove('match');
+                elements.receiverChecksum.textContent += ' ✗';
+              }
+            }
 
             // If we have received indices and total chunks, update all segments
             if (event.receivedIndices && event.totalChunks) {
@@ -842,6 +899,12 @@
         clearProgressSegments(elements.receivingProgressBarContainer);
         elements.receivingProgressText.textContent = '0/0';
 
+        // Hide checksums and clear classes
+        elements.senderChecksum.style.display = 'none';
+        elements.senderChecksum.classList.remove('match', 'mismatch');
+        elements.receiverChecksum.style.display = 'none';
+        elements.receiverChecksum.classList.remove('match', 'mismatch');
+
         // Reset transfer stats
         resetTransferStats();
 
@@ -868,6 +931,12 @@
         elements.receivedTextDisplay.innerHTML = '';
         clearProgressSegments(elements.receivingProgressBarContainer);
         elements.receivingProgressText.textContent = '0/0';
+
+        // Hide checksums and clear classes
+        elements.senderChecksum.style.display = 'none';
+        elements.senderChecksum.classList.remove('match', 'mismatch');
+        elements.receiverChecksum.style.display = 'none';
+        elements.receiverChecksum.classList.remove('match', 'mismatch');
 
         // Reset transfer stats
         resetTransferStats();
@@ -896,6 +965,12 @@
         elements.txData.disabled = true;
         clearProgressSegments(elements.sendingProgressBarContainer);
         elements.sendingProgressText.textContent = '0/0';
+
+        // Hide checksums and clear classes
+        elements.senderChecksum.style.display = 'none';
+        elements.senderChecksum.classList.remove('match', 'mismatch');
+        elements.receiverChecksum.style.display = 'none';
+        elements.receiverChecksum.classList.remove('match', 'mismatch');
 
         // Reset transfer stats
         resetTransferStats();
