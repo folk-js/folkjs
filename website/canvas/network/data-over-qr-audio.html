@@ -487,6 +487,7 @@
       let audioContext = null;
       let analyser = null;
       let visualizationActive = false;
+      let currentSendingStream = null; // Track current sending stream
 
       // Bitrate measurement
       let transferStats = {
@@ -755,8 +756,8 @@
           if (currentMode === 'sender') {
             const text = elements.txData.value.trim();
             if (text) {
-              // Use 15fps (67ms cycle interval) for rapid QR codes
-              await qrProtocol.configureSender(text, 500, 67);
+              // Start streaming QR codes
+              await startSending(text, elements);
             }
           }
         });
@@ -793,12 +794,48 @@
         setupAudioTest(elements);
       }
 
+      // Stop current sending stream
+      function stopSending() {
+        if (currentSendingStream) {
+          currentSendingStream.stop = true; // Flag to stop the stream
+          currentSendingStream = null;
+        }
+      }
+
+      // Start sending using the new stream-based API
+      async function startSending(text, elements) {
+        // Stop any existing stream
+        stopSending();
+
+        // Create a new stream
+        const stream = qrProtocol.send(text, 500);
+        currentSendingStream = { stream, stop: false };
+
+        // Process the stream
+        try {
+          for await (const qrData of stream) {
+            // Check if we should stop
+            if (currentSendingStream?.stop) {
+              break;
+            }
+
+            // Update QR code display
+            updateQRCode(qrData, elements.qrcodeContainer);
+          }
+        } catch (error) {
+          console.error('Error during QR streaming:', error);
+        }
+      }
+
       // Configure as sender (without audio initialization)
       function configureSenderWithoutAudio(elements) {
         // First cleanup if needed
         if (qrScanner) {
           stopCamera(elements);
         }
+
+        // Stop any existing sending stream
+        stopSending();
 
         // Clear UI
         elements.receivedTextDisplay.innerHTML = '';
@@ -824,6 +861,9 @@
           stopCamera(elements);
         }
 
+        // Stop any existing sending stream
+        stopSending();
+
         // Clear UI
         elements.receivedTextDisplay.innerHTML = '';
         clearProgressSegments(elements.receivingProgressBarContainer);
@@ -841,13 +881,16 @@
         // Configure protocol as sender
         const text = elements.txData.value.trim();
         if (text) {
-          // Use 15fps (67ms cycle interval) for rapid QR codes
-          await qrProtocol.configureSender(text, 500, 67);
+          // Start streaming QR codes
+          await startSending(text, elements);
         }
       }
 
       // Configure as receiver
       async function configureAsReceiver(elements) {
+        // Stop any existing sending stream
+        stopSending();
+
         // Clear UI
         elements.txData.value = '';
         elements.txData.disabled = true;
