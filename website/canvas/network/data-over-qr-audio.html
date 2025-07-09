@@ -673,6 +673,8 @@
           qrScanner = new QrScanner(video, (result) => window.onQRDetected?.(result.data), {
             returnDetailedScanResult: true,
             preferredCamera: 'environment',
+            highlightScanRegion: true,
+            highlightCodeOutline: true,
           });
           await qrScanner.start();
           videoContainer.classList.add('camera-active');
