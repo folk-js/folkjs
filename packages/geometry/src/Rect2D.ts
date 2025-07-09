@@ -1,5 +1,5 @@
 import type { Matrix2D } from './Matrix2D.ts';
-import { sign } from './utilities.ts';
+import { isNumber, isObject, sign } from './utilities.ts';
 import type { Vector2 } from './Vector2.ts';
 import * as V from './Vector2.ts';
 
@@ -12,6 +12,10 @@ export interface Rect2D {
 
 export function fromValues(x = 0, y = 0, width = 0, height = 0): Rect2D {
   return { x, y, width, height };
+}
+
+export function isRect2D(rect: unknown): rect is Rect2D {
+  return isObject(rect) && isNumber(rect.x) && isNumber(rect.y) && isNumber(rect.width) && isNumber(rect.height);
 }
 
 export function center(rect: Rect2D) {

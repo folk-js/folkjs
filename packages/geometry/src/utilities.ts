@@ -23,3 +23,7 @@ export const toDegree = (a: number) => a * RADIAN;
 export const toDOMPrecision = (value: number) => Math.round(value * 1e4) / 1e4;
 
 export const toRadian = (a: number) => a * DEGREE;
+
+export const isNumber = (num: unknown): num is number => typeof num === 'number';
+
+export const isObject = (obj: unknown): obj is Record<string, any> => obj != null && typeof obj === 'object';

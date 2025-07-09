@@ -1,4 +1,5 @@
-import type { Rect2D } from './Rect2D.ts';
+import { isRect2D, type Rect2D } from './Rect2D.ts';
+import { isNumber } from './utilities.ts';
 import type { Vector2Readonly } from './Vector2.ts';
 import * as V from './Vector2.ts';
 
@@ -17,6 +18,10 @@ export type Shape2DCorners = Readonly<{
   bottomRight: Vector2Readonly;
   bottomLeft: Vector2Readonly;
 }>;
+
+export function isShape2D(shape: Shape2D) {
+  return isRect2D(shape) && isNumber(shape.rotation);
+}
 
 export function fromValues(x = 0, y = 0, width = 0, height = 0, rotation = 0, vertices?: Shape2D['vertices']): Shape2D {
   return { x, y, width, height, rotation, vertices };
