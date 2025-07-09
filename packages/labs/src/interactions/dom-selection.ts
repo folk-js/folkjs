@@ -75,15 +75,14 @@ export function selectElement<T extends Element = Element>(
       cancellationSignal.removeEventListener('abort', onCancel);
       (container as HTMLElement).removeEventListener('pointerover', onPointerOver, { capture: true });
       (container as HTMLElement).removeEventListener('click', onSelection, { capture: true });
-      (container as HTMLElement).removeEventListener('keydown', onKeyDown, { capture: true });
+      window.removeEventListener('keydown', onKeyDown, { capture: true });
       containerDocument.adoptedStyleSheets.splice(containerDocument.adoptedStyleSheets.indexOf(styles), 1);
     }
 
     cancellationSignal.addEventListener('abort', onCancel);
     (container as HTMLElement).addEventListener('pointerover', onPointerOver, { capture: true });
     (container as HTMLElement).addEventListener('click', onSelection, { capture: true });
-    (container as HTMLElement).addEventListener('keydown', onKeyDown, { capture: true });
-
+    window.addEventListener('keydown', onKeyDown, { capture: true });
     containerDocument.adoptedStyleSheets.push(styles);
   });
 }

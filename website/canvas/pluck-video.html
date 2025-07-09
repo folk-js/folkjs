@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pluck Video</title>
+    <style>
+      html,
+      body,
+      main {
+        margin: 0;
+        height: 100vh;
+        overscroll-behavior: none;
+        touch-action: none;
+        margin: 0;
+      }
+
+      video {
+        object-fit: cover;
+        object-position: center;
+        border: 1px lightgrey solid;
+        border-radius: 5px;
+        overflow: hidden;
+      }
+
+      button {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+      }
+
+      img[folk-video-timestamp] {
+        display: block;
+        position: relative;
+        border: 1px solid black;
+
+        &::before {
+          content: attr(folk-video-timestamp);
+          display: block;
+          position: absolute;
+          left: 0;
+          bottom: 100%;
+          font-size: 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main folk-zoomable="grid: true">
+      <video
+        autoplay
+        crossorigin="anonymous"
+        controls
+        folk-shape="x: 25; y: 25; height: 300; width: 400;"
+        src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+      >
+      </video>
+    </main>
+
+    <button>Pluck</button>
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-zoomable';
+      import '@folkjs/labs/standalone/folk-shape-attribute';
+      import { dragImageOutOfVideoFrame } from '@folkjs/labs/interactions/video';
+
+      let ac = null;
+      const main = document.querySelector('main');
+      const pluck = document.querySelector('button');
+      const video = document.querySelector('video');
+
+      pluck.addEventListener('click', async () => {
+        if (ac) {
+          ac?.abort();
+        } else {
+          ac = new AbortController();
+          await dragImageOutOfVideoFrame(ac.signal, main);
+          ac = null;
+        }
+      });
+
+      document.body.addEventListener('dblclick', (e) => {
+        const figure = e.target.closest('figure');
+
+        if (figure === null) return;
+        const time = figure.querySelector('figcaption')?.textContent;
+
+        if (time) {
+          video.currentTime = Number(time);
+        }
+      });
+    </script>
+  </body>
+</html>
