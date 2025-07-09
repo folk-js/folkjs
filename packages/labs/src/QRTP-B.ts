@@ -98,7 +98,6 @@ export class QRTPB extends EventEmitter {
 
       // If all chunks are acknowledged, we're done
       if (attempts >= this.#totalChunks) {
-        this.emit('allAcknowledged');
         break;
       }
 

@@ -627,7 +627,10 @@
             updateProgressSegment(elements.sendingProgress, index, 'received');
           });
 
-          if (event.remaining === 0 && event.acknowledged.length > 0) {
+          if (event.remaining === 0) {
+            // Update progress text to show completion
+            const totalSegments = elements.sendingProgress.querySelectorAll('.progress-segment').length;
+            updateProgressText(elements.sendingProgress, totalSegments, totalSegments);
             showSuccessMessage();
           }
         });
@@ -670,12 +673,6 @@
               }
             }
           }
-        });
-
-        qrProtocol.on('allAcknowledged', () => {
-          const totalSegments = elements.sendingProgress.querySelectorAll('.progress-segment').length;
-          updateProgressText(elements.sendingProgress, totalSegments, totalSegments);
-          showSuccessMessage();
         });
       }
 
