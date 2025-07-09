@@ -1,4 +1,3 @@
-import EventEmitter from 'eventemitter3';
 import { GGWave } from './ggwave';
 import { codec } from './utils/codecString';
 
@@ -11,14 +10,8 @@ interface QRTPBOptions {
 
 /**
  * QRTP-B - QR Transfer Protocol with Audio Backchannel
- *
- * Clean API:
- * - new QRTPB(options) - unified constructor
- * - send(data, chunkSize) - returns async iterator for QR codes
- * - receive(qrDataStream) - returns async iterator for received chunks
- * - dispose() - cleanup
  */
-export class QRTPB extends EventEmitter {
+export class QRTPB {
   #chunksMap: Map<number, string> = new Map();
   #receivedIndices: Set<number> = new Set();
   #unacknowledgedIndices: Set<number> = new Set();
@@ -37,7 +30,6 @@ export class QRTPB extends EventEmitter {
   #checksum: string = '';
 
   constructor(options: QRTPBOptions = {}) {
-    super();
     this.#audioVolume = options.audioVolume ?? 80;
     this.#frameRate = options.frameRate ?? 15;
     this.#audioAckInterval = options.ackInterval ?? 2000;
@@ -65,14 +57,7 @@ export class QRTPB extends EventEmitter {
         this.#receivedIndices.add(packet.index);
         this.#unacknowledgedIndices.add(packet.index);
 
-        this.emit('chunk', {
-          index: packet.index,
-          total: packet.total,
-          payload: packet.payload,
-          receivedCount: this.#receivedIndices.size,
-          receivedIndices: Array.from(this.#receivedIndices),
-          unacknowledgedIndices: Array.from(this.#unacknowledgedIndices),
-        });
+        // Chunk received - handled via receive() iterator
 
         const isComplete = this.#receivedIndices.size === packet.total;
         if (isComplete) {
@@ -109,7 +94,16 @@ export class QRTPB extends EventEmitter {
    * Send data as QR codes with audio backchannel
    * Returns async iterator of QR code data
    */
-  async *send(data: string, chunkSize = 500): AsyncIterableIterator<{ data: string; index: number; total: number }> {
+  async *send(
+    data: string,
+    chunkSize = 500,
+  ): AsyncIterableIterator<{
+    qr: string;
+    index: number;
+    total: number;
+    acknowledged: number[];
+    isComplete: boolean;
+  }> {
     this.#role = 'sender';
     this.#chunksMap = new Map();
     this.#acknowledgedIndices = new Set();
@@ -122,13 +116,6 @@ export class QRTPB extends EventEmitter {
     }
 
     this.#totalChunks = this.#chunksMap.size;
-
-    this.emit('init', {
-      total: this.#totalChunks,
-      size: chunkSize,
-      dataLength: data.length,
-      checksum: this.#checksum,
-    });
 
     // Initialize audio for acknowledgments
     if (!this.#isAudioInitialized) {
@@ -157,7 +144,13 @@ export class QRTPB extends EventEmitter {
         payload,
       });
 
-      yield { data: qrData, index: nextIndex, total: this.#totalChunks };
+      yield {
+        qr: qrData,
+        index: nextIndex,
+        total: this.#totalChunks,
+        acknowledged: Array.from(this.#acknowledgedIndices),
+        isComplete: this.#acknowledgedIndices.size >= this.#totalChunks,
+      };
 
       currentIndex = (nextIndex + 1) % this.#totalChunks;
       await new Promise((resolve) => setTimeout(resolve, 1000 / this.#frameRate));
@@ -166,15 +159,19 @@ export class QRTPB extends EventEmitter {
 
   /**
    * Receive data from QR codes with audio backchannel
-   * Pass in an async iterable of QR code strings (e.g., from camera)
-   * Returns async iterator of received message chunks
+   * Returns progress updates including chunks, completion status, and final message
    */
   async *receive(qrDataStream: AsyncIterable<string>): AsyncIterableIterator<{
-    index: number;
-    payload: string;
+    // Current chunk (if any)
+    chunk?: { index: number; payload: string; isNew: boolean };
+    // Overall progress
+    received: number;
     total: number;
+    receivedIndices: number[];
+    // Completion
     isComplete: boolean;
     message?: string;
+    checksum?: string;
   }> {
     this.#role = 'receiver';
     this.#chunksMap = new Map();
@@ -197,7 +194,20 @@ export class QRTPB extends EventEmitter {
     for await (const qrData of qrDataStream) {
       const result = this.#processQRCode(qrData);
       if (result) {
-        yield result;
+        // Always yield progress, whether new chunk or not
+        yield {
+          chunk: {
+            index: result.index,
+            payload: result.payload,
+            isNew: true, // processQRCode only returns results for new chunks
+          },
+          received: this.#receivedIndices.size,
+          total: this.#totalChunks,
+          receivedIndices: Array.from(this.#receivedIndices),
+          isComplete: result.isComplete,
+          message: result.message,
+          checksum: this.#checksum || undefined,
+        };
       }
     }
   }
@@ -222,13 +232,6 @@ export class QRTPB extends EventEmitter {
     if (hasAllChunks) {
       this.#message = orderedChunks.join('');
       this.#checksum = this.#computeChecksum(this.#message);
-
-      this.emit('complete', {
-        message: this.#message,
-        receivedIndices: Array.from(this.#receivedIndices),
-        totalChunks: this.#totalChunks,
-        checksum: this.#checksum,
-      });
     }
   }
 
@@ -346,23 +349,13 @@ export class QRTPB extends EventEmitter {
     if (!packet) return;
 
     try {
-      let hasNewAcks = false;
-
       // Convert ranges to individual indices
       const indices = this.#rangesToIndices(packet.ranges);
 
       for (const index of indices) {
         if (!this.#acknowledgedIndices.has(index) && index >= 0 && index < this.#totalChunks) {
           this.#acknowledgedIndices.add(index);
-          hasNewAcks = true;
         }
-      }
-
-      if (hasNewAcks) {
-        this.emit('ack', {
-          acknowledged: Array.from(this.#acknowledgedIndices),
-          remaining: this.#totalChunks - this.#acknowledgedIndices.size,
-        });
       }
     } catch (error) {
       console.error('Failed to parse audio acknowledgment:', error);
@@ -410,7 +403,6 @@ export class QRTPB extends EventEmitter {
     }
 
     this.#isAudioInitialized = false;
-    this.removeAllListeners();
   }
 
   /**
