@@ -248,55 +248,66 @@ export class QRTPB extends EventEmitter {
   }
 
   /**
-   * Convert indices to optimized ranges using full received context
-   * Supports wrapped ranges that span across the end/beginning boundary
+   * Flood-fill from seeds over received indices, then convert to ranges
    */
-  #optimizeRanges(indicesToAck: number[]): [number, number][] {
+  #floodFillRanges(indicesToAck: number[]): [number, number][] {
     if (indicesToAck.length === 0) return [];
 
-    const sortedIndices = [...indicesToAck].sort((a, b) => a - b);
-    const optimizedRanges: [number, number][] = [];
-    let i = 0;
+    // Step 1: Flood-fill ALL seeds to get complete set of indices to acknowledge
+    const toAck = new Set<number>();
+    const visited = new Set<number>();
 
-    while (i < sortedIndices.length) {
-      const currentIndex = sortedIndices[i];
+    for (const seed of indicesToAck) {
+      if (!this.#receivedIndices.has(seed) || visited.has(seed)) continue;
 
-      // Expand left using full received set
-      let rangeStart = currentIndex;
-      while (rangeStart - 1 >= 0 && this.#receivedIndices.has(rangeStart - 1)) {
-        rangeStart--;
+      // Flood-fill this connected component
+      let start = seed;
+      let end = seed;
+
+      // Expand left
+      while (start - 1 >= 0 && this.#receivedIndices.has(start - 1)) {
+        start--;
       }
 
-      // Expand right using full received set
-      let rangeEnd = currentIndex;
-      while (rangeEnd + 1 <= this.#totalChunks - 1 && this.#receivedIndices.has(rangeEnd + 1)) {
-        rangeEnd++;
+      // Expand right
+      while (end + 1 < this.#totalChunks && this.#receivedIndices.has(end + 1)) {
+        end++;
       }
 
-      optimizedRanges.push([rangeStart, rangeEnd]);
-
-      // Skip past all indices we've included in this range
-      while (i < sortedIndices.length && sortedIndices[i] <= rangeEnd) {
-        i++;
-      }
-    }
-
-    // Check if we can merge the first and last ranges into a wrapped range
-    if (optimizedRanges.length >= 2) {
-      const firstRange = optimizedRanges[0];
-      const lastRange = optimizedRanges[optimizedRanges.length - 1];
-
-      // Can wrap if last range ends at the boundary and first range starts at 0
-      if (lastRange[1] === this.#totalChunks - 1 && firstRange[0] === 0) {
-        // Create wrapped range: [lastRangeStart, firstRangeEnd]
-        const wrappedRange: [number, number] = [lastRange[0], firstRange[1]];
-
-        // Replace first and last ranges with the wrapped range
-        return [wrappedRange, ...optimizedRanges.slice(1, -1)];
+      // Add entire connected component to both visited and toAck
+      for (let i = start; i <= end; i++) {
+        visited.add(i);
+        toAck.add(i);
       }
     }
 
-    return optimizedRanges;
+    if (toAck.size === 0) return [];
+
+    // Step 2: Convert the flood-filled indices to ranges
+    const sortedIndices = Array.from(toAck).sort((a, b) => a - b);
+    const ranges: [number, number][] = [];
+
+    let start = sortedIndices[0];
+    let end = sortedIndices[0];
+
+    for (let i = 1; i < sortedIndices.length; i++) {
+      if (sortedIndices[i] === end + 1) {
+        end = sortedIndices[i]; // Extend current range
+      } else {
+        ranges.push([start, end]); // Save current range
+        start = end = sortedIndices[i]; // Start new range
+      }
+    }
+    ranges.push([start, end]); // Save final range
+
+    // Step 3: Handle circular wraparound
+    if (ranges.length > 1 && ranges[0][0] === 0 && ranges[ranges.length - 1][1] === this.#totalChunks - 1) {
+      const last = ranges.pop()!;
+      const first = ranges.shift()!;
+      ranges.unshift([last[0], first[1]]); // Wrapped range
+    }
+
+    return ranges;
   }
 
   /**
@@ -312,15 +323,14 @@ export class QRTPB extends EventEmitter {
       const indicesToAck = Array.from(this.#unacknowledgedIndices);
 
       // Convert to optimized ranges using full received context
-      const ranges = this.#optimizeRanges(indicesToAck);
+      const ranges = this.#floodFillRanges(indicesToAck);
 
       if (ranges.length > 0) {
         const ackMessage = this.#ackHeader.encode({ ranges });
+        // Clear the unacknowledged set which we're about to send
+        this.#unacknowledgedIndices.clear();
         await this.#ggwave.send(ackMessage, this.#audioVolume);
       }
-
-      // Clear the unacknowledged set - we've sent everything
-      this.#unacknowledgedIndices.clear();
     } catch (error) {
       console.error('Failed to send audio acknowledgment:', error);
     }
