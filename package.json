@@ -13,24 +13,7 @@
     "deopt": "node --experimental-strip-types --prof --log-deopt --log-ic --log-maps --log-maps-details --log-internal-timer-events --log-code --log-source-code --detailed-line-info",
     "clean": "find . -name 'dist' -o -name 'node_modules' -o -name '.wireit' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
     "clean:wireit": "find . -name '.wireit' | xargs rm -rf",
-    "test": "npm run test --workspaces",
-    "types": "wireit"
-  },
-  "wireit": {
-    "types": {
-      "command": "tsc --build packages/*/tsconfig.json --pretty",
-      "files": [
-        "packages/*/src/**/*.ts",
-        "packages/*/src/**/*.tsx",
-        "packages/*/tsconfig.json",
-        "tsconfig.base.json"
-      ],
-      "output": [
-        "packages/*/tsconfig.tsbuildinfo",
-        "packages/*/dist/**/*.d.ts",
-        "packages/*/dist/**/*.d.ts.map"
-      ]
-    }
+    "test": "npm run test --workspaces"
   },
   "devDependencies": {
     "prettier": "^3.5.3",

@@ -24,7 +24,6 @@
   ],
   "scripts": {
     "build": "wireit",
-    "dev": "vite __tests__",
     "test": "echo 'No tests to run'"
   },
   "wireit": {
@@ -43,7 +42,6 @@
     }
   },
   "devDependencies": {
-    "typescript": "^5.8.2",
-    "vite": "^6.3.4"
+    "typescript": "^5.8.2"
   }
 }
