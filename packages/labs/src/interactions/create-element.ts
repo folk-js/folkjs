@@ -1,5 +1,4 @@
 import type { Point } from '@folkjs/geometry/Vector2';
-import type { FolkBaseConnection } from '../folk-base-connection';
 import { selectElements } from './dom-multi-selection';
 
 export function clickToCreateElement<T extends Element = Element>(
@@ -144,12 +143,4 @@ export function clickToCreateShapes<T extends Element = Element>(
       el.setAttribute('folk-shape', '');
     }
   });
-}
-
-export function dragToCreateConnection<T extends FolkBaseConnection = FolkBaseConnection>(
-  container: Element,
-  cancellationSignal: AbortSignal,
-  createElement: (point: Point) => T,
-): Promise<T | null> {
-  return new Promise((resolve) => {});
 }
