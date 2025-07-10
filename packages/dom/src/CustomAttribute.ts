@@ -2,7 +2,7 @@ export class CustomAttribute {
   static attributeName = '';
 
   static define() {
-    if (customElements.get(this.attributeName)) return;
+    if (customAttributes.isDefined(this.attributeName)) return;
 
     customAttributes.define(this.attributeName, this);
   }
@@ -146,4 +146,14 @@ export class CustomAttributeRegistry {
   }
 }
 
-export const customAttributes = new CustomAttributeRegistry();
+// There are cases when multiple versions of this registry might be added to the page
+// and we need to guarantee there is only a single registry created.
+let customAttributes: CustomAttributeRegistry;
+
+if ('__customAttributes' in window) {
+  customAttributes = window.__customAttributes as CustomAttributeRegistry;
+} else {
+  (window as any).__customAttributes = customAttributes = new CustomAttributeRegistry();
+}
+
+export { customAttributes };
