@@ -3,3 +3,4 @@ export { BidirectionalPropagator } from './bidirectional-propagator.ts';
 export { Propagator } from './propagator.ts';
 export { SymmetricPropagator } from './symmetric-propagator.ts';
 export type { PropagatorFunction, PropagatorOptions, PropagatorParser } from './types.ts';
+export { ValuePropagator } from './value-propagator.ts';

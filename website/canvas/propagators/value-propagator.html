@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Value Propagator</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+      }
+
+      folk-shape {
+        background-color: black;
+        border-radius: 5px;
+        color: white;
+        padding: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Text propagation example -->
+    <folk-shape id="box1" x="100" y="100" width="100" height="50">Source</folk-shape>
+    <folk-shape id="box2" x="250" y="100" width="100" height="50">Target</folk-shape>
+    <folk-value-propagator
+      source="#box1"
+      target="#box2"
+      expression="textContent: from.textContent + ' (copied)'"
+    ></folk-value-propagator>
+
+    <!-- Position propagation example -->
+    <folk-shape id="box3" x="100" y="200" width="80" height="80">Drag me</folk-shape>
+    <folk-shape id="box4" x="300" y="200" width="80" height="80">Follower</folk-shape>
+    <folk-value-propagator
+      source="#box3"
+      target="#box4"
+      expression="x: from.x + 200, 
+y: from.y + 50"
+    ></folk-value-propagator>
+
+    <!-- Rotation based on position -->
+    <folk-shape id="box5" x="100" y="300" width="80" height="80">Move X</folk-shape>
+    <folk-shape id="box6" x="450" y="300" width="80" height="80">Rotates</folk-shape>
+    <folk-value-propagator source="#box5" target="#box6" expression="rotation: from.x / 10"></folk-value-propagator>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-shape';
+      import '@folkjs/labs/standalone/folk-value-propagator';
+    </script>
+  </body>
+</html>

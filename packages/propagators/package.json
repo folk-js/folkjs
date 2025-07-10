@@ -39,5 +39,8 @@
   },
   "devDependencies": {
     "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "@vue/reactivity": "^3.5.17"
   }
 }
