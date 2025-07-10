@@ -35,7 +35,7 @@
     </style>
 
     <script type="module">
-      import { encodeRange, decodeRange } from '../src/range.ts';
+      import { encodeRange, decodeRange } from '@folkjs/dom/range';
 
       function updateRangeText(rangeString) {
         window.range.textContent = rangeString.replace('(', '(\n  ').replaceAll(', ', ',\n  ').replace(/\)$/, '\n)');
