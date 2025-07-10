@@ -47,7 +47,7 @@
     "@types/webextension-polyfill": "^0.12.3",
     "rollup-plugin-tla": "^0.0.2",
     "typescript": "^5.8.2",
-    "vite": "^6.0.3",
+    "vite": "npm:rolldown-vite@latest",
     "vite-plugin-wasm": "^3.4.1",
     "vite-plugin-web-extension": "^4.4.3"
   }
