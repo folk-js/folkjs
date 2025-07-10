@@ -33,7 +33,7 @@
     </style>
   </head>
   <body>
-    <chess-board>
+    <chess-board folk-sync>
       <chess-piece position="a1" type="white-rook"></chess-piece>
       <chess-piece position="b1" type="white-knight"></chess-piece>
       <chess-piece position="c1" type="white-bishop"></chess-piece>
@@ -70,4 +70,7 @@
   </body>
 
   <script type="module" src="./main.ts"></script>
+  <script type="module">
+    import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
+  </script>
 </html>
