@@ -1,2 +1,3 @@
-website/canvas/self-modifying-html.html
-website/canvas/lsp-attribute.html
+website/demos/self-modifying-html.html
+website/demos/lsp-attribute.html
+website/canvas/main.ts

@@ -1,5 +1,4 @@
-import { css, property, ReactiveElement, type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
-import { selectElement } from '@folkjs/labs/interactions/dom-selection';
-
-FolkSyncAttribute.define();
+import '@folkjs/labs/standalone/folk-space-attribute';
+import '@folkjs/labs/standalone/folk-shape-attribute';
+import '@folkjs/labs/standalone/folk-arrow';
+import '@folkjs/labs/standalone/folk-sync-attribute';

@@ -1,8 +1,6 @@
 import { css, property, ReactiveElement, type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
 import { selectElement } from '@folkjs/labs/interactions/dom-selection';
-
-FolkSyncAttribute.define();
+import '@folkjs/labs/standalone/folk-sync-attribute';
 
 // https://github.com/lichess-org/chessground
 // https://chessboardjs.com/#start

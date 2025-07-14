@@ -1013,5 +1013,3 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 }
-
-FolkSyncAttribute.define();
