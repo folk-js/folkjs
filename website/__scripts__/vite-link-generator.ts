@@ -55,7 +55,7 @@ export function getCanvasFiles(baseDir: string): CanvasFile[] {
  * Generate a link for a canvas file
  */
 function formatLink(file: CanvasFile): string {
-  return `<li><a href="/canvas/${file.relativePath}">${file.displayName}</a></li>`;
+  return `<li><a href="/demos/${file.relativePath}">${file.displayName}</a></li>`;
 }
 
 /**
