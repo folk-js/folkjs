@@ -22,7 +22,7 @@ bench('Shape2D: update bottom right corner', () => {
 }).gc('inner');
 
 bench('Shape2D: bounds', () => {
-  do_not_optimize(S.bounds(shape));
+  do_not_optimize(S.boundingBox(shape));
 }).gc('inner');
 
 bench('Shape2D: flip handles', () => {

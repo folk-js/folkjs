@@ -30,7 +30,7 @@ describe('Shape2D', () => {
 
   test('bounds are calculated correctly', () => {
     const shape = S.fromValues(10, 20, 100, 50);
-    const bounds = S.bounds(shape);
+    const bounds = S.boundingBox(shape);
     expect(bounds.x).toBe(10);
     expect(bounds.y).toBe(20);
     expect(bounds.width).toBe(100);
@@ -39,7 +39,7 @@ describe('Shape2D', () => {
 
   test('bounds with rotation are calculated correctly', () => {
     const shape = S.fromValues(10, 20, 100, 50, Math.PI / 4);
-    const bounds = S.bounds(shape);
+    const bounds = S.boundingBox(shape);
     expect(bounds.x).toBeCloseTo(6.967);
     expect(bounds.y).toBeCloseTo(-8.033);
     expect(bounds.width).toBeCloseTo(106.066);
@@ -89,7 +89,7 @@ describe('Shape2D', () => {
       Math.PI / 2, // 90 degrees
     );
 
-    const bounds = S.bounds(shape);
+    const bounds = S.boundingBox(shape);
 
     expect(bounds.width).toBeCloseTo(50);
     expect(bounds.height).toBeCloseTo(100);
