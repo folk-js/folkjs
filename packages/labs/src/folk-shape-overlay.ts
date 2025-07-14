@@ -5,7 +5,7 @@ import type { Vector2 } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 import { round, toDOMPrecision } from '@folkjs/geometry/utilities';
 import { type FolkShapeAttribute } from './folk-shape-attribute';
-import type { FolkSpaceAttribute } from './folk-zoomable';
+import type { FolkSpaceAttribute } from './folk-space-attribute';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 type ResizeHandle = 'resize-top-left' | 'resize-top-right' | 'resize-bottom-right' | 'resize-bottom-left';

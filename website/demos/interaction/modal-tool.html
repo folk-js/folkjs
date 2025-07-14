@@ -19,7 +19,7 @@
     </style>
   </head>
   <body>
-    <body folk-zoomable="grid:true">
+    <body folk-space="grid:true">
       <h1 folk-shape>Heading</h1>
       <input folk-shape value="Input 1" />
       <input folk-shape value="Input 2" />
@@ -31,7 +31,7 @@
       <folk-modal-tool folk-shape="x:555; y: 15">Delete</folk-modal-tool>
 
       <script type="module">
-        import '@folkjs/labs/standalone/folk-zoomable';
+        import '@folkjs/labs/standalone/folk-space-attribute';
         import '@folkjs/labs/standalone/folk-shape-attribute';
         import { FolkModalTool } from '@folkjs/labs/folk-modal-tool';
         FolkModalTool.define();

@@ -36,11 +36,11 @@ declare global {
 }
 
 export class FolkSpaceAttribute extends CustomAttribute implements IPointTransform {
-  static override attributeName = 'folk-zoomable';
+  static override attributeName = 'folk-space';
 
   static override define() {
     if (!customAttributes.isDefined(this.attributeName)) {
-      Object.defineProperty(Element.prototype, 'zoom', {
+      Object.defineProperty(Element.prototype, 'space', {
         get() {
           return customAttributes.get(this, FolkSpaceAttribute.attributeName) as FolkSpaceAttribute | undefined;
         },
@@ -51,7 +51,7 @@ export class FolkSpaceAttribute extends CustomAttribute implements IPointTransfo
   }
 
   static styles = css`
-    :host([folk-zoomable]) {
+    :host([folk-space]) {
       display: block;
       position: relative;
       overflow: visible;
@@ -61,7 +61,7 @@ export class FolkSpaceAttribute extends CustomAttribute implements IPointTransfo
       --folk-scale: 1;
     }
 
-    :host([folk-zoomable*='grid: true']) {
+    :host([folk-space*='grid: true']) {
       --circle-width: 1px;
       --circle: circle at var(--circle-width) var(--circle-width);
       /* Map color transparency to --folk-scale for each level of the grid */
@@ -240,7 +240,7 @@ export class FolkSpaceAttribute extends CustomAttribute implements IPointTransfo
     try {
       this.#shadow = this.ownerElement.attachShadow({ mode: 'open' });
     } catch (error) {
-      console.warn("folk-zoomable attribute can't work with an element that already has a shadow root.");
+      console.warn("folk-space attribute can't work with an element that already has a shadow root.");
       return;
     }
 

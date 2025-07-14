@@ -13,10 +13,10 @@ import { FolkShapeAttribute } from '../folk-shape-attribute';
 import { FolkShapeOverlay } from '../folk-shape-overlay';
 import { FolkShortcutTree } from '../folk-shortcut-tree';
 import { FolkSpace } from '../folk-space';
+import { FolkSpaceAttribute } from '../folk-space-attribute';
 import { FolkSpectrogram } from '../folk-spectrogram';
 import { FolkSpreadsheet, FolkSpreadSheetCell, FolkSpreadsheetHeader } from '../folk-spreadsheet';
 import { FolkWebLLM } from '../folk-webllm';
-import { FolkSpaceAttribute } from '../folk-zoomable';
 import { IntlNumber } from '../intl-elements/intl-number';
 
 declare global {

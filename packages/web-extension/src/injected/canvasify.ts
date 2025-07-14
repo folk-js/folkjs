@@ -1,7 +1,7 @@
 import '@folkjs/labs/standalone/folk-shape-attribute';
-import '@folkjs/labs/standalone/folk-zoomable';
+import '@folkjs/labs/standalone/folk-space-attribute';
 
-document.body.setAttribute('folk-zoomable', '');
+document.body.setAttribute('folk-space', '');
 
 document.body.addEventListener('dblclick', (e) => {
   const el = e.target as HTMLElement;

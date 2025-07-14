@@ -22,11 +22,11 @@
       }
     </style>
   </head>
-  <body folk-zoomable="grid:true">
+  <body folk-space="grid:true">
     <folk-gizmos></folk-gizmos>
 
     <script type="module">
-      import '@folkjs/labs/standalone/folk-zoomable';
+      import '@folkjs/labs/standalone/folk-space-attribute';
       import '@folkjs/labs/standalone/folk-shape-attribute';
       import { Gizmos } from '@folkjs/canvas/folk-gizmos';
       import { breathFirstTraverse } from '@folkjs/geometry/BoundingVolumeHierarchy';
@@ -44,10 +44,10 @@
 
       function loop() {
         requestAnimationFrame(loop);
-        const zoom = document.body.zoom.bvh;
+        const zoom = document.body.space.bvh;
         Gizmos.clear();
 
-        breathFirstTraverse(document.body.zoom.bvh, (node) => {
+        breathFirstTraverse(document.body.space.bvh, (node) => {
           if (!node.isLeaf) {
             Gizmos.rect(node.aabb, { color: '#aca0a077' });
           }

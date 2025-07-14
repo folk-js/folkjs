@@ -1,4 +1,4 @@
-import { FolkSpaceAttribute } from '../folk-zoomable';
+import { FolkSpaceAttribute } from '../folk-space-attribute';
 
 FolkSpaceAttribute.define();
 
