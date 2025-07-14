@@ -108,10 +108,10 @@ export function expand(rect: Rect2D, padding: number): Rect2D {
 }
 
 export function bounds(...rects: Rect2D[]): Rect2D {
-  let left = -Infinity;
-  let top = -Infinity;
-  let right = Infinity;
-  let bottom = Infinity;
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
 
   for (const rect of rects) {
     if (rect.x < left) left = rect.x;

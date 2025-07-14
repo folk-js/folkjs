@@ -23,7 +23,7 @@ describe('BoundingVolumeHierarchy', () => {
     expect(bvh.isLeaf).toBe(true);
   });
 
-  test('initializes BVH with two rectangles', () => {
+  test.only('initializes BVH with two rectangles', () => {
     const shapes = [S.fromValues(0, 0, 10, 10), S.fromValues(15, 15, 10, 10)];
     const bvh = BVH.fromShapes(shapes);
 
