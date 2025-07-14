@@ -6,11 +6,11 @@ import wasm from 'vite-plugin-wasm';
 
 // Local plugins
 import { cleanUrlHandler } from './__scripts__/vite-clean-urls';
-import { getCanvasFiles, linkGenerator } from './__scripts__/vite-link-generator';
+import { getCanvasFiles as getDemoFiles, linkGenerator } from './__scripts__/vite-link-generator';
 import { remark } from './__scripts__/vite-remark-md';
 
 const websiteDir = resolve(__dirname, '.');
-const canvasWebsiteDir = resolve(__dirname, './canvas');
+const demoWebsiteDir = resolve(__dirname, './demos');
 
 function getEntryPoints() {
   // Main index
@@ -19,21 +19,21 @@ function getEntryPoints() {
   };
 
   // Add site-level folders
-  ['file-space', 'hyperzoom', 'chess'].forEach((section) => {
+  ['file-space', 'hyperzoom', 'chess', 'canvas'].forEach((section) => {
     entries[section] = resolve(websiteDir, section, 'index.html');
   });
 
   // Add all canvas files
-  getCanvasFiles(canvasWebsiteDir).forEach((file) => {
-    const key = `canvas/${file.relativePath.replace('.html', '')}`;
-    entries[key] = resolve(canvasWebsiteDir, file.fullPath);
+  getDemoFiles(demoWebsiteDir).forEach((file) => {
+    const key = `demos/${file.relativePath.replace('.html', '')}`;
+    entries[key] = resolve(demoWebsiteDir, file.fullPath);
   });
 
   return entries;
 }
 
 export default defineConfig({
-  plugins: [cleanUrlHandler(websiteDir), linkGenerator(canvasWebsiteDir), mkcert(), wasm(), topLevelAwait(), remark()],
+  plugins: [cleanUrlHandler(websiteDir), linkGenerator(demoWebsiteDir), mkcert(), wasm(), topLevelAwait(), remark()],
   build: {
     target: 'esnext',
     sourcemap: true,
