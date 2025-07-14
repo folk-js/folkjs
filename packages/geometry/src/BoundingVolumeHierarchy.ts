@@ -58,7 +58,7 @@ export function fromShapes(shapes: Array<S.Shape2D>): BVHNode<S.Shape2D> {
   }
 
   const leafNodes: BVHLeafNode<S.Shape2D>[] = shapes.map((shape) => {
-    const aabb = S.bounds(shape);
+    const aabb = S.boundingBox(shape);
 
     return {
       value: shape,
@@ -118,7 +118,7 @@ export function nearestShape(root: BVHNode<S.Shape2D>, shape: S.Shape2D, directi
   const stack = [root];
   let node: BVHNode<S.Shape2D> | undefined;
 
-  const bounds = S.bounds(shape);
+  const bounds = S.boundingBox(shape);
   const center = R.center(bounds);
   let distance = Infinity;
   let closestShape: S.Shape2D | undefined;

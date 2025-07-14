@@ -55,8 +55,9 @@ export class CustomAttributeRegistry {
   #observer: MutationObserver = new MutationObserver((mutations) => {
     mutations.forEach((m: MutationRecord) => {
       if (m.type === 'attributes') {
-        const attr = this.#getConstructor(m.attributeName!);
-        if (attr) this.#handleChange(m.attributeName!, m.target as Element, m.oldValue);
+        if (this.#attrMap.has(m.attributeName!)) {
+          this.#handleChange(m.attributeName!, m.target as Element, m.oldValue);
+        }
       } else {
         m.removedNodes.forEach((node) => {
           if (!isNodeAnElement(node)) return;

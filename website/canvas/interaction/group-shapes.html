@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Group Shapes</title>
+    <style>
+      html {
+        width: 100%;
+        height: 100%;
+        position: fixed;
+        overflow: hidden;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+        margin: 0;
+      }
+      button#group {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main folk-zoomable="grid: true">
+      <h1 folk-shape="x: 50; y: 45;">Lorem Ipsum</h1>
+      <p folk-shape="x: 25; y: 75;" contenteditable=""
+        >Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore
+        magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
+        consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+        pariatur.</p
+      >
+      <p folk-shape="x: 100; y: 200;" contenteditable=""
+        >Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est
+        laborum.</p
+      >
+    </main>
+
+    <button id="group">Group shapes</button>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-shape-attribute';
+      import { mergeShapesByClick } from '@folkjs/labs/interactions/canvas';
+
+      let ac = null;
+      const main = document.querySelector('main');
+      const group = document.querySelector('button');
+
+      group.addEventListener('click', async () => {
+        if (ac) {
+          ac?.abort();
+        } else {
+          ac = new AbortController();
+          const section = await mergeShapesByClick(ac.signal, main);
+          ac = null;
+        }
+      });
+    </script>
+  </body>
+</html>

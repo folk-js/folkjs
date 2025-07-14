@@ -107,16 +107,24 @@ export function expand(rect: Rect2D, padding: number): Rect2D {
   return fromValues(rect.x - padding, rect.y - padding, rect.width + padding, rect.height + padding);
 }
 
-export function bounds(rect1: Rect2D, rect2: Rect2D): Rect2D {
-  const x = Math.min(rect1.x, rect2.x);
-  const y = Math.min(rect1.y, rect2.y);
+export function bounds(...rects: Rect2D[]): Rect2D {
+  let left = -Infinity;
+  let top = -Infinity;
+  let right = Infinity;
+  let bottom = Infinity;
 
-  return {
-    x,
-    y,
-    width: Math.max(rect1.x + rect1.width, rect2.x + rect2.width) - x,
-    height: Math.max(rect1.y + rect1.height, rect2.y + rect2.height) - y,
-  };
+  for (const rect of rects) {
+    if (rect.x < left) left = rect.x;
+    if (rect.y < top) top = rect.y;
+
+    const r = rect.x + rect.width;
+    if (r > right) right = r;
+
+    const b = rect.y + rect.height;
+    if (b > bottom) bottom = b;
+  }
+
+  return fromValues(left, top, right - left, bottom - top);
 }
 
 export function isPointInsideRect(rect: Rect2D, point: Vector2): boolean {

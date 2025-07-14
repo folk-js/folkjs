@@ -1,9 +1,9 @@
-import { isRect2D, type Rect2D } from './Rect2D.ts';
+import * as R from './Rect2D.ts';
 import { isNumber } from './utilities.ts';
 import type { Vector2Readonly } from './Vector2.ts';
 import * as V from './Vector2.ts';
 
-export type Shape2D = Rect2D & {
+export type Shape2D = R.Rect2D & {
   /** Clockwise rotation of the shape, in radians. */
   rotation: number;
   /** Relative vertices of the shape, in the range [0, 1] */
@@ -20,7 +20,7 @@ export type Shape2DCorners = Readonly<{
 }>;
 
 export function isShape2D(shape: Shape2D) {
-  return isRect2D(shape) && isNumber(shape.rotation);
+  return R.isRect2D(shape) && isNumber(shape.rotation);
 }
 
 export function fromValues(x = 0, y = 0, width = 0, height = 0, rotation = 0, vertices?: Shape2D['vertices']): Shape2D {
@@ -171,7 +171,7 @@ export function rotateAround(shape: Shape2D, angle: number, origin: Vector2Reado
   updateTopLeftAndBottomRightCorners(shape, newTopLeft, newBottomRight);
 }
 
-export function bounds(shape: Shape2DReadonly, c?: Shape2DCorners): Rect2D {
+export function boundingBox(shape: Shape2DReadonly, c?: Shape2DCorners): R.Rect2D {
   if (shape.rotation === 0) {
     return {
       x: shape.x,
@@ -192,6 +192,13 @@ export function bounds(shape: Shape2DReadonly, c?: Shape2DCorners): Rect2D {
     width: Math.max(topLeft.x, topRight.x, bottomRight.x, bottomLeft.x) - x,
     height: Math.max(topLeft.y, topRight.y, bottomRight.y, bottomLeft.y) - y,
   };
+}
+
+export function bounds(shapes: Shape2DReadonly[]): R.Rect2D {
+  return R.bounds.apply(
+    null,
+    shapes.map((s) => boundingBox(s)),
+  );
 }
 
 export function absoluteVertices(shape: Shape2DReadonly, c = center(shape)): ReadonlyArray<V.Vector2Readonly> {

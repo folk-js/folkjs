@@ -50,6 +50,12 @@ export function selectElement<T extends Element = Element>(
       onCancel();
     }
 
+    function onPointerDown(event: PointerEvent) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    }
+
     function onSelection(event: MouseEvent) {
       if (filter !== undefined) {
         const el = filter(event.target as T);
@@ -73,6 +79,7 @@ export function selectElement<T extends Element = Element>(
     function cleanUp() {
       el?.removeAttribute('folk-hovered-element');
       cancellationSignal.removeEventListener('abort', onCancel);
+      (container as HTMLElement).removeEventListener('pointerdown', onPointerDown, { capture: true });
       (container as HTMLElement).removeEventListener('pointerover', onPointerOver, { capture: true });
       (container as HTMLElement).removeEventListener('click', onSelection, { capture: true });
       window.removeEventListener('keydown', onKeyDown, { capture: true });
@@ -80,6 +87,7 @@ export function selectElement<T extends Element = Element>(
     }
 
     cancellationSignal.addEventListener('abort', onCancel);
+    (container as HTMLElement).addEventListener('pointerdown', onPointerDown, { capture: true });
     (container as HTMLElement).addEventListener('pointerover', onPointerOver, { capture: true });
     (container as HTMLElement).addEventListener('click', onSelection, { capture: true });
     window.addEventListener('keydown', onKeyDown, { capture: true });

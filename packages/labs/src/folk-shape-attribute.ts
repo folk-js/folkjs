@@ -390,7 +390,7 @@ export class FolkShapeAttribute extends CustomAttribute {
   #shapeOverlay = (this.constructor as typeof FolkShapeAttribute).#overlay;
 
   get bounds() {
-    return S.bounds(this.#shape);
+    return S.boundingBox(this.#shape);
   }
 
   #transformStack = new TransformStack();
@@ -399,15 +399,11 @@ export class FolkShapeAttribute extends CustomAttribute {
     return this.#transformStack;
   }
 
-  constructor(ownerElement: Element, name: string, value: string) {
-    super(ownerElement, name, value);
-
-    ownerElement.addEventListener('focus', this);
-    ownerElement.addEventListener('blur', this);
-  }
-
   override connectedCallback(): void {
     const el = this.ownerElement as HTMLElement;
+
+    el.addEventListener('focus', this);
+    el.addEventListener('blur', this);
 
     // We need to make this element focusable if it isn't already
     // Edge case: <video> tabIndex property is 0, but we need a tab index attribute to focus it.
@@ -462,6 +458,14 @@ export class FolkShapeAttribute extends CustomAttribute {
 
   override disconnectedCallback(): void {
     const el = this.ownerElement as HTMLElement;
+
+    if (document.activeElement === el) {
+      this.#shapeOverlay.close();
+      el.blur();
+    }
+
+    el.removeEventListener('focus', this);
+    el.removeEventListener('blur', this);
 
     if (this.#autoHeight || this.#autoWidth) {
       resizeManager.unobserve(el, this.#onResize);
