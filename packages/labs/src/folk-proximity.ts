@@ -102,11 +102,8 @@ export class FolkCluster extends FolkHull {
     }
   }
 
-  removeElement(geometry: FolkShape) {
-    this.sources = Array.from(this.sourceElements)
-      .filter((el) => el !== geometry)
-      .map((el) => `#${el.id}`)
-      .join(', ');
+  override removeElement(geometry: FolkShape) {
+    super.removeElement(geometry);
 
     const element = geometry.firstElementChild;
 

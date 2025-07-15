@@ -15,14 +15,7 @@ const folkObserver = new FolkObserver();
 export class FolkBaseSet extends ReactiveElement {
   static override styles: CSSResultGroup = css`
     :host {
-      display: block;
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-    }
-
-    ::slotted(*) {
-      pointer-events: auto;
+      display: content;
     }
   `;
 
@@ -37,7 +30,7 @@ export class FolkBaseSet extends ReactiveElement {
     return Array.from(this.#sourcesMap.values());
   }
 
-  @state() sourceElements = new Set<Element>();
+  @state() sourceElements: ReadonlySet<Element> = new Set<Element>();
 
   #slot = document.createElement('slot');
 
@@ -59,7 +52,7 @@ export class FolkBaseSet extends ReactiveElement {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this.unobserveSources();
+    this.#unobserveSources(this.sourceElements as Set<Element>);
   }
 
   // we might not need to react to the first slot change
@@ -73,7 +66,7 @@ export class FolkBaseSet extends ReactiveElement {
     const elementsToObserve = sourceElements.difference(this.sourceElements);
     const elementsToUnobserve = this.sourceElements.difference(sourceElements);
 
-    this.unobserveSources(elementsToUnobserve);
+    this.#unobserveSources(elementsToUnobserve);
 
     for (const el of elementsToObserve) {
       folkObserver.observe(el, this.#sourcesCallback, { iframeSelector: elementsMap.get(el) });
@@ -87,11 +80,29 @@ export class FolkBaseSet extends ReactiveElement {
     this.requestUpdate('sourcesMap');
   };
 
-  unobserveSources(elements: Set<Element> = this.sourceElements) {
+  #unobserveSources(elements: Set<Element>) {
     for (const el of elements) {
-      folkObserver.unobserve(el, this.#sourcesCallback);
       this.#sourcesMap.delete(el);
-      this.sourceElements.delete(el);
+      (this.sourceElements as Set<Element>).delete(el);
+      folkObserver.unobserve(el, this.#sourcesCallback);
     }
+  }
+
+  addElement(element: Element) {
+    if (this.sourceElements.has(element)) return;
+    const set = new Set<Element>();
+    set.add(element);
+    this.sourceElements.forEach((el) => set.add(el));
+    this.sourceElements = set;
+  }
+
+  removeElement(element: Element) {
+    if (!this.sourceElements.has(element)) return;
+
+    const set = new Set<Element>();
+    this.sourceElements.forEach((el) => {
+      if (el !== element) set.add(el);
+    });
+    this.sourceElements = set;
   }
 }

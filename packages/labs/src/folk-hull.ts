@@ -16,9 +16,13 @@ export class FolkHull extends FolkBaseSet {
     FolkBaseSet.styles,
     css`
       #hull {
+        position: absolute;
+        top: 0;
+        left: 0;
         background-color: var(--folk-hull-bg, #b4d8f644);
         height: 100%;
         width: 100%;
+        pointer-events: none;
       }
     `,
   ];
