@@ -4,8 +4,8 @@ import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 import { round, toDOMPrecision } from '@folkjs/geometry/utilities';
-import { type FolkShapeAttribute } from './folk-shape-attribute';
 import type { FolkSpaceAttribute } from './folk-space-attribute';
+import type { Shape2DObject } from './shape-events';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 type ResizeHandle = 'resize-top-left' | 'resize-top-right' | 'resize-bottom-right' | 'resize-bottom-left';
@@ -192,7 +192,8 @@ export class FolkShapeOverlay extends ReactiveElement {
   }
 
   #startAngle = 0;
-  #shape: FolkShapeAttribute | null = null;
+  #ownerElement: HTMLElement | null = null;
+  #shape: Shape2DObject | null = null;
   #handles!: Record<ResizeHandle | RotateHandle, HTMLElement>;
 
   #spatialTabMode = false;
@@ -258,16 +259,16 @@ export class FolkShapeOverlay extends ReactiveElement {
 
         if (this.#spatialTabMode) {
           if (this.#shape === null) {
-            const firstShape = document.querySelector('[folk-shape]')?.shape;
+            const el = document.querySelector('[folk-shape]');
 
-            if (firstShape === undefined) return;
+            if (el?.shape === undefined) return;
 
-            this.open(firstShape);
+            this.open(el.shape, el as HTMLElement);
           }
 
           this.focus();
         } else {
-          setTimeout(() => (this.#shape?.ownerElement as HTMLElement).focus(), 0);
+          setTimeout(() => this.#ownerElement?.focus(), 0);
         }
 
         this.focus();
@@ -323,7 +324,7 @@ export class FolkShapeOverlay extends ReactiveElement {
   };
 
   handleEvent(event: PointerEvent | KeyboardEvent | FocusEvent) {
-    if (this.#shape === null) return;
+    if (this.#shape === null || this.#ownerElement === null) return;
 
     // prevent IOS Safari from scrolling when a shape is interacted with.
     if (event.type === 'touchmove') {
@@ -352,17 +353,18 @@ export class FolkShapeOverlay extends ReactiveElement {
       handle = 'move';
     }
 
-    if (event.type === 'dblclick') {
-      if (handle.startsWith('resize')) {
-        this.#shape.autoHeight = true;
-        this.#shape.autoWidth = true;
-      } else if (handle.startsWith('rotation')) {
-        this.#shape.rotation = 0;
-      } else if (handle.startsWith('move')) {
-        this.#shape.autoPosition = true;
-      }
-      return;
-    }
+    // TODO: figure out how this can work with the shape selection
+    // if (event.type === 'dblclick') {
+    //   if (handle.startsWith('resize')) {
+    //     this.#shape.autoHeight = true;
+    //     this.#shape.autoWidth = true;
+    //   } else if (handle.startsWith('rotation')) {
+    //     this.#shape.rotation = 0;
+    //   } else if (handle.startsWith('move')) {
+    //     this.#shape.autoPosition = true;
+    //   }
+    //   return;
+    // }
 
     // Handle pointer capture setup/cleanup
     if (event instanceof PointerEvent) {
@@ -379,7 +381,7 @@ export class FolkShapeOverlay extends ReactiveElement {
 
         // Safari has a rendering bug unless we create a new stacking context
         // only apply it while the shape is being moved
-        (this.#shape.ownerElement as HTMLElement).style.transform = 'translateZ(0)';
+        this.#ownerElement.style.transform = 'translateZ(0)';
 
         // Setup pointer capture
         target.addEventListener('pointermove', this);
@@ -391,7 +393,7 @@ export class FolkShapeOverlay extends ReactiveElement {
       }
 
       if (event.type === 'lostpointercapture') {
-        (this.#shape.ownerElement as HTMLElement).style.transform = '';
+        this.#ownerElement.style.transform = '';
         this.#internals.states.delete(handle);
         target.removeEventListener('pointermove', this);
         target.removeEventListener('lostpointercapture', this);
@@ -479,11 +481,12 @@ export class FolkShapeOverlay extends ReactiveElement {
     }
   }
 
-  open(shape: FolkShapeAttribute) {
+  open(shape: Shape2DObject, element: HTMLElement) {
     if (this.isOpen) this.close();
 
     this.#shape = shape;
-    this.#shape.ownerElement.addEventListener('transform', this.#update);
+    this.#ownerElement = element;
+    this.#ownerElement.addEventListener('transform', this.#update);
     this.#shape.transformStack.transforms.forEach((transform) => {
       (transform as FolkSpaceAttribute).ownerElement.addEventListener('space-transform', this.#update);
     });
@@ -493,13 +496,14 @@ export class FolkShapeOverlay extends ReactiveElement {
   }
 
   close() {
-    if (!this.isOpen || !this.#shape) return;
+    if (!this.isOpen || !this.#shape || !this.#ownerElement) return;
 
-    this.#shape.ownerElement.removeEventListener('transform', this.#update);
+    this.#ownerElement.removeEventListener('transform', this.#update);
     this.#shape.transformStack.transforms.forEach((transform) => {
       (transform as FolkSpaceAttribute).ownerElement.removeEventListener('space-transform', this.#update);
     });
     this.#shape = null;
+    this.#ownerElement = null;
     this.hidePopover();
   }
 

@@ -4,7 +4,7 @@ import { css } from '@folkjs/dom/tags';
 import * as BVH from '@folkjs/geometry/BoundingVolumeHierarchy';
 import * as M from '@folkjs/geometry/Matrix2D';
 import * as S from '@folkjs/geometry/Shape2D';
-import { FolkShapeAttribute, ShapeConnectedEvent, ShapeDisconnectedEvent } from './folk-shape-attribute';
+import { ShapeConnectedEvent, ShapeDisconnectedEvent, type Shape2DObject } from './shape-events';
 
 declare global {
   interface Element {
@@ -113,7 +113,7 @@ export class FolkSpaceAttribute extends CustomAttribute implements IPointTransfo
   #slot = document.createElement('slot');
   #container = document.createElement('div');
   #matrix = M.fromValues();
-  #shapes: FolkShapeAttribute[] = [];
+  #shapes: Shape2DObject[] = [];
   #bvh: BVH.BVHNode<S.Shape2D> | null = null;
 
   get bvh(): BVH.BVHNodeReadonly<S.Shape2D> {
@@ -348,12 +348,12 @@ export class FolkSpaceAttribute extends CustomAttribute implements IPointTransfo
   #onShapeConnected = (event: ShapeConnectedEvent) => {
     this.#shapes.push(event.shape);
     this.#bvh = null;
-    event.shape.ownerElement.addEventListener('transform', this.#onShapeTransform);
+    event.target!.addEventListener('transform', this.#onShapeTransform);
     event.registerSpace(this);
   };
 
   #onShapeDisconnected = (event: ShapeDisconnectedEvent) => {
-    event.shape.ownerElement.removeEventListener('transform', this.#onShapeTransform);
+    event.target!.removeEventListener('transform', this.#onShapeTransform);
     this.#shapes.splice(
       this.#shapes.findIndex((s) => s === event.shape),
       1,

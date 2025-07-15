@@ -1,78 +1,12 @@
-import { IPointTransform, TransformStack } from '@folkjs/canvas';
+import { TransformStack } from '@folkjs/canvas';
 import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
 import { ResizeManager } from '@folkjs/dom/ResizeManger';
 import { css } from '@folkjs/dom/tags';
-import type { Shape2DReadonly } from '@folkjs/geometry/Shape2D';
 import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';
 import { toDOMPrecision } from '@folkjs/geometry/utilities';
 import { FolkShapeOverlay } from './folk-shape-overlay';
-
-declare global {
-  interface ElementEventMap {
-    transform2: TransformEvent;
-  }
-}
-
-// TODO: expose previous and current rects
-export class TransformEvent extends Event {
-  readonly #current: Shape2DReadonly;
-  readonly #previous: Shape2DReadonly;
-
-  constructor(current: Shape2DReadonly, previous: Shape2DReadonly) {
-    super('transform', { cancelable: true, bubbles: true, composed: true });
-    this.#current = current;
-    this.#previous = previous;
-  }
-
-  get current() {
-    return this.#current;
-  }
-
-  get previous() {
-    return this.#previous;
-  }
-
-  #xPrevented = false;
-  get xPrevented() {
-    return this.defaultPrevented || this.#xPrevented;
-  }
-  preventX() {
-    this.#xPrevented = true;
-  }
-
-  #yPrevented = false;
-  get yPrevented() {
-    return this.defaultPrevented || this.#yPrevented;
-  }
-  preventY() {
-    this.#yPrevented = true;
-  }
-
-  #heightPrevented = false;
-  get heightPrevented() {
-    return this.defaultPrevented || this.#heightPrevented;
-  }
-  preventHeight() {
-    this.#heightPrevented = true;
-  }
-
-  #widthPrevented = false;
-  get widthPrevented() {
-    return this.defaultPrevented || this.#widthPrevented;
-  }
-  preventWidth() {
-    this.#widthPrevented = true;
-  }
-
-  #rotationPrevented = false;
-  get rotationPrevented() {
-    return this.defaultPrevented || this.#rotationPrevented;
-  }
-  preventRotate() {
-    this.#rotationPrevented = true;
-  }
-}
+import { ShapeConnectedEvent, ShapeDisconnectedEvent, TransformEvent, type Shape2DObject } from './shape-events';
 
 declare global {
   interface Element {
@@ -82,54 +16,8 @@ declare global {
 
 const resizeManager = new ResizeManager();
 
-export class ShapeConnectedEvent extends Event {
-  #spaces: IPointTransform[] = [];
-
-  get spaces() {
-    return this.#spaces;
-  }
-
-  #shape;
-
-  get shape() {
-    return this.#shape;
-  }
-
-  constructor(shape: FolkShapeAttribute) {
-    super('shape-connected', { bubbles: true });
-
-    this.#shape = shape;
-  }
-
-  // order top-most parent space to the bottom-most local space
-  registerSpace(space: IPointTransform) {
-    this.#spaces.push(space);
-  }
-}
-
-export class ShapeDisconnectedEvent extends Event {
-  #shape;
-
-  get shape() {
-    return this.#shape;
-  }
-
-  constructor(shape: FolkShapeAttribute) {
-    super('shape-disconnected', { bubbles: true });
-
-    this.#shape = shape;
-  }
-}
-
-declare global {
-  interface ElementEventMap {
-    'shape-connected': ShapeConnectedEvent;
-    'shape-disconnected': ShapeDisconnectedEvent;
-  }
-}
-
 // TODO: if an auto position/size is defined as a style then we should probably save it and set it back
-export class FolkShapeAttribute extends CustomAttribute {
+export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject {
   static override attributeName = 'folk-shape';
 
   static override define() {
@@ -490,7 +378,8 @@ export class FolkShapeAttribute extends CustomAttribute {
         this.#shape.x = el.offsetLeft;
         this.#shape.y = el.offsetTop;
       }
-      this.#shapeOverlay.open(this);
+
+      this.#shapeOverlay.open(this, this.ownerElement as HTMLElement);
     } else if (event.type === 'blur' && event.relatedTarget !== this.#shapeOverlay) {
       this.#shapeOverlay.close();
     }
