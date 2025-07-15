@@ -43,21 +43,22 @@ export function dragToCreateElement<T extends Element = Element>(
     let el: T | null = null;
 
     function onPointerDown(event: PointerEvent) {
-      el = createElement({ x: event.pageX, y: event.pageY });
+      const point = container.space!.mapPointFromParent({ x: event.pageX, y: event.pageY });
+      el = createElement(point);
       // should be generalize this?
       container.appendChild(el);
     }
 
     function onPointerMove(event: PointerEvent) {
       if (el === null) return;
-
-      updateElement(el, { x: event.pageX, y: event.pageY });
+      const point = container.space!.mapPointFromParent({ x: event.pageX, y: event.pageY });
+      updateElement(el, point);
     }
 
     function onPointerUp(event: PointerEvent) {
       if (el === null) return;
-
-      updateElement(el, { x: event.pageX, y: event.pageY });
+      const point = container.space!.mapPointFromParent({ x: event.pageX, y: event.pageY });
+      updateElement(el, point);
       cleanUp();
       resolve(el);
     }

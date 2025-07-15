@@ -8,7 +8,7 @@ import { ShapeConnectedEvent, ShapeDisconnectedEvent, type Shape2DObject } from 
 
 declare global {
   interface Element {
-    zoom: FolkSpaceAttribute | undefined;
+    space: FolkSpaceAttribute | undefined;
   }
 }
 
