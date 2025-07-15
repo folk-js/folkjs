@@ -207,16 +207,32 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
     return this.y;
   }
 
+  set top(value) {
+    this.y = value;
+  }
+
   get right() {
     return this.x + this.width;
+  }
+
+  set right(value) {
+    this.width = value - this.x;
   }
 
   get bottom() {
     return this.y + this.height;
   }
 
+  set bottom(value) {
+    this.height = value - this.y;
+  }
+
   get left() {
     return this.x;
+  }
+
+  set left(value) {
+    this.x = value;
   }
 
   get vertices() {
@@ -366,6 +382,7 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
     el.style.removeProperty('--folk-rotation');
 
     this.ownerElement.dispatchEvent(new ShapeDisconnectedEvent(this));
+    this.#transformStack = new TransformStack();
   }
 
   handleEvent(event: FocusEvent) {

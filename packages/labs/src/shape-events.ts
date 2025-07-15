@@ -1,20 +1,20 @@
 import { IPointTransform, TransformStack } from '@folkjs/canvas';
 import type { Rect2D } from '@folkjs/geometry/Rect2D';
 import type { Shape2D, Shape2DReadonly } from '@folkjs/geometry/Shape2D';
-import type { Point } from '@folkjs/geometry/Vector2';
+import type { Point, Vector2Readonly } from '@folkjs/geometry/Vector2';
 
 export type Shape2DObject = Shape2D & {
-  // in the future we can make these properties not readonly
-  readonly top: number;
-  readonly right: number;
-  readonly bottom: number;
-  readonly left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
   topLeft: Point;
   topRight: Point;
   bottomRight: Point;
   bottomLeft: Point;
   center: Point;
   bounds: Rect2D;
+  vertices: ReadonlyArray<Vector2Readonly> | undefined;
   transformStack: TransformStack;
 };
 
