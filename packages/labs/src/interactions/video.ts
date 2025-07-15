@@ -77,15 +77,6 @@ export function dragImageOutOfVideoFrame(
       resolve(null);
     }
 
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-
-      onCancel();
-    }
-
     function cleanUp() {
       figure?.removeAttribute('folk-placing-element');
       figure = null;
@@ -93,13 +84,11 @@ export function dragImageOutOfVideoFrame(
       container.removeEventListener('pointerdown', onPointerDown, { capture: true });
       container.removeEventListener('pointermove', onPointerMove, { capture: true });
       container.removeEventListener('pointerup', onPointerUp, { capture: true });
-      window.removeEventListener('keydown', onKeyDown, { capture: true });
       container.ownerDocument.adoptedStyleSheets.splice(container.ownerDocument.adoptedStyleSheets.indexOf(styles), 1);
     }
 
     cancellationSignal.addEventListener('abort', onCancel);
     container.addEventListener('pointerdown', onPointerDown, { capture: true });
-    window.addEventListener('keydown', onKeyDown, { capture: true });
     container.ownerDocument.adoptedStyleSheets.push(styles);
   });
 }

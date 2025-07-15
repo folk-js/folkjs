@@ -7,16 +7,6 @@ export function clickToCreateElement<T extends Element = Element>(
   createElement: (point: Point) => T,
 ): Promise<T | null> {
   return new Promise((resolve) => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-
-      onCancel();
-    }
-
     function onClick(event: MouseEvent) {
       const el = createElement({ x: event.pageX, y: event.pageY });
       // should be generalize this?
@@ -33,15 +23,13 @@ export function clickToCreateElement<T extends Element = Element>(
     function cleanUp() {
       document.body.inert = false;
       cancellationSignal.removeEventListener('abort', onCancel);
-      window.removeEventListener('click', onClick, { capture: true });
-      window.removeEventListener('keydown', onKeyDown, { capture: true });
+      container.removeEventListener('click', onClick, { capture: true });
     }
 
     // should this just be applied to the container
     document.body.inert = true;
     cancellationSignal.addEventListener('abort', onCancel);
-    window.addEventListener('click', onClick, { capture: true });
-    window.addEventListener('keydown', onKeyDown, { capture: true });
+    container.addEventListener('click', onClick, { capture: true });
   });
 }
 
@@ -52,16 +40,6 @@ export function dragToCreateElement<T extends Element = Element>(
   updateElement: (element: T, point: Point) => void,
 ): Promise<T | null> {
   return new Promise((resolve) => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-
-      onCancel();
-    }
-
     let el: T | null = null;
 
     function onPointerDown(event: PointerEvent) {
@@ -86,24 +64,21 @@ export function dragToCreateElement<T extends Element = Element>(
 
     function onCancel() {
       cleanUp();
+      el?.remove();
       resolve(null);
     }
 
     function cleanUp() {
-      container.inert = false;
       cancellationSignal.removeEventListener('abort', onCancel);
-      window.removeEventListener('pointerdown', onPointerDown, { capture: true });
-      window.removeEventListener('pointermove', onPointerMove, { capture: true });
-      window.removeEventListener('pointerup', onPointerUp, { capture: true });
-      window.removeEventListener('keydown', onKeyDown, { capture: true });
+      container.removeEventListener('pointerdown', onPointerDown, { capture: true });
+      container.removeEventListener('pointermove', onPointerMove, { capture: true });
+      container.removeEventListener('pointerup', onPointerUp, { capture: true });
     }
 
-    document.body.inert = true;
     cancellationSignal.addEventListener('abort', onCancel);
-    window.addEventListener('pointerdown', onPointerDown, { capture: true });
-    window.addEventListener('pointermove', onPointerMove, { capture: true });
-    window.addEventListener('pointerup', onPointerUp, { capture: true });
-    window.addEventListener('keydown', onKeyDown, { capture: true });
+    container.addEventListener('pointerdown', onPointerDown, { capture: true });
+    container.addEventListener('pointermove', onPointerMove, { capture: true });
+    container.addEventListener('pointerup', onPointerUp, { capture: true });
   });
 }
 
@@ -133,9 +108,10 @@ export async function dragToCreateShape<T extends Element = Element>(
 }
 
 export function clickToCreateShapes<T extends Element = Element>(
-  completionSignal: AbortSignal,
+  container: HTMLElement,
   cancellationSignal: AbortSignal,
-): Promise<T | null> {
+  completionSignal: AbortSignal,
+): Promise<T[] | null> {
   return new Promise(async (resolve) => {
     const elements = await selectElements(completionSignal, cancellationSignal);
 

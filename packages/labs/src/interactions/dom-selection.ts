@@ -26,6 +26,8 @@ export function selectElement<T extends Element = Element>(
     let el: Element | null = null;
 
     function onPointerOver(event: PointerEvent) {
+      if (event.target === container) return;
+
       el?.removeAttribute('folk-hovered-element');
       if (filter !== undefined) {
         el = filter(event.target as T);
@@ -35,21 +37,18 @@ export function selectElement<T extends Element = Element>(
       el?.setAttribute('folk-hovered-element', '');
     }
 
+    function onPointerLeave(event: PointerEvent) {
+      if (event.target === el) {
+        el?.removeAttribute('folk-hovered-element');
+      }
+    }
+
     function onCancel() {
       cleanUp();
       resolve(null);
     }
 
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-
-      onCancel();
-    }
-
+    // Prevent focus from being received
     function onPointerDown(event: PointerEvent) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -57,6 +56,8 @@ export function selectElement<T extends Element = Element>(
     }
 
     function onSelection(event: MouseEvent) {
+      if (event.target === container) return;
+
       if (filter !== undefined) {
         const el = filter(event.target as T);
 
@@ -81,16 +82,16 @@ export function selectElement<T extends Element = Element>(
       cancellationSignal.removeEventListener('abort', onCancel);
       (container as HTMLElement).removeEventListener('pointerdown', onPointerDown, { capture: true });
       (container as HTMLElement).removeEventListener('pointerover', onPointerOver, { capture: true });
+      (container as HTMLElement).removeEventListener('pointerleave', onPointerLeave, { capture: true });
       (container as HTMLElement).removeEventListener('click', onSelection, { capture: true });
-      window.removeEventListener('keydown', onKeyDown, { capture: true });
       containerDocument.adoptedStyleSheets.splice(containerDocument.adoptedStyleSheets.indexOf(styles), 1);
     }
 
     cancellationSignal.addEventListener('abort', onCancel);
     (container as HTMLElement).addEventListener('pointerdown', onPointerDown, { capture: true });
     (container as HTMLElement).addEventListener('pointerover', onPointerOver, { capture: true });
+    (container as HTMLElement).addEventListener('pointerleave', onPointerLeave, { capture: true });
     (container as HTMLElement).addEventListener('click', onSelection, { capture: true });
-    window.addEventListener('keydown', onKeyDown, { capture: true });
     containerDocument.adoptedStyleSheets.push(styles);
   });
 }

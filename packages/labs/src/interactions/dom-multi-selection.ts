@@ -25,16 +25,6 @@ export function selectElements(
       resolve([]);
     }
 
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-
-      onCancel();
-    }
-
     function onComplete() {
       resolve(elements);
       cleanUp();
@@ -43,14 +33,12 @@ export function selectElements(
     function cleanUp() {
       completionSignal.removeEventListener('abort', onComplete);
       cancellationSignal.removeEventListener('abort', onCancel);
-      window.removeEventListener('keydown', onKeyDown, { capture: true });
       elements.forEach((el) => el.removeAttribute('folk-selected-element'));
       document.adoptedStyleSheets.splice(document.adoptedStyleSheets.indexOf(styles), 1);
     }
 
     completionSignal.addEventListener('abort', onComplete);
     cancellationSignal.addEventListener('abort', onCancel);
-    window.addEventListener('keydown', onKeyDown, { capture: true });
     document.adoptedStyleSheets.push(styles);
 
     const selectionFilter = (el: Element) => {

@@ -81,12 +81,17 @@
           }
         }
       }
+
+      [folk-shape]:empty {
+        border: solid 2px black;
+        border-radius: 13px;
+      }
     </style>
   </head>
   <body>
-    <main folk-space="grid: true" folk-sync></main>
+    <main folk-space="grid: true"></main>
 
-    <!-- role="toolbar" -->
+    <!-- role="toolbar"? -->
     <fieldset id="instruments">
       <label>Select<input type="radio" name="instrument" value="select" checked /></label>
       <label>Pan<input type="radio" name="instrument" value="pan" /></label>
