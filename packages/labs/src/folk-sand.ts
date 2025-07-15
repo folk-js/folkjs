@@ -19,6 +19,9 @@ export class FolkSand extends FolkBaseSet {
     FolkBaseSet.styles,
     css`
       canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
         height: 100%;
         width: 100%;
         pointer-events: auto;
