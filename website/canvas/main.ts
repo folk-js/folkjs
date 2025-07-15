@@ -75,7 +75,12 @@ window.addEventListener('keydown', (e) => {
     setActiveInstrument('select');
   }
 
-  console.log(e)
+  // TODO: think about how to be more specific here
+  if (e.code.startsWith('Digit') && document.activeElement === null) {
+    const instrument = instruments.querySelector<HTMLInputElement>(`label:nth-child(${e.key}) input[type="radio"]`);
+    
+    if (instrument) setActiveInstrument(instrument.value);
+  }
 })
 
 startInstrument();
