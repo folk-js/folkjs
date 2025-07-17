@@ -15,7 +15,7 @@ const folkObserver = new FolkObserver();
 export class FolkBaseSet extends ReactiveElement {
   static override styles: CSSResultGroup = css`
     :host {
-      display: content;
+      display: contents;
     }
   `;
 

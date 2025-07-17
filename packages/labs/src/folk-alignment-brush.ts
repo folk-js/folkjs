@@ -1,4 +1,5 @@
 import { Gizmos, type Point } from '@folkjs/canvas';
+import { css } from '@folkjs/dom/ReactiveElement';
 import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
@@ -13,6 +14,19 @@ interface AlignmentLine {
 
 export class FolkAlignmentBrush extends FolkBaseSet {
   static override tagName = 'folk-alignment-brush';
+
+  static override styles = css`
+    :host {
+      display: block;
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    ::slotted(*) {
+      pointer-events: auto;
+    }
+  `;
 
   // Core structure
   #alignments = new Set<AlignmentLine>();
