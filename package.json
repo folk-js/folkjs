@@ -4,7 +4,8 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "website"
+    "website",
+    "web-extension"
   ],
   "scripts": {
     "bench": "node --expose-gc --experimental-strip-types __scripts__/benchmark.ts",
