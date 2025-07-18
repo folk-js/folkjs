@@ -24,7 +24,8 @@
   ],
   "scripts": {
     "build": "wireit",
-    "test": "echo 'No tests to run'"
+    "test": "echo 'No tests to run'",
+    "publish": "wireit"
   },
   "wireit": {
     "build": {
@@ -38,6 +39,12 @@
       "output": [
         "dist/**",
         "tsconfig.tsbuildinfo"
+      ]
+    },
+    "publish": {
+      "command": "npm publish --access public",
+      "dependencies": [
+        "build"
       ]
     }
   },

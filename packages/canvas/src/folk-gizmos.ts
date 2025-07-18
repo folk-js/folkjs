@@ -1,7 +1,7 @@
 import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
+import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 import { DOMRectTransform } from './DOMRectTransform';
-import type { Point } from './types';
 
 interface GizmoOptions {
   color?: string;
@@ -85,7 +85,8 @@ export class Gizmos extends ReactiveElement {
     }
   `;
 
-  readonly #layer: string;
+  #layer: string;
+
   #hidden: boolean;
 
   constructor() {

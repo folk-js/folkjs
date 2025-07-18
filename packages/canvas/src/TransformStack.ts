@@ -1,6 +1,6 @@
+import type { Point } from '@folkjs/geometry/Vector2';
 import { satisfies } from './interfaces/InterfaceKey';
 import { IPointTransform } from './interfaces/IPointTransform';
-import type { Point } from './types';
 
 /**
  * A class that manages a stack of transformations and provides methods

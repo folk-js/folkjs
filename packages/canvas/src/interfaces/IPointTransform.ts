@@ -1,4 +1,4 @@
-import type { Point } from '../types.ts';
+import type { Point } from '@folkjs/geometry/Vector2';
 import { interfaceKey } from './InterfaceKey.js';
 
 export const IPointTransform = interfaceKey<IPointTransform>('IPointTransform');

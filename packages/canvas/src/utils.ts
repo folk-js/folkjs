@@ -1,7 +1,7 @@
 // Adopted from: https://github.com/pshihn/bezier-points/blob/master/lib/index.ts
 
+import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
-import type { Point } from './types.ts';
 
 export const MAX_Z_INDEX = 2147483647;
 

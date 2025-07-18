@@ -1,4 +1,4 @@
-import type { Point } from './types';
+import type { Point } from '@folkjs/geometry/Vector2';
 
 interface DOMTransformInit {
   x?: number;

@@ -23,6 +23,7 @@
   "scripts": {
     "build": "wireit",
     "test": "wireit",
+    "publish": "wireit",
     "test:dev": "npm run test --watch"
   },
   "wireit": {
@@ -48,6 +49,13 @@
         "__tests__/*.test.ts"
       ],
       "output": []
+    },
+    "publish": {
+      "command": "npm publish --access public",
+      "dependencies": [
+        "build",
+        "test"
+      ]
     }
   },
   "devDependencies": {

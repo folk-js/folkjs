@@ -1,5 +1,5 @@
 // @ts-nocheck
-import type { Point } from './types.ts';
+import type { Point } from '@folkjs/geometry/Vector2';
 import { lerp } from './utils.ts';
 
 export const round = (value: number, decimal = 0) => Math.round(value * decimal) / decimal;

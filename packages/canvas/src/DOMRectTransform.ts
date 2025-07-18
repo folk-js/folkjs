@@ -1,5 +1,5 @@
+import type { Point } from '@folkjs/geometry/Vector2';
 import { Matrix } from './Matrix.ts';
-import type { Point } from './types.ts';
 
 interface DOMRectTransformInit {
   height?: number;
