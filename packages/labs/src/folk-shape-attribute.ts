@@ -40,6 +40,7 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
     @layer folk {
       [folk-shape] {
         box-sizing: border-box;
+        position: relative;
         overflow: scroll;
         transform-origin: center center;
         rotate: var(--folk-rotation);
@@ -47,6 +48,7 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
       }
 
       [folk-shape*='x:'][folk-shape*='y:'] {
+        display: block;
         position: absolute;
         left: var(--folk-x) !important;
         top: var(--folk-y) !important;
@@ -66,7 +68,6 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
   static {
     // TODO: detect how to inject styles into shadowroot
     document.adoptedStyleSheets.push(this.styles);
-    document.documentElement.appendChild(this.#overlay);
   }
 
   #autoPosition = false;
@@ -395,10 +396,12 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
         this.#shape.x = el.offsetLeft;
         this.#shape.y = el.offsetTop;
       }
-
+      console.log(this.#shapeOverlay);
+      this.ownerElement.appendChild(this.#shapeOverlay);
       this.#shapeOverlay.open(this, this.ownerElement as HTMLElement);
     } else if (event.type === 'blur' && event.relatedTarget !== this.#shapeOverlay) {
       this.#shapeOverlay.close();
+      this.#shapeOverlay.remove();
     }
   }
 

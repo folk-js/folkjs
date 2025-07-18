@@ -24,82 +24,30 @@
         margin: 0;
       }
 
-      #instruments {
-        display: flex;
-        flex-wrap: nowrap;
+      folk-instruments {
         position: fixed;
         bottom: 1rem;
         left: 50%;
         translate: -50%;
-        border: 1px;
-        padding: 0;
-        margin: 0;
-        border-radius: 11px;
-        background-color: white;
-        box-shadow:
-          0px 0px 2px hsl(0, 0%, 0%, 16%),
-          0px 2px 3px hsl(0, 0%, 0%, 24%),
-          0px 2px 6px hsl(0, 0%, 0%, 0.1),
-          inset 0px 0px 0px 1px hsl(0, 0%, 100%);
-
-        label {
-          position: relative;
-          padding: 1rem;
-
-          &:hover {
-            cursor: pointer;
-          }
-
-          &:has(input[type='radio']:checked) {
-            color: white;
-          }
-        }
-
-        input[type='radio'] {
-          /* Add if not using autoprefixer */
-          -webkit-appearance: none;
-          appearance: none;
-          /* For iOS < 15 to remove gradient background */
-          background-color: #fff;
-          /* Not removed via appearance */
-          margin: 0;
-
-          position: absolute;
-          inset: 5px;
-          z-index: 2;
-          border-radius: 8px;
-
-          background-color: transparent;
-
-          &:hover {
-            background-color: hsl(0, 0%, 0%, 4.3%);
-          }
-
-          &:checked {
-            z-index: -1;
-            background-color: hsl(214, 84%, 56%);
-          }
-        }
       }
 
-      [folk-shape]:empty {
+      [folk-shape] {
         border: solid 2px black;
         border-radius: 13px;
       }
     </style>
   </head>
   <body>
-    <main folk-space="grid: true" folk-sync></main>
+    <main folk-space="grid: true"></main>
 
-    <!-- role="toolbar"? -->
-    <fieldset id="instruments">
-      <label>Select<input type="radio" name="instrument" value="select" checked /></label>
-      <label>Pan<input type="radio" name="instrument" value="pan" /></label>
-      <label>Draw<input type="radio" name="instrument" value="draw" /></label>
-      <label>Erase<input type="radio" name="instrument" value="erase" /></label>
-      <label>Rectangle<input type="radio" name="instrument" value="rectangle" /></label>
-      <label>Arrow<input type="radio" name="instrument" value="arrow" /></label>
-    </fieldset>
+    <folk-instruments container="main">
+      <span slot="select">Select</span>
+      <span slot="pan">Pan</span>
+      <span slot="draw">Draw</span>
+      <span slot="erase">Erase</span>
+      <span slot="rectangle">Rectangle</span>
+      <span slot="arrow">Arrow</span>
+    </folk-instruments>
   </body>
 
   <script type="module" src="./main.ts"></script>

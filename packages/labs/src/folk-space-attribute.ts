@@ -290,7 +290,6 @@ export class FolkSpaceAttribute extends CustomAttribute implements IPointTransfo
     this.ownerElement.removeEventListener('shape-connected', this.#onShapeConnected);
     this.ownerElement.removeEventListener('shape-disconnected', this.#onShapeDisconnected);
     (this.ownerElement as HTMLElement).removeEventListener('wheel', this.#onWheel);
-    // this.#pointerTracker.stop();
   }
 
   #updateRequested = false;
