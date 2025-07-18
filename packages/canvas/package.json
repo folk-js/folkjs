@@ -38,6 +38,7 @@
       "command": "tsc --build --pretty",
       "clean": "if-file-deleted",
       "dependencies": [
+        "../geometry:build",
         "../dom:build"
       ],
       "files": [
@@ -62,7 +63,8 @@
     }
   },
   "dependencies": {
-    "@folkjs/dom": "^0.0.1"
+    "@folkjs/dom": "^0.0.1",
+    "@folkjs/geometry": "^0.0.1"
   },
   "devDependencies": {
     "expect": "^29.7.0",

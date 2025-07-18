@@ -1,7 +1,6 @@
 // Core utilities and types
 export * from './folk-gizmos';
 export * from './Matrix';
-export * from './types';
 export * from './utils';
 
 // DOM and transformation
