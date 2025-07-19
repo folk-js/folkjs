@@ -1,4 +1,3 @@
-import { DOMRectTransform } from '@folkjs/canvas';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { WebGLUtils } from '@folkjs/dom/webgl';
 import { FolkBaseSet } from './folk-base-set';
@@ -639,18 +638,12 @@ export class FolkSand extends FolkBaseSet {
 
     this.sourceRects.forEach((rect) => {
       // Get the transformed vertices in parent space
-      let transformedPoints;
-
-      if (rect instanceof DOMRectTransform) {
-        transformedPoints = rect.vertices().map((point) => rect.toParentSpace(point));
-      } else {
-        transformedPoints = [
-          { x: rect.left, y: rect.top },
-          { x: rect.right, y: rect.top },
-          { x: rect.left, y: rect.bottom },
-          { x: rect.right, y: rect.bottom },
-        ];
-      }
+      const transformedPoints = [
+        { x: rect.left, y: rect.top },
+        { x: rect.right, y: rect.top },
+        { x: rect.left, y: rect.bottom },
+        { x: rect.right, y: rect.bottom },
+      ];
 
       // Convert the transformed points to buffer coordinates
       const bufferPoints = transformedPoints.map((point) => this.#convertToBufferCoordinates(point.x, point.y));

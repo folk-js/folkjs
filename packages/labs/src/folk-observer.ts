@@ -1,6 +1,6 @@
-import { TransformEvent } from '@folkjs/canvas/TransformEvent';
 import { ClientRectObserver, type ClientRectObserverEntry } from '@folkjs/dom/ClientRectObserver';
 import { FolkShape } from './folk-shape';
+import type { TransformEvent } from './shape-events';
 
 export type FolkObserverEntry = (entry: ClientRectObserverEntry) => void;
 
@@ -157,7 +157,7 @@ export class FolkObserver {
   }
 
   #onTransform = (event: TransformEvent) => {
-    this.#updateTarget({ target: event.target as HTMLElement, contentRect: event.current });
+    this.#updateTarget({ target: event.target as HTMLElement, contentRect: DOMRectReadOnly.fromRect(event.current) });
   };
 
   observe(target: Element, callback: FolkObserverEntry, { iframeSelector }: FolkObserverOptions = {}): void {

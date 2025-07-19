@@ -19,8 +19,8 @@ export type Shape2DCorners = Readonly<{
   bottomLeft: Vector2Readonly;
 }>;
 
-export function isShape2D(shape: Shape2D) {
-  return R.isRect2D(shape) && isNumber(shape.rotation);
+export function isShape2D(shape: unknown): shape is Shape2D {
+  return R.isRect2D(shape) && 'rotation' in shape && isNumber(shape.rotation);
 }
 
 export function fromValues(x = 0, y = 0, width = 0, height = 0, rotation = 0, vertices?: Shape2D['vertices']): Shape2D {

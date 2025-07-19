@@ -1,4 +1,3 @@
-import { TransformEvent } from '@folkjs/canvas';
 import { proximal } from '@folkjs/geometry/Rect2D';
 import { FolkHull } from './folk-hull';
 import { FolkShape } from './folk-shape';
@@ -145,7 +144,7 @@ export class FolkProximity extends HTMLElement {
     this.addEventListener('transform', this.#handleProximity);
   }
 
-  #handleProximity = (e: TransformEvent) => {
+  #handleProximity = (e: Event) => {
     const el = e.target as FolkShape;
 
     const cluster = this.#findCluster(el);

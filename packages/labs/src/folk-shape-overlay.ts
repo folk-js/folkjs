@@ -544,7 +544,7 @@ export class FolkShapeOverlay extends ReactiveElement {
     if (this.#shape === null) return;
 
     // FIX: this is a bandaid for sub-pixel jitter that happens in the opposite resize handle
-    // It seems like there is sub-pixel imprecision happening in DOMRectTransform, but I haven't figured out where yet.
+    // It seems like there is sub-pixel imprecision happening in Shape2D, but I haven't figured out where yet.
     // If the coordinates are rounded to 2 decimal places, no jitter happens.
     this.#shape[getCornerName(handle)] = { x: round(pointerPos.x, 2), y: round(pointerPos.y, 2) };
 

@@ -121,6 +121,6 @@ declare global {
   interface ElementEventMap {
     'shape-connected': ShapeConnectedEvent;
     'shape-disconnected': ShapeDisconnectedEvent;
-    transform2: TransformEvent;
+    transform: TransformEvent;
   }
 }

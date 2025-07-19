@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier2d';
-import { DOMRectTransform } from '@folkjs/canvas';
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { isShape2D } from 'packages/geometry/dist/Shape2D';
 import { TransformIntegrator } from './EffectIntegrator';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
@@ -12,7 +12,6 @@ export class FolkPhysics extends FolkBaseSet {
 
   #world?: RAPIER.World;
   #bodies: Map<FolkShape, RAPIER.RigidBody> = new Map();
-  #elementToRect: Map<FolkShape, DOMRectTransform> = new Map();
   #animationFrameId?: number;
   #lastTimestamp?: number;
   #integrator = TransformIntegrator.register('physics');
@@ -39,7 +38,6 @@ export class FolkPhysics extends FolkBaseSet {
 
     // Cleanup physics resources
     this.#bodies.clear();
-    this.#elementToRect.clear();
     this.#world?.free();
   }
 
@@ -64,7 +62,7 @@ export class FolkPhysics extends FolkBaseSet {
     for (const element of this.sourceElements) {
       if (!(element instanceof FolkShape)) continue;
       const rect = this.sourcesMap.get(element);
-      if (!(rect instanceof DOMRectTransform)) continue;
+      if (!rect || !isShape2D(rect)) continue;
 
       if (!this.#bodies.has(element)) {
         // Create new rigid body matching the element's position
@@ -87,7 +85,7 @@ export class FolkPhysics extends FolkBaseSet {
         this.#bodies.set(element, body);
 
         // Set element's rotation origin to top-left
-        rect.transformOrigin = { x: 0, y: 0 };
+        (rect as any).transformOrigin = { x: 0, y: 0 };
       }
 
       // Update existing body

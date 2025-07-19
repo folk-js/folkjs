@@ -1,6 +1,6 @@
 // This is a rewrite of https://github.com/guerrillacontra/html5-es6-physics-rope
 
-import { AnimationFrameController, DOMRectTransform, type AnimationFrameControllerHost } from '@folkjs/canvas';
+import { AnimationFrameController, type AnimationFrameControllerHost } from '@folkjs/canvas';
 import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
@@ -100,26 +100,14 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
       return;
     }
 
-    let source: Point;
-    let target: Point;
-
-    if (sourceRect instanceof DOMRectTransform) {
-      source = sourceRect.center;
-    } else {
-      source = {
-        x: sourceRect.x + sourceRect.width / 2,
-        y: sourceRect.y + sourceRect.height,
-      };
-    }
-
-    if (targetRect instanceof DOMRectTransform) {
-      target = targetRect.center;
-    } else {
-      target = {
-        x: targetRect.x + targetRect.width / 2,
-        y: targetRect.y + targetRect.height,
-      };
-    }
+    const source = {
+      x: sourceRect.x + sourceRect.width / 2,
+      y: sourceRect.y + sourceRect.height,
+    };
+    const target = {
+      x: targetRect.x + targetRect.width / 2,
+      y: targetRect.y + targetRect.height,
+    };
 
     if (this.#points.length === 0) {
       this.#points = this.#generatePoints(source, target);

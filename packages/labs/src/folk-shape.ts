@@ -3,7 +3,6 @@ import {
   DOMRectTransformReadonly,
   IPointTransform,
   MAX_Z_INDEX,
-  TransformEvent,
   TransformStack,
 } from '@folkjs/canvas';
 import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
@@ -13,6 +12,7 @@ import * as M from '@folkjs/geometry/Matrix2D';
 import { round, toDOMPrecision } from '@folkjs/geometry/utilities';
 import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
+import { TransformEvent } from './shape-events';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 const resizeManager = new ResizeManager();

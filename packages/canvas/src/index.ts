@@ -3,7 +3,6 @@ export * from './utils';
 
 // DOM and transformation
 export * from './DOMRectTransform';
-export * from './TransformEvent';
 export * from './TransformStack';
 
 // Animation and timing

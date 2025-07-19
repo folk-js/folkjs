@@ -1,5 +1,5 @@
-import { DOMRectTransform } from '@folkjs/canvas';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import * as S from '@folkjs/geometry/Shape2D';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
 import { type CellTemplate, FolkSpreadsheet, FolkSpreadSheetCell, templateCells } from './folk-spreadsheet';
@@ -147,18 +147,14 @@ export class FolkSpaceProjector extends FolkBaseSet {
     for (const el of this.sourceElements) {
       const rect = this.sourcesMap.get(el)!;
 
-      if (rect instanceof DOMRectTransform) {
-        const { x, y } = rect.toParentSpace(rect.topLeft);
-        updateCell(this.#spreadsheet.getCell('A', row)!, x);
-        updateCell(this.#spreadsheet.getCell('B', row)!, y);
-        updateCell(this.#spreadsheet.getCell('C', row)!, rect.width);
-        updateCell(this.#spreadsheet.getCell('D', row)!, rect.height);
+      updateCell(this.#spreadsheet.getCell('A', row)!, rect.x);
+      updateCell(this.#spreadsheet.getCell('B', row)!, rect.y);
+      updateCell(this.#spreadsheet.getCell('C', row)!, rect.width);
+      updateCell(this.#spreadsheet.getCell('D', row)!, rect.height);
+
+      if (S.isShape2D(rect)) {
         updateCell(this.#spreadsheet.getCell('E', row)!, (rect.rotation * 180) / Math.PI);
       } else {
-        updateCell(this.#spreadsheet.getCell('A', row)!, rect.x);
-        updateCell(this.#spreadsheet.getCell('B', row)!, rect.y);
-        updateCell(this.#spreadsheet.getCell('C', row)!, rect.width);
-        updateCell(this.#spreadsheet.getCell('D', row)!, rect.height);
         updateCell(this.#spreadsheet.getCell('E', row)!, 0);
       }
       row += 1;

@@ -15,7 +15,15 @@ const folkObserver = new FolkObserver();
 export class FolkBaseSet extends ReactiveElement {
   static override styles: CSSResultGroup = css`
     :host {
-      display: contents;
+      display: block;
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    ::slotted(*) {
+      pointer-events: auto;
+      z-index: 1;
     }
   `;
 

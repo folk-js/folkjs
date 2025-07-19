@@ -1,8 +1,6 @@
-import { DOMRectTransform } from '@folkjs/canvas';
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { glsl } from '@folkjs/dom/tags';
 import { WebGLUtils } from '@folkjs/dom/webgl';
-import type { Point } from '@folkjs/geometry/Vector2';
 import { FolkBaseSet } from './folk-base-set';
 
 /**
@@ -185,22 +183,11 @@ export class FolkDistanceField extends FolkBaseSet {
 
     // Collect positions and assign shapes to groups
     this.sourceRects.forEach((rect, index) => {
-      let topLeftParent: Point;
-      let topRightParent: Point;
-      let bottomLeftParent: Point;
-      let bottomRightParent: Point;
-
-      if (rect instanceof DOMRectTransform) {
-        topLeftParent = rect.toParentSpace(rect.topLeft);
-        topRightParent = rect.toParentSpace(rect.topRight);
-        bottomLeftParent = rect.toParentSpace(rect.bottomLeft);
-        bottomRightParent = rect.toParentSpace(rect.bottomRight);
-      } else {
-        topLeftParent = { x: rect.left, y: rect.top };
-        topRightParent = { x: rect.right, y: rect.top };
-        bottomLeftParent = { x: rect.left, y: rect.bottom };
-        bottomRightParent = { x: rect.right, y: rect.bottom };
-      }
+      // TODO: rotation
+      const topLeftParent = { x: rect.left, y: rect.top };
+      const topRightParent = { x: rect.right, y: rect.top };
+      const bottomLeftParent = { x: rect.left, y: rect.bottom };
+      const bottomRightParent = { x: rect.right, y: rect.bottom };
 
       // Convert rotated coordinates to NDC using container dimensions
       const x1 = (topLeftParent.x / containerWidth) * 2 - 1;

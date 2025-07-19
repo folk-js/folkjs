@@ -270,7 +270,7 @@ export class DOMRectTransform implements DOMRect {
    * Gets the four corner vertices of the rectangle in **local space**.
    * @returns An array of points in the order: top-left, top-right, bottom-right, bottom-left.
    */
-  vertices(): Point[] {
+  get vertices(): Point[] {
     return [this.topLeft, this.topRight, this.bottomRight, this.bottomLeft];
   }
 
@@ -441,7 +441,7 @@ export class DOMRectTransform implements DOMRect {
    */
   getBounds(): Required<DOMRectInit> {
     // Transform all vertices to parent space
-    const transformedVertices = this.vertices().map((v) => this.toParentSpace(v));
+    const transformedVertices = this.vertices.map((v) => this.toParentSpace(v));
 
     // Find min and max coordinates
     const xs = transformedVertices.map((v) => v.x);

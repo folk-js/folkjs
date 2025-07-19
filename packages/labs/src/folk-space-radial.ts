@@ -1,9 +1,10 @@
-import { TransformEvent } from '@folkjs/canvas';
-import { canIUseMoveBefore } from '@folkjs/dom/CanIUse';
+// import { canIUseMoveBefore } from '@folkjs/dom/CanIUse';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import * as S from '@folkjs/geometry/Shape2D';
 import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
+import { TransformEvent } from './shape-events';
 
 export class FolkSpaceRadial extends FolkBaseSet {
   static override tagName = 'folk-space-radial';
@@ -63,36 +64,36 @@ export class FolkSpaceRadial extends FolkBaseSet {
     });
   }
 
-  #handleMoveBefore(event: Event) {
-    if (!canIUseMoveBefore()) return;
+  // #handleMoveBefore(event: Event) {
+  //   if (!canIUseMoveBefore()) return;
 
-    const shapeElement = event.target as HTMLElement;
+  //   const shapeElement = event.target as HTMLElement;
 
-    // Calculate the center of the shape
-    const shapeBounds = shapeElement.getBoundingClientRect();
-    const shapeCenter = {
-      x: shapeBounds.left + shapeBounds.width / 2,
-      y: shapeBounds.top + shapeBounds.height / 2,
-    };
+  //   // Calculate the center of the shape
+  //   const shapeBounds = shapeElement.getBoundingClientRect();
+  //   const shapeCenter = {
+  //     x: shapeBounds.left + shapeBounds.width / 2,
+  //     y: shapeBounds.top + shapeBounds.height / 2,
+  //   };
 
-    const bounds = this.getBoundingClientRect();
-    const spaceCenter = { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+  //   const bounds = this.getBoundingClientRect();
+  //   const spaceCenter = { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
 
-    // Calculate distance from shape center to circle center
-    const distance = V.distance(shapeCenter, spaceCenter);
+  //   // Calculate distance from shape center to circle center
+  //   const distance = V.distance(shapeCenter, spaceCenter);
 
-    const circleRadius = bounds.width / 2;
-    const isInsideCircle = distance <= circleRadius;
-    const isInHost = shapeElement.parentElement === this;
+  //   const circleRadius = bounds.width / 2;
+  //   const isInsideCircle = distance <= circleRadius;
+  //   const isInHost = shapeElement.parentElement === this;
 
-    if (isInsideCircle && !isInHost) {
-      (this as any).moveBefore(shapeElement, null);
-      // this.#ignoredShapes.delete(shapeElement);
-    } else if (!isInsideCircle && isInHost) {
-      (document.body as any).moveBefore(shapeElement, null);
-      // this.#ignoredShapes.add(shapeElement);
-    }
-  }
+  //   if (isInsideCircle && !isInHost) {
+  //     (this as any).moveBefore(shapeElement, null);
+  //     // this.#ignoredShapes.delete(shapeElement);
+  //   } else if (!isInsideCircle && isInHost) {
+  //     (document.body as any).moveBefore(shapeElement, null);
+  //     // this.#ignoredShapes.add(shapeElement);
+  //   }
+  // }
 
   #onTransform = (event: Event) => {
     if (!(event instanceof TransformEvent)) return;
@@ -104,22 +105,14 @@ export class FolkSpaceRadial extends FolkBaseSet {
     const bounds = this.getBoundingClientRect();
     const spaceCenter = { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
 
-    // Calculate the absolute position of the rotateOrigin in local space
-    const rotateOriginLocal = {
-      x: transform.width * transform.rotateOrigin.x,
-      y: transform.height * transform.rotateOrigin.y,
-    };
-
     // Convert the local rotateOrigin to parent space
-    const rotateOriginParent = transform.toParentSpace(rotateOriginLocal);
+    const rotateOriginParent = S.center(transform);
 
     const distance = V.distance(rotateOriginParent, spaceCenter);
 
     // if the shape is outside the circle, don't move it
     // tried using moveBefore, but will leave this here for now
-    if (distance > bounds.width / 2) {
-      return;
-    }
+    if (distance > bounds.width / 2) return;
 
     // Compute vector from space center to rotateOrigin in parent space
     const dx = rotateOriginParent.x - spaceCenter.x;

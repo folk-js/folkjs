@@ -1,7 +1,8 @@
 import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
+import * as R from '@folkjs/geometry/Rect2D';
+import * as S from '@folkjs/geometry/Shape2D';
 import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
-import { DOMRectTransform } from './DOMRectTransform';
 
 interface GizmoOptions {
   color?: string;
@@ -142,9 +143,9 @@ export class Gizmos extends ReactiveElement {
     ctx.stroke();
   }
 
-  /** Draws a rectangle, can be a regular DOMRect or a DOMRectTransform */
+  /** Draws a rectangle, can be a regular Rect2D or Shape2D */
   static rect(
-    rect: DOMRect | DOMRectTransform,
+    rect: R.Rect2D | S.Shape2D,
     { color = 'blue', width = 2, fill, layer = Gizmos.#defaultLayer }: RectOptions = {},
   ) {
     const ctx = Gizmos.#getContext(layer);
@@ -154,9 +155,9 @@ export class Gizmos extends ReactiveElement {
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
 
-    if (rect instanceof DOMRectTransform) {
+    if (S.isShape2D(rect)) {
       // For transformed rectangles, draw using the vertices
-      const vertices = rect.vertices().map((p) => rect.toParentSpace(p));
+      const vertices = S.absoluteVertices(rect);
       ctx.moveTo(vertices[0].x, vertices[0].y);
       for (let i = 1; i < vertices.length; i++) {
         ctx.lineTo(vertices[i].x, vertices[i].y);
