@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/dom",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "DOM utilities",
   "keywords": [
     "DOM"
@@ -24,7 +24,6 @@
   ],
   "scripts": {
     "build": "wireit",
-    "test": "echo 'No tests to run'",
     "publish": "wireit"
   },
   "wireit": {

@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/propagators",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Core utilities for creating propagators",
   "keywords": [
     "propagators"
@@ -20,7 +20,6 @@
   ],
   "scripts": {
     "build": "wireit",
-    "test": "echo 'No tests to run'",
     "publish": "wireit"
   },
   "wireit": {

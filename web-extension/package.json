@@ -1,5 +1,6 @@
 {
   "name": "@folkjs/web-extension",
+  "version": "0.0.2",
   "private": true,
   "description": "folkjs web extension",
   "author": "Christopher Shank <chris.shank.23@gmail.com>",
@@ -7,8 +8,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "npm run build --watch",
-    "build": "wireit",
-    "test": "echo 'No tests to run'"
+    "build": "wireit"
   },
   "wireit": {
     "build": {

@@ -14,7 +14,9 @@
     "deopt": "node --experimental-strip-types --prof --log-deopt --log-ic --log-maps --log-maps-details --log-internal-timer-events --log-code --log-source-code --detailed-line-info",
     "clean": "find . -name 'dist' -o -name 'node_modules' -o -name '.wireit' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
     "clean:wireit": "find . -name '.wireit' | xargs rm -rf",
-    "test": "npm run test --workspaces"
+    "test": "npm run test --workspaces --if-present",
+    "publish": "npm publish --workspaces --if-present",
+    "version": "npm version --workspaces"
   },
   "devDependencies": {
     "prettier": "^3.5.3",

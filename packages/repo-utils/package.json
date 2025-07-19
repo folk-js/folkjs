@@ -20,8 +20,7 @@
     "src"
   ],
   "scripts": {
-    "build": "wireit",
-    "test": "echo 'No tests to run'"
+    "build": "wireit"
   },
   "wireit": {
     "build": {
@@ -42,5 +41,6 @@
     "expect": "^29.7.0",
     "mitata": "^1.0.34",
     "typescript": "^5.8.2"
-  }
+  },
+  "version": "0.0.1"
 }

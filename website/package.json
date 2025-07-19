@@ -1,13 +1,12 @@
 {
   "name": "@folkjs/website",
-  "version": "0.0.0",
+  "version": "0.0.2",
   "type": "module",
   "scripts": {
     "build": "wireit",
     "dev": "wireit",
     "dev:host": "npm run dev -- --host",
-    "preview": "npm run build && vite preview",
-    "test": "echo 'No tests to run'"
+    "preview": "npm run build && vite preview"
   },
   "wireit": {
     "build": {
