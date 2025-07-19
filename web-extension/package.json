@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/web-extension",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "folkjs web extension",
   "author": "Christopher Shank <chris.shank.23@gmail.com>",

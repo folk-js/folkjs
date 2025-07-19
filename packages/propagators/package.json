@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/propagators",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Core utilities for creating propagators",
   "keywords": [
     "propagators"
