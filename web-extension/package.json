@@ -1,10 +1,7 @@
 {
   "name": "@folkjs/web-extension",
-  "version": "0.0.0",
+  "private": true,
   "description": "folkjs web extension",
-  "keywords": [
-    "web extension"
-  ],
   "author": "Christopher Shank <chris.shank.23@gmail.com>",
   "type": "module",
   "license": "MIT",

@@ -16,6 +16,22 @@
     "./standalone/*": {
       "import": "./dist/standalone/*.js",
       "types": "./dist/standalone/*.d.ts"
+    },
+    "./interactions/*": {
+      "import": "./dist/interactions/*.js",
+      "types": "./dist/interactions/*.d.ts"
+    },
+    "./intl-elements/*": {
+      "import": "./dist/intl-elements/*.js",
+      "types": "./dist/intl-elements/*.d.ts"
+    },
+    "./lsp/*": {
+      "import": "./dist/lsp/*.js",
+      "types": "./dist/lsp/*.d.ts"
+    },
+    "./utils/*": {
+      "import": "./dist/utils/*.js",
+      "types": "./dist/utils/*.d.ts"
     }
   },
   "files": [
@@ -24,7 +40,8 @@
   ],
   "scripts": {
     "build": "wireit",
-    "test": "wireit"
+    "test": "wireit",
+    "publish": "wireit"
   },
   "wireit": {
     "build": {
@@ -55,6 +72,13 @@
         "__tests__/*.test.ts"
       ],
       "output": []
+    },
+    "publish": {
+      "command": "npm publish --access public",
+      "dependencies": [
+        "build",
+        "test"
+      ]
     }
   },
   "dependencies": {
