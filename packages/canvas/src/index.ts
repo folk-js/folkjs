@@ -1,5 +1,4 @@
 // Core utilities and types
-export * from './folk-gizmos';
 export * from './utils';
 
 // DOM and transformation

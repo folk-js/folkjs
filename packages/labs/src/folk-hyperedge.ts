@@ -1,4 +1,4 @@
-import { Gizmos } from '@folkjs/canvas';
+import { Gizmos } from '@folkjs/canvas/folk-gizmos';
 import { verticesToPolygon } from '@folkjs/canvas/utils';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import type { Point } from '@folkjs/geometry/Vector2';
