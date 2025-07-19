@@ -26,7 +26,6 @@
     "sourceMap": true,
     "lib": ["esnext", "dom", "dom.iterable"],
     "composite": true,
-    "declarationMap": true,
-    "baseUrl": "."
+    "declarationMap": true
   }
 }

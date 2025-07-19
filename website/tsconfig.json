@@ -1,6 +1,7 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
+    "baseUrl": ".",
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "types": ["@types/wicg-file-system-access"]

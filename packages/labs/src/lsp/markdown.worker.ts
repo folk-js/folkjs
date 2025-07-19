@@ -1,6 +1,5 @@
 // Simple JSON LS in Web Worker that provides completion and hover.
 // Includes a schema for `tsconfig.json`.
-import type { URI } from 'node_modules/vscode-uri/lib/umd/uri';
 import {
   BrowserMessageReader,
   BrowserMessageWriter,
@@ -24,6 +23,7 @@ import {
   type ITextDocument,
   type Token,
 } from 'vscode-markdown-languageservice';
+import type { URI } from 'vscode-uri';
 
 const markdownService = createLanguageService({
   workspace: {

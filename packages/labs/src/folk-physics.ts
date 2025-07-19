@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier2d';
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import { isShape2D } from 'packages/geometry/dist/Shape2D';
+import { isShape2D } from '@folkjs/geometry/Shape2D';
 import { TransformIntegrator } from './EffectIntegrator';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';
