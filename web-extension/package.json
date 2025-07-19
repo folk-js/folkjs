@@ -34,10 +34,10 @@
     }
   },
   "dependencies": {
-    "@folkjs/canvas": "^0.0.1",
-    "@folkjs/dom": "^0.0.1",
-    "@folkjs/geometry": "^0.0.1",
-    "@folkjs/labs": "^0.0.1",
+    "@folkjs/canvas": "0.0.3",
+    "@folkjs/dom": "0.0.3",
+    "@folkjs/geometry": "0.0.3",
+    "@folkjs/labs": "0.0.3",
     "webextension-polyfill": "^0.12.0"
   },
   "devDependencies": {

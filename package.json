@@ -15,8 +15,19 @@
     "clean": "find . -name 'dist' -o -name 'node_modules' -o -name '.wireit' -o -name 'tsconfig.tsbuildinfo' | xargs rm -rf",
     "clean:wireit": "find . -name '.wireit' | xargs rm -rf",
     "test": "npm run test --workspaces --if-present",
-    "publish": "npm publish --workspaces --if-present",
+    "publish": "wireit",
     "version": "npm version --workspaces"
+  },
+  "wireit": {
+    "publish": {
+      "dependencies": [
+        "./packages/geometry:publish",
+        "./packages/dom:publish",
+        "./packages/propagators:publish",
+        "./packages/canvas:publish",
+        "./packages/labs:publish"
+      ]
+    }
   },
   "devDependencies": {
     "prettier": "^3.5.3",
