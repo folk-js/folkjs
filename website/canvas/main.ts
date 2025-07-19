@@ -2,8 +2,10 @@ import '@folkjs/labs/standalone/folk-space-attribute';
 import '@folkjs/labs/standalone/folk-shape-attribute';
 import '@folkjs/labs/standalone/folk-sync-attribute';
 import '@folkjs/labs/standalone/folk-arrow';
+import '@folkjs/labs/standalone/folk-event-propagator';
 import {deleteElementByClick} from '@folkjs/labs/interactions/delete';
 import {dragToCreateShape} from '@folkjs/labs/interactions/create-element';
+import {clickToCreateArrow, clickToCreateEventPropagator} from '@folkjs/labs/interactions/connection';
 import { property, state, ReactiveElement, type PropertyValues, css } from '@folkjs/dom/ReactiveElement';
 
 class FolkInstruments extends ReactiveElement {
@@ -31,6 +33,7 @@ class FolkInstruments extends ReactiveElement {
       z-index: 0;
 
       label {
+        white-space: nowrap;
         position: relative;
         padding: 1rem;
 
@@ -106,8 +109,6 @@ class FolkInstruments extends ReactiveElement {
 
     root.appendChild(this.#fieldset);
 
-    console.log(this.querySelectorAll('[slot]'))
-
     // TODO: use mutation observer to watch changes to slots
     this.querySelectorAll('[slot]').forEach((el, i) => {
       const label = document.createElement('label');
@@ -155,11 +156,15 @@ class FolkInstruments extends ReactiveElement {
       e.stopPropagation();
       this.activeInstrument = 'select';
     }
-  
-    // TODO: think about how to be more specific here
-    if (e.code.startsWith('Digit') && (document.activeElement === document.body || document.activeElement?.closest('#instruments'))) {
-      const instrument = this.renderRoot.querySelector<HTMLInputElement>(`label:nth-child(${e.key}) input[type="radio"]`);
+
+4    // TODO: think about how to be more specific here
+    if (e.code.startsWith('Digit') && (document.activeElement === document.body || document.activeElement === this)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      e.stopPropagation();
       
+      const instrument = this.renderRoot.querySelector<HTMLInputElement>(`label:nth-child(${e.key}) input[type="radio"]`);
+
       if (instrument) this.activeInstrument = instrument.value;
     }
   }
@@ -196,6 +201,15 @@ class FolkInstruments extends ReactiveElement {
         break;
       }
       case 'arrow': {
+        const arrow = await clickToCreateArrow(this.containerEl, this.#cancelInstrument.signal);
+
+        if (arrow) this.activeInstrument = 'select';
+        break;
+      }
+      case 'event-propagator': {
+        const ep = await clickToCreateEventPropagator(this.containerEl, this.#cancelInstrument.signal);
+
+        if (ep) this.activeInstrument = 'select';
         break;
       }
     }

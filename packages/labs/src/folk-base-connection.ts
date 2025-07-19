@@ -65,12 +65,6 @@ export class FolkBaseConnection extends ReactiveElement {
 
   @state() targetRect: DOMRectReadOnly | null = null;
 
-  override createRenderRoot() {
-    const root = super.createRenderRoot();
-
-    return root;
-  }
-
   override disconnectedCallback() {
     super.disconnectedCallback();
     this.#unobserveSource();
@@ -86,6 +80,7 @@ export class FolkBaseConnection extends ReactiveElement {
       const point = decodePointToPseudoElement(this.source);
 
       if (point) {
+        this.sourcePoint = point;
         this.sourceRect = DOMRectReadOnly.fromRect(point);
       } else {
         const [el] = parseDeepCSSSelector(this.source);
@@ -101,8 +96,14 @@ export class FolkBaseConnection extends ReactiveElement {
       if (this.sourceElement === null) {
         this.sourceRect = null;
       } else {
+        this.source = '';
         folkObserver.observe(this.sourceElement, this.#sourceCallback, { iframeSelector: this.#sourceIframeSelector });
       }
+    }
+
+    if (changedProperties.has('sourcePoint') && this.sourcePoint) {
+      this.sourceRect = DOMRectReadOnly.fromRect(this.sourcePoint);
+      this.source = `${this.sourcePoint.x},${this.sourcePoint.y}`;
     }
 
     if (changedProperties.has('target')) {
@@ -113,6 +114,7 @@ export class FolkBaseConnection extends ReactiveElement {
       const point = decodePointToPseudoElement(this.target);
 
       if (point) {
+        this.targetPoint = point;
         this.targetRect = DOMRectReadOnly.fromRect(point);
       } else {
         const [el] = parseDeepCSSSelector(this.target);
@@ -128,8 +130,14 @@ export class FolkBaseConnection extends ReactiveElement {
       if (this.targetElement === null) {
         this.targetRect = null;
       } else {
+        this.target = '';
         folkObserver.observe(this.targetElement, this.#targetCallback, { iframeSelector: this.#targetIframeSelector });
       }
+    }
+
+    if (changedProperties.has('targetPoint') && this.targetPoint) {
+      this.targetRect = DOMRectReadOnly.fromRect(this.targetPoint);
+      this.target = `${this.targetPoint.x},${this.targetPoint.y}`;
     }
   }
 

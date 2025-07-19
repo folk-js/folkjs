@@ -1,26 +1,28 @@
-import { FolkArrow } from '../folk-arrow';
-import { FolkHull } from '../folk-hull';
-import { FolkHyperedge } from '../folk-hyperedge';
-import { FolkInk } from '../folk-ink';
-import { FolkLLM } from '../folk-llm';
-import { FolkPresence } from '../folk-presence';
-import { FolkProjector } from '../folk-projector';
-import { FolkCluster, FolkProximity } from '../folk-proximity';
-import { FolkRope } from '../folk-rope';
-import { FolkShape } from '../folk-shape';
-import { FolkShapeAttribute } from '../folk-shape-attribute';
-import { FolkShapeOverlay } from '../folk-shape-overlay';
-import { FolkShortcutTree } from '../folk-shortcut-tree';
-import { FolkSpace } from '../folk-space';
-import { FolkSpaceAttribute } from '../folk-space-attribute';
-import { FolkSpectrogram } from '../folk-spectrogram';
-import { FolkSpreadsheet, FolkSpreadSheetCell, FolkSpreadsheetHeader } from '../folk-spreadsheet';
-import { FolkWebLLM } from '../folk-webllm';
-import { IntlNumber } from '../intl-elements/intl-number';
+import type { FolkEventPropagator } from 'src/folk-event-propagator';
+import type { FolkArrow } from '../folk-arrow';
+import type { FolkHull } from '../folk-hull';
+import type { FolkHyperedge } from '../folk-hyperedge';
+import type { FolkInk } from '../folk-ink';
+import type { FolkLLM } from '../folk-llm';
+import type { FolkPresence } from '../folk-presence';
+import type { FolkProjector } from '../folk-projector';
+import type { FolkCluster, FolkProximity } from '../folk-proximity';
+import type { FolkRope } from '../folk-rope';
+import type { FolkShape } from '../folk-shape';
+import type { FolkShapeAttribute } from '../folk-shape-attribute';
+import type { FolkShapeOverlay } from '../folk-shape-overlay';
+import type { FolkShortcutTree } from '../folk-shortcut-tree';
+import type { FolkSpace } from '../folk-space';
+import type { FolkSpaceAttribute } from '../folk-space-attribute';
+import type { FolkSpectrogram } from '../folk-spectrogram';
+import type { FolkSpreadsheet, FolkSpreadSheetCell, FolkSpreadsheetHeader } from '../folk-spreadsheet';
+import type { FolkWebLLM } from '../folk-webllm';
+import type { IntlNumber } from '../intl-elements/intl-number';
 
 declare global {
   interface HTMLElementTagNameMap {
     'folk-arrow': FolkArrow;
+    'folk-event-propagator': FolkEventPropagator;
     'folk-hull': FolkHull;
     'folk-hyperedge': FolkHyperedge;
     'folk-ink': FolkInk;

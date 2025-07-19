@@ -5,6 +5,8 @@ import { FolkRope } from './folk-rope';
 export class FolkEventPropagator extends FolkRope {
   static override tagName = 'folk-event-propagator';
 
+  static override shadowRootOptions: ShadowRootInit = { ...FolkRope.shadowRootOptions, delegatesFocus: true };
+
   static override styles = [
     ...FolkRope.styles,
     css`
