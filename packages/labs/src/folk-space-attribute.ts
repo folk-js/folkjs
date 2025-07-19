@@ -1,9 +1,10 @@
-import { IPointTransform, toDOMPrecision } from '@folkjs/canvas';
+import { IPointTransform } from '@folkjs/canvas';
 import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
 import { css } from '@folkjs/dom/tags';
 import * as BVH from '@folkjs/geometry/BoundingVolumeHierarchy';
 import * as M from '@folkjs/geometry/Matrix2D';
 import * as S from '@folkjs/geometry/Shape2D';
+import { toDOMPrecision } from '@folkjs/geometry/utilities';
 import type { Point } from '@folkjs/geometry/Vector2';
 import { ShapeConnectedEvent, ShapeDisconnectedEvent, type Shape2DObject } from './shape-events';
 

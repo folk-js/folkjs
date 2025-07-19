@@ -1,10 +1,10 @@
-import '@folkjs/labs/standalone/folk-pinch';
 import '@folkjs/labs/standalone/folk-shape';
+import '@folkjs/labs/standalone/folk-space';
 import { FolkDirectory } from './folk-directory';
 
 FolkDirectory.define();
 
-const pinch = document.querySelector('folk-pinch')!;
+const pinch = document.querySelector('folk-space')!;
 
 document.addEventListener('click', async (event) => {
   if (!(event.target instanceof HTMLElement)) return;

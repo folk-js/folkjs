@@ -2,20 +2,17 @@ import {
   DOMRectTransform,
   DOMRectTransformReadonly,
   IPointTransform,
-  Matrix,
   MAX_Z_INDEX,
-  round,
-  toDOMPrecision,
   TransformEvent,
   TransformStack,
 } from '@folkjs/canvas';
+import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
+import { ResizeManager } from '@folkjs/dom/ResizeManger';
+import { html } from '@folkjs/dom/tags';
+import * as M from '@folkjs/geometry/Matrix2D';
+import { round, toDOMPrecision } from '@folkjs/geometry/utilities';
 import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
-
-import { ResizeManager } from '@folkjs/dom/ResizeManger';
-
-import { css, ReactiveElement } from '@folkjs/dom/ReactiveElement';
-import { html } from '@folkjs/dom/tags';
 import { getResizeCursorUrl, getRotateCursorUrl } from './utils/cursors';
 
 const resizeManager = new ResizeManager();
@@ -687,10 +684,12 @@ export class FolkShape extends ReactiveElement {
    */
   mapPointFromParent(point: Point): Point {
     // Create a transform matrix based on current shape properties
-    const matrix = new Matrix().translate(this.#rect.x, this.#rect.y).rotate(this.#rect.rotation).scale(1, 1); // We don't change scale for shapes
-
+    const matrix = M.fromTranslate(this.#rect.x, this.#rect.y);
+    M.rotateSelf(matrix, this.#rect.rotation);
+    M.scaleSelf(matrix, 1, 1);
+    M.invertSelf(matrix);
     // Apply the inverse transformation to convert from parent to shape coordinates
-    return matrix.clone().invert().applyToPoint(point);
+    return M.applyToPoint(matrix, point);
   }
 
   /**
@@ -702,10 +701,10 @@ export class FolkShape extends ReactiveElement {
    */
   mapVectorFromParent(vector: Point): Point {
     // Create a matrix with just the rotation component (no translation)
-    const matrix = new Matrix().rotate(this.#rect.rotation);
-
+    const matrix = M.fromRotate(this.#rect.rotation);
+    M.invertSelf(matrix);
     // Apply the inverse transformation to the vector
-    return matrix.clone().invert().applyToPoint(vector);
+    return M.applyToPoint(matrix, vector);
   }
 
   /**
@@ -716,10 +715,12 @@ export class FolkShape extends ReactiveElement {
    */
   mapPointToParent(point: Point): Point {
     // Create a transform matrix based on current shape properties
-    const matrix = new Matrix().translate(this.#rect.x, this.#rect.y).rotate(this.#rect.rotation).scale(1, 1); // We don't change scale for shapes
+    const matrix = M.fromTranslate(this.#rect.x, this.#rect.y);
+    M.rotateSelf(matrix, this.#rect.rotation);
+    M.scaleSelf(matrix, 1, 1);
 
     // Apply the transformation to convert from shape coordinates to parent coordinates
-    return matrix.applyToPoint(point);
+    return M.applyToPoint(matrix, point);
   }
 
   /**
@@ -730,10 +731,10 @@ export class FolkShape extends ReactiveElement {
    */
   mapVectorToParent(vector: Point): Point {
     // Create a matrix with just the rotation component (no translation)
-    const matrix = new Matrix().rotate(this.#rect.rotation);
+    const matrix = M.fromRotate(this.#rect.rotation);
 
     // Apply the transformation to the vector
-    return matrix.applyToPoint(vector);
+    return M.applyToPoint(matrix, vector);
   }
 }
 

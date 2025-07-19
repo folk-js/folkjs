@@ -15,7 +15,7 @@
         margin: 0;
       }
 
-      folk-pinch {
+      folk-space {
         position: absolute;
         inset: 0;
       }
@@ -41,7 +41,7 @@
     </style>
   </head>
   <body>
-    <folk-pinch>
+    <folk-space>
       <folk-shape id="box3" x="350" y="200" width="30" height="30"></folk-shape>
       <folk-shape id="box4" x="500" y="250" width="30" height="30"></folk-shape>
       <folk-event-propagator
@@ -51,10 +51,10 @@
         expression="y: from.x,
 rotation: from.x/10"
       ></folk-event-propagator>
-    </folk-pinch>
+    </folk-space>
 
     <script type="module">
-      import '@folkjs/labs/standalone/folk-pinch';
+      import '@folkjs/labs/standalone/folk-space';
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-event-propagator';
     </script>

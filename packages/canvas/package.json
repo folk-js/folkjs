@@ -18,10 +18,6 @@
     "./*": {
       "import": "./dist/*.js",
       "types": "./dist/*.d.ts"
-    },
-    "./reactive-element": {
-      "import": "./dist/reactive-element/index.js",
-      "types": "./dist/reactive-element/index.d.ts"
     }
   },
   "files": [

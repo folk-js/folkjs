@@ -1,5 +1,5 @@
+import * as M from '@folkjs/geometry/Matrix2D';
 import type { Point } from '@folkjs/geometry/Vector2';
-import { Matrix } from './Matrix.ts';
 
 interface DOMRectTransformInit {
   height?: number;
@@ -34,8 +34,8 @@ export class DOMRectTransform implements DOMRect {
   #rotateOrigin: Point; // Origin for rotation
 
   // Internal transformation matrices
-  #transformMatrix: Matrix; // Transforms from local to parent space
-  #inverseMatrix: Matrix; // Transforms from parent to local space
+  #transformMatrix: M.Matrix2D; // Transforms from local to parent space
+  #inverseMatrix: M.Matrix2D; // Transforms from parent to local space
 
   /**
    * Constructs a new `TransformDOMRect`.
@@ -53,8 +53,8 @@ export class DOMRectTransform implements DOMRect {
     this.#rotateOrigin = init.rotateOrigin ?? { x: 0.5, y: 0.5 };
 
     // Initialize transformation matrices
-    this.#transformMatrix = Matrix.Identity();
-    this.#inverseMatrix = Matrix.Identity();
+    this.#transformMatrix = M.fromValues();
+    this.#inverseMatrix = M.fromValues();
 
     this.#updateMatrices();
   }
@@ -158,27 +158,30 @@ export class DOMRectTransform implements DOMRect {
    */
   #updateMatrices() {
     // Reset the transformMatrix to identity
-    this.#transformMatrix.identity();
+    M.identitySelf(this.#transformMatrix);
 
     // Get absolute positions for origins
     const transformOrigin = this.#getAbsoluteTransformOrigin();
     const rotateOrigin = this.#getAbsoluteRotateOrigin();
 
     // Apply transformations
-    this.#transformMatrix
-      // Step 1: Translate to global position
-      .translate(this.#x, this.#y)
-      // Step 2: Translate to the transform origin
-      .translate(transformOrigin.x, transformOrigin.y)
-      // Step 3: Rotate around the rotation origin
-      .translate(rotateOrigin.x - transformOrigin.x, rotateOrigin.y - transformOrigin.y)
-      .rotate(this.#rotation)
-      .translate(-(rotateOrigin.x - transformOrigin.x), -(rotateOrigin.y - transformOrigin.y))
-      // Step 4: Translate back from the transform origin
-      .translate(-transformOrigin.x, -transformOrigin.y);
+    // Step 1: Translate to global position
+    M.translateSelf(this.#transformMatrix, this.#x, this.#y);
+    // Step 2: Translate to the transform origin
+    M.translateSelf(this.#transformMatrix, transformOrigin.x, transformOrigin.y);
+    // Step 3: Rotate around the rotation origin
+    M.translateSelf(this.#transformMatrix, rotateOrigin.x - transformOrigin.x, rotateOrigin.y - transformOrigin.y);
+    M.rotateSelf(this.#transformMatrix, this.#rotation);
+    M.translateSelf(
+      this.#transformMatrix,
+      -(rotateOrigin.x - transformOrigin.x),
+      -(rotateOrigin.y - transformOrigin.y),
+    );
+    // Step 4: Translate back from the transform origin
+    M.translateSelf(this.#transformMatrix, -transformOrigin.x, -transformOrigin.y);
 
     // Update inverseMatrix as the inverse of transformMatrix
-    this.#inverseMatrix = this.#transformMatrix.clone().invert();
+    this.#inverseMatrix = M.invert(this.#transformMatrix);
   }
 
   // Convert relative origins to absolute points
@@ -197,11 +200,11 @@ export class DOMRectTransform implements DOMRect {
   }
 
   // Accessors for the transformation matrices
-  get transformMatrix(): Matrix {
+  get transformMatrix(): M.Matrix2D {
     return this.#transformMatrix;
   }
 
-  get inverseMatrix(): Matrix {
+  get inverseMatrix(): M.Matrix2D {
     return this.#inverseMatrix;
   }
 
@@ -211,7 +214,7 @@ export class DOMRectTransform implements DOMRect {
    * @returns The point in local coordinate space.
    */
   toLocalSpace(point: Point): Point {
-    return this.#inverseMatrix.applyToPoint(point);
+    return M.applyToPoint(this.#inverseMatrix, point);
   }
 
   /**
@@ -220,7 +223,7 @@ export class DOMRectTransform implements DOMRect {
    * @returns The point in parent coordinate space.
    */
   toParentSpace(point: Point): Point {
-    return this.#transformMatrix.applyToPoint(point);
+    return M.applyToPoint(this.#transformMatrix, point);
   }
 
   // Local space corners
@@ -276,7 +279,7 @@ export class DOMRectTransform implements DOMRect {
    * @returns A string suitable for use in CSS `transform` properties.
    */
   toCssString(): string {
-    return this.transformMatrix.toCssString();
+    return M.toCSSString(this.transformMatrix);
   }
 
   /**
@@ -504,11 +507,11 @@ export class DOMRectTransformReadonly extends DOMRectTransform {
     return super.bottom;
   }
 
-  override get transformMatrix(): Matrix {
+  override get transformMatrix(): M.Matrix2DReadonly {
     return super.transformMatrix;
   }
 
-  override get inverseMatrix(): Matrix {
+  override get inverseMatrix(): M.Matrix2D {
     return super.inverseMatrix;
   }
 

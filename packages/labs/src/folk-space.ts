@@ -1,6 +1,8 @@
-import { IPointTransform, Matrix, toDOMPrecision } from '@folkjs/canvas';
+import { IPointTransform } from '@folkjs/canvas';
 import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
+import * as M from '@folkjs/geometry/Matrix2D';
 import type { Point } from '@folkjs/geometry/Vector2';
+import { toDOMPrecision } from '@folkjs/geometry/utilities';
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;
@@ -160,8 +162,8 @@ export class FolkSpace extends ReactiveElement implements IPointTransform {
     return { x: this.#x, y: this.#y };
   }
 
-  get matrix(): Matrix {
-    return new Matrix().translate(this.#x, this.#y).scale(this.#scale, this.#scale);
+  get matrix(): M.Matrix2D {
+    return M.scaleSelf(M.fromTranslate(this.#x, this.#y), this.#scale, this.#scale);
   }
 
   /**
@@ -172,10 +174,11 @@ export class FolkSpace extends ReactiveElement implements IPointTransform {
    */
   mapPointFromParent(point: Point): Point {
     // Create an inverse of the current transformation matrix
-    const inverseMatrix = this.matrix.clone().invert();
+
+    const inverseMatrix = M.invert(this.matrix);
 
     // Apply the inverse transformation to convert from parent to space coordinates
-    return inverseMatrix.applyToPoint(point);
+    return M.applyToPoint(inverseMatrix, point);
   }
 
   /**
@@ -188,10 +191,10 @@ export class FolkSpace extends ReactiveElement implements IPointTransform {
   mapVectorFromParent(vector: Point): Point {
     // For vectors, we only need to apply scale (and rotation if present)
     // Create a matrix with just the scale component
-    const scaleMatrix = new Matrix(this.#scale, 0, 0, this.#scale, 0, 0);
+    const scaleMatrix = M.invertSelf(M.fromScale(this.#scale));
 
     // Apply the inverse transformation to the vector
-    return scaleMatrix.clone().invert().applyToPoint(vector);
+    return M.applyToPoint(scaleMatrix, vector);
   }
 
   /**
@@ -202,7 +205,7 @@ export class FolkSpace extends ReactiveElement implements IPointTransform {
    */
   mapPointToParent(point: Point): Point {
     // Apply the space's transformation matrix directly
-    return this.matrix.applyToPoint(point);
+    return M.applyToPoint(this.matrix, point);
   }
 
   /**
@@ -214,10 +217,10 @@ export class FolkSpace extends ReactiveElement implements IPointTransform {
   mapVectorToParent(vector: Point): Point {
     // For vectors, we only need to apply scale (and rotation if present)
     // Create a matrix with just the scale component
-    const scaleMatrix = new Matrix(this.#scale, 0, 0, this.#scale, 0, 0);
+    const scaleMatrix = M.fromScale(this.#scale);
 
     // Apply the transformation to the vector
-    return scaleMatrix.applyToPoint(vector);
+    return M.applyToPoint(scaleMatrix, vector);
   }
 
   get onTransformChange(): TransformChangeCallback | null {
@@ -280,7 +283,7 @@ export class FolkSpace extends ReactiveElement implements IPointTransform {
 
   #update() {
     if (this.#contentElement) {
-      this.#contentElement.style.transform = this.matrix.toCssString();
+      this.#contentElement.style.transform = M.toCSSString(this.matrix);
     }
 
     if (this.#gridElement) {

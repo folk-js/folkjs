@@ -3,7 +3,6 @@ import { FolkHull } from '../folk-hull';
 import { FolkHyperedge } from '../folk-hyperedge';
 import { FolkInk } from '../folk-ink';
 import { FolkLLM } from '../folk-llm';
-import { FolkPinch } from '../folk-pinch';
 import { FolkPresence } from '../folk-presence';
 import { FolkProjector } from '../folk-projector';
 import { FolkCluster, FolkProximity } from '../folk-proximity';
@@ -26,7 +25,6 @@ declare global {
     'folk-hyperedge': FolkHyperedge;
     'folk-ink': FolkInk;
     'folk-llm': FolkLLM;
-    'folk-pinch': FolkPinch;
     'folk-presence': FolkPresence;
     'folk-projector': FolkProjector;
     'folk-cluster': FolkCluster;

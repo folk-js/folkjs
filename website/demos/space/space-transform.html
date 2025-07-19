@@ -113,7 +113,7 @@
     <script type="module">
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-rope';
-      import { Matrix } from '@folkjs/canvas/Matrix';
+      import * as M from '@folkjs/geometry/Matrix3D';
       import { IPointTransform } from '@folkjs/canvas/interfaces/IPointTransform';
 
       // Define the transform-plane custom element
@@ -127,7 +127,7 @@
 
         // IPointTransform implementation
         mapPointFromParent(point) {
-          return Matrix.projectPointOntoPlane(point, this.getMatrix());
+          return M.projectPointOntoPlane(point, this.getMatrix());
         }
 
         mapVectorFromParent(vector) {
@@ -141,8 +141,8 @@
           const vectorPoint = { x: vector.x, y: vector.y };
 
           // Transform both points using the same projection method as mapPointFromParent
-          const transformedOrigin = Matrix.projectPointOntoPlane(origin, this.getMatrix());
-          const transformedVectorPoint = Matrix.projectPointOntoPlane(vectorPoint, this.getMatrix());
+          const transformedOrigin = M.projectPointOntoPlane(origin, this.getMatrix());
+          const transformedVectorPoint = M.projectPointOntoPlane(vectorPoint, this.getMatrix());
 
           // The transformed vector is the difference between these points
           return {
@@ -152,7 +152,7 @@
         }
 
         mapPointToParent(point) {
-          return Matrix.projectPointFromPlane(point, this.getMatrix());
+          return M.projectPointFromPlane(point, this.getMatrix());
         }
 
         mapVectorToParent(vector) {
