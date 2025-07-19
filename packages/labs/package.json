@@ -32,8 +32,8 @@
       "clean": "if-file-deleted",
       "dependencies": [
         "../dom:build",
-        "../canvas:build",
         "../geometry:build",
+        "../canvas:build",
         "../propagators:build"
       ],
       "files": [

@@ -8,8 +8,8 @@ import {
   toDOMPrecision,
   TransformEvent,
   TransformStack,
-  type Point,
 } from '@folkjs/canvas';
+import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 
 import { ResizeManager } from '@folkjs/dom/ResizeManger';

@@ -1,7 +1,7 @@
-import type { Point } from '@folkjs/canvas';
 import { Gizmos } from '@folkjs/canvas';
 import { verticesToPolygon } from '@folkjs/canvas/utils';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseHyperedge } from './folk-base-hyperedge';
 

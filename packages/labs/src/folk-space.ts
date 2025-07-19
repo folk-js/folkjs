@@ -1,5 +1,6 @@
-import { IPointTransform, Matrix, type Point, toDOMPrecision } from '@folkjs/canvas';
+import { IPointTransform, Matrix, toDOMPrecision } from '@folkjs/canvas';
 import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
+import type { Point } from '@folkjs/geometry/Vector2';
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;

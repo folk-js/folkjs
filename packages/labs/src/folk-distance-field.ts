@@ -1,7 +1,8 @@
-import { DOMRectTransform, type Point } from '@folkjs/canvas';
+import { DOMRectTransform } from '@folkjs/canvas';
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { glsl } from '@folkjs/dom/tags';
 import { WebGLUtils } from '@folkjs/dom/webgl';
+import type { Point } from '@folkjs/geometry/Vector2';
 import { FolkBaseSet } from './folk-base-set';
 
 /**

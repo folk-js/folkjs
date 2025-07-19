@@ -1,5 +1,6 @@
-import { Gizmos, type Point } from '@folkjs/canvas';
+import { Gizmos } from '@folkjs/canvas';
 import { css } from '@folkjs/dom/ReactiveElement';
+import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseSet } from './folk-base-set';
 import { FolkShape } from './folk-shape';

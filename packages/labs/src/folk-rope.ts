@@ -1,12 +1,8 @@
 // This is a rewrite of https://github.com/guerrillacontra/html5-es6-physics-rope
 
-import {
-  AnimationFrameController,
-  DOMRectTransform,
-  type AnimationFrameControllerHost,
-  type Point,
-} from '@folkjs/canvas';
+import { AnimationFrameController, DOMRectTransform, type AnimationFrameControllerHost } from '@folkjs/canvas';
 import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseConnection } from './folk-base-connection';
 
