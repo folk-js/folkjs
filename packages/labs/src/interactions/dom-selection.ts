@@ -95,3 +95,153 @@ export function selectElement<T extends Element = Element>(
     containerDocument.adoptedStyleSheets.push(styles);
   });
 }
+
+type InteractionExecutor<T> = (args: {
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: any) => void;
+  onCancel: (callback: () => void) => void;
+  onCompletion: (callback: () => void) => void;
+  onFinished: (callback: () => void) => void;
+}) => void;
+
+type InteractionState = 'pending' | 'resolved' | 'rejected' | 'completed' | 'canceled';
+
+class Interaction<T> extends Promise<T> {
+  #onCancel?: () => void;
+  #onComplete?: () => void;
+  #onFinished?: () => void;
+  #state: InteractionState = 'pending';
+
+  get state() {
+    return this.#state;
+  }
+
+  constructor(executor: InteractionExecutor<T>) {
+    super((resolve, reject) => {
+      executor({
+        resolve: (value) => {
+          if (this.#state === 'pending') {
+            this.#state = 'resolved';
+            this.#onFinished?.();
+            resolve(value);
+          }
+        },
+        reject: (reason) => {
+          if (this.#state === 'pending') {
+            this.#state = 'rejected';
+            this.#onFinished?.();
+            reject(reason);
+          }
+        },
+        onCancel: (callback) => {
+          this.#onCancel = callback;
+        },
+        onCompletion: (callback) => {
+          this.#onComplete = callback;
+        },
+        onFinished: (callback) => {
+          this.#onFinished = callback;
+        },
+      });
+    });
+  }
+  cancel() {
+    if (this.#state === 'pending') {
+      this.#state = 'canceled';
+      this.#onFinished?.();
+      this.#onCancel?.();
+    }
+  }
+
+  complete() {
+    if (this.#state === 'pending') {
+      this.#state = 'completed';
+      this.#onFinished?.();
+      this.#onComplete?.();
+    }
+  }
+}
+
+function selectEl<T extends Element = Element>(
+  container: HTMLElement | DocumentOrShadowRoot = document.documentElement,
+  filter?: (el: Element) => T | null,
+): Interaction<T> {
+  return new Interaction(({ resolve, onFinished }) => {
+    const containerDocument = container instanceof HTMLElement ? container.ownerDocument : container;
+    let el: Element | null = null;
+    const a = new AbortController();
+
+    onFinished(() => {
+      el?.removeAttribute('folk-hovered-element');
+      containerDocument.adoptedStyleSheets.splice(containerDocument.adoptedStyleSheets.indexOf(styles), 1);
+      a.abort();
+    });
+
+    // Prevent focus from being received
+    (container as HTMLElement).addEventListener(
+      'pointerdown',
+      (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+      },
+      { capture: true, signal: a.signal },
+    );
+
+    (container as HTMLElement).addEventListener(
+      'pointerover',
+      (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+
+        if (event.target === container) return;
+
+        el?.removeAttribute('folk-hovered-element');
+        if (filter !== undefined) {
+          el = filter(event.target as T);
+        } else {
+          el = event.target as Element;
+        }
+        el?.setAttribute('folk-hovered-element', '');
+      },
+      { capture: true, signal: a.signal },
+    );
+
+    (container as HTMLElement).addEventListener(
+      'pointerleave',
+      (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+
+        if (event.target === el) {
+          el?.removeAttribute('folk-hovered-element');
+        }
+      },
+      { capture: true, signal: a.signal },
+    );
+
+    (container as HTMLElement).addEventListener(
+      'click',
+      (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+
+        if (event.target === container) return;
+
+        if (filter !== undefined) {
+          const el = filter(event.target as T);
+
+          if (el) resolve(el);
+        } else {
+          resolve(event.target as T);
+        }
+      },
+      { capture: true, signal: a.signal },
+    );
+
+    containerDocument.adoptedStyleSheets.push(styles);
+  });
+}
