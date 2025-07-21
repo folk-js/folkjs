@@ -1,0 +1,157 @@
+
+/**
+ * Source: https://github.com/primer/primitives/blob/main/src/tokens/functional/color/syntax.json5#L240
+ */
+
+md-syntax {
+  display: block;
+  white-space: pre-wrap;
+  word-spacing: normal;
+  word-break: normal;
+  word-wrap: normal;
+  overflow: auto;
+  tab-size: 2;
+  hyphens: none;
+  padding: 0.5rem;
+  border-radius: 0.3rem;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+}
+
+@layer md-syntax-element {
+  md-syntax {
+    --prettylights-bg: light-dark(#fbfbfb, #191e24);
+    --prettylights-fg: light-dark(#1f2328, #f0f6fc);
+    --prettylights-comment: light-dark(#59636e, #9198a1);
+    --prettylights-constant: light-dark(#0550ae, #79c0ff);
+    --prettylights-constant-other-reference-link: light-dark(#0a3069, #a5d6ff);
+    --prettylights-entity: light-dark(#6639ba, #d2a8ff);
+    --prettylights-entity-tag: light-dark(#0550ae, #7ee787);
+    --prettylights-keyword: light-dark(#cf222e, #ff7b72);
+    --prettylights-bold: light-dark(#f0f6fc, #f0f6fc);
+    --prettylights-deleted-bg: light-dark(#ffebe9, #67060c);
+    --prettylights-deleted-text: light-dark(#82071e, #ffdcd7);
+    --prettylights-heading: light-dark(#0550ae, #1f6feb);
+    --prettylights-inserted-bg: light-dark(#dafbe1, #033a16);
+    --prettylights-inserted-text: light-dark(#116329, #aff5b4);
+    --prettylights-italic: light-dark(#f0f6fc, #f0f6fc);
+    --prettylights-string: light-dark(#0a3069, #a5d6ff);
+    --prettylights-string-regexp: light-dark(#116329, #7ee787);
+    --prettylights-variable: light-dark(#953800, #ffa657);
+
+    color-scheme: inherit;
+    color: var(--prettylights-fg);
+    background-color: var(--prettylights-bg);
+    font-family: "Recursive";
+    font-variation-settings: "MONO" 1;
+    line-height: 1.6;
+  }
+
+  /*
+   * INFO:
+   * (1.) Currently not a supported property for the highlight pseudo-elements.
+   * Full list of supported properties: https://drafts.csswg.org/css-pseudo-4/#highlight-styling
+   * More infos: https://github.com/w3c/csswg-drafts/issues/8355
+   */
+
+  ::highlight(punctuation),
+  ::highlight(number),
+  ::highlight(atrule) {
+    color: var(--prettylights-fg);
+  }
+
+  ::highlight(namespace) {
+    opacity: 0.7;
+  }
+
+  ::highlight(comment),
+  ::highlight(prolog),
+  ::highlight(doctype),
+  ::highlight(cdata) {
+    color: var(--prettylights-comment);
+  }
+
+  ::highlight(constant),
+  ::highlight(attr-name),
+  ::highlight(char),
+  ::highlight(builtin),
+  ::highlight(operator) {
+    color: var(--prettylights-constant);
+  }
+
+  ::highlight(property),
+  ::highlight(tag),
+  ::highlight(boolean),
+  ::highlight(symbol) {
+    color: var(--prettylights-entity-tag);
+  }
+
+  ::highlight(entity),
+  ::highlight(selector),
+  ::highlight(class-name),
+  ::highlight(function) {
+    color: var(--prettylights-entity);
+  }
+
+  ::highlight(keyword),
+  ::highlight(rule) {
+    color: var(--prettylights-keyword);
+  }
+
+  ::highlight(string),
+  ::highlight(attr-value) {
+    color: var(--prettylights-string);
+  }
+
+  ::highlight(variable) {
+    color: var(--prettylights-variable);
+  }
+
+  ::highlight(regex) {
+    font-weight: bold; /* (1.) */
+    color: var(--prettylights-string-regexp);
+  }
+
+  ::highlight(italic) {
+    font-style: italic; /* (1.) */
+    color: var(--prettylights-italic);
+  }
+  ::highlight(bold) {
+    font-weight: bold; /* (1.) */
+    color: var(--prettylights-bold);
+  }
+
+  ::highlight(deleted) {
+    color: var(--prettylights-deleted-text);
+    background-color: var(--prettylights-deleted-bg);
+  }
+
+  ::highlight(inserted) {
+    color: var(--prettylights-inserted-text);
+    background-color: var(--prettylights-inserted-bg);
+  }
+
+  ::highlight(url) {
+    text-decoration: underline;
+    color: var(--prettylights-constant-other-reference-link);
+  }
+
+  ::highlight(important) {
+    color: var(--prettylights-heading);
+  }
+
+  /* CSS language overwrites */
+  ::highlight(css-important) {
+    color: var(--prettylights-keyword);
+  }
+
+  /* Markdown specific tokens */
+  ::highlight(md-title) {
+    color: var(--prettylights-heading);
+  }
+
+  ::highlight(md-list) {
+    color: var(--prettylights-variable);
+  }
+}

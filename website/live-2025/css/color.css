@@ -1,0 +1,31 @@
+/* Native Light/Dark Mode Variables */
+
+:root {
+  --bg-color: light-dark(#ffffff, #17191f);
+  --text-color: light-dark(#24292e, #e9ecf0);
+  --text-secondary: light-dark(#999, #7c838b);
+  --code-bg: light-dark(#e4e9ee, #1f242c);
+  --code-text: light-dark(#38424c, #d6dae0);
+  --blockquote-bg: light-dark(#f1f1f1, #1f242c);
+  --table-border: light-dark(#ddd, #363c45);
+  --table-header-bg: light-dark(#f4f4f4, #282e36);
+  --table-stripe-bg: light-dark(#f9f9f9, #1f242c);
+  --border-color: light-dark(#ddd, #363c45);
+  
+  /* Animation colors */
+  --color-black: light-dark(#000000, #f2f4f5);
+  --color-green: light-dark(#4ade80, #34a853);
+  --color-orange: light-dark(#fb923c, #e67e22);
+  --color-blue: light-dark(#60a5fa, #5294cf);
+  --color-gray: light-dark(#a1a1aa, #6b7280);
+  --color-white: light-dark(#ffffff, #f8fafc);
+}
+
+/* Apply theme variables to base elements */
+html,
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+

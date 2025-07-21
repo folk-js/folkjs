@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scoped Propagators</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=4" />
+    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=4" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,CRSV,MONO@-15..0,300..1000,0..1,0..1,0..1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./css/reset.css" />
+    <link rel="stylesheet" href="./css/style.css" />
+    <link rel="stylesheet" href="./css/color.css" />
+    <link rel="stylesheet" href="./css/md-syntax.css" />
+
+    <!-- KaTeX for LaTeX rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css" integrity="sha384-GvrOXuhMATgEsSwCs4smul74iXGOixntILdUW9XmUC6+HX0sLNAK3q71HotJqlAn" crossorigin="anonymous">
+
+    <!-- Social Meta Tags -->
+    <meta
+      name="description"
+      content="A programming model for spatial canvases"
+    />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Scoped Propagators" />
+    <meta
+      property="og:description"
+      content="A programming model for spatial canvases"
+    />
+  </head>
+  <body>
+    <main class="post">
+      <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 1rem;">
+        <h1 style="margin: 0;">Scoped Propagators</h1>
+        <span style="color: var(--text-secondary); font-size: 0.9em;">
+          July 7, 2024 • 6 min read
+        </span>
+      </div>
+      <style>
+        @media (max-width: 767px) {
+          .post > div:first-child {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+          }
+          .post > div:first-child span {
+            margin-top: 0.5rem;
+          }
+        }
+      </style>
+      <blockquote>
+<p><a href="https://orionreed.github.io/scoped-propagators/">live demo</a> | <a href="https://www.youtube.com/live/4GOeYylCMJI?t=29591s">talk @ LIVE/SPLASH</a> | <a href="https://folkjs.org/canvas/propagators/event-propagators.html">folkjs event propagators</a></p>
+</blockquote>
+<h2>Abstract</h2>
+<p>Graphs, as a model of computation and as a means of interaction and authorship, have found success in specific domains such as shader programming and signal processing. In these systems, computation is often expressed on nodes of specific types, with edges representing the flow of information. This is a powerful and general-purpose model, but is typically a closed-world environment where both node and edge types are decided at design-time. By choosing an alternate topology where computation is represented by edges, the incentive for a closed environment is reduced.</p>
+<p>I present <em>Scoped Propagators (SPs)</em>, a programming model designed to be embedded within existing environments and user interfaces. By representing computation as mappings between nodes along edges, SPs make it possible to add behaviour and interactivity to environments which were not designed with liveness in mind. I demonstrate an implementation of the SP model in an infinite canvas environment, where users can create arrows between arbitrary shapes and define SPs as Javascript object literals on these arrows.</p>
+<p><video controls><source src="./live/examples.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<h2>Introduction</h2>
+<p>A scoped propagator is formed of a function which takes a <em>source</em> and <em>target</em> node and returns an partial update to the <em>target</em> node, and a scope which defines some subset of events which trigger propagation.</p>
+<p>the Scoped Propagator model is based on two key insights:</p>
+<ol>
+<li>by representing computation as mappings between nodes along edges, you do not need to know at design-time what node types exist.</li>
+<li>by scoping the propagation to events, you can augment nodes with interactive behaviour suitable for the environment in which SPs have been embedded.</li>
+</ol>
+<p>Below are the four event scopes which are currently implemented, which I have found to be appropriate and useful for an infinite canvas environment.</p>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>Firing Condition</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>change (default)</td>
+<td>Properties of the source node change</td>
+</tr>
+<tr>
+<td>click</td>
+<td>A source node is clicked</td>
+</tr>
+<tr>
+<td>tick</td>
+<td>A tick (frame render) event fires</td>
+</tr>
+<tr>
+<td>geo</td>
+<td>A node changes whose bounds overlap the target</td>
+</tr>
+</tbody></table>
+<p>The syntax for SPs in this implementation is a <em>scope</em> followed by a <em>JS object literal</em>:</p>
+<md-syntax lang="js">scope { property1: value1, property2: value2 }</md-syntax><p>Each propagator is passed the <em>source</em> and <em>target</em> nodes (named &quot;from&quot; and &quot;to&quot; for brevity) which can be accessed like so:</p>
+<md-syntax lang="ts">click {x: from.x + 10, rotation: to.rotation + 1 }</md-syntax><p>The propagator above will, when the source is clicked, set the targets <code>x</code> value to be 10 units greater than the source, and increment the targets rotation. Here is an example of this basic idea:</p>
+<p><video controls><source src="./live/intro.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<h2>Demonstration</h2>
+<p>By passing the target as well as the source node, it makes it trivial to create toggles and counters. We can do this by creating an arrow from a node <em>to itself</em> and getting a value from either the source or target nodes (which are now the same).</p>
+<p>Note that by allowing nodes from <code>self -&gt; self</code> we do not have to worry about the layout of nodes, as the arrow will move wherever the node moves. This is in contrast to, for example, needing to move a button node alongside the node of interest, or have some suitable grouping primitive available.</p>
+<p><video controls><source src="./live/buttons.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<p>This is already sufficient for many primitive constraint-based layouts, with the caveat that constraints do not, without the addition of a backwards propagator, work in both directions.</p>
+<p><video controls><source src="./live/constraints.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<p>Being able to take a property from one node, transform it, and set the property of another node to that value, is useful not just for adding behaviour but also for debugging. Here we are formatting the full properties of one node and setting the text property of the target whenever the source updates.</p>
+<p><video controls><source src="./live/inspection.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<p>If we wish to create dynamic behaviours as a function of time, we can use an appropriate scope such as <code>tick</code> and pass a readonly <code>deltaTime</code> value to these propagators. Which here we are using to implement a classic linear interpolation equation.</p>
+<p>Note that, as with all of the examples, 100% of the behaviour is encoded in the text of the arrows. This creates a kind of diagrammatic specification of behaviour, where all behaviours could be re-created from a static screenshot.</p>
+<p><video controls><source src="./live/lerp.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<p>While pure functions make reasoning about a system of SPs easier, we may in practice want to allow side effects. Here we have extended the syntax to support arbitrary Javascript:</p>
+<md-syntax lang="ts">scope () {
+  /* arbitrary JS can be executed in this function body */
+
+  // optional return:
+  return { /* update */ }
+}</md-syntax><p>This is useful if we want to, for example, create utilities or DIY tools out of existing nodes, such as this &quot;paintbrush&quot; which creates a new shape at the top-left corner whenever the brush is not overlapping with another shape.</p>
+<p><video controls><source src="./live/tools.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<p>Scoped Propagators are interesting in part because of their ability to cross the boundaries of otherwise siloed systems and to do so without the use of an escape hatch — all additional behaviour happens in-situ, in the same environment as the interface elements, not from editing source code.</p>
+<p>Here is an example of a Petri Net (left box) which is being mapped to a chart primitive (right box). By merit of knowing some specifics of both systems, an author can create a mapping from one to the other without any explicit relationship existing prior to the creation of the propagator (here mapping the number of tokens in a box to the height of a rectangle in a chart)</p>
+<blockquote>
+<p>NOTE: the syntax here is slightly older and not consistent with the other examples.</p>
+</blockquote>
+<p><video controls><source src="./live/bridging.mov" type="video/quicktime">Your browser does not support the video tag.</video></p>
+<p>Let&#39;s now combine some of these examples to create something less trivial. In this example, we have:</p>
+<ul>
+<li>a joystick (constrained to a box)</li>
+<li>fish movement controlled by the joystick, based on the red circles position relative to the center of the joystick box</li>
+<li>a shark with a fish follow behaviour</li>
+<li>an on/off toggle</li>
+<li>a dead state, which resets the score, and swaps the fish image source to a dead fish</li>
+<li>a score counter which increments over time for as long as the fish is alive</li>
+</ul>
+<p>This small game consists of nine relatively terse arrows, propagating between nodes of different types. Propagators were also used to build the game, as it was unclear if or how I could change an image source URL until I used a propagator to inspect the internal state of the image and discovered the property to change.</p>
+<p><video controls><source src="./live/game.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<h2>Prior Work</h2>
+<p>Scoped Propagators are related to <a href="https://dspace.mit.edu/handle/1721.1/54635">Propagator Networks</a> but differ in three key ways:</p>
+<ul>
+<li>propagation happens along <em>edges</em> instead of <em>nodes</em></li>
+<li>propagation is only fired when to a scope condition is met.</li>
+<li>instead of stateful <em>cell nodes</em> and <em>propagator nodes</em>, all nodes can be stateful and can be of an arbitrary type</li>
+</ul>
+<p>This is also not the first application of propagators to infinite canvas environments, <a href="https://x.com/dennizor/status/1793389346881417323">Dennis Hansen</a> built <a href="https://www.holograph.so">Holograph</a>, an implementation of propagator networks in <a href="https://tldraw.com">tldraw</a>, and motivated the use of the term &quot;propagator&quot; in this model.</p>
+<h2>Open Questions</h2>
+<p>Many questions about this model have yet to be answered including questions of <em>function reuse</em>, modeling of <em>side-effects</em>, handling of <em>multi-input-multi-output</em> propagation (which is trivial in traditional propagator networks), and applications to other domains such as graph-databases.</p>
+<p>This model has not yet been formalised, and while the propagators themselves can be simply expressed as a function <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi><mo stretchy="false">(</mo><mi>a</mi><mo separator="true">,</mo><mi>b</mi><mo stretchy="false">)</mo><mo>↦</mo><msup><mi>b</mi><mo mathvariant="normal" lspace="0em" rspace="0em">′</mo></msup></mrow><annotation encoding="application/x-tex">f(a,b) \mapsto b&#x27;</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.10764em;">f</span><span class="mopen">(</span><span class="mord mathnormal">a</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">b</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">↦</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.7519em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7519em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">′</span></span></span></span></span></span></span></span></span></span></span></span>, I have not yet found an appropriate way to express <em>scopes</em> and the relationship between the two.</p>
+<p>These questions, along with formalisation of the model and an examination of real-world usage is left to future work.</p>
+
+    </main>
+  </body>
+</html>

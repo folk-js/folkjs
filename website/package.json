@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "wireit",
+    "live": "npx vite-node live-2025/build.ts",
     "dev": "wireit",
     "dev:host": "npm run dev -- --host",
     "preview": "npm run build && vite preview"
@@ -64,7 +65,11 @@
     "@folkjs/dom": "^0.0.3",
     "@folkjs/geometry": "^0.0.3",
     "@folkjs/labs": "^0.0.3",
+    "gray-matter": "^4.0.3",
     "ink-mde": "^0.34.0",
+    "marked": "^12.0.2",
+    "marked-footnote": "^1.4.0",
+    "marked-katex-extension": "^5.1.5",
     "remark-html": "^16.0.1",
     "remark-parse": "^11.0.0",
     "remark-wiki-link": "^2.0.1",
