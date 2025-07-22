@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import matter from 'gray-matter';
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import markedFootnote from 'marked-footnote';
 import markedKatex from 'marked-katex-extension';
 import { basename } from 'path';
@@ -101,13 +101,13 @@ function processMarkdownFile(filePath: string): PostData {
   const title = frontmatter.title || slug;
 
   // Configure marked to handle media files and LaTeX
-  marked
+  const marked = new Marked()
     .use(markedFootnote())
-    .use(
-      markedKatex({
-        throwOnError: false,
-      }),
-    )
+    // .use(
+    //   markedKatex({
+    //     throwOnError: false,
+    //   }),
+    // )
     .use({
       renderer: {
         code(code: string, language?: string) {
