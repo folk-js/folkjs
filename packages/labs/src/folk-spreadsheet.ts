@@ -8,6 +8,7 @@ const styles = css`
     --border-color: #e1e1e1;
     border: solid 1px var(--border-color);
     box-sizing: border-box;
+    position: relative;
     display: grid;
     font-family: monospace;
     grid-template-columns: 50px repeat(var(--column-count), var(--cell-width));
@@ -21,9 +22,9 @@ const styles = css`
 
   textarea {
     background-color: rgba(255, 255, 255, 0.75);
-    grid-column: var(--text-column, 0);
-    grid-row: var(--text-row, 0);
+    position: absolute;
     z-index: 11;
+    box-sizing: border-box;
   }
 
   s-columns {
@@ -376,10 +377,16 @@ export class FolkSpreadsheet extends HTMLElement {
   #focusTextarea(cell: FolkSpreadSheetCell) {
     if (cell.readonly) return;
     this.#editedCell = cell;
-    const gridColumn = getColumnIndex(cell.column) + 2;
-    const gridRow = cell.row + 1;
-    this.#textarea.style.setProperty('--text-column', `${gridColumn}`);
-    this.#textarea.style.setProperty('--text-row', `${gridRow}`);
+    // const gridColumn = getColumnIndex(cell.column) + 2;
+    // const gridRow = cell.row + 1;
+    // this.#textarea.style.setProperty('--text-column', `${gridColumn}`);
+    // this.#textarea.style.setProperty('--text-row', `${gridRow}`);this.#textarea.style.setProperty('--text-column', `${gridColumn}`);
+    const { top, left, width, height } = cell.getBoundingClientRect();
+    const box = this.getBoundingClientRect();
+    this.#textarea.style.top = `${top - box.top}px`;
+    this.#textarea.style.left = `${left - box.left}px`;
+    this.#textarea.style.width = `${width}px`;
+    this.#textarea.style.height = `${height}px`;
     this.#textarea.value = cell.expression;
     this.#textarea.hidden = false;
     this.#textarea.focus();
@@ -387,10 +394,12 @@ export class FolkSpreadsheet extends HTMLElement {
 
   #resetTextarea() {
     if (this.#editedCell === null) return;
-    this.#textarea.style.setProperty('--text-column', '0');
-    this.#textarea.style.setProperty('--text-row', '0');
+    // this.#textarea.style.setProperty('--text-column', '0');
+    // this.#textarea.style.setProperty('--text-row', '0');
     this.#textarea.style.width = '';
-    this.#textarea.style.height = '';
+    this.#textarea.style.width = '';
+    this.#textarea.style.top = '';
+    this.#textarea.style.left = '';
     this.#editedCell.expression = this.#textarea.value;
     this.#textarea.value = '';
     this.#editedCell.focus();
@@ -463,7 +472,7 @@ export class FolkSpreadSheetCell extends HTMLElement {
         expression = `return ${expression}`;
       }
 
-      const argNames: string[] = expression.match(/\$[A-Z]+\d+/g) ?? [];
+      const argNames: string[] = expression.match(/[A-Z]+\d+/g) ?? [];
 
       this.#dependencies = Object.freeze(
         argNames

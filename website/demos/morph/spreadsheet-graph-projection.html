@@ -18,6 +18,11 @@
       folk-arrow {
         z-index: calc(infinity);
       }
+      button {
+        position: fixed;
+        right: 1rem;
+        top: 1rem;
+      }
 
       body[overlay] {
         folk-spreadsheet::after {
@@ -41,13 +46,13 @@
     </style>
   </head>
   <body>
-    <button>Toggle</button>
-    <folk-shape x="50" y="50" width="500">
+    <button>Toggle Dependency graph</button>
+    <folk-shape x="50" y="50">
       <folk-spreadsheet>
         <folk-cell
           column="A"
           row="1"
-          expression="1"
+          expression=""
           style="--cell-top: 100px; --cell-left: 100px; view-transition-name: A1"
         ></folk-cell>
         <folk-cell column="B" row="1"></folk-cell>
@@ -62,7 +67,7 @@
         <folk-cell
           column="A"
           row="2"
-          expression="$A1 * 2"
+          expression=""
           style="--cell-top: 200px; --cell-left: 100px; view-transition-name: A2"
         ></folk-cell>
         <folk-cell column="B" row="2"></folk-cell>
@@ -74,7 +79,11 @@
         <folk-cell column="H" row="2"></folk-cell>
         <folk-cell column="I" row="2"></folk-cell>
         <folk-cell column="J" row="2"></folk-cell>
-        <folk-cell column="A" row="3"></folk-cell>
+        <folk-cell
+          column="A"
+          row="3"
+          style="--cell-top: 150px; --cell-left: 250px; view-transition-name: A3"
+        ></folk-cell>
         <folk-cell column="B" row="3"></folk-cell>
         <folk-cell column="C" row="3"></folk-cell>
         <folk-cell column="D" row="3"></folk-cell>
@@ -86,12 +95,7 @@
         <folk-cell column="J" row="3"></folk-cell>
         <folk-cell column="A" row="4"></folk-cell>
         <folk-cell column="B" row="4"></folk-cell>
-        <folk-cell
-          column="C"
-          row="4"
-          expression="$A1 + $A2"
-          style="--cell-top: 150px; --cell-left: 250px; view-transition-name: C4"
-        ></folk-cell>
+        <folk-cell column="C" row="4"></folk-cell>
         <folk-cell column="D" row="4"></folk-cell>
         <folk-cell column="E" row="4"></folk-cell>
         <folk-cell column="F" row="4"></folk-cell>
@@ -159,6 +163,106 @@
         <folk-cell column="H" row="10"></folk-cell>
         <folk-cell column="I" row="10"></folk-cell>
         <folk-cell column="J" row="10"></folk-cell>
+        <folk-cell column="A" row="11"></folk-cell>
+        <folk-cell column="B" row="11"></folk-cell>
+        <folk-cell column="C" row="11"></folk-cell>
+        <folk-cell column="D" row="11"></folk-cell>
+        <folk-cell column="E" row="11"></folk-cell>
+        <folk-cell column="F" row="11"></folk-cell>
+        <folk-cell column="G" row="11"></folk-cell>
+        <folk-cell column="H" row="11"></folk-cell>
+        <folk-cell column="I" row="11"></folk-cell>
+        <folk-cell column="J" row="11"></folk-cell>
+        <folk-cell column="A" row="12"></folk-cell>
+        <folk-cell column="B" row="12"></folk-cell>
+        <folk-cell column="C" row="12"></folk-cell>
+        <folk-cell column="D" row="12"></folk-cell>
+        <folk-cell column="E" row="12"></folk-cell>
+        <folk-cell column="F" row="12"></folk-cell>
+        <folk-cell column="G" row="12"></folk-cell>
+        <folk-cell column="H" row="12"></folk-cell>
+        <folk-cell column="I" row="12"></folk-cell>
+        <folk-cell column="J" row="12"></folk-cell>
+        <folk-cell column="A" row="13"></folk-cell>
+        <folk-cell column="B" row="13"></folk-cell>
+        <folk-cell column="C" row="13"></folk-cell>
+        <folk-cell column="D" row="13"></folk-cell>
+        <folk-cell column="E" row="13"></folk-cell>
+        <folk-cell column="F" row="13"></folk-cell>
+        <folk-cell column="G" row="13"></folk-cell>
+        <folk-cell column="H" row="13"></folk-cell>
+        <folk-cell column="I" row="13"></folk-cell>
+        <folk-cell column="J" row="13"></folk-cell>
+        <folk-cell column="A" row="14"></folk-cell>
+        <folk-cell column="B" row="14"></folk-cell>
+        <folk-cell column="C" row="14"></folk-cell>
+        <folk-cell column="D" row="14"></folk-cell>
+        <folk-cell column="E" row="14"></folk-cell>
+        <folk-cell column="F" row="14"></folk-cell>
+        <folk-cell column="G" row="14"></folk-cell>
+        <folk-cell column="H" row="14"></folk-cell>
+        <folk-cell column="I" row="14"></folk-cell>
+        <folk-cell column="J" row="14"></folk-cell>
+        <folk-cell column="A" row="15"></folk-cell>
+        <folk-cell column="B" row="15"></folk-cell>
+        <folk-cell column="C" row="15"></folk-cell>
+        <folk-cell column="D" row="15"></folk-cell>
+        <folk-cell column="E" row="15"></folk-cell>
+        <folk-cell column="F" row="15"></folk-cell>
+        <folk-cell column="G" row="15"></folk-cell>
+        <folk-cell column="H" row="15"></folk-cell>
+        <folk-cell column="I" row="15"></folk-cell>
+        <folk-cell column="J" row="15"></folk-cell>
+        <folk-cell column="A" row="16"></folk-cell>
+        <folk-cell column="B" row="16"></folk-cell>
+        <folk-cell column="C" row="16"></folk-cell>
+        <folk-cell column="D" row="16"></folk-cell>
+        <folk-cell column="E" row="16"></folk-cell>
+        <folk-cell column="F" row="16"></folk-cell>
+        <folk-cell column="G" row="16"></folk-cell>
+        <folk-cell column="H" row="16"></folk-cell>
+        <folk-cell column="I" row="16"></folk-cell>
+        <folk-cell column="J" row="16"></folk-cell>
+        <folk-cell column="A" row="17"></folk-cell>
+        <folk-cell column="B" row="17"></folk-cell>
+        <folk-cell column="C" row="17"></folk-cell>
+        <folk-cell column="D" row="17"></folk-cell>
+        <folk-cell column="E" row="17"></folk-cell>
+        <folk-cell column="F" row="17"></folk-cell>
+        <folk-cell column="G" row="17"></folk-cell>
+        <folk-cell column="H" row="17"></folk-cell>
+        <folk-cell column="I" row="17"></folk-cell>
+        <folk-cell column="J" row="17"></folk-cell>
+        <folk-cell column="A" row="18"></folk-cell>
+        <folk-cell column="B" row="18"></folk-cell>
+        <folk-cell column="C" row="18"></folk-cell>
+        <folk-cell column="D" row="18"></folk-cell>
+        <folk-cell column="E" row="18"></folk-cell>
+        <folk-cell column="F" row="18"></folk-cell>
+        <folk-cell column="G" row="18"></folk-cell>
+        <folk-cell column="H" row="18"></folk-cell>
+        <folk-cell column="I" row="18"></folk-cell>
+        <folk-cell column="J" row="18"></folk-cell>
+        <folk-cell column="A" row="19"></folk-cell>
+        <folk-cell column="B" row="19"></folk-cell>
+        <folk-cell column="C" row="19"></folk-cell>
+        <folk-cell column="D" row="19"></folk-cell>
+        <folk-cell column="E" row="19"></folk-cell>
+        <folk-cell column="F" row="19"></folk-cell>
+        <folk-cell column="G" row="19"></folk-cell>
+        <folk-cell column="H" row="19"></folk-cell>
+        <folk-cell column="I" row="19"></folk-cell>
+        <folk-cell column="J" row="19"></folk-cell>
+        <folk-cell column="A" row="20"></folk-cell>
+        <folk-cell column="B" row="20"></folk-cell>
+        <folk-cell column="C" row="20"></folk-cell>
+        <folk-cell column="D" row="20"></folk-cell>
+        <folk-cell column="E" row="20"></folk-cell>
+        <folk-cell column="F" row="20"></folk-cell>
+        <folk-cell column="G" row="20"></folk-cell>
+        <folk-cell column="H" row="20"></folk-cell>
+        <folk-cell column="I" row="20"></folk-cell>
+        <folk-cell column="J" row="20"></folk-cell>
       </folk-spreadsheet>
     </folk-shape>
 
