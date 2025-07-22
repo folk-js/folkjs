@@ -280,7 +280,6 @@ export class FolkSpreadsheet extends HTMLElement {
   }
 
   set values(value) {
-    console.log(value);
     const rows = this.rows;
 
     for (let i = 0; i < rows.length; i++) {
@@ -289,6 +288,15 @@ export class FolkSpreadsheet extends HTMLElement {
       for (let j = 0; j < rows.length; j++) {
         const cell = row[j];
         cell.expression = rowData[j];
+      }
+    }
+  }
+
+  appendRow(...values: any[]) {
+    for (const row of this.rows) {
+      if (row.every((column) => column.expression === '')) {
+        values.forEach((value, i) => (row[i].expression = value));
+        return;
       }
     }
   }
@@ -455,14 +463,19 @@ export class FolkSpreadSheetCell extends HTMLElement {
 
   static observedAttributes = ['expression'];
 
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+  }
+
   attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null) {
     if (name === 'expression' && newValue !== null) {
       let expression = newValue;
       expression = String(expression).trim();
 
-      if (expression === this.#expression) return;
+      if (expression === oldValue) return;
 
-      this.#expression = expression;
+      this.expression = expression;
 
       this.#dependencies.forEach((dep) => dep.removeEventListener('propagate', this));
 
@@ -505,26 +518,22 @@ export class FolkSpreadSheetCell extends HTMLElement {
   }
 
   get name() {
-    return `${this.#column}${this.#row}`;
+    return `${this.column}${this.row}`;
   }
 
-  #column = this.getAttribute('column') || '';
   get column() {
-    return this.#column;
+    return this.getAttribute('column') || '';
   }
   set column(column) {
-    this.#column = column;
+    this.setAttribute('column', column);
   }
 
-  #row = Number(this.getAttribute('row')) || -1;
   get row() {
-    return this.#row;
+    return Number(this.getAttribute('row'));
   }
-  set row(row) {
-    this.#row = row;
+  set row(value) {
+    this.setAttribute('row', value.toString());
   }
-
-  #expression = '';
 
   #dependencies: ReadonlyArray<FolkSpreadSheetCell> = [];
 
@@ -535,10 +544,10 @@ export class FolkSpreadSheetCell extends HTMLElement {
   #function = new Function();
 
   get expression(): string {
-    return this.#expression;
+    return this.getAttribute('expression') || '';
   }
   set expression(expression: any) {
-    this.setAttribute('expression', expression);
+    this.setAttribute('expression', expression.toString());
   }
 
   get readonly() {
@@ -558,19 +567,19 @@ export class FolkSpreadSheetCell extends HTMLElement {
   }
 
   get cellAbove() {
-    return this.#getCell(this.#column, this.#row - 1);
+    return this.#getCell(this.column, this.row - 1);
   }
 
   get cellBelow() {
-    return this.#getCell(this.#column, this.#row + 1);
+    return this.#getCell(this.column, this.row + 1);
   }
 
   get cellToTheLeft() {
-    return this.#getCell(relativeColumnName(this.column, -1), this.#row);
+    return this.#getCell(relativeColumnName(this.column, -1), this.row);
   }
 
   get cellToTheRight() {
-    return this.#getCell(relativeColumnName(this.column, 1), this.#row);
+    return this.#getCell(relativeColumnName(this.column, 1), this.row);
   }
 
   #evaluate() {
@@ -581,7 +590,7 @@ export class FolkSpreadSheetCell extends HTMLElement {
       const value = this.#function.apply(null, args);
 
       this.#value = value;
-      this.textContent = value.toString();
+      this.shadowRoot!.textContent = value.toString();
       this.dispatchEvent(new Event('propagate', { bubbles: true }));
       this.setAttribute('type', typeof value);
     } catch (error) {

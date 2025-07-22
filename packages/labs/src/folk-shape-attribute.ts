@@ -48,7 +48,6 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
       }
 
       [folk-shape*='x:'][folk-shape*='y:'] {
-        display: block;
         position: absolute;
         left: var(--folk-x) !important;
         top: var(--folk-y) !important;
