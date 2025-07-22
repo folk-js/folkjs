@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Scoped Propagators</title>
+    <title>Live Programming in Hostile Territory</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico?v=4" />
     <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=4" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -23,21 +23,21 @@
     <!-- Social Meta Tags -->
     <meta
       name="description"
-      content="A programming model for spatial canvases"
+      content="Live programming research gravitates inward towards the creation of isolated environments whose success is measured by domination: achieving adoption by displacing rather than integrating with existing tools and practices. To counter this tendency, we advocate that live programming research broaden its purview from the creation of new environments to the augmenting of existing ones and, through a selection of prototypes, explore three _adversarial strategies_ for introducing programmatic capabilities into existing environments that actively resist modification. We discuss how these strategies might promote more pluralistic futures and avoid aggregation into siloed platforms."
     />
     <meta property="og:type" content="article" />
-    <meta property="og:title" content="Scoped Propagators" />
+    <meta property="og:title" content="Live Programming in Hostile Territory" />
     <meta
       property="og:description"
-      content="A programming model for spatial canvases"
+      content="Live programming research gravitates inward towards the creation of isolated environments whose success is measured by domination: achieving adoption by displacing rather than integrating with existing tools and practices. To counter this tendency, we advocate that live programming research broaden its purview from the creation of new environments to the augmenting of existing ones and, through a selection of prototypes, explore three _adversarial strategies_ for introducing programmatic capabilities into existing environments that actively resist modification. We discuss how these strategies might promote more pluralistic futures and avoid aggregation into siloed platforms."
     />
   </head>
   <body>
     <main class="post">
       <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 1rem;">
-        <h1 style="margin: 0;">Scoped Propagators</h1>
+        <h1 style="margin: 0;">Live Programming in Hostile Territory</h1>
         <span style="color: var(--text-secondary); font-size: 0.9em;">
-          July 7, 2024 • 6 min read
+          July 20, 2025 • 10 min read
         </span>
       </div>
       <style>
@@ -51,97 +51,66 @@
           }
         }
       </style>
-      <blockquote>
-<p><a href="https://orionreed.github.io/scoped-propagators/">live demo</a> | <a href="https://www.youtube.com/live/4GOeYylCMJI?t=29591s">talk @ LIVE/SPLASH</a> | <a href="https://folkjs.org/canvas/propagators/event-propagators.html">folkjs event propagators</a></p>
-</blockquote>
-<h2>Abstract</h2>
-<p>Graphs, as a model of computation and as a means of interaction and authorship, have found success in specific domains such as shader programming and signal processing. In these systems, computation is often expressed on nodes of specific types, with edges representing the flow of information. This is a powerful and general-purpose model, but is typically a closed-world environment where both node and edge types are decided at design-time. By choosing an alternate topology where computation is represented by edges, the incentive for a closed environment is reduced.</p>
-<p>I present <em>Scoped Propagators (SPs)</em>, a programming model designed to be embedded within existing environments and user interfaces. By representing computation as mappings between nodes along edges, SPs make it possible to add behaviour and interactivity to environments which were not designed with liveness in mind. I demonstrate an implementation of the SP model in an infinite canvas environment, where users can create arrows between arbitrary shapes and define SPs as Javascript object literals on these arrows.</p>
-<p><video controls><source src="./live/examples.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
-<h2>Introduction</h2>
-<p>A scoped propagator is formed of a function which takes a <em>source</em> and <em>target</em> node and returns an partial update to the <em>target</em> node, and a scope which defines some subset of events which trigger propagation.</p>
-<p>the Scoped Propagator model is based on two key insights:</p>
-<ol>
-<li>by representing computation as mappings between nodes along edges, you do not need to know at design-time what node types exist.</li>
-<li>by scoping the propagation to events, you can augment nodes with interactive behaviour suitable for the environment in which SPs have been embedded.</li>
-</ol>
-<p>Below are the four event scopes which are currently implemented, which I have found to be appropriate and useful for an infinite canvas environment.</p>
-<table>
-<thead>
-<tr>
-<th>Scope</th>
-<th>Firing Condition</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>change (default)</td>
-<td>Properties of the source node change</td>
-</tr>
-<tr>
-<td>click</td>
-<td>A source node is clicked</td>
-</tr>
-<tr>
-<td>tick</td>
-<td>A tick (frame render) event fires</td>
-</tr>
-<tr>
-<td>geo</td>
-<td>A node changes whose bounds overlap the target</td>
-</tr>
-</tbody></table>
-<p>The syntax for SPs in this implementation is a <em>scope</em> followed by a <em>JS object literal</em>:</p>
-<md-syntax lang="js">scope { property1: value1, property2: value2 }</md-syntax><p>Each propagator is passed the <em>source</em> and <em>target</em> nodes (named &quot;from&quot; and &quot;to&quot; for brevity) which can be accessed like so:</p>
-<md-syntax lang="ts">click {x: from.x + 10, rotation: to.rotation + 1 }</md-syntax><p>The propagator above will, when the source is clicked, set the targets <code>x</code> value to be 10 units greater than the source, and increment the targets rotation. Here is an example of this basic idea:</p>
-<p><video controls><source src="./live/intro.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
-<h2>Demonstration</h2>
-<p>By passing the target as well as the source node, it makes it trivial to create toggles and counters. We can do this by creating an arrow from a node <em>to itself</em> and getting a value from either the source or target nodes (which are now the same).</p>
-<p>Note that by allowing nodes from <code>self -&gt; self</code> we do not have to worry about the layout of nodes, as the arrow will move wherever the node moves. This is in contrast to, for example, needing to move a button node alongside the node of interest, or have some suitable grouping primitive available.</p>
-<p><video controls><source src="./live/buttons.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
-<p>This is already sufficient for many primitive constraint-based layouts, with the caveat that constraints do not, without the addition of a backwards propagator, work in both directions.</p>
-<p><video controls><source src="./live/constraints.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
-<p>Being able to take a property from one node, transform it, and set the property of another node to that value, is useful not just for adding behaviour but also for debugging. Here we are formatting the full properties of one node and setting the text property of the target whenever the source updates.</p>
-<p><video controls><source src="./live/inspection.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
-<p>If we wish to create dynamic behaviours as a function of time, we can use an appropriate scope such as <code>tick</code> and pass a readonly <code>deltaTime</code> value to these propagators. Which here we are using to implement a classic linear interpolation equation.</p>
-<p>Note that, as with all of the examples, 100% of the behaviour is encoded in the text of the arrows. This creates a kind of diagrammatic specification of behaviour, where all behaviours could be re-created from a static screenshot.</p>
-<p><video controls><source src="./live/lerp.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
-<p>While pure functions make reasoning about a system of SPs easier, we may in practice want to allow side effects. Here we have extended the syntax to support arbitrary Javascript:</p>
-<md-syntax lang="ts">scope () {
-  /* arbitrary JS can be executed in this function body */
+      <div style="max-width: 600px; margin: 4rem auto 2rem auto;">
 
-  // optional return:
-  return { /* update */ }
-}</md-syntax><p>This is useful if we want to, for example, create utilities or DIY tools out of existing nodes, such as this &quot;paintbrush&quot; which creates a new shape at the top-left corner whenever the brush is not overlapping with another shape.</p>
-<p><video controls><source src="./live/tools.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
-<p>Scoped Propagators are interesting in part because of their ability to cross the boundaries of otherwise siloed systems and to do so without the use of an escape hatch — all additional behaviour happens in-situ, in the same environment as the interface elements, not from editing source code.</p>
-<p>Here is an example of a Petri Net (left box) which is being mapped to a chart primitive (right box). By merit of knowing some specifics of both systems, an author can create a mapping from one to the other without any explicit relationship existing prior to the creation of the propagator (here mapping the number of tokens in a box to the height of a rectangle in a chart)</p>
-<blockquote>
-<p>NOTE: the syntax here is slightly older and not consistent with the other examples.</p>
-</blockquote>
-<p><video controls><source src="./live/bridging.mov" type="video/quicktime">Your browser does not support the video tag.</video></p>
-<p>Let&#39;s now combine some of these examples to create something less trivial. In this example, we have:</p>
+<p><em>&quot;[Humans] make their own history, but they do not make it as they please; they do not make it under self-selected circumstances, but under circumstances existing already, given and transmitted from the past.&quot;</em>
+<span style="max-width: 600px; text-align: right; display: block;">— Karl Marx</span></p>
+</div>
+
+<h1>Abstract</h1>
+<p>Live programming research gravitates inward towards the creation of isolated environments whose success is measured by domination: achieving adoption by displacing rather than integrating with existing tools and practices. To counter this tendency, we advocate that live programming research broaden its purview from the creation of new environments to the augmenting of existing ones and, through a selection of prototypes, explore three <em>adversarial strategies</em> for introducing programmatic capabilities into existing environments which are unfriendly or antagonistic to modification. We discuss how these strategies might promote more pluralistic futures and avoid aggregation into siloed platforms.</p>
+<h1>Introduction</h1>
+<p>Live programming research is broadly concerned with the creation of programming tools which provide immediate feedback on the dynamic behavior of a program even while running @Rein<em>2018. We believe live programming faces inwards, towards the creation of _fully circumscribed universes</em> — often viewed as the most pragmatic means to explore new forms of liveness. This inward focus produces systems which can be operated on from within themselves, but neglect their participation in wider contexts of use @Clark_2017, encouraging what Kell describes as a success-by-domination strategy @Kell_2020 where systems achieve adoption by displacing rather than integrating with existing tools and practices.</p>
+<p>While traditional programming leverages ubiquitous plaintext infrastructures that resist single-system dominance through their simplicity and interoperability @Hall_2015, live programming&#39;s visual requirements largely preclude utilizing this pluralistic foundation. This threatens to shift the experience of programming into one mediated through siloed platforms, losing the freedom and plurality that plaintext infrastructures provide. Rather than accept this trajectory, we advocate for this community to extend its research from the creation of new environments to the augmenting of existing ones, situating new systems in existing contexts of use.</p>
+<p>We explore three strategies for live programming in &#39;hostile territory&#39;—environments that are unfriendly or antagonistic to modification. Central to these strategies is <em>free addressability</em>—a property we argue is essential for augmenting existing systems without requiring cooperation from their original creators. We demonstrate, through a selection of prototypes from the <em>folkjs</em> research project @Shank_2025, how live programming can exploit the addressable surfaces of existing user interfaces to situate itself in environments that were never designed to accommodate it. These interventions are not ends in themselves, but create fragile bridges that demonstrate the potential of more robust infrastructure and, by setting expectations of interoperability, make it harder to retreat into isolation.</p>
+<h1>Free Addressability</h1>
+<p>The practice of information hiding—originally advocated by Parnas to support &quot;centralized management process for large, disconnected teams&quot; @Tchernavskij_2019—creates challenges for software evolution, particularly in contexts where multiple authors work across organizational boundaries rather than within coordinated teams. As Ostermann et al. observe, it is unclear how to decide up-front which design decisions should be hidden versus exposed, and software evolution often brings new stakeholders who need access to previously hidden information @Ostermann_2011. This results in what Basman et al. call &quot;hermetic&quot; systems—isolated environments that &quot;give insufficient consideration to what lies outside the system&quot; @Basman_2018a.</p>
+<p>We believe <em>free addressability</em>—a term we adopt from Basman et al. @Basman_2018a—is a necessary property for the additive modifications our strategies require. Free addressability embraces transparent, publicly addressable state through queries, selectors, names, and other means to target pieces of state within a system, making internal components reachable from the outside without requiring permission or coordination from the original creators.</p>
+<p>Our adversarial strategies exploit the fact that user interfaces often expose more addressable surfaces than the underlying program—through DOM elements, accessibility trees, and visual components. This disparity creates crucial leverage points for live programming interventions, allowing us to exploit existing addressability where it exists while revealing opportunities to improve addressability where it doesn&#39;t. These addressable surfaces provide the basis for working in hostile territory by offering ways to situate live programming capabilities within environments that were never designed to accommodate them.</p>
+<h1>Strategies</h1>
+<p>Our strategies draw inspiration from what Doctorow calls <em>&quot;adversarial interoperability&quot;</em> - interfacing with systems without the permission of their original creators @Doctorow_2019. We exploit the addressable surfaces of existing environments to situate live programming capabilities where they were never intended to be.</p>
+<p>We explore three approaches that differ in their relationship between system and environment:</p>
 <ul>
-<li>a joystick (constrained to a box)</li>
-<li>fish movement controlled by the joystick, based on the red circles position relative to the center of the joystick box</li>
-<li>a shark with a fish follow behaviour</li>
-<li>an on/off toggle</li>
-<li>a dead state, which resets the score, and swaps the fish image source to a dead fish</li>
-<li>a score counter which increments over time for as long as the fish is alive</li>
+<li><em>Annotating</em> existing surfaces with new affordances</li>
+<li><em>Embedding</em> systems into unknown host environments</li>
+<li><em>Extending</em> closed systems through re-appropriation of available addressing schemes.</li>
 </ul>
-<p>This small game consists of nine relatively terse arrows, propagating between nodes of different types. Propagators were also used to build the game, as it was unclear if or how I could change an image source URL until I used a propagator to inspect the internal state of the image and discovered the property to change.</p>
-<p><video controls><source src="./live/game.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
-<h2>Prior Work</h2>
-<p>Scoped Propagators are related to <a href="https://dspace.mit.edu/handle/1721.1/54635">Propagator Networks</a> but differ in three key ways:</p>
+<h2>Adversarial Annotation</h2>
+<p>forms of annotation. That is, augmentation without necessarily needing to change the structure of the underlying environment.</p>
+<p>Adversarial annotation challenges the assumption that live programming requires purpose-built universes, making it possible to embed new affordances where people already work. Rather than creating destinations for users to visit, annotation distributes live programming capabilities as lightweight augmentations that attach to existing structure—demonstrating that environments are not the only path to liveness.</p>
+<p>While web-based systems often break when their DOM tree structure is modified, they tolerate the addition of new attributes that encode new capabilities. This tolerance creates one path for escaping isolated environments — annotations can introduce liveness without requiring users to abandon their existing tools or migrate their work. The flexible pattern matching of CSS selectors enables these annotations to discover and interact with their surroundings, working opportunistically with existing document structure rather than requiring pre-negotiated structural agreements. Unlike environments that must control their entire context, annotations can situate themselves within foreign systems and coexist with the structural arrangements they encounter.</p>
+<p>Our prototypes demonstrate the embedding of live programming affordances into existing contexts as if they were native features:</p>
 <ul>
-<li>propagation happens along <em>edges</em> instead of <em>nodes</em></li>
-<li>propagation is only fired when to a scope condition is met.</li>
-<li>instead of stateful <em>cell nodes</em> and <em>propagator nodes</em>, all nodes can be stateful and can be of an arbitrary type</li>
+<li>a custom HTML attribute that bind language servers to editable text content</li>
+<li>a custom HTML attribute DOM sync attributes make document subtrees collaborative across devices.</li>
+<li>Event propagators create computational relationships between interface elements.</li>
 </ul>
-<p>This is also not the first application of propagators to infinite canvas environments, <a href="https://x.com/dennizor/status/1793389346881417323">Dennis Hansen</a> built <a href="https://www.holograph.so">Holograph</a>, an implementation of propagator networks in <a href="https://tldraw.com">tldraw</a>, and motivated the use of the term &quot;propagator&quot; in this model.</p>
-<h2>Open Questions</h2>
-<p>Many questions about this model have yet to be answered including questions of <em>function reuse</em>, modeling of <em>side-effects</em>, handling of <em>multi-input-multi-output</em> propagation (which is trivial in traditional propagator networks), and applications to other domains such as graph-databases.</p>
-<p>This model has not yet been formalised, and while the propagators themselves can be simply expressed as a function <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi><mo stretchy="false">(</mo><mi>a</mi><mo separator="true">,</mo><mi>b</mi><mo stretchy="false">)</mo><mo>↦</mo><msup><mi>b</mi><mo mathvariant="normal" lspace="0em" rspace="0em">′</mo></msup></mrow><annotation encoding="application/x-tex">f(a,b) \mapsto b&#x27;</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.10764em;">f</span><span class="mopen">(</span><span class="mord mathnormal">a</span><span class="mpunct">,</span><span class="mspace" style="margin-right:0.1667em;"></span><span class="mord mathnormal">b</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">↦</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="base"><span class="strut" style="height:0.7519em;"></span><span class="mord"><span class="mord mathnormal">b</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.7519em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight"><span class="mord mtight">′</span></span></span></span></span></span></span></span></span></span></span></span>, I have not yet found an appropriate way to express <em>scopes</em> and the relationship between the two.</p>
-<p>These questions, along with formalisation of the model and an examination of real-world usage is left to future work.</p>
+<p>These interventions succeed by creating the experience of an environment without requiring one — users encounter live programming capabilities that feel indigenous to their existing tools rather than isolated systems forcing them to move elsewhere.</p>
+<p><video controls><source src="./live/lsp.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<p><video controls><source src="./live/chess.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<h2>Adversarial Embedding</h2>
+<p><em>Adversarial embedding</em> is the approach of decoupling live programming systems from a specific host environment, like a top-level domain or desktop application. This makes it possible to situate them across a wider range of environments and compose them side-by-side with other systems. To achieve this, coordination via protocols is necessary.</p>
+<p>Web applets @Rupert_2025 are one such protocol that web-based, live programming system can use to achieve adversarial embedding. Through a small event-based protocol that wraps around an <code>iframe</code>, web applets provide a means for any existing web page to externalize state and actions to a host environment. It doesn&#39;t require any changes to how these existing systems are designed, packaged, or distributed. The downside with this protocol is that information hiding remains the default, the author(s) of the system remain in full control of what is addressable and what is not. While some systems may find this necessary to preserve the liveness of the existing system.</p>
+<p>The alternative is to embed freely addressable systems, which lessens the coordination required and provides more compelling forms of extensibility. For example, if the addressable space is the DOM, then a fully addressable system can be implemented as custom HTML elements. We demonstrate below an HTML-first spreadsheet where the spreadsheet and each of the cells in it are addressable by their own HTML element. The state of the running system is exposed through the DOM, each cell has properties for its evaluated value and dependencies. Furthermore, each cell emits a DOM event when it is re-evaluated, meaning that dependents can listen to re-evaluate themselves, but also that granular observability from outside of the spreadsheet is possible. Another benefit of addressability shown in this demo is that any part of the system can be styled via CSS. All of this together means that it&#39;s possible to take this system and permisionlessly amend it with an in-place visualization of the spreadsheet&#39;s dependency graph all while the system continues running.</p>
+<p><video controls><source src="./live/spreadsheet.mp4" type="video/mp4">Your browser does not support the video tag.</video></p>
+<h2>Adversarial Extension</h2>
+<p>When existing systems provide no addressable surfaces, adversarial extension creates addressability by exploiting whatever infrastructure remains available. Unlike annotation, which works with systems designed to tolerate additions, extension operates on closed systems by repurposing infrastructure that was never intended to support live programming.</p>
+<p>Accessibility APIs represent one such exploitable infrastructure. Operating systems expose accessibility trees to support assistive technologies, creating a parallel addressable representation of every running application&#39;s interface. Our prototype demonstrates how this infrastructure can be repurposed for live programming interventions—a WebSocket server connects web interfaces to accessibility and windowing APIs, making it possible to query, subscribe to, and modify the interface state of any running application. This creates an addressable surface where none existed before.</p>
+<p>The accessibility tree prototype shows the Signal messaging application with an outline view of its accessibility tree. This view is rendered on top of all running applications, allowing arbitrary web-based interfaces to be rendered alongside (or on top of) a running application which can provide alternative interfaces to interact with the interface state. By exploiting the accessibility infrastructure that applications cannot opt out of—since doing so would break assistive technology compliance—this approach works even with systems designed to resist external intervention. These extensions succeed through infrastructural appropriation, using addressing schemes intended for assistive technology to enable new forms of programmatic interaction.</p>
+<p><img src="./live/axtree.png" alt="A Signal app with an editable accessibility tree."></p>
+<h1>Related Work</h1>
+<p>Systems like Sifter @Huynh_2006, Vegimite @Lin_2009, Rousillon @Chasins_2018, Wildcard @Litt_2020, and Joker @Katongo_2022 demonstrate a form of adversarial embedding. They enable end-users to customize existing web pages by scraping data into spreadsheets and tables, then reflecting modifications back to the original page. By packaging themselves as web extensions rather than standalone applications, these systems situate themselves inside the environments they augment rather than requiring users to bring their data elsewhere.</p>
+<p>Whereas the systems above try abstract away web technologies behind familiar interfaces, Webstrates @Klokmose_2015 takes the opposite approach, creating a collaborative authoring environment where &quot;the state of the DOM itself corresponds to the authorial shared state&quot; @Basman_2018a. Webstrates demonstrates the potential of exploiting the DOM&#39;s inherent addressability as a foundation for live programming in shared authorial environments. Our DOM sync attribute explores similar territory, enabling computational annotation of existing DOM structures without requiring migration to a dedicated platform.</p>
+<p>Engraft @Horowitz_2023 explores composition between live programming tools by creating interfaces that allow different systems to be embedded within each other. While Engraft acknowledges that live programming systems should integrate with the outside world, its focus on inward composition—maintaining properties within controlled environments—contrasts with our emphasis on outward integration into hostile territory.</p>
+<h1>Discussion</h1>
+<p>When users experience live programming capabilities situated in place rather than sequestered in dedicated environments, we hope they begin to see such integration as normal rather than exceptional. We believe pluralistic practices that subvert intended boundaries create pressure like water finding cracks — persistent forces that gradually reshape systems toward openness.</p>
+<p>Much of live programming research focuses on creating better environments without considering how change actually happens in computing ecosystems. We believe the community needs to engage with the question of <em>change</em>: how do isolated programming tools evolve into integrated, composable ecologies without falling into success-by-domination strategies? Our approach rests on the belief that fragile bridges and adversarial interventions create social pressures that drive systemic change. By demonstrating what becomes possible when addressable surfaces are exploited, we establish expectations of interoperability and integration. These prototypes point toward a future where external composition is a design assumption rather than an afterthought.</p>
+<p>The scale of this challenge becomes clear when we consider how difficult it is to depart from existing traditions. Plaintext infrastructures resist single-system dominance, but this resistance was not inevitable. As Hall observes, what we call &quot;plaintext infrastructure&quot; is actually &quot;the set of text encoding, display, manipulation, and processing artifacts currently ubiquitous in computing: ASCII, UTF8, text editors, text-field or text-area UI widgets, terminals, keyboards, String types, object-to-String rendering functions, human-readable format libraries, tokenizers, parsers, escape sequences and input sanitization, Base64 encoding, line-ending and whitespace conventions, and the fallback data-flavor of the copy/paste clipboard&quot; @Hall_2015. This ubiquity required decades of standardization, adoption, and gradual convergence—it did not emerge from any inherent philosophical commitment to openness. The challenge is achieving similar ubiquity for live programming systems.</p>
+<h1>Limitations &amp; Future Work</h1>
+<p>Our current exploration focuses on additive modifications and does not address removing or replacing parts of running programs. The approaches we present also concentrate heavily on UI-level intervention points. Significant work remains in applying adversarial techniques at other levels of the software stack, from runtime systems to operating system primitives. Kell&#39;s work on liballocs suggests one promising direction for free addressability at the process level @Kell_2018.</p>
+<p>Most of our examples target web and browser contexts, limiting their applicability to the broader software ecosystem. Future work should explore how these strategies translate to desktop applications, mobile environments, and system-level software. The fragility of some approaches—such as relying on unstable CSS selectors or working around obfuscated DOM structures—highlights the need for more robust addressing schemes.</p>
+<p>An important direction for future research involves enabling interoperability and co-existence between different live programming models that may have conflicting guarantees or execution models. What primitives enable different computational paradigms to work together? These questions become urgent as we move toward ecosystems where multiple live programming systems must coexist and collaborate.</p>
+<p>Perhaps most ambitiously, we envision extending these principles to operating system design. What would it look like if accessibility trees provided stable, rich addressing schemes for all running applications? How might we design OS-level APIs that assume external composition rather than treating it as an afterthought?</p>
 
     </main>
   </body>

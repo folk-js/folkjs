@@ -1,13 +1,108 @@
 ---
 title: Live Programming in Hostile Territory
-description: Live programming research gravitates inward towards the creation of isolated environments whose success is measured by domination: achieving adoption by displacing rather than integrating with existing tools and practices. To counter this tendency, we advocate that live programming research broaden its purview from the creation of new environments to the augmenting of existing ones and, through a selection of prototypes, explore three _adversarial strategies_ for introducing programmatic capabilities into existing environments that actively resist modification. We discuss how these strategies might promote more pluralistic futures and avoid aggregation into siloed platforms.
+description: 'Live programming research gravitates inward towards the creation of isolated environments whose success is measured by domination: achieving adoption by displacing rather than integrating with existing tools and practices. To counter this tendency, we advocate that live programming research broaden its purview from the creation of new environments to the augmenting of existing ones and, through a selection of prototypes, explore three _adversarial strategies_ for introducing programmatic capabilities into existing environments that actively resist modification. We discuss how these strategies might promote more pluralistic futures and avoid aggregation into siloed platforms.'
 date: 2025-07-21
 ---
 
-## Abstract
+<div style="max-width: 600px; margin: 4rem auto 2rem auto;">
 
-Live programming research gravitates inward towards the creation of isolated environments whose success is measured by domination: achieving adoption by displacing rather than integrating with existing tools and practices. To counter this tendency, we advocate that live programming research broaden its purview from the creation of new environments to the augmenting of existing ones and, through a selection of prototypes, explore three _adversarial strategies_ for introducing programmatic capabilities into existing environments that actively resist modification. We discuss how these strategies might promote more pluralistic futures and avoid aggregation into siloed platforms.
+_"[Humans] make their own history, but they do not make it as they please; they do not make it under self-selected circumstances, but under circumstances existing already, given and transmitted from the past."_
+<span style="max-width: 600px; text-align: right; display: block;">— Karl Marx</span>
 
-## Introduction
+</div>
 
-#
+# Abstract
+
+Live programming research gravitates inward towards the creation of isolated environments whose success is measured by domination: achieving adoption by displacing rather than integrating with existing tools and practices. To counter this tendency, we advocate that live programming research broaden its purview from the creation of new environments to the augmenting of existing ones and, through a selection of prototypes, explore three _adversarial strategies_ for introducing programmatic capabilities into existing environments which are unfriendly or antagonistic to modification. We discuss how these strategies might promote more pluralistic futures and avoid aggregation into siloed platforms.
+
+# Introduction
+
+Live programming research is broadly concerned with the creation of programming tools which provide immediate feedback on the dynamic behavior of a program even while running @Rein*2018. We believe live programming faces inwards, towards the creation of \_fully circumscribed universes* — often viewed as the most pragmatic means to explore new forms of liveness. This inward focus produces systems which can be operated on from within themselves, but neglect their participation in wider contexts of use @Clark_2017, encouraging what Kell describes as a success-by-domination strategy @Kell_2020 where systems achieve adoption by displacing rather than integrating with existing tools and practices.
+
+While traditional programming leverages ubiquitous plaintext infrastructures that resist single-system dominance through their simplicity and interoperability @Hall_2015, live programming's visual requirements largely preclude utilizing this pluralistic foundation. This threatens to shift the experience of programming into one mediated through siloed platforms, losing the freedom and plurality that plaintext infrastructures provide. Rather than accept this trajectory, we advocate for this community to extend its research from the creation of new environments to the augmenting of existing ones, situating new systems in existing contexts of use.
+
+We explore three strategies for live programming in 'hostile territory'—environments that are unfriendly or antagonistic to modification. Central to these strategies is _free addressability_—a property we argue is essential for augmenting existing systems without requiring cooperation from their original creators. We demonstrate, through a selection of prototypes from the _folkjs_ research project @Shank_2025, how live programming can exploit the addressable surfaces of existing user interfaces to situate itself in environments that were never designed to accommodate it. These interventions are not ends in themselves, but create fragile bridges that demonstrate the potential of more robust infrastructure and, by setting expectations of interoperability, make it harder to retreat into isolation.
+
+# Free Addressability
+
+The practice of information hiding—originally advocated by Parnas to support "centralized management process for large, disconnected teams" @Tchernavskij_2019—creates challenges for software evolution, particularly in contexts where multiple authors work across organizational boundaries rather than within coordinated teams. As Ostermann et al. observe, it is unclear how to decide up-front which design decisions should be hidden versus exposed, and software evolution often brings new stakeholders who need access to previously hidden information @Ostermann_2011. This results in what Basman et al. call "hermetic" systems—isolated environments that "give insufficient consideration to what lies outside the system" @Basman_2018a.
+
+We believe _free addressability_—a term we adopt from Basman et al. @Basman_2018a—is a necessary property for the additive modifications our strategies require. Free addressability embraces transparent, publicly addressable state through queries, selectors, names, and other means to target pieces of state within a system, making internal components reachable from the outside without requiring permission or coordination from the original creators.
+
+Our adversarial strategies exploit the fact that user interfaces often expose more addressable surfaces than the underlying program—through DOM elements, accessibility trees, and visual components. This disparity creates crucial leverage points for live programming interventions, allowing us to exploit existing addressability where it exists while revealing opportunities to improve addressability where it doesn't. These addressable surfaces provide the basis for working in hostile territory by offering ways to situate live programming capabilities within environments that were never designed to accommodate them.
+
+# Strategies
+
+Our strategies draw inspiration from what Doctorow calls _"adversarial interoperability"_ - interfacing with systems without the permission of their original creators @Doctorow_2019. We exploit the addressable surfaces of existing environments to situate live programming capabilities where they were never intended to be.
+
+We explore three approaches that differ in their relationship between system and environment:
+
+- _Annotating_ existing surfaces with new affordances
+- _Embedding_ systems into unknown host environments
+- _Extending_ closed systems through re-appropriation of available addressing schemes.
+
+## Adversarial Annotation
+
+forms of annotation. That is, augmentation without necessarily needing to change the structure of the underlying environment.
+
+Adversarial annotation challenges the assumption that live programming requires purpose-built universes, making it possible to embed new affordances where people already work. Rather than creating destinations for users to visit, annotation distributes live programming capabilities as lightweight augmentations that attach to existing structure—demonstrating that environments are not the only path to liveness.
+
+While web-based systems often break when their DOM tree structure is modified, they tolerate the addition of new attributes that encode new capabilities. This tolerance creates one path for escaping isolated environments — annotations can introduce liveness without requiring users to abandon their existing tools or migrate their work. The flexible pattern matching of CSS selectors enables these annotations to discover and interact with their surroundings, working opportunistically with existing document structure rather than requiring pre-negotiated structural agreements. Unlike environments that must control their entire context, annotations can situate themselves within foreign systems and coexist with the structural arrangements they encounter.
+
+Our prototypes demonstrate the embedding of live programming affordances into existing contexts as if they were native features:
+
+- a custom HTML attribute that bind language servers to editable text content
+- a custom HTML attribute DOM sync attributes make document subtrees collaborative across devices.
+- Event propagators create computational relationships between interface elements.
+
+These interventions succeed by creating the experience of an environment without requiring one — users encounter live programming capabilities that feel indigenous to their existing tools rather than isolated systems forcing them to move elsewhere.
+
+![An custom HTML attribute added to a style tag that binds an LSP server.](lsp.mp4)
+
+![A chess board, event propagator, and spreadsheet syncing across windows.](chess.mp4)
+
+## Adversarial Embedding
+
+_Adversarial embedding_ is the approach of decoupling live programming systems from a specific host environment, like a top-level domain or desktop application. This makes it possible to situate them across a wider range of environments and compose them side-by-side with other systems. To achieve this, coordination via protocols is necessary.
+
+Web applets @Rupert_2025 are one such protocol that web-based, live programming system can use to achieve adversarial embedding. Through a small event-based protocol that wraps around an `iframe`, web applets provide a means for any existing web page to externalize state and actions to a host environment. It doesn't require any changes to how these existing systems are designed, packaged, or distributed. The downside with this protocol is that information hiding remains the default, the author(s) of the system remain in full control of what is addressable and what is not. While some systems may find this necessary to preserve the liveness of the existing system.
+
+The alternative is to embed freely addressable systems, which lessens the coordination required and provides more compelling forms of extensibility. For example, if the addressable space is the DOM, then a fully addressable system can be implemented as custom HTML elements. We demonstrate below an HTML-first spreadsheet where the spreadsheet and each of the cells in it are addressable by their own HTML element. The state of the running system is exposed through the DOM, each cell has properties for its evaluated value and dependencies. Furthermore, each cell emits a DOM event when it is re-evaluated, meaning that dependents can listen to re-evaluate themselves, but also that granular observability from outside of the spreadsheet is possible. Another benefit of addressability shown in this demo is that any part of the system can be styled via CSS. All of this together means that it's possible to take this system and permisionlessly amend it with an in-place visualization of the spreadsheet's dependency graph all while the system continues running.
+
+![A spreadsheet with a custom HTML element that exposes its state and dependencies.](spreadsheet.mp4)
+
+## Adversarial Extension
+
+When existing systems provide no addressable surfaces, adversarial extension creates addressability by exploiting whatever infrastructure remains available. Unlike annotation, which works with systems designed to tolerate additions, extension operates on closed systems by repurposing infrastructure that was never intended to support live programming.
+
+Accessibility APIs represent one such exploitable infrastructure. Operating systems expose accessibility trees to support assistive technologies, creating a parallel addressable representation of every running application's interface. Our prototype demonstrates how this infrastructure can be repurposed for live programming interventions—a WebSocket server connects web interfaces to accessibility and windowing APIs, making it possible to query, subscribe to, and modify the interface state of any running application. This creates an addressable surface where none existed before.
+
+The accessibility tree prototype shows the Signal messaging application with an outline view of its accessibility tree. This view is rendered on top of all running applications, allowing arbitrary web-based interfaces to be rendered alongside (or on top of) a running application which can provide alternative interfaces to interact with the interface state. By exploiting the accessibility infrastructure that applications cannot opt out of—since doing so would break assistive technology compliance—this approach works even with systems designed to resist external intervention. These extensions succeed through infrastructural appropriation, using addressing schemes intended for assistive technology to enable new forms of programmatic interaction.
+
+![A Signal app with an editable accessibility tree.](axtree.png)
+
+# Related Work
+
+Systems like Sifter @Huynh_2006, Vegimite @Lin_2009, Rousillon @Chasins_2018, Wildcard @Litt_2020, and Joker @Katongo_2022 demonstrate a form of adversarial embedding. They enable end-users to customize existing web pages by scraping data into spreadsheets and tables, then reflecting modifications back to the original page. By packaging themselves as web extensions rather than standalone applications, these systems situate themselves inside the environments they augment rather than requiring users to bring their data elsewhere.
+
+Whereas the systems above try abstract away web technologies behind familiar interfaces, Webstrates @Klokmose_2015 takes the opposite approach, creating a collaborative authoring environment where "the state of the DOM itself corresponds to the authorial shared state" @Basman_2018a. Webstrates demonstrates the potential of exploiting the DOM's inherent addressability as a foundation for live programming in shared authorial environments. Our DOM sync attribute explores similar territory, enabling computational annotation of existing DOM structures without requiring migration to a dedicated platform.
+
+Engraft @Horowitz_2023 explores composition between live programming tools by creating interfaces that allow different systems to be embedded within each other. While Engraft acknowledges that live programming systems should integrate with the outside world, its focus on inward composition—maintaining properties within controlled environments—contrasts with our emphasis on outward integration into hostile territory.
+
+# Discussion
+
+When users experience live programming capabilities situated in place rather than sequestered in dedicated environments, we hope they begin to see such integration as normal rather than exceptional. We believe pluralistic practices that subvert intended boundaries create pressure like water finding cracks — persistent forces that gradually reshape systems toward openness.
+
+Much of live programming research focuses on creating better environments without considering how change actually happens in computing ecosystems. We believe the community needs to engage with the question of _change_: how do isolated programming tools evolve into integrated, composable ecologies without falling into success-by-domination strategies? Our approach rests on the belief that fragile bridges and adversarial interventions create social pressures that drive systemic change. By demonstrating what becomes possible when addressable surfaces are exploited, we establish expectations of interoperability and integration. These prototypes point toward a future where external composition is a design assumption rather than an afterthought.
+
+The scale of this challenge becomes clear when we consider how difficult it is to depart from existing traditions. Plaintext infrastructures resist single-system dominance, but this resistance was not inevitable. As Hall observes, what we call "plaintext infrastructure" is actually "the set of text encoding, display, manipulation, and processing artifacts currently ubiquitous in computing: ASCII, UTF8, text editors, text-field or text-area UI widgets, terminals, keyboards, String types, object-to-String rendering functions, human-readable format libraries, tokenizers, parsers, escape sequences and input sanitization, Base64 encoding, line-ending and whitespace conventions, and the fallback data-flavor of the copy/paste clipboard" @Hall_2015. This ubiquity required decades of standardization, adoption, and gradual convergence—it did not emerge from any inherent philosophical commitment to openness. The challenge is achieving similar ubiquity for live programming systems.
+
+# Limitations & Future Work
+
+Our current exploration focuses on additive modifications and does not address removing or replacing parts of running programs. The approaches we present also concentrate heavily on UI-level intervention points. Significant work remains in applying adversarial techniques at other levels of the software stack, from runtime systems to operating system primitives. Kell's work on liballocs suggests one promising direction for free addressability at the process level @Kell_2018.
+
+Most of our examples target web and browser contexts, limiting their applicability to the broader software ecosystem. Future work should explore how these strategies translate to desktop applications, mobile environments, and system-level software. The fragility of some approaches—such as relying on unstable CSS selectors or working around obfuscated DOM structures—highlights the need for more robust addressing schemes.
+
+An important direction for future research involves enabling interoperability and co-existence between different live programming models that may have conflicting guarantees or execution models. What primitives enable different computational paradigms to work together? These questions become urgent as we move toward ecosystems where multiple live programming systems must coexist and collaborate.
+
+Perhaps most ambitiously, we envision extending these principles to operating system design. What would it look like if accessibility trees provided stable, rich addressing schemes for all running applications? How might we design OS-level APIs that assume external composition rather than treating it as an afterthought?
