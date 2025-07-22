@@ -87,6 +87,11 @@ function generateHTML(post: PostData): string {
             margin-top: 0.5rem;
           }
         }
+
+        /* hide the auto-generated footnote heading */
+        #footnote-label {
+          display: none;
+        }
       </style>
       ${post.content}
     </main>
