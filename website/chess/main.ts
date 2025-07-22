@@ -1,5 +1,8 @@
 import { css, property, ReactiveElement, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { selectElement } from '@folkjs/labs/interactions/dom-selection';
+import '@folkjs/labs/standalone/folk-event-propagator';
+import '@folkjs/labs/standalone/folk-shape';
+import '@folkjs/labs/standalone/folk-spreadsheet';
 import '@folkjs/labs/standalone/folk-sync-attribute';
 
 // https://github.com/lichess-org/chessground
@@ -131,9 +134,13 @@ class ChessPiece extends ReactiveElement {
 
   @property({ type: String, reflect: true }) type: ChessPieceType = 'white-pawn';
 
-  protected override update(changedProperties: PropertyValues): void {
+  protected override update(changedProperties: PropertyValues<ChessPiece>): void {
     super.update(changedProperties);
     this.style.gridArea = this.position;
+
+    if (changedProperties.has('position') && changedProperties.get('position') !== undefined) {
+      this.dispatchEvent(new Event('move', { bubbles: true }));
+    }
   }
 }
 
@@ -162,7 +169,7 @@ class ChessBoard extends ReactiveElement {
       --dark-color: #c1926e;
       --light-color: #f0dcb9;
 
-      width: calc(var(--square-size, 80px) * 8);
+      width: calc(var(--square-size, 60px) * 8);
       aspect-ratio: 1;
 
       display: grid;
@@ -317,6 +324,11 @@ async function movePiece(cancellationSignal: AbortSignal, board: ChessBoard): Pr
   return piece;
 }
 
-while (true) {
-  await movePiece(new AbortController().signal, document.querySelector('chess-board')!);
-}
+console.log('main');
+setTimeout(async () => {
+  while (true) {
+    console.log('start');
+    await movePiece(new AbortController().signal, document.querySelector('chess-board')!);
+    console.log('done');
+  }
+}, 5000);
