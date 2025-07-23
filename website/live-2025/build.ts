@@ -35,6 +35,11 @@ function generateHTML(post: PostData): string {
       })
     : null;
 
+  // Parse authors from frontmatter
+  const authors = post.frontmatter.author
+    ? post.frontmatter.author.split(',').map((author: string) => author.trim())
+    : [];
+
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -71,28 +76,58 @@ function generateHTML(post: PostData): string {
   </head>
   <body>
     <main class="post">
-      <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 1rem;">
-        <h1 style="margin: 0;">${post.title}</h1>
-        <span style="color: var(--text-secondary); font-size: 0.9em;">
-          ${dateStr ? `${dateStr} • ` : ''}${post.readingTime} min read
-        </span>
-      </div>
-      <style>
-        @media (max-width: 767px) {
-          .post > div:first-child {
-            flex-direction: column !important;
-            align-items: flex-start !important;
-          }
-          .post > div:first-child span {
-            margin-top: 0.5rem;
-          }
+      <header style="text-align: center; margin-top: 3rem; margin-bottom: 3rem;">
+        <h1 style="margin: 0 0 1rem 0; font-size: 2.5rem;">${post.title}</h1>
+        ${
+          authors.length > 0
+            ? `
+                  <div class="authors" style="display: flex; justify-content: center; gap: 4rem; margin-bottom: 1rem; flex-wrap: wrap;">
+          ${authors.map((author: string) => `<span class="author" style="color: var(--text-primary); font-weight: 500;">${author}</span>`).join('')}
+        </div>
+        `
+            : ''
         }
-
+        <div style="color: var(--text-secondary); font-size: 0.9rem;">
+          ${dateStr ? `${dateStr} • ` : ''}${post.readingTime} min read
+        </div>
+      </header>
+      
+      <style>
         /* hide the auto-generated footnote heading */
         #footnote-label {
           display: none;
         }
+        
+        @media (max-width: 767px) {
+          .post header h1 {
+            font-size: 2rem !important;
+          }
+          .post header {
+            margin-top: 2rem !important;
+          }
+        }
       </style>
+      
+      <script>
+        // Randomize author order on page load
+        document.addEventListener('DOMContentLoaded', function() {
+          const authorsContainer = document.querySelector('.authors');
+          if (authorsContainer) {
+            const authorElements = Array.from(authorsContainer.children);
+            
+            // Fisher-Yates shuffle algorithm
+            for (let i = authorElements.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [authorElements[i], authorElements[j]] = [authorElements[j], authorElements[i]];
+            }
+            
+            // Clear container and append shuffled elements
+            authorsContainer.innerHTML = '';
+            authorElements.forEach(element => authorsContainer.appendChild(element));
+          }
+        });
+      </script>
+      
       ${post.content}
     </main>
   </body>
@@ -106,6 +141,9 @@ function processMarkdownFile(filePath: string): PostData {
   const title = frontmatter.title || slug;
 
   // Configure marked to handle media files and LaTeX
+  // Section numbering state
+  const sectionNumbers: number[] = [];
+
   const marked = new Marked()
     .use(markedFootnote())
     // .use(
@@ -115,6 +153,36 @@ function processMarkdownFile(filePath: string): PostData {
     // )
     .use({
       renderer: {
+        heading(text: string, level: number) {
+          // Update section numbering
+          if (level === 1) {
+            sectionNumbers.length = 1;
+            sectionNumbers[0] = (sectionNumbers[0] || 0) + 1;
+          } else if (level === 2) {
+            sectionNumbers.length = 2;
+            sectionNumbers[1] = (sectionNumbers[1] || 0) + 1;
+          } else if (level === 3) {
+            sectionNumbers.length = 3;
+            sectionNumbers[2] = (sectionNumbers[2] || 0) + 1;
+          } else {
+            // For deeper levels, just continue the pattern
+            sectionNumbers.length = level;
+            for (let i = 0; i < level; i++) {
+              if (sectionNumbers[i] === undefined) sectionNumbers[i] = 0;
+            }
+            sectionNumbers[level - 1] = (sectionNumbers[level - 1] || 0) + 1;
+          }
+
+          // Generate section number string
+          const sectionNumber = sectionNumbers.slice(0, level).join('.');
+
+          // Create the heading with section number
+          const id = text
+            .toLowerCase()
+            .replace(/[^\w\- ]/g, '')
+            .replace(/\s+/g, '-');
+          return `<h${level} id="${id}">${sectionNumber}. ${text}</h${level}>`;
+        },
         code(code: string, language?: string) {
           // Convert code blocks to md-syntax elements
           const lang = language ? ` lang="${language}"` : '';

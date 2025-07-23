@@ -1,12 +1,13 @@
 ---
 title: Live Programming in Hostile Territory
 description: 'Live programming research gravitates inward towards the creation of isolated environments whose success is measured by domination: achieving adoption by displacing rather than integrating with existing tools and practices. To counter this tendency, we advocate that live programming research broaden its purview from the creation of new environments to the augmenting of existing ones and, through a selection of prototypes, explore three _adversarial strategies_ for introducing programmatic capabilities into existing environments that actively resist modification. We discuss how these strategies might promote more pluralistic futures and avoid aggregation into siloed platforms.'
+author: 'Chris Shank, Orion Reed'
 date: 2025-07-21
 ---
 
 <div style="max-width: 600px; margin: 4rem auto 2rem auto;">
 
-_"[Humans] make their own history, but they do not make it as they please; they do not make it under self-selected circumstances, but under circumstances existing already, given and transmitted from the past."_
+_"[People] make their own history, but they do not make it as they please; they do not make it under self-selected circumstances, but under circumstances existing already, given and transmitted from the past."_
 <span style="max-width: 600px; text-align: right; display: block;">— Karl Marx</span>
 
 </div>
