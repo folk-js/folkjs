@@ -64,6 +64,7 @@
     "@folkjs/dom": "^0.0.3",
     "@folkjs/geometry": "^0.0.3",
     "@folkjs/labs": "^0.0.3",
+    "@retorquere/bibtex-parser": "^9.0.21",
     "gray-matter": "^4.0.3",
     "ink-mde": "^0.34.0",
     "marked": "^12.0.2",

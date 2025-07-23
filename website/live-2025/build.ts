@@ -4,8 +4,11 @@ import { Marked } from 'marked';
 import markedFootnote from 'marked-footnote';
 import markedKatex from 'marked-katex-extension';
 import { basename } from 'path';
+// @ts-ignore - Package doesn't have TypeScript declarations
+import { parse as parseBibtex } from '@retorquere/bibtex-parser';
 
 const MARKDOWN_FILE = 'live-2025/live.md';
+const BIBTEX_FILE = 'live-2025/folkjs.bib';
 const OUTPUT_FILE = 'live-2025/index.html';
 const ROOT_DIR = '.';
 
@@ -15,6 +18,192 @@ interface PostData {
   content: string;
   frontmatter: any;
   readingTime: number;
+}
+
+interface BibEntry {
+  key: string;
+  type: string;
+  fields: Record<string, any>;
+}
+
+function parseBibliography(): Map<string, BibEntry> {
+  const bibEntries = new Map<string, BibEntry>();
+
+  if (!existsSync(BIBTEX_FILE)) {
+    console.log(`${BIBTEX_FILE} not found, skipping bibliography...`);
+    return bibEntries;
+  }
+
+  try {
+    const bibContent = readFileSync(BIBTEX_FILE, 'utf-8');
+    const parsed = parseBibtex(bibContent);
+
+    for (const entry of parsed.entries) {
+      bibEntries.set(entry.key, {
+        key: entry.key,
+        type: entry.type,
+        fields: entry.fields,
+      });
+    }
+
+    console.log(`📚 Parsed ${bibEntries.size} bibliography entries`);
+  } catch (error) {
+    console.error('Error parsing bibliography:', error);
+  }
+
+  return bibEntries;
+}
+
+function formatAuthor(author: string): string {
+  // Handle "Last, First" format and clean up
+  if (author.includes(',')) {
+    const parts = author.split(',').map((p) => p.trim());
+    if (parts.length === 2) {
+      return `${parts[1]} ${parts[0]}`;
+    }
+  }
+  return author;
+}
+
+function formatBibEntry(entry: BibEntry): string {
+  const fields = entry.fields;
+
+  // Format authors
+  let authors = '';
+  if (fields.author) {
+    let authorList: string[] = [];
+
+    if (Array.isArray(fields.author)) {
+      // Handle structured author objects: {firstName: "John", lastName: "Doe"}
+      authorList = fields.author.map((author: any) => {
+        if (author.firstName && author.lastName) {
+          return `${author.firstName} ${author.lastName}`;
+        } else if (author.lastName) {
+          return author.lastName;
+        } else {
+          return String(author);
+        }
+      });
+    } else if (typeof fields.author === 'string') {
+      // Handle string format with " and " separators
+      authorList = fields.author.split(' and ').map(formatAuthor);
+    }
+
+    // Format the author list
+    if (authorList.length === 1) {
+      authors = authorList[0];
+    } else if (authorList.length === 2) {
+      authors = `${authorList[0]} and ${authorList[1]}`;
+    } else if (authorList.length > 2) {
+      authors = `${authorList.slice(0, -1).join(', ')}, and ${authorList[authorList.length - 1]}`;
+    }
+  }
+
+  // Helper function to get field value as string
+  const getFieldValue = (field: any): string => {
+    if (Array.isArray(field)) {
+      return field.join(', ');
+    }
+    return String(field || '');
+  };
+
+  // Format based on entry type
+  switch (entry.type.toLowerCase()) {
+    case 'article':
+      let articleRef = `${authors}, "${getFieldValue(fields.title)},"`;
+
+      const journal = getFieldValue(fields.journaltitle || fields.journal);
+      if (journal) {
+        articleRef += ` ${journal}`;
+
+        const volume = getFieldValue(fields.volume);
+        const number = getFieldValue(fields.number);
+
+        if (volume) articleRef += `, vol. ${volume}`;
+        if (number) articleRef += `, no. ${number}`;
+      }
+
+      const articleDate = getFieldValue(fields.date || fields.year);
+      if (articleDate) articleRef += `, ${articleDate}`;
+
+      articleRef += '.';
+      if (fields.doi) articleRef += ` doi: ${getFieldValue(fields.doi)}.`;
+
+      return articleRef;
+
+    case 'inproceedings':
+      let procRef = `${authors}, "${getFieldValue(fields.title)}," in ${getFieldValue(fields.booktitle)}`;
+
+      const location = getFieldValue(fields.location);
+      const publisher = getFieldValue(fields.publisher);
+      if (location && publisher) {
+        procRef += `, ${location}: ${publisher}`;
+      } else if (publisher) {
+        procRef += `, ${publisher}`;
+      }
+
+      const procDate = getFieldValue(fields.date || fields.year);
+      if (procDate) procRef += `, ${procDate}`;
+
+      procRef += '.';
+      if (fields.doi) procRef += ` doi: ${getFieldValue(fields.doi)}.`;
+
+      return procRef;
+
+    case 'online':
+      const accessed = fields.urldate ? ` Accessed: ${getFieldValue(fields.urldate)}.` : '';
+      return `${authors || getFieldValue(fields.title)}, "${getFieldValue(fields.title)}"${accessed} [Online]. Available: ${getFieldValue(fields.url)}`;
+
+    case 'book':
+      return `${authors}, "${getFieldValue(fields.title)}," ${getFieldValue(fields.publisher)}, ${getFieldValue(fields.date || fields.year)}.`;
+
+    case 'thesis':
+      return `${authors}, "${getFieldValue(fields.title)}," ${getFieldValue(fields.type) || 'Thesis'}, ${getFieldValue(fields.date || fields.year)}.`;
+
+    default:
+      // Fallback format
+      return `${authors}, "${getFieldValue(fields.title)}," ${getFieldValue(fields.date || fields.year)}.`;
+  }
+}
+
+function processCitations(
+  content: string,
+  bibEntries: Map<string, BibEntry>,
+): { content: string; usedCitations: Set<string> } {
+  const usedCitations = new Set<string>();
+  const citationPattern = /@([a-zA-Z0-9]+)/g;
+
+  // Replace @citations with [^citations]
+  const processedContent = content.replace(citationPattern, (match, key) => {
+    if (bibEntries.has(key)) {
+      usedCitations.add(key);
+      return `[^${key}]`;
+    } else {
+      console.warn(`⚠️  Citation key "${key}" not found in bibliography`);
+      return match; // Keep original if not found
+    }
+  });
+
+  return { content: processedContent, usedCitations };
+}
+
+function generateReferences(usedCitations: Set<string>, bibEntries: Map<string, BibEntry>): string {
+  if (usedCitations.size === 0) return '';
+
+  let references = '\n# References\n\n';
+
+  // Sort citations by their keys
+  const sortedCitations = Array.from(usedCitations).sort();
+
+  for (const bibKey of sortedCitations) {
+    const entry = bibEntries.get(bibKey);
+    if (entry) {
+      const formatted = formatBibEntry(entry);
+      references += `[^${bibKey}]: ${formatted}\n\n`;
+    }
+  }
+
+  return references;
 }
 
 function calculateReadingTime(content: string): number {
@@ -134,11 +323,21 @@ function generateHTML(post: PostData): string {
 </html>`;
 }
 
-function processMarkdownFile(filePath: string): PostData {
+function processMarkdownFile(
+  filePath: string,
+  bibEntries: Map<string, BibEntry>,
+): { postData: PostData; usedCitations: Set<string> } {
   const content = readFileSync(filePath, 'utf-8');
   const { content: markdownContent, data: frontmatter } = matter(content);
   const slug = basename(filePath, '.md');
   const title = frontmatter.title || slug;
+
+  // Process citations first
+  const { content: processedMarkdown, usedCitations } = processCitations(markdownContent, bibEntries);
+
+  // Add references before markdown processing
+  const references = generateReferences(usedCitations, bibEntries);
+  const markdownWithReferences = processedMarkdown + references;
 
   // Configure marked to handle media files and LaTeX
   // Section numbering state
@@ -154,6 +353,15 @@ function processMarkdownFile(filePath: string): PostData {
     .use({
       renderer: {
         heading(text: string, level: number) {
+          // Skip numbering for References and Abstract sections
+          if (text.toLowerCase() === 'references' || text.toLowerCase() === 'abstract') {
+            const id = text
+              .toLowerCase()
+              .replace(/[^\w\- ]/g, '')
+              .replace(/\s+/g, '-');
+            return `<h${level} id="${id}">${text}</h${level}>`;
+          }
+
           // Update section numbering
           if (level === 1) {
             sectionNumbers.length = 1;
@@ -192,28 +400,43 @@ function processMarkdownFile(filePath: string): PostData {
           // Use relative paths for media files in the live subdirectory
           const mediaPath = href.startsWith('/') ? href : `./live/${href}`;
 
+          let mediaElement = '';
+
           // For video files, use video tag
           if (mediaPath.match(/\.(mp4|mov)$/i)) {
-            return `<video controls><source src="${mediaPath}" type="video/${
+            mediaElement = `<video controls><source src="${mediaPath}" type="video/${
               mediaPath.endsWith('.mov') ? 'quicktime' : 'mp4'
             }">Your browser does not support the video tag.</video>`;
+          } else {
+            // For images, use img tag
+            mediaElement = `<img src="${mediaPath}" alt="${text || ''}"${title ? ` title="${title}"` : ''}>`;
           }
 
-          // For images, use img tag
-          return `<img src="${mediaPath}" alt="${text || ''}"${title ? ` title="${title}"` : ''}>`;
+          // Add caption if text exists
+          if (text) {
+            return `<figure style="margin: 1rem 0; text-align: center;">
+              ${mediaElement}
+              <figcaption style="margin-top: 0.5rem; font-style: italic; color: var(--text-secondary, #666); font-size: 0.9rem;">${text}</figcaption>
+            </figure>`;
+          }
+
+          return mediaElement;
         },
       },
     });
 
-  const htmlContent = marked.parse(markdownContent) as string;
+  const htmlContent = marked.parse(markdownWithReferences) as string;
   const readingTime = calculateReadingTime(htmlContent);
 
   return {
-    slug,
-    title,
-    content: htmlContent,
-    frontmatter,
-    readingTime,
+    postData: {
+      slug,
+      title,
+      content: htmlContent,
+      frontmatter,
+      readingTime,
+    },
+    usedCitations,
   };
 }
 
@@ -225,8 +448,10 @@ export function build() {
     return;
   }
 
-  const post = processMarkdownFile(MARKDOWN_FILE);
-  const html = generateHTML(post);
+  const bibEntries = parseBibliography();
+  const { postData, usedCitations } = processMarkdownFile(MARKDOWN_FILE, bibEntries);
+
+  const html = generateHTML(postData);
 
   // Write the HTML file
   writeFileSync(OUTPUT_FILE, html);
