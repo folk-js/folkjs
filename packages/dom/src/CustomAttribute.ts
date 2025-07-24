@@ -35,11 +35,13 @@ export class CustomAttribute {
     this.#ownerElement = ownerElement;
   }
 
-  connectedCallback(): void {}
+  connectedCallback?: () => void = undefined;
 
-  disconnectedCallback(): void {}
+  connectedMoveCallback?: () => void = undefined;
 
-  changedCallback(oldValue: string | null, newValue: string): void {}
+  disconnectedCallback?: () => void = undefined;
+
+  changedCallback?: (oldValue: string | null, newValue: string) => void;
 }
 
 const isNodeAnElement = (node: Node): node is Element => node.nodeType === Node.ELEMENT_NODE;
@@ -59,14 +61,36 @@ export class CustomAttributeRegistry {
           this.#handleChange(m.attributeName!, m.target as Element, m.oldValue);
         }
       } else {
-        m.removedNodes.forEach((node) => {
+        const addNodes = new Set(m.addedNodes);
+        const removedNodes = new Set(m.removedNodes);
+        const movedNodes = addNodes.union(removedNodes);
+
+        movedNodes.forEach((node) => {
+          addNodes.delete(node);
+          removedNodes.delete(node);
+        });
+
+        removedNodes.forEach((node) => {
           if (!isNodeAnElement(node)) return;
 
-          this.#elementMap.get(node)?.forEach((inst) => inst.disconnectedCallback?.(), this);
+          this.#elementMap.get(node)?.forEach((inst) => inst.disconnectedCallback?.());
           this.#elementMap.delete(node);
         });
 
-        m.addedNodes.forEach((node) => {
+        movedNodes.forEach((node) => {
+          if (!isNodeAnElement(node)) return;
+
+          this.#elementMap.get(node)?.forEach((inst) => {
+            if (inst.connectedMoveCallback !== undefined) {
+              inst.connectedMoveCallback();
+            } else {
+              inst.disconnectedCallback?.();
+              inst.connectedCallback?.();
+            }
+          });
+        });
+
+        addNodes.forEach((node) => {
           if (!isNodeAnElement(node)) return;
 
           for (const attr of node.attributes) {
@@ -133,16 +157,16 @@ export class CustomAttributeRegistry {
 
       inst = new CustomAttributeConstructor(el, name, newVal);
       map.set(name, inst);
-      inst.connectedCallback();
-      inst.changedCallback(null, newVal);
+      inst.connectedCallback?.();
+      inst.changedCallback?.(null, newVal);
       return;
     } else if (newVal == null) {
-      inst.disconnectedCallback();
+      inst.disconnectedCallback?.();
       map.delete(name);
     } else if (newVal !== inst.value) {
       inst.value = newVal;
       if (oldVal == null) throw new Error('Not possible!');
-      inst.changedCallback(oldVal, newVal);
+      inst.changedCallback?.(oldVal, newVal);
     }
   }
 }
