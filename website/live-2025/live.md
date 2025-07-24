@@ -78,13 +78,13 @@ One alternative is to embed freely addressable systems, which lessens the coordi
 
 When systems provide no addressable surfaces, adversarial extension creates addressability by exploiting whatever infrastructure remains available. Unlike annotation, which works with systems designed to tolerate additions, extension operates on closed systems by re-purposing infrastructure that was not intended to support external modification.
 
-Accessibility APIs represent one such exploitable infrastructure. Operating systems expose accessibility trees to support assistive technologies, creating a parallel addressable representation of every running application's interface. While this interface provides only a limited view of application state focused on user-facing elements rather than internal program logic, it offers universal coverage across all running applications.
+Accessibility APIs represent one such exploitable infrastructure. Operating systems expose accessibility trees to support assistive technologies, creating a parallel addressable representation of every running application's interface. While this interface provides only a limited view of application state focused on user-facing elements rather than internal program logic, it offers near-universal coverage across all running applications.
 
 Our prototype demonstrates how this infrastructure can be repurposed for external augmentation—a WebSocket server connects web interfaces to accessibility and windowing APIs, making it possible to query, subscribe to, and modify the interface state of any running application. This creates an addressable surface where none existed before.
 
-![An editable accessibility tree shown attached to the side of the Signal messaging app](axtree.png)
+![Ivory app extended with editable accessibility tree and regex-based text editing UI](axtree.mp4)
 
-The accessibility tree prototype shows the Signal messaging application with an outline view of its accessibility tree. This view is spatially attached to the Signal window, moving and resizing alongside it, allowing arbitrary web-based interfaces to be rendered alongside (or on top of) a running application which can provide alternative interfaces to interact with the interface state. Since applications cannot opt out of accessibility infrastructure without breaking assistive technology compliance, this approach works even with systems designed to resist external intervention. These extensions succeed through infrastructural appropriation, using addressing schemes intended for assistive technology to enable new forms of programmatic interaction.
+The accessibility tree prototype shows the Ivory messaging application augmented with two external interfaces: an editable outline view of its accessibility tree and a regex-based find-and-replace interface for text editing. This regex functionality, absent from Ivory itself, demonstrates the kind of read-write querying possible across boundaries we usually consider closed—proprietary applications with no APIs, closed source code, or deliberate restrictions on extensibility. The positioning system leverages accessibility coordinate information to spatially attach these augmentations to their target elements, making them feel more like native features than external overlays. Since applications cannot opt out of accessibility infrastructure without breaking assistive technology compliance, this approach works even with systems designed to resist external intervention, and the same augmentations can work universally across any application.
 
 These three strategies are complementary rather than competing—each addresses different constraints in the landscape of existing systems. _Annotation_ works with systems that tolerate additions, _embedding_ enables portability across environments, and _extension_ exploits mandatory addressable surfaces when no other options remain. The choice of strategy depends on the specific affordances and restrictions of the target environment.
 
@@ -96,7 +96,7 @@ Whereas the systems above try to abstract away web technologies behind familiar 
 
 Engraft @Horowitz2023 explores composition between live programming tools by creating interfaces that allow different systems to be embedded within each other. While Engraft acknowledges that live programming systems should integrate with the outside world, its focus on inward composition—maintaining properties within controlled environments—contrasts with our emphasis on outward integration into hostile territory.
 
-# Limitations
+# Limitations & Future Work
 
 Our current exploration focuses on additive modifications and does not address removing or replacing parts of running programs. The approaches we present also concentrate heavily on UI-level intervention points. Significant work remains in applying adversarial techniques at other levels of the software stack, from runtime systems to operating system primitives. Kell's work on liballocs suggests one promising direction for free addressability at the level of Unix processes @Kell2018.
 

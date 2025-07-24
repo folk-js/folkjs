@@ -265,19 +265,22 @@ function generateHTML(post: PostData): string {
   </head>
   <body>
     <main class="post">
-      <header style="text-align: center; margin-top: 3rem; margin-bottom: 3rem;">
+            <header style="text-align: center; margin-top: 3rem; margin-bottom: 3rem;">
         <h1 style="margin: 0 0 1rem 0; font-size: 2.5rem;">${post.title}</h1>
         ${
           authors.length > 0
             ? `
-                  <div class="authors" style="display: flex; justify-content: center; gap: 4rem; margin-bottom: 1rem; flex-wrap: wrap;">
+                   <div class="authors" style="display: flex; justify-content: center; gap: 4rem; margin-bottom: 1rem; flex-wrap: wrap;">
           ${authors.map((author: string) => `<span class="author" style="color: var(--text-primary); font-weight: 500;">${author}</span>`).join('')}
         </div>
         `
             : ''
         }
         <div style="color: var(--text-secondary); font-size: 0.9rem;">
-          ${dateStr ? `${dateStr} • ` : ''}${post.readingTime} min read
+          ${dateStr ? `${dateStr} • ` : ''}<a href="/artifacts/live-2025.pdf" 
+             style="color: var(--text-secondary, #666); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.2s;"
+             onmouseover="this.style.borderBottomColor='var(--text-secondary, #666)'"
+             onmouseout="this.style.borderBottomColor='transparent'">PDF</a>
         </div>
       </header>
       
