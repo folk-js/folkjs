@@ -59,6 +59,9 @@ export class FolkReorderableAttribute extends CustomAttribute<HTMLElement> {
     // Only handle left mouse button or primary touch
     if (event.button !== 0) return;
 
+    if (event.target !== this.ownerElement) {
+      return;
+    }
     const container = this.ownerElement.parentElement;
     if (!container || container.children.length < 2) return;
 

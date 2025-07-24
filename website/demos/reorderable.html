@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Advanced Reorderable Demos with moveBefore</title>
+    <title>Reorderable Lists with moveBefore</title>
     <style>
       body {
         max-width: 700px;
@@ -48,11 +48,11 @@
         counter-reset: ordered-counter;
       }
 
-      ol li {
+      ol > li {
         counter-increment: ordered-counter;
       }
 
-      ol li::before {
+      ol > li::before {
         content: counter(ordered-counter) '. ';
         font-weight: bold;
         margin-right: 8px;
@@ -91,58 +91,8 @@
         background: #eee;
       }
 
-      /* Horizontal layouts */
-      .horizontal-list {
-        display: flex;
-        gap: 16px;
-        flex-wrap: wrap;
-        margin: 32px 0;
-        padding: 16px;
-        background: white;
-        border-radius: 8px;
-        border: 1px solid #ddd;
-      }
-
-      .horizontal-list [folk-reorderable] {
-        margin: 0;
-        flex-shrink: 0;
-      }
-
-      .tag {
-        padding: 6px 12px;
-        background: #e1f5fe;
-        border: 1px solid #81d4fa;
-        border-radius: 16px;
-        font-size: 14px;
-        white-space: nowrap;
-      }
-
-      .tag[aria-grabbed='true'] {
-        background: #b3e5fc;
-        border-color: #4fc3f7;
-      }
-
-      .card {
-        background: white;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 16px;
-        width: 200px;
-        text-align: center;
-      }
-
-      .card img {
-        max-width: 100%;
-        height: 120px;
-        object-fit: cover;
-        border-radius: 4px;
-      }
-
       /* Complex nested layout */
       .nested-demo {
-        background: #f0f0f0;
-        padding: 20px;
-        border-radius: 8px;
         margin: 32px 0;
       }
 
@@ -154,13 +104,13 @@
         border-radius: 6px;
       }
 
-      .nested-demo .inner-list {
+      .nested-demo ul {
         margin: 12px 0 0 0;
         padding: 0;
         list-style: none;
       }
 
-      .nested-demo .inner-list [folk-reorderable] {
+      .nested-demo ul [folk-reorderable] {
         background: #f8f8f8;
         margin: 6px 0;
         padding: 8px 12px;
@@ -170,15 +120,11 @@
       }
 
       /* Form demo */
-      .form-demo {
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        border: 1px solid #ddd;
+      form {
         margin: 32px 0;
       }
 
-      .form-demo [folk-reorderable] {
+      form [folk-reorderable] {
         background: #fafafa;
         border: 1px solid #e0e0e0;
         margin: 12px 0;
@@ -186,183 +132,146 @@
         border-radius: 4px;
       }
 
-      .form-demo input,
-      .form-demo textarea,
-      .form-demo select {
+      form input,
+      form textarea,
+      form select {
         width: 100%;
         padding: 8px;
         border: 1px solid #ccc;
         border-radius: 3px;
         margin-top: 4px;
+        box-sizing: border-box;
       }
 
-      .form-demo label {
+      form label {
         font-weight: bold;
         font-size: 14px;
       }
 
-      /* Size variety demo */
-      .size-variety {
-        display: flex;
-        gap: 12px;
-        align-items: flex-start;
-        flex-wrap: wrap;
+      /* Styling demonstrations */
+      .styling-demo {
+        list-style: none;
+      }
+
+      .funky-transitions[folk-reorderable] {
+        background: #2c3e50;
+        color: #ecf0f1;
+        border: 2px solid transparent;
+        transition: all 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .funky-transitions[folk-reorderable]::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+        transition: left 0.8s ease;
+      }
+
+      .funky-transitions[folk-reorderable]:hover {
+        background: #e74c3c;
+        border-color: #f39c12;
+        transform: translate(var(--drag-x, 0px), var(--drag-y, 0px)) translateY(-8px) scale(1.08) rotate(-2deg);
+        box-shadow: 0 15px 30px rgba(231, 76, 60, 0.4);
+        border-radius: 20px 5px;
+      }
+
+      .funky-transitions[folk-reorderable]:hover::before {
+        left: 100%;
+      }
+
+      .funky-transitions[folk-reorderable][aria-grabbed='true'] {
+        background: #9b59b6;
+        border-color: #e67e22;
+        transform: translate(var(--drag-x, 0px), var(--drag-y, 0px)) scale(1.15) rotate(5deg);
+        box-shadow: 0 20px 40px rgba(155, 89, 182, 0.6);
+        border-radius: 50px 10px;
+        transition:
+          background 0.3s ease,
+          border-color 0.3s ease,
+          border-radius 0.3s ease,
+          box-shadow 0.3s ease;
+      }
+
+      /* Canvas demo styles */
+      .canvas-demo {
         margin: 32px 0;
+      }
+
+      .canvas-demo .canvas-container[folk-reorderable] {
+        background: #ffffff;
+        margin: 12px 0;
         padding: 16px;
-        background: white;
-        border-radius: 8px;
-        border: 1px solid #ddd;
-      }
-
-      .size-variety [folk-reorderable] {
-        margin: 0;
-        background: #f5f5f5;
-        border: 1px solid #ddd;
-        border-radius: 6px;
-        padding: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        font-size: 12px;
-      }
-
-      .tiny {
-        width: 60px;
-        height: 60px;
-      }
-      .small {
-        width: 100px;
-        height: 80px;
-      }
-      .medium {
-        width: 150px;
-        height: 100px;
-      }
-      .large {
-        width: 200px;
-        height: 120px;
-      }
-      .tall {
-        width: 80px;
-        height: 160px;
-      }
-      .wide {
-        width: 250px;
-        height: 60px;
-      }
-
-      /* Canvas demo */
-      .canvas-container [folk-reorderable] {
-        margin: 8px;
-        background: white;
         border: 2px solid #ddd;
-        border-radius: 8px;
-        padding: 8px;
-        display: inline-block;
+        border-radius: 6px;
+        max-width: 250px;
       }
 
-      .canvas-container canvas {
-        border: 1px solid #ccc;
-        border-radius: 4px;
+      .canvas-demo .canvas-container[folk-reorderable]:hover {
+        border-color: #999;
+        transform: translate(var(--drag-x, 0px), var(--drag-y, 0px)) translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+
+      .canvas-demo .canvas-container[folk-reorderable][aria-grabbed='true'] {
+        border-color: #666;
+        background: #fafafa;
+        transform: translate(var(--drag-x, 0px), var(--drag-y, 0px)) rotate(1deg);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      }
+
+      .canvas-demo canvas {
+        border-radius: 3px;
+        background: #fefefe;
+        transition: box-shadow 0.2s ease;
+      }
+
+      .canvas-demo canvas:hover {
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
       }
     </style>
   </head>
   <body>
-    <h1>Advanced Reorderable Demos with moveBefore</h1>
+    <h1>Reorderable Lists with moveBefore</h1>
 
     <p>
       Drag items to reorder them using the new
-      <a href="https://developer.mozilla.org/en-US/docs/Web/API/Document/moveBefore">moveBefore</a> API. This lets us
-      move elements around the DOM without losing state, opening up a ton if interesting possibilities we hope to
-      explore.
+      <a href="https://developer.mozilla.org/en-US/docs/Web/API/Document/moveBefore">moveBefore</a> API. Unlike
+      traditional drag-and-drop libraries that clone elements or manipulate their innerHTML, this uses the native
+      <code>moveBefore()</code> API to physically relocate DOM nodes. This preserves all element state: form values,
+      video playback position, event listeners, and complex nested structures.
     </p>
 
-    <h3>Research outline:</h3>
-    <ul>
-      <li folk-reorderable>Abstract and introduction to chromatic pachyderms</li>
-      <li folk-reorderable>Literature review of purple mammals in academic discourse</li>
-      <li folk-reorderable>Methodology for observing fictional elephant populations</li>
-      <li folk-reorderable>Statistical analysis of imaginary color variations</li>
-      <li folk-reorderable>Discussion of implications for theoretical zoology</li>
-      <li folk-reorderable>Conclusion and future research directions</li>
-    </ul>
-
-    <h3>Writing process:</h3>
+    <h3>Research outline</h3>
     <ol>
-      <li folk-reorderable>Draft the theoretical framework for purple elephant studies</li>
-      <li folk-reorderable>Compile references from speculative biology journals</li>
-      <li folk-reorderable>Write methodology section using hypothetical field observations</li>
-      <li folk-reorderable>Create data visualizations of imaginary measurements</li>
-      <li folk-reorderable>Develop arguments for the evolutionary advantages of purple coloration</li>
-      <li folk-reorderable>Peer review with colleagues in fictional animal studies</li>
-      <li folk-reorderable style="display: flex; align-items: flex-start; gap: 0.5rem"
-        ><video src="/dancing-flower.webm" autoplay controls loop style="max-width: 10rem; flex-shrink: 0"></video
-        ><span>Notice that the video state persists as it moves around the DOM</span></li
-      >
-      <li>(this list element does not have the folk-reorderable attribute)</li>
+      <li folk-reorderable>Abstract and introduction to chromatic pachyderms</li>
+      <li folk-reorderable>Literature review of purple mammals in theoretical zoology</li>
+      <li folk-reorderable>Methodology for observing fictional elephant populations</li>
+      <li folk-reorderable>Visualizations of imaginary measurements</li>
+      <li folk-reorderable>Arguments for the evolutionary advantages of purple coloration</li>
     </ol>
 
-    <h3>Horizontal tags (try reordering these):</h3>
-    <div class="horizontal-list">
-      <div folk-reorderable class="tag">JavaScript</div>
-      <div folk-reorderable class="tag">TypeScript</div>
-      <div folk-reorderable class="tag">Web Components</div>
-      <div folk-reorderable class="tag">CSS Grid</div>
-      <div folk-reorderable class="tag">DOM API</div>
-      <div folk-reorderable class="tag">Accessibility</div>
-      <div folk-reorderable class="tag">Performance</div>
-    </div>
+    <h3>Styling demonstrations</h3>
+    <ul class="styling-demo">
+      <li folk-reorderable style="display: flex; align-items: flex-start; gap: 0.5rem">
+        <video src="/dancing-flower.webm" autoplay controls loop style="max-width: 10rem; flex-shrink: 0"></video>
+        <span>Notice that the video state persists as it moves around the DOM</span>
+      </li>
+      <li folk-reorderable>
+        <audio src="/Feather.mov" controls loop></audio>
+      </li>
 
-    <h3>Image gallery cards:</h3>
-    <div class="horizontal-list">
-      <div folk-reorderable class="card">
-        <img src="/dancing-flower.webm" alt="Dancing flower" />
-        <h4>Dancing Flower</h4>
-        <p>Animated nature</p>
-      </div>
-      <div folk-reorderable class="card">
-        <div
-          style="
-            width: 100%;
-            height: 120px;
-            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-          "
-        >
-          Gradient
-        </div>
-        <h4>Abstract Art</h4>
-        <p>Color study</p>
-      </div>
-      <div folk-reorderable class="card">
-        <div
-          style="width: 100%; height: 120px; background: #333; border-radius: 4px; position: relative; overflow: hidden"
-        >
-          <div
-            style="
-              position: absolute;
-              top: 50%;
-              left: 50%;
-              transform: translate(-50%, -50%);
-              color: white;
-              font-size: 24px;
-            "
-            >📊</div
-          >
-        </div>
-        <h4>Data Viz</h4>
-        <p>Charts & graphs</p>
-      </div>
-    </div>
+      <li class="funky-transitions" folk-reorderable>This item has wild hover and drag transitions</li>
+      <li>(this list element does not have the folk-reorderable attribute)</li>
+    </ul>
 
-    <h3>Form inputs that preserve state (type in them, then reorder!):</h3>
-    <div class="form-demo">
+    <h3>Form inputs that preserve state</h3>
+    <form>
       <div folk-reorderable>
         <label>Your name:</label>
         <input type="text" placeholder="Enter your full name..." value="" />
@@ -389,187 +298,161 @@
         <input type="checkbox" id="newsletter" />
         <label for="newsletter">Subscribe to our elephant newsletter</label>
       </div>
-    </div>
+    </form>
 
-    <h3>Mixed sizes that would confuse other libraries:</h3>
-    <div class="size-variety">
-      <div folk-reorderable class="tiny">Tiny<br />60×60</div>
-      <div folk-reorderable class="large">Large box<br />200×120</div>
-      <div folk-reorderable class="small">Small<br />100×80</div>
-      <div folk-reorderable class="tall">Tall<br />narrow<br />80×160</div>
-      <div folk-reorderable class="medium">Medium<br />150×100</div>
-      <div folk-reorderable class="wide">Wide and shallow 250×60</div>
-    </div>
-
-    <h3>Nested reorderable lists (both levels are independently reorderable!):</h3>
-    <div class="nested-demo">
+    <h3>Nested reorderable lists</h3>
+    <section class="nested-demo">
       <div folk-reorderable>
-        <strong>🏠 Home Renovation</strong>
-        <ul class="inner-list">
-          <li folk-reorderable>Paint living room walls</li>
-          <li folk-reorderable>Install new light fixtures</li>
-          <li folk-reorderable>Replace kitchen cabinets</li>
+        <strong>🐘 Purple Elephant Behavioral Studies</strong>
+        <ul>
+          <li folk-reorderable>Observe trunk color variations in morning light</li>
+          <li folk-reorderable>Document ear flapping patterns during feeding</li>
+          <li folk-reorderable>Record vocalizations in purple spectrum frequencies</li>
         </ul>
       </div>
       <div folk-reorderable>
-        <strong>🌱 Garden Planning</strong>
-        <ul class="inner-list">
-          <li folk-reorderable>Plant spring flowers</li>
-          <li folk-reorderable>Build raised vegetable beds</li>
-          <li folk-reorderable>Install irrigation system</li>
+        <strong>🔬 Laboratory Analysis</strong>
+        <ul>
+          <li folk-reorderable>Test pigmentation samples under microscope</li>
+          <li folk-reorderable>Analyze genetic markers for color expression</li>
+          <li folk-reorderable>Compare with standard gray elephant control group</li>
         </ul>
       </div>
       <div folk-reorderable>
-        <strong>💼 Work Projects</strong>
-        <ul class="inner-list">
-          <li folk-reorderable>Update portfolio website</li>
-          <li folk-reorderable>Prepare quarterly presentation</li>
-          <li folk-reorderable>Review team performance metrics</li>
+        <strong>📊 Data Collection</strong>
+        <ul>
+          <li folk-reorderable>Photograph subjects from multiple angles</li>
+          <li folk-reorderable>Measure chromatic intensity across body regions</li>
+          <li folk-reorderable>Document environmental factors affecting coloration</li>
         </ul>
       </div>
-    </div>
+    </section>
 
-    <h3>Canvas elements with drawings (state persists!):</h3>
-    <div class="canvas-container">
-      <div folk-reorderable>
-        <canvas width="150" height="100" style="background: #ffe0e0" id="canvas1"></canvas>
-        <div style="text-align: center; margin-top: 8px; font-size: 12px">Red canvas</div>
+    <h3>Drawable canvases</h3>
+    <section class="canvas-demo">
+      <div folk-reorderable class="canvas-container">
+        <strong>🎨 Sketch Pad</strong>
+        <canvas
+          width="200"
+          height="150"
+          style="border: 1px solid #ccc; display: block; margin-top: 8px; cursor: crosshair"
+        ></canvas>
       </div>
-      <div folk-reorderable>
-        <canvas width="150" height="100" style="background: #e0ffe0" id="canvas2"></canvas>
-        <div style="text-align: center; margin-top: 8px; font-size: 12px">Green canvas</div>
+      <div folk-reorderable class="canvas-container">
+        <strong>📝 Notes Canvas</strong>
+        <canvas
+          width="200"
+          height="150"
+          style="border: 1px solid #ccc; display: block; margin-top: 8px; cursor: crosshair"
+        ></canvas>
       </div>
-      <div folk-reorderable>
-        <canvas width="150" height="100" style="background: #e0e0ff" id="canvas3"></canvas>
-        <div style="text-align: center; margin-top: 8px; font-size: 12px">Blue canvas</div>
+      <div folk-reorderable class="canvas-container">
+        <strong>🌈 Color Palette</strong>
+        <canvas
+          width="200"
+          height="150"
+          style="border: 1px solid #ccc; display: block; margin-top: 8px; cursor: crosshair"
+        ></canvas>
       </div>
-    </div>
-
-    <h3>CSS animations that continue running:</h3>
-    <div class="horizontal-list">
-      <div
-        folk-reorderable
-        style="
-          width: 100px;
-          height: 100px;
-          background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
-          animation: rotate 3s linear infinite;
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-          font-weight: bold;
-        "
-      >
-        Spin
+      <div folk-reorderable class="canvas-container">
+        <strong>🔢 Math Scratchpad</strong>
+        <canvas
+          width="200"
+          height="150"
+          style="border: 1px solid #ccc; display: block; margin-top: 8px; cursor: crosshair"
+        ></canvas>
       </div>
-      <div
-        folk-reorderable
-        style="
-          width: 100px;
-          height: 100px;
-          background: linear-gradient(90deg, #a8e6cf, #88d8c0);
-          animation: pulse 2s ease-in-out infinite;
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-          font-weight: bold;
-        "
-      >
-        Pulse
+      <div folk-reorderable class="canvas-container">
+        <strong>🗺️ Mind Map</strong>
+        <canvas
+          width="200"
+          height="150"
+          style="border: 1px solid #ccc; display: block; margin-top: 8px; cursor: crosshair"
+        ></canvas>
       </div>
-      <div
-        folk-reorderable
-        style="
-          width: 100px;
-          height: 100px;
-          background: linear-gradient(135deg, #ffd93d, #ff9f43);
-          animation: bounce 1.5s ease infinite;
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-          font-weight: bold;
-        "
-      >
-        Bounce
-      </div>
-    </div>
-
-    <style>
-      @keyframes rotate {
-        from {
-          transform: rotate(0deg);
-        }
-        to {
-          transform: rotate(360deg);
-        }
-      }
-
-      @keyframes pulse {
-        0%,
-        100% {
-          transform: scale(1);
-        }
-        50% {
-          transform: scale(1.1);
-        }
-      }
-
-      @keyframes bounce {
-        0%,
-        100% {
-          transform: translateY(0);
-        }
-        50% {
-          transform: translateY(-10px);
-        }
-      }
-    </style>
-
-    <p style="margin-top: 40px; padding: 20px; background: #f0f8ff; border-radius: 8px; border-left: 4px solid #4a90e2">
-      <strong>Why this works:</strong> Unlike traditional drag-and-drop libraries that clone elements or manipulate
-      their innerHTML, this uses the native <code>moveBefore()</code> API to physically relocate DOM nodes. This
-      preserves all element state: form values, video playback position, canvas drawings, running animations, event
-      listeners, and even complex nested structures. It's a web-native approach that leverages the platform rather than
-      fighting against it.
-    </p>
+    </section>
 
     <script type="module">
       import '@folkjs/labs/standalone/folk-reorderable';
 
-      // Draw some initial content on the canvases
-      function drawOnCanvas(canvasId, color) {
-        const canvas = document.getElementById(canvasId);
+      // Make canvases drawable
+      document.querySelectorAll('canvas').forEach((canvas) => {
         const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
 
-        // Draw a simple pattern
-        ctx.fillStyle = color;
-        ctx.fillRect(20, 20, 50, 30);
-        ctx.fillStyle = 'white';
-        ctx.font = '12px Arial';
-        ctx.fillText('Drag me!', 25, 40);
+        // Set up drawing context
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
 
-        // Add click handler to draw circles
-        canvas.addEventListener('click', (e) => {
+        function getMousePos(e) {
           const rect = canvas.getBoundingClientRect();
-          const x = e.clientX - rect.left;
-          const y = e.clientY - rect.top;
+          return {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top,
+          };
+        }
 
-          ctx.fillStyle = color;
+        function startDrawing(e) {
+          isDrawing = true;
+          const pos = getMousePos(e);
+          lastX = pos.x;
+          lastY = pos.y;
+        }
+
+        function draw(e) {
+          if (!isDrawing) return;
+
+          const pos = getMousePos(e);
           ctx.beginPath();
-          ctx.arc(x, y, 5, 0, 2 * Math.PI);
-          ctx.fill();
-        });
-      }
+          ctx.moveTo(lastX, lastY);
+          ctx.lineTo(pos.x, pos.y);
+          ctx.stroke();
 
-      drawOnCanvas('canvas1', '#ff6b6b');
-      drawOnCanvas('canvas2', '#4ecdc4');
-      drawOnCanvas('canvas3', '#6c5ce7');
+          lastX = pos.x;
+          lastY = pos.y;
+        }
+
+        function stopDrawing() {
+          isDrawing = false;
+        }
+
+        // Mouse events
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          const mouseEvent = new MouseEvent('mousedown', {
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+          });
+          canvas.dispatchEvent(mouseEvent);
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          const mouseEvent = new MouseEvent('mousemove', {
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+          });
+          canvas.dispatchEvent(mouseEvent);
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+          e.preventDefault();
+          const mouseEvent = new MouseEvent('mouseup', {});
+          canvas.dispatchEvent(mouseEvent);
+        });
+      });
     </script>
   </body>
 </html>
