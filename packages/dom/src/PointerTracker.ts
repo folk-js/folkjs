@@ -1,76 +1,13 @@
-// TODO: rewrite this as GestureTracker
-
-/**
- * Copyright 2020 Google Inc. All Rights Reserved.
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *     http://www.apache.org/licenses/LICENSE-2.0
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 const Buttons = {
   None: 0,
   LeftMouseOrTouchOrPenDown: 1,
 };
 
-export class Pointer {
-  /** x offset from the top of the document */
-  pageX: number;
-  /** y offset from the top of the document */
-  pageY: number;
-  /** x offset from the top of the viewport */
-  clientX: number;
-  /** y offset from the top of the viewport */
-  clientY: number;
-  /** Unique ID for this pointer */
-  id: number = -1;
-  /** The platform object used to create this Pointer */
-  nativePointer: Touch | PointerEvent | MouseEvent;
-
-  constructor(nativePointer: Touch | PointerEvent | MouseEvent) {
-    this.nativePointer = nativePointer;
-    this.pageX = nativePointer.pageX;
-    this.pageY = nativePointer.pageY;
-    this.clientX = nativePointer.clientX;
-    this.clientY = nativePointer.clientY;
-
-    if (self.Touch && nativePointer instanceof Touch) {
-      this.id = nativePointer.identifier;
-    } else if (isPointerEvent(nativePointer)) {
-      // is PointerEvent
-      this.id = nativePointer.pointerId;
-    }
-  }
-
-  /**
-   * Returns an expanded set of Pointers for high-resolution inputs.
-   */
-  getCoalesced(): Pointer[] {
-    if ('getCoalescedEvents' in this.nativePointer) {
-      const events = this.nativePointer.getCoalescedEvents().map((p) => new Pointer(p));
-      // Firefox sometimes returns an empty list here. I'm not sure it's doing the right thing.
-      // https://github.com/w3c/pointerevents/issues/409
-      if (events.length > 0) return events;
-      // Otherwise, Firefox falls through…
-    }
-    return [this];
-  }
-}
-
-const isPointerEvent = (event: any): event is PointerEvent => 'pointerId' in event;
-
-const isTouchEvent = (event: any): event is TouchEvent => 'changedTouches' in event;
-
 const noop = () => {};
 
-export type InputEvent = TouchEvent | PointerEvent | MouseEvent;
-type StartCallback = (pointer: Pointer, event: InputEvent) => boolean;
-type MoveCallback = (previousPointers: Pointer[], changedPointers: Pointer[], event: InputEvent) => void;
-type EndCallback = (pointer: Pointer, event: InputEvent, cancelled: boolean) => void;
+type StartCallback = (pointer: PointerEvent) => boolean;
+type MoveCallback = (previousPointers: PointerEvent[], changedPointers: PointerEvent[], event: PointerEvent) => void;
+type EndCallback = (pointer: PointerEvent, cancelled: boolean) => void;
 
 export interface PointerTrackerOptions {
   /**
@@ -126,18 +63,18 @@ export default class PointerTracker {
   /**
    * State of the tracked pointers when they were pressed/touched.
    */
-  readonly startPointers: Pointer[] = [];
+  readonly startPointers: PointerEvent[] = [];
   /**
    * Latest state of the tracked pointers. Contains the same number of pointers, and in the same
    * order as this.startPointers.
    */
-  readonly currentPointers: Pointer[] = [];
+  readonly currentPointers: PointerEvent[] = [];
 
   #element: HTMLElement;
   #startCallback: StartCallback;
   #moveCallback: MoveCallback;
   #endCallback: EndCallback;
-  #rawUpdates: boolean;
+  #rawUpdates = 'onpointerrawupdate' in window;
 
   /**
    * Firefox has a bug where touch-based pointer events have a `buttons` of 0, when this shouldn't
@@ -154,32 +91,14 @@ export default class PointerTracker {
    * @param element Element to monitor.
    * @param options
    */
-  constructor(
-    element: HTMLElement,
-    {
-      start = () => true,
-      move = noop,
-      end = noop,
-      rawUpdates = false,
-      avoidPointerEvents = false,
-    }: PointerTrackerOptions = {},
-  ) {
+  constructor(element: HTMLElement, { start = () => true, move = noop, end = noop }: PointerTrackerOptions = {}) {
     this.#element = element;
     this.#startCallback = start;
     this.#moveCallback = move;
     this.#endCallback = end;
-    this.#rawUpdates = rawUpdates && 'onpointerrawupdate' in window;
 
     // Add listeners
-    if (self.PointerEvent && !avoidPointerEvents) {
-      this.#element.addEventListener('pointerdown', this.#pointerStart);
-    } else {
-      this.#element.addEventListener('mousedown', this.#pointerStart);
-      this.#element.addEventListener('touchstart', this.#touchStart);
-      this.#element.addEventListener('touchmove', this.#move);
-      this.#element.addEventListener('touchend', this.#touchEnd);
-      this.#element.addEventListener('touchcancel', this.#touchEnd);
-    }
+    this.#element.addEventListener('pointerdown', this.#pointerStart);
   }
 
   /**
@@ -187,16 +106,9 @@ export default class PointerTracker {
    */
   stop() {
     this.#element.removeEventListener('pointerdown', this.#pointerStart);
-    this.#element.removeEventListener('mousedown', this.#pointerStart);
-    this.#element.removeEventListener('touchstart', this.#touchStart);
-    this.#element.removeEventListener('touchmove', this.#move);
-    this.#element.removeEventListener('touchend', this.#touchEnd);
-    this.#element.removeEventListener('touchcancel', this.#touchEnd);
     this.#element.removeEventListener(this.#rawUpdates ? 'pointerrawupdate' : 'pointermove', this.#move as any);
     this.#element.removeEventListener('pointerup', this.#pointerEnd);
     this.#element.removeEventListener('pointercancel', this.#pointerEnd);
-    window.removeEventListener('mousemove', this.#move);
-    window.removeEventListener('mouseup', this.#pointerEnd);
   }
 
   /**
@@ -206,8 +118,8 @@ export default class PointerTracker {
    * @param event Related event
    * @returns Whether the pointer is being tracked.
    */
-  #triggerPointerStart(pointer: Pointer, event: InputEvent): boolean {
-    if (!this.#startCallback(pointer, event)) return false;
+  #triggerPointerStart(pointer: PointerEvent): boolean {
+    if (!this.#startCallback(pointer)) return false;
     this.currentPointers.push(pointer);
     this.startPointers.push(pointer);
     return true;
@@ -218,56 +130,36 @@ export default class PointerTracker {
    *
    * @param event This will only be a MouseEvent if the browser doesn't support pointer events.
    */
-  #pointerStart = (event: PointerEvent | MouseEvent) => {
-    if (isPointerEvent(event) && event.buttons === 0) {
+  #pointerStart = (event: PointerEvent) => {
+    if (event.buttons === 0) {
       // This is the buggy Firefox case. See _excludeFromButtonsCheck.
       this.#excludeFromButtonsCheck.add(event.pointerId);
     } else if (!(event.buttons & Buttons.LeftMouseOrTouchOrPenDown)) {
       return;
     }
-    const pointer = new Pointer(event);
     // If we're already tracking this pointer, ignore this event.
     // This happens with mouse events when multiple buttons are pressed.
-    if (this.currentPointers.some((p) => p.id === pointer.id)) return;
+    if (this.currentPointers.some((p) => p.pointerId === event.pointerId)) return;
 
-    if (!this.#triggerPointerStart(pointer, event)) return;
+    if (!this.#triggerPointerStart(event)) return;
 
     // Add listeners for additional events.
     // The listeners may already exist, but no harm in adding them again.
-    if (isPointerEvent(event)) {
-      const capturingElement =
-        event.target && 'setPointerCapture' in event.target ? (event.target as Element) : this.#element;
 
-      capturingElement.setPointerCapture(event.pointerId);
-      this.#element.addEventListener(this.#rawUpdates ? 'pointerrawupdate' : 'pointermove', this.#move as any);
-      this.#element.addEventListener('pointerup', this.#pointerEnd);
-      this.#element.addEventListener('pointercancel', this.#pointerEnd);
-    } else {
-      // MouseEvent
-      window.addEventListener('mousemove', this.#move);
-      window.addEventListener('mouseup', this.#pointerEnd);
-    }
-  };
+    const capturingElement =
+      event.target && 'setPointerCapture' in event.target ? (event.target as Element) : this.#element;
 
-  /**
-   * Listener for touchstart.
-   * Only used if the browser doesn't support pointer events.
-   */
-  #touchStart = (event: TouchEvent) => {
-    for (const touch of Array.from(event.changedTouches)) {
-      this.#triggerPointerStart(new Pointer(touch), event);
-    }
+    capturingElement.setPointerCapture(event.pointerId);
+    this.#element.addEventListener(this.#rawUpdates ? 'pointerrawupdate' : 'pointermove', this.#move as any);
+    this.#element.addEventListener('pointerup', this.#pointerEnd);
+    this.#element.addEventListener('pointercancel', this.#pointerEnd);
   };
 
   /**
    * Listener for pointer/mouse/touch move events.
    */
-  #move = (event: PointerEvent | MouseEvent | TouchEvent) => {
-    if (
-      !isTouchEvent(event) &&
-      (!isPointerEvent(event) || !this.#excludeFromButtonsCheck.has(event.pointerId)) &&
-      event.buttons === Buttons.None
-    ) {
+  #move = (event: PointerEvent) => {
+    if (!this.#excludeFromButtonsCheck.has(event.pointerId) && event.buttons === Buttons.None) {
       // This happens in a number of buggy cases where the browser failed to deliver a pointerup
       // or pointercancel. If we see the pointer moving without any buttons down, synthesize an end.
       // https://github.com/w3c/pointerevents/issues/407
@@ -276,13 +168,11 @@ export default class PointerTracker {
       return;
     }
     const previousPointers = this.currentPointers.slice();
-    const changedPointers = isTouchEvent(event)
-      ? Array.from(event.changedTouches).map((t) => new Pointer(t))
-      : [new Pointer(event)];
+    const changedPointers = [event];
     const trackedChangedPointers = [];
 
     for (const pointer of changedPointers) {
-      const index = this.currentPointers.findIndex((p) => p.id === pointer.id);
+      const index = this.currentPointers.findIndex((p) => p.pointerId === pointer.pointerId);
       if (index === -1) continue; // Not a pointer we're tracking
       trackedChangedPointers.push(pointer);
       this.currentPointers[index] = pointer;
@@ -299,25 +189,20 @@ export default class PointerTracker {
    * @param pointer Pointer
    * @param event Related event
    */
-  #triggerPointerEnd = (pointer: Pointer, event: InputEvent): boolean => {
-    // Main button still down?
-    // With mouse events, you get a mouseup per mouse button, so the left button might still be down.
-    if (!isTouchEvent(event) && event.buttons & Buttons.LeftMouseOrTouchOrPenDown) {
-      return false;
-    }
-    const index = this.currentPointers.findIndex((p) => p.id === pointer.id);
+  #triggerPointerEnd = (pointer: PointerEvent): boolean => {
+    const index = this.currentPointers.findIndex((p) => p.pointerId === pointer.pointerId);
     // Not a pointer we're interested in?
     if (index === -1) return false;
 
     this.currentPointers.splice(index, 1);
     this.startPointers.splice(index, 1);
-    this.#excludeFromButtonsCheck.delete(pointer.id);
+    this.#excludeFromButtonsCheck.delete(pointer.pointerId);
 
     // The event.type might be a 'move' event due to workarounds for weird mouse behaviour.
     // See _move for details.
-    const cancelled = !(event.type === 'mouseup' || event.type === 'touchend' || event.type === 'pointerup');
+    const cancelled = pointer.type !== 'pointerup';
 
-    this.#endCallback(pointer, event, cancelled);
+    this.#endCallback(pointer, cancelled);
     return true;
   };
 
@@ -326,28 +211,12 @@ export default class PointerTracker {
    *
    * @param event This will only be a MouseEvent if the browser doesn't support pointer events.
    */
-  #pointerEnd = (event: PointerEvent | MouseEvent) => {
-    if (!this.#triggerPointerEnd(new Pointer(event), event)) return;
+  #pointerEnd = (event: PointerEvent) => {
+    if (!this.#triggerPointerEnd(event)) return;
 
-    if (isPointerEvent(event)) {
-      if (this.currentPointers.length) return;
-      this.#element.removeEventListener(this.#rawUpdates ? 'pointerrawupdate' : 'pointermove', this.#move as any);
-      this.#element.removeEventListener('pointerup', this.#pointerEnd);
-      this.#element.removeEventListener('pointercancel', this.#pointerEnd);
-    } else {
-      // MouseEvent
-      window.removeEventListener('mousemove', this.#move);
-      window.removeEventListener('mouseup', this.#pointerEnd);
-    }
-  };
-
-  /**
-   * Listener for touchend.
-   * Only used if the browser doesn't support pointer events.
-   */
-  #touchEnd = (event: TouchEvent) => {
-    for (const touch of Array.from(event.changedTouches)) {
-      this.#triggerPointerEnd(new Pointer(touch), event);
-    }
+    if (this.currentPointers.length) return;
+    this.#element.removeEventListener(this.#rawUpdates ? 'pointerrawupdate' : 'pointermove', this.#move as any);
+    this.#element.removeEventListener('pointerup', this.#pointerEnd);
+    this.#element.removeEventListener('pointercancel', this.#pointerEnd);
   };
 }
