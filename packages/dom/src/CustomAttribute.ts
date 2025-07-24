@@ -1,4 +1,4 @@
-export class CustomAttribute {
+export class CustomAttribute<E extends Element = Element> {
   static attributeName = '';
 
   static define() {
@@ -7,7 +7,7 @@ export class CustomAttribute {
     customAttributes.define(this.attributeName, this);
   }
 
-  readonly #ownerElement;
+  readonly #ownerElement: E;
   get ownerElement() {
     return this.#ownerElement;
   }
@@ -27,7 +27,7 @@ export class CustomAttribute {
     this.ownerElement.setAttribute(this.#name, value);
   }
 
-  constructor(ownerElement: Element, name: string, value: string) {
+  constructor(ownerElement: E, name: string, value: string) {
     if (!name.includes('-')) throw new Error(`Custom attribute '${name}' must include a hyphen.`);
 
     this.#name = name;
