@@ -356,16 +356,19 @@ function processMarkdownFile(
     .use({
       renderer: {
         heading(text: string, level: number) {
+          // Bump all headings down one level (h1 → h2, h2 → h3, etc.)
+          const outputLevel = level + 1;
+
           // Skip numbering for References and Abstract sections
           if (text.toLowerCase() === 'references' || text.toLowerCase() === 'abstract') {
             const id = text
               .toLowerCase()
               .replace(/[^\w\- ]/g, '')
               .replace(/\s+/g, '-');
-            return `<h${level} id="${id}">${text}</h${level}>`;
+            return `<h${outputLevel} id="${id}">${text}</h${outputLevel}>`;
           }
 
-          // Update section numbering
+          // Update section numbering (still use original level for numbering logic)
           if (level === 1) {
             sectionNumbers.length = 1;
             sectionNumbers[0] = (sectionNumbers[0] || 0) + 1;
@@ -387,12 +390,12 @@ function processMarkdownFile(
           // Generate section number string
           const sectionNumber = sectionNumbers.slice(0, level).join('.');
 
-          // Create the heading with section number
+          // Create the heading with section number (using bumped output level)
           const id = text
             .toLowerCase()
             .replace(/[^\w\- ]/g, '')
             .replace(/\s+/g, '-');
-          return `<h${level} id="${id}">${sectionNumber}. ${text}</h${level}>`;
+          return `<h${outputLevel} id="${id}">${sectionNumber}. ${text}</h${outputLevel}>`;
         },
         code(code: string, language?: string) {
           // Convert code blocks to md-syntax elements
