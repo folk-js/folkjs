@@ -35,13 +35,13 @@ export class CustomAttribute {
     this.#ownerElement = ownerElement;
   }
 
-  connectedCallback?: () => void = undefined;
+  connectedCallback() {}
 
-  connectedMoveCallback?: () => void = undefined;
+  connectedMoveCallback?: () => void;
 
-  disconnectedCallback?: () => void = undefined;
+  disconnectedCallback() {}
 
-  changedCallback?: (oldValue: string | null, newValue: string) => void;
+  changedCallback(oldValue: string | null, newValue: string) {}
 }
 
 const isNodeAnElement = (node: Node): node is Element => node.nodeType === Node.ELEMENT_NODE;
