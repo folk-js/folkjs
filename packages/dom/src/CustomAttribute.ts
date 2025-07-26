@@ -63,7 +63,7 @@ export class CustomAttributeRegistry {
       } else {
         const addNodes = new Set(m.addedNodes);
         const removedNodes = new Set(m.removedNodes);
-        const movedNodes = addNodes.union(removedNodes);
+        const movedNodes = addNodes.intersection(removedNodes);
 
         movedNodes.forEach((node) => {
           addNodes.delete(node);
