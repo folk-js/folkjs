@@ -200,6 +200,20 @@ class FolkInstruments extends ReactiveElement {
         if (el) this.activeInstrument = 'select';
         break;
       }
+      case 'text': {
+        const el = await dragToCreateShape(this.containerEl, this.#cancelInstrument.signal, () => {
+          const div = document.createElement('div');
+          div.contentEditable = 'true';
+          return div;
+        });
+        
+        
+        if (el) {
+          setTimeout(() => el.focus());
+          this.activeInstrument = 'select';
+        }
+        break;
+      }
       case 'arrow': {
         const arrow = await clickToCreateArrow(this.containerEl, this.#cancelInstrument.signal);
 
