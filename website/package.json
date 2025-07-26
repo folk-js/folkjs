@@ -40,11 +40,15 @@
       "service": true,
       "dependencies": [
         {
-          "script": "../packages/canvas:build",
+          "script": "../packages/geometry:build",
           "cascade": false
         },
         {
-          "script": "../packages/geometry:build",
+          "script": "../packages/dom:build",
+          "cascade": false
+        },
+        {
+          "script": "../packages/canvas:build",
           "cascade": false
         },
         {
@@ -55,6 +59,7 @@
       "files": [
         "package.json",
         "tsconfig.json",
+        "vite.config.ts",
         "__scripts__/**"
       ]
     }

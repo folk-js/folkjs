@@ -45,6 +45,8 @@ export function dragToCreateElement<T extends Element = Element>(
     function onPointerDown(event: PointerEvent) {
       const point = container.space!.mapPointFromParent({ x: event.pageX, y: event.pageY });
       el = createElement(point);
+      container.addEventListener('pointermove', onPointerMove, { capture: true });
+      container.addEventListener('pointerup', onPointerUp, { capture: true });
       // should be generalize this?
       container.appendChild(el);
     }
@@ -78,8 +80,6 @@ export function dragToCreateElement<T extends Element = Element>(
 
     cancellationSignal.addEventListener('abort', onCancel);
     container.addEventListener('pointerdown', onPointerDown, { capture: true });
-    container.addEventListener('pointermove', onPointerMove, { capture: true });
-    container.addEventListener('pointerup', onPointerUp, { capture: true });
   });
 }
 

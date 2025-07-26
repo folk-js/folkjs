@@ -8,7 +8,7 @@ export class FolkEventPropagator extends FolkRope {
   static override shadowRootOptions: ShadowRootInit = { ...FolkRope.shadowRootOptions, delegatesFocus: true };
 
   static override styles = [
-    ...FolkRope.styles,
+    FolkRope.styles,
     css`
       .input-container {
         position: absolute;

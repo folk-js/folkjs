@@ -1,7 +1,7 @@
 // This is a rewrite of https://github.com/guerrillacontra/html5-es6-physics-rope
 
 import { AnimationFrameController, type AnimationFrameControllerHost } from '@folkjs/canvas';
-import { css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { css, property, type CSSResultGroup, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import type { Point } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
 import { FolkBaseConnection } from './folk-base-connection';
@@ -30,24 +30,28 @@ export class FolkRope extends FolkBaseConnection implements AnimationFrameContro
 
   static #resolution = 5;
 
-  static override styles = [
-    FolkBaseConnection.styles,
-    css`
-      svg {
-        height: 100%;
-        pointer-events: none;
-        width: 100%;
-      }
+  static override styles: CSSResultGroup = css`
+    :host {
+      display: block;
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
 
-      path {
-        fill: none;
-        pointer-events: stroke;
-        stroke: var(--folk-rope-color, black);
-        stroke-width: var(--folk-rope-width, 3);
-        stroke-linecap: var(--folk-rope-linecap, round);
-      }
-    `,
-  ];
+    svg {
+      height: 100%;
+      pointer-events: none;
+      width: 100%;
+    }
+
+    path {
+      fill: none;
+      pointer-events: stroke;
+      stroke: var(--folk-rope-color, black);
+      stroke-width: var(--folk-rope-width, 3);
+      stroke-linecap: var(--folk-rope-linecap, round);
+    }
+  `;
 
   // TODO: stop simulation when energy approaches 0
   #rAF = new AnimationFrameController(this, 10000);

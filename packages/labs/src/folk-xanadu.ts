@@ -1,10 +1,19 @@
 import { verticesToPolygon } from '@folkjs/canvas';
-import type { PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import type { Point } from '@folkjs/geometry/Vector2';
 import { FolkBaseConnection } from './folk-base-connection.js';
 
 export class FolkXanadu extends FolkBaseConnection {
   static override tagName = 'folk-xanadu';
+
+  static override styles = css`
+    :host {
+      display: block;
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+  `;
 
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
