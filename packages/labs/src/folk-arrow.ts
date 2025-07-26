@@ -1,8 +1,25 @@
 import { getSvgPathFromStroke, pointsOnBezierCurves } from '@folkjs/canvas';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import * as R from '@folkjs/geometry/Rect2D';
 import { getBoxToBoxArrow } from 'perfect-arrows';
 import { getStroke } from 'perfect-freehand';
 import { FolkBaseConnection } from './folk-base-connection';
+
+function boundingBoxFromCurve(points: number[][]): R.Rect2D {
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+
+  for (const [x, y] of points) {
+    if (y < top) top = y;
+    if (y > bottom) bottom = y;
+    if (x < left) left = x;
+    if (x > right) right = x;
+  }
+
+  return R.fromValues(left, top, right - left, bottom - top);
+}
 
 export type Arrow = [
   /** The x position of the (padded) starting point. */
@@ -28,33 +45,42 @@ export type Arrow = [
 export class FolkArrow extends FolkBaseConnection {
   static override tagName = 'folk-arrow';
 
-  static override styles = [
-    FolkBaseConnection.styles,
-    css`
-      svg {
-        width: 100%;
-        height: 100%;
-        stroke: black;
-        fill: black;
-        pointer-events: none;
+  static override styles = css`
+    :host {
+      display: block;
+      position: absolute;
+      pointer-events: none;
+    }
 
-        path {
-          pointer-events: all;
-        }
+    [part='arc'] {
+      position: absolute;
+      inset: 0;
+      background: black;
+    }
 
-        polygon {
-          pointer-events: all;
-        }
-      }
-    `,
-  ];
+    /*[part='source'] {
+      position: absolute;
+    }
 
-  #svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  #path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  #headPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    
+
+    [part='target'] {
+      position: absolute;
+      inset: 0;
+      background: black;
+    }*/
+  `;
+
+  #source = document.createElement('div');
+  #arc = document.createElement('div');
+  #target = document.createElement('div');
 
   override createRenderRoot() {
     const root = super.createRenderRoot();
+
+    this.#source.part.add('source');
+    this.#arc.part.add('arc');
+    this.#target.part.add('target');
 
     const stroke = getStroke(
       [
@@ -85,11 +111,9 @@ export class FolkArrow extends FolkBaseConnection {
 
     const path = getSvgPathFromStroke(stroke);
 
-    this.#headPath.setAttribute('d', path);
+    this.#target.style.clipPath = `path("${path}")`;
 
-    this.#svg.append(this.#path, this.#headPath);
-
-    root.append(this.#svg);
+    root.append(this.#source, this.#arc, this.#target);
     return root;
   }
 
@@ -99,11 +123,11 @@ export class FolkArrow extends FolkBaseConnection {
     const { sourceRect, targetRect } = this;
 
     if (sourceRect === null || targetRect === null) {
-      this.#svg.style.display = 'none';
+      this.style.display = 'none';
       return;
     }
 
-    this.#svg.style.display = '';
+    this.style.display = '';
 
     const [sx, sy, cx, cy, ex, ey, ae] = getBoxToBoxArrow(
       sourceRect.x,
@@ -117,12 +141,15 @@ export class FolkArrow extends FolkBaseConnection {
       { padStart: 1, padEnd: 15 },
     ) as Arrow;
 
-    const points = pointsOnBezierCurves([
+    const curve = [
       { x: sx, y: sy },
       { x: cx, y: cy },
       { x: ex, y: ey },
+      // Need a forth point for the bezier curve util
       { x: ex, y: ey },
-    ]);
+    ];
+
+    const points = pointsOnBezierCurves(curve);
 
     const stroke = getStroke(points, {
       size: 5,
@@ -140,11 +167,32 @@ export class FolkArrow extends FolkBaseConnection {
         cap: true,
       },
     });
+
+    const bounds = boundingBoxFromCurve(stroke);
+
+    // Make curve relative to it's bounding box
+    for (const point of stroke) {
+      point[0] -= bounds.x;
+      point[1] -= bounds.y;
+    }
+
     const path = getSvgPathFromStroke(stroke);
 
-    this.#path.setAttribute('d', path);
+    this.style.top = `${bounds.y}px`;
+    this.style.left = `${bounds.x}px`;
+    this.style.width = `${bounds.width}px`;
+    this.style.height = `${bounds.height}px`;
+    this.#arc.style.clipPath = `path("${path}")`;
 
-    const endAngleAsDegrees = ae * (180 / Math.PI);
-    this.#headPath.setAttribute('transform', `translate(${ex},${ey}) rotate(${endAngleAsDegrees})`);
+    const start = stroke[0];
+    const end = stroke.at(-1)!;
+
+    this.style.setProperty('--folk-source-x', `${start[0]}px`);
+    this.style.setProperty('--folk-source-y', `${start[1]}px`);
+    this.style.setProperty('--folk-target-x', `${end[0]}px`);
+    this.style.setProperty('--folk-target-y', `${end[1]}px`);
+
+    this.#target.style.translate = `${ex}px ${ey}px`;
+    this.#target.style.rotate = `${ae}rad`;
   }
 }
