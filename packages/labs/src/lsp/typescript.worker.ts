@@ -4,6 +4,7 @@ import {
   createVirtualTypeScriptEnvironment,
   knownLibFilesForCompilerOptions,
   type LZString,
+  type VirtualTypeScriptEnvironment,
 } from '@typescript/vfs';
 import ts, { type CompilerOptions } from 'typescript';
 import { TextDocument } from 'vscode-json-languageservice';
@@ -26,30 +27,13 @@ import {
 
 const TS_VERSION = '5.8.3';
 
-// Simple state management like the other workers
+// State management like the other workers
 const docs: Map<string, TextDocument> = new Map();
-let tsEnv: any = null;
+let tsEnv: VirtualTypeScriptEnvironment | null = null;
 let isInitialized = false;
-let libFsMap: Map<string, string> | null = null; // Cache lib files
+let libFsMap: Map<string, string> | null = null;
 
-// Convert LSP URI to simple file path for TypeScript VFS
-function uriToFilePath(uri: string): string {
-  // Convert 'folk://ts-demo.ts' to 'ts-demo.ts'
-  return uri.replace(/^[^:]+:\/\//, '');
-}
-
-// Convert simple file path back to LSP URI
-function filePathToUri(filePath: string): string {
-  // Find the original URI that corresponds to this file path
-  for (const uri of docs.keys()) {
-    if (uriToFilePath(uri) === filePath) {
-      return uri;
-    }
-  }
-  return filePath; // fallback
-}
-
-const compilerOptions: ts.CompilerOptions = {
+const compilerOptions: CompilerOptions = {
   target: ts.ScriptTarget.ES2020,
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -63,55 +47,37 @@ const compilerOptions: ts.CompilerOptions = {
   lib: ['ES2020', 'DOM'],
 };
 
-// Initialize TypeScript environment with lib files (async, one time only)
-async function initializeTypeScript() {
-  console.log('Initializing TypeScript environment...');
+// Convert LSP URI to simple file path for TypeScript VFS
+function uriToFilePath(uri: string): string {
+  return uri.replace(/^[^:]+:\/\//, '');
+}
 
+// Initialize TypeScript environment with lib files
+async function initializeTypeScript() {
   // Load lib files once and cache them
   libFsMap = await createDefaultMapFromCDN(compilerOptions, TS_VERSION, false, ts);
 
   // Create initial environment
-  updateTypeScriptEnvironmentSync();
+  updateTypeScriptEnvironment();
   isInitialized = true;
-
-  console.log('TypeScript environment initialized');
 }
 
-// Synchronous file update - like JSON worker
-function updateTypeScriptEnvironmentSync() {
-  if (!libFsMap) {
-    console.warn('Lib files not loaded yet');
-    return;
-  }
-
-  console.log('Updating TypeScript environment (sync)');
+// Update TypeScript environment synchronously
+function updateTypeScriptEnvironment() {
+  if (!libFsMap) return;
 
   // Create new fsMap with cached lib files + current user files
-  const fsMap = new Map(libFsMap); // Copy lib files
+  const fsMap = new Map(libFsMap);
 
-  // Add all current user files using simple file paths
   for (const [uri, doc] of docs) {
     const filePath = uriToFilePath(uri);
     fsMap.set(filePath, doc.getText());
   }
 
-  // Recreate environment synchronously
+  // Recreate environment
   const system = createSystem(fsMap);
   const userFiles = Array.from(docs.keys()).map(uriToFilePath);
-
-  console.log('Recreating environment with files:', userFiles);
   tsEnv = createVirtualTypeScriptEnvironment(system, userFiles, ts, compilerOptions);
-
-  console.log('TypeScript environment updated synchronously');
-}
-
-// Backward compatibility wrapper
-function updateTypeScriptEnvironment() {
-  if (!isInitialized) {
-    console.log('TypeScript not initialized, skipping update');
-    return;
-  }
-  updateTypeScriptEnvironmentSync();
 }
 
 function positionToOffset(text: string, position: { line: number; character: number }): number {
@@ -209,9 +175,10 @@ conn.onRequest(InitializeRequest.type, async (_params): Promise<InitializeResult
 // ------ NOTIFICATIONS ------
 
 conn.onNotification(DidOpenTextDocumentNotification.type, ({ textDocument: { uri, languageId, version, text } }) => {
-  console.log('Opening document:', uri);
   docs.set(uri, TextDocument.create(uri, languageId, version, text));
-  updateTypeScriptEnvironment();
+  if (isInitialized) {
+    updateTypeScriptEnvironment();
+  }
 });
 
 conn.onNotification(DidChangeTextDocumentNotification.type, ({ textDocument, contentChanges }) => {
@@ -219,7 +186,9 @@ conn.onNotification(DidChangeTextDocumentNotification.type, ({ textDocument, con
   if (doc) {
     const updatedDoc = TextDocument.update(doc, contentChanges, textDocument.version || 0);
     docs.set(textDocument.uri, updatedDoc);
-    updateTypeScriptEnvironment();
+    if (isInitialized) {
+      updateTypeScriptEnvironment();
+    }
   }
 });
 
@@ -227,10 +196,7 @@ conn.onNotification(DidChangeTextDocumentNotification.type, ({ textDocument, con
 
 conn.onRequest(CompletionRequest.method, async ({ textDocument, position }) => {
   const doc = docs.get(textDocument.uri);
-  if (!doc || !tsEnv || !isInitialized) {
-    console.log('No document or TypeScript environment for completion');
-    return null;
-  }
+  if (!doc || !tsEnv || !isInitialized) return null;
 
   try {
     const text = doc.getText();
@@ -238,9 +204,7 @@ conn.onRequest(CompletionRequest.method, async ({ textDocument, position }) => {
     const filePath = uriToFilePath(textDocument.uri);
     const completions = tsEnv.languageService.getCompletionsAtPosition(filePath, offset, {});
 
-    if (!completions) {
-      return null;
-    }
+    if (!completions) return null;
 
     return {
       isIncomplete: false,
@@ -292,9 +256,7 @@ conn.onRequest(HoverRequest.method, async ({ textDocument, position }) => {
 
 conn.onRequest(DocumentDiagnosticRequest.method, async ({ textDocument }) => {
   const doc = docs.get(textDocument.uri);
-  if (!doc || !tsEnv || !isInitialized) {
-    return [];
-  }
+  if (!doc || !tsEnv || !isInitialized) return [];
 
   try {
     const filePath = uriToFilePath(textDocument.uri);
