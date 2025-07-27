@@ -134,9 +134,16 @@ export class FolkLSPAttribute extends CustomAttribute {
     }
   }
 
-  #fileUri = 'folk://';
   #fileVersion = 1;
   #languageClient: LanguageClient | undefined;
+
+  get #fileUri() {
+    // Generate a unique URI for this element based on its position and language
+    const language = this.value || 'txt';
+    const elementId = this.ownerElement.id || 'element';
+    const extension = language === 'js' ? 'js' : language === 'ts' ? 'ts' : language;
+    return `folk://${elementId}.${extension}`;
+  }
   #activeTooltips = new Map<string, HTMLElement>();
 
   get #highlights() {

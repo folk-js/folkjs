@@ -91,6 +91,7 @@
     "@folkjs/geometry": "0.0.3",
     "@folkjs/propagators": "0.0.3",
     "@mlc-ai/web-llm": "^0.2.78",
+    "@typescript/vfs": "^1.6.1",
     "@volar/typescript-language-service": "^1.0.1",
     "codemirror": "^6.0.1",
     "eventemitter3": "^5.0.1",

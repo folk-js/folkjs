@@ -111,8 +111,8 @@ head script:not([src]):not([type])::after {
   </head>
 
   <body>
-    <pre contenteditable="plaintext-only" folk-syntax="json" spellcheck="false">{"hello": "world"}</pre>
-    <pre contenteditable="plaintext-only" folk-syntax="javascript" spellcheck="false">
+    <pre contenteditable="plaintext-only" folk-syntax="json" folk-lsp="json" spellcheck="false" id="json-demo">{"hello": "world"}</pre>
+    <pre contenteditable="plaintext-only" folk-syntax="javascript" spellcheck="false" folk-lsp="ts" id="ts-demo">
       // add code that does some things for testing, simple JS things that do some little interactions with the dom
       const foobar = document.getElementById('foobar');
 
