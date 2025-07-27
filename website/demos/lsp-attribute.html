@@ -72,6 +72,30 @@ head script:not([src])::after {
 
 head script:not([src]):not([type])::after {
   content: attr(id) '.js (inline)';
+}
+
+[folk-syntax] {
+  display: block;
+  white-space: pre-wrap;
+  word-spacing: normal;
+  word-break: normal;
+  word-wrap: normal;
+  overflow: auto;
+  tab-size: 2;
+  hyphens: none;
+  padding: 0.5rem;
+  border-radius: 0.3rem;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+  max-width: 80vw;
+
+  color-scheme: inherit;
+  color: light-dark(#1f2328, #f0f6fc);
+  background-color: light-dark(#fbfbfb, #191e24);
+  font-family: 'Recursive';
+  font-variation-settings: 'MONO' 1;
+  line-height: 1.6;
 }</style>
 
     <script type="importmap" id="dependencies" contenteditable="plaintext-only" folk-lsp>{
@@ -82,10 +106,35 @@ head script:not([src]):not([type])::after {
 
     <script type="module">
       import '@folkjs/labs/standalone/folk-lsp-attribute';
+      import '@folkjs/labs/standalone/folk-syntax-attribute';
     </script>
   </head>
 
   <body>
-    <pre contenteditable="plaintext-only">{"hello": "world"}</pre>
+    <pre contenteditable="plaintext-only" folk-syntax="json" spellcheck="false">{"hello": "world"}</pre>
+    <pre contenteditable="plaintext-only" folk-syntax="javascript" spellcheck="false">
+      // add code that does some things for testing, simple JS things that do some little interactions with the dom
+      const foobar = document.getElementById('foobar');
+
+      const bar = {
+        a: 1,
+        b: Math.random(),
+        c: 'foobar',
+        d: [1, 2, 3],
+        e: {
+          f: 'barfoo',
+        }
+      }
+
+      setTimeout(() => {
+        bar.anotherThing = 'anotherThing'
+      }, 5000);
+      
+      foobar.addEventListener('click', () => {
+        foobar.style.backgroundColor = foobar.style.backgroundColor === 'lightblue' ? '' : 'lightblue';
+        foobar.style.padding = foobar.style.padding === '10px' ? '' : '10px';
+        foobar.style.borderRadius = foobar.style.borderRadius === '5px' ? '' : '5px';
+      });
+    </script>
   </body>
 </html>

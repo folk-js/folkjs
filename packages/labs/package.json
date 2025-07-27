@@ -100,6 +100,7 @@
     "peerjs": "^1.5.4",
     "perfect-arrows": "^0.3.7",
     "perfect-freehand": "^1.2.2",
+    "prism-esm": "^1.29.0-fix.6",
     "qr-scanner": "^1.4.2",
     "recast": "^0.23.11",
     "uhtml": "^4.5.11",
