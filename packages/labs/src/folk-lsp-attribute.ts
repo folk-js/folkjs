@@ -338,8 +338,6 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
     // Reset tooltip class
     this.#tooltip.className = 'folk-lsp-tooltip';
 
-    console.log('[diagnostics]', diagnostics);
-
     // Create structured content with severity indicators
     const content = diagnostics
       .map((diagnostic) => {
@@ -443,7 +441,6 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
       try {
         domRange.setStart(textNode, startOffset);
         domRange.setEnd(textNode, endOffset);
-        console.log('[domRange]', domRange);
         switch (diagnostic.severity) {
           case DiagnosticSeverity.Error:
             this.#highlights['folk-lsp-error'].add(domRange);
@@ -528,7 +525,6 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
     });
 
     await this.#languageClient.start();
-    console.log('start', this.ownerElement);
     this.#languageClient.sendNotification(DidOpenTextDocumentNotification.type, {
       textDocument: {
         uri: this.#fileUri,
