@@ -9,6 +9,8 @@ import {
   DocumentDiagnosticRequest,
   MarkupKind,
   Position,
+  type CompletionItem,
+  type CompletionList,
 } from 'vscode-languageserver-protocol';
 import { LanguageClient } from './lsp/LanguageClient';
 
@@ -192,6 +194,116 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
         background: #9b59b6;
         color: white;
       }
+
+      /* Completion dropdown styles */
+      .folk-lsp-completion {
+        position: fixed;
+        background: #2d2d2d;
+        color: #f0f0f0;
+        border-radius: 6px;
+        font-size: 13px;
+        max-width: 400px;
+        max-height: 200px;
+        z-index: 1001;
+        font-family:
+          'SF Pro Text',
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        display: none;
+        flex-direction: column;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        border: 1px solid #404040;
+        overflow: hidden;
+      }
+
+      .folk-lsp-completion-list {
+        overflow-y: auto;
+        max-height: 200px;
+      }
+
+      .folk-lsp-completion-item {
+        padding: 8px 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid #404040;
+      }
+
+      .folk-lsp-completion-item:last-child {
+        border-bottom: none;
+      }
+
+      .folk-lsp-completion-item:hover,
+      .folk-lsp-completion-item.selected {
+        background: #3d3d3d;
+      }
+
+      .folk-lsp-completion-kind {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        min-width: 40px;
+        text-align: center;
+        flex-shrink: 0;
+      }
+
+      .folk-lsp-completion-kind.function {
+        background: #9b59b6;
+        color: white;
+      }
+
+      .folk-lsp-completion-kind.variable {
+        background: #3498db;
+        color: white;
+      }
+
+      .folk-lsp-completion-kind.class {
+        background: #e74c3c;
+        color: white;
+      }
+
+      .folk-lsp-completion-kind.interface {
+        background: #f39c12;
+        color: white;
+      }
+
+      .folk-lsp-completion-kind.property,
+      .folk-lsp-completion-kind.field {
+        background: #2ecc71;
+        color: white;
+      }
+
+      .folk-lsp-completion-kind.method {
+        background: #9b59b6;
+        color: white;
+      }
+
+      .folk-lsp-completion-kind.keyword {
+        background: #e67e22;
+        color: white;
+      }
+
+      .folk-lsp-completion-kind.module {
+        background: #34495e;
+        color: white;
+      }
+
+      .folk-lsp-completion-item-label {
+        font-weight: 500;
+        flex-grow: 1;
+      }
+
+      .folk-lsp-completion-item-detail {
+        font-size: 11px;
+        color: #aaa;
+        flex-shrink: 0;
+      }
     }
   `;
 
@@ -213,6 +325,11 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
     return `${refId}.${extension}`;
   }
   #tooltip: HTMLElement | null = null;
+  #completionDropdown: HTMLElement | null = null;
+  #completionItems: CompletionItem[] = [];
+  #selectedCompletionIndex = -1;
+  #completionPosition: Position | null = null;
+  #completionTriggerOffset = 0;
   #diagnosticRanges: Array<{ range: Range; diagnostic: Diagnostic }> = [];
 
   get #highlights() {
@@ -221,19 +338,52 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
 
   override connectedCallback(): void {
     this.ownerElement.addEventListener('input', this.#onInput);
+    this.ownerElement.addEventListener('keydown', this.#onKeyDown);
     this.ownerElement.addEventListener('mousemove', this.#onMouseMove);
     this.ownerElement.addEventListener('mouseleave', this.#hideTooltip);
+    this.ownerElement.addEventListener('blur', this.#hideCompletion);
   }
 
   override async disconnectedCallback() {
     this.ownerElement.removeEventListener('input', this.#onInput);
+    this.ownerElement.removeEventListener('keydown', this.#onKeyDown);
     this.ownerElement.removeEventListener('mousemove', this.#onMouseMove);
     this.ownerElement.removeEventListener('mouseleave', this.#hideTooltip);
+    this.ownerElement.removeEventListener('blur', this.#hideCompletion);
     this.#hideTooltip();
+    this.#hideCompletion();
     this.#languageClient?.stop();
   }
 
-  #onInput = () => {
+  #onKeyDown = (event: KeyboardEvent) => {
+    if (this.#isCompletionVisible()) {
+      switch (event.key) {
+        case 'ArrowDown':
+          event.preventDefault();
+          this.#selectNextCompletion();
+          break;
+        case 'ArrowUp':
+          event.preventDefault();
+          this.#selectPreviousCompletion();
+          break;
+        case 'Enter':
+        case 'Tab':
+          event.preventDefault();
+          this.#insertSelectedCompletion();
+          break;
+        case 'Escape':
+          event.preventDefault();
+          this.#hideCompletion();
+          break;
+      }
+    } else if (event.ctrlKey && event.key === ' ') {
+      // Manual completion trigger
+      event.preventDefault();
+      this.#requestCompletion(true);
+    }
+  };
+
+  #onInput = (event: Event) => {
     if (this.#languageClient === undefined) return;
 
     // TODO: this feels flaky... how to version properly?
@@ -249,22 +399,53 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
         },
       ],
     });
-    this.#requestCompletion();
+
+    // Check if we should trigger completion based on input
+    const shouldTriggerCompletion = this.#shouldTriggerCompletion(event as InputEvent);
+    if (shouldTriggerCompletion) {
+      this.#requestCompletion();
+    } else if (this.#isCompletionVisible()) {
+      // Update existing completion with new filter
+      this.#filterExistingCompletions();
+    }
+
     this.#requestDiagnostics();
   };
 
+  #shouldTriggerCompletion(event: InputEvent): boolean {
+    if (!event.data) return false;
+
+    // Get language-specific trigger characters
+    const language = this.value;
+    const triggerChars = this.#getTriggerCharacters(language);
+
+    return triggerChars.includes(event.data);
+  }
+
+  #getTriggerCharacters(language: string): string[] {
+    switch (language) {
+      case 'ts':
+      case 'js':
+        return ['.', ':', '>', '<'];
+      case 'css':
+        return ['-', ':', '@'];
+      case 'json':
+        return ['"', ':'];
+      default:
+        return [];
+    }
+  }
+
   #getSelectionPosition(): Position | null {
     const selection = document.getSelection();
-    if (!selection) {
+    if (!selection || selection.rangeCount === 0) {
       return null;
     }
 
     const range = selection.getRangeAt(0);
 
-    // Get line and character offset from range
-    const node = range.startContainer;
-    const text = node.textContent || '';
-    const offset = range.startOffset;
+    const text = this.ownerElement.textContent || '';
+    const offset = this.#getTextOffset(range);
 
     // Split text into lines and count up to offset to get line/char
     const lines = text.split('\n');
@@ -273,15 +454,27 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
     let currentOffset = 0;
 
     for (const lineText of lines) {
-      if (currentOffset + lineText.length + 1 > offset) {
+      if (currentOffset + lineText.length >= offset) {
         character = offset - currentOffset;
         break;
       }
-      currentOffset += lineText.length + 1;
+      currentOffset += lineText.length + 1; // +1 for newline
       line++;
     }
 
     return { line, character };
+  }
+
+  #getTextOffset(range: Range): number {
+    const textNode = this.ownerElement.firstChild;
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return 0;
+
+    // Calculate offset from start of text node
+    const preRange = document.createRange();
+    preRange.selectNodeContents(textNode);
+    preRange.setEnd(range.startContainer, range.startOffset);
+
+    return preRange.toString().length;
   }
 
   async #requestDiagnostics() {
@@ -462,19 +655,279 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
     }
   }
 
-  // TODO: handle request
-  async #requestCompletion() {
+  // Completion UI methods
+  async #requestCompletion(manual = false) {
     if (this.#languageClient === undefined) return;
 
     const position = this.#getSelectionPosition();
     if (!position) return;
 
-    const completions = await this.#languageClient.sendRequest(CompletionRequest.type, {
-      textDocument: {
-        uri: this.#fileUri,
-      },
-      position,
+    try {
+      const response = await this.#languageClient.sendRequest(CompletionRequest.type, {
+        textDocument: {
+          uri: this.#fileUri,
+        },
+        position,
+      });
+
+      let completionItems: CompletionItem[] = [];
+
+      if (response) {
+        if (Array.isArray(response)) {
+          completionItems = response;
+        } else if ('items' in response) {
+          completionItems = (response as CompletionList).items;
+        }
+      }
+
+      if (completionItems.length > 0 || manual) {
+        this.#completionItems = completionItems;
+        this.#completionPosition = position;
+        this.#completionTriggerOffset = this.#getTextOffset(document.getSelection()!.getRangeAt(0));
+        this.#showCompletion();
+      } else {
+        this.#hideCompletion();
+      }
+    } catch (error) {
+      console.error('Completion request failed:', error);
+      this.#hideCompletion();
+    }
+  }
+
+  #showCompletion() {
+    if (this.#completionItems.length === 0) return;
+
+    if (!this.#completionDropdown) {
+      this.#completionDropdown = document.createElement('div');
+      this.#completionDropdown.className = 'folk-lsp-completion';
+      document.body.appendChild(this.#completionDropdown);
+    }
+
+    this.#renderCompletionItems();
+    this.#positionCompletion();
+    this.#completionDropdown.style.display = 'flex';
+    this.#selectedCompletionIndex = 0;
+    this.#updateCompletionSelection();
+  }
+
+  #renderCompletionItems() {
+    if (!this.#completionDropdown) return;
+
+    const listElement = document.createElement('div');
+    listElement.className = 'folk-lsp-completion-list';
+
+    this.#completionItems.forEach((item, index) => {
+      const itemElement = document.createElement('div');
+      itemElement.className = 'folk-lsp-completion-item';
+      itemElement.dataset.index = index.toString();
+
+      const kindElement = document.createElement('span');
+      const kindClass = this.#getCompletionKindClass(item.kind);
+      kindElement.className = `folk-lsp-completion-kind ${kindClass}`;
+      kindElement.textContent = kindClass;
+
+      const labelElement = document.createElement('span');
+      labelElement.className = 'folk-lsp-completion-item-label';
+      labelElement.textContent = item.label;
+
+      const detailElement = document.createElement('span');
+      detailElement.className = 'folk-lsp-completion-item-detail';
+      detailElement.textContent = item.detail || '';
+
+      itemElement.appendChild(kindElement);
+      itemElement.appendChild(labelElement);
+      if (item.detail) {
+        itemElement.appendChild(detailElement);
+      }
+
+      itemElement.addEventListener('click', () => {
+        this.#selectedCompletionIndex = index;
+        this.#insertSelectedCompletion();
+      });
+
+      listElement.appendChild(itemElement);
     });
+
+    this.#completionDropdown.innerHTML = '';
+    this.#completionDropdown.appendChild(listElement);
+  }
+
+  #positionCompletion() {
+    if (!this.#completionDropdown || !this.#completionPosition) return;
+
+    const selection = document.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+
+    const dropdownHeight = this.#completionDropdown.offsetHeight;
+    const dropdownWidth = this.#completionDropdown.offsetWidth;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let top = rect.bottom + 2;
+    let left = rect.left;
+
+    // Adjust if dropdown would go below viewport
+    if (top + dropdownHeight > viewportHeight - 10) {
+      top = rect.top - dropdownHeight - 2;
+    }
+
+    // Adjust if dropdown would go off screen horizontally
+    if (left + dropdownWidth > viewportWidth - 10) {
+      left = viewportWidth - dropdownWidth - 10;
+    }
+
+    this.#completionDropdown.style.top = `${Math.max(10, top)}px`;
+    this.#completionDropdown.style.left = `${Math.max(10, left)}px`;
+  }
+
+  #hideCompletion = () => {
+    if (this.#completionDropdown) {
+      this.#completionDropdown.style.display = 'none';
+    }
+    this.#completionItems = [];
+    this.#selectedCompletionIndex = -1;
+    this.#completionPosition = null;
+    this.#completionTriggerOffset = 0;
+  };
+
+  #isCompletionVisible(): boolean {
+    return (
+      this.#completionDropdown !== null &&
+      this.#completionDropdown.style.display === 'flex' &&
+      this.#completionItems.length > 0
+    );
+  }
+
+  #selectNextCompletion() {
+    if (this.#completionItems.length === 0) return;
+    this.#selectedCompletionIndex = (this.#selectedCompletionIndex + 1) % this.#completionItems.length;
+    this.#updateCompletionSelection();
+  }
+
+  #selectPreviousCompletion() {
+    if (this.#completionItems.length === 0) return;
+    this.#selectedCompletionIndex =
+      this.#selectedCompletionIndex <= 0 ? this.#completionItems.length - 1 : this.#selectedCompletionIndex - 1;
+    this.#updateCompletionSelection();
+  }
+
+  #updateCompletionSelection() {
+    if (!this.#completionDropdown) return;
+
+    const items = this.#completionDropdown.querySelectorAll('.folk-lsp-completion-item');
+    items.forEach((item, index) => {
+      item.classList.toggle('selected', index === this.#selectedCompletionIndex);
+    });
+
+    // Scroll selected item into view
+    const selectedItem = items[this.#selectedCompletionIndex] as HTMLElement;
+    if (selectedItem) {
+      selectedItem.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  #insertSelectedCompletion() {
+    if (this.#selectedCompletionIndex < 0 || this.#selectedCompletionIndex >= this.#completionItems.length) {
+      this.#hideCompletion();
+      return;
+    }
+
+    const item = this.#completionItems[this.#selectedCompletionIndex];
+    const insertText = item.insertText || item.label;
+
+    // Get current selection
+    const selection = document.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      this.#hideCompletion();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const currentOffset = this.#getTextOffset(range);
+
+    // Calculate the text to replace (from trigger point to current cursor)
+    const textContent = this.ownerElement.textContent || '';
+    const beforeTrigger = textContent.substring(0, this.#completionTriggerOffset);
+    const afterCursor = textContent.substring(currentOffset);
+
+    // Find the start of the word being completed
+    const wordStart = this.#findWordStart(beforeTrigger);
+    const wordToReplace = textContent.substring(wordStart, currentOffset);
+
+    // Insert the completion
+    const newText = textContent.substring(0, wordStart) + insertText + afterCursor;
+    this.ownerElement.textContent = newText;
+
+    // Set cursor position after inserted text
+    const newCursorPos = wordStart + insertText.length;
+    this.#setCursorPosition(newCursorPos);
+
+    this.#hideCompletion();
+
+    // Trigger input event to update language server
+    this.ownerElement.dispatchEvent(new InputEvent('input', { inputType: 'insertCompositionText', data: insertText }));
+  }
+
+  #findWordStart(text: string): number {
+    const wordBoundaryRegex = /[^a-zA-Z0-9_$]/;
+    for (let i = text.length - 1; i >= 0; i--) {
+      if (wordBoundaryRegex.test(text[i])) {
+        return i + 1;
+      }
+    }
+    return 0;
+  }
+
+  #setCursorPosition(offset: number) {
+    const textNode = this.ownerElement.firstChild;
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return;
+
+    const range = document.createRange();
+    const selection = document.getSelection();
+
+    try {
+      range.setStart(textNode, Math.min(offset, textNode.textContent?.length || 0));
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    } catch (e) {
+      console.warn('Failed to set cursor position:', e);
+    }
+  }
+
+  #filterExistingCompletions() {
+    // For now, we'll just hide completions on text changes that aren't trigger characters
+    // In a more sophisticated implementation, we could filter the existing completions
+    // based on the current word being typed
+    this.#hideCompletion();
+  }
+
+  #getCompletionKindClass(kind?: number): string {
+    switch (kind) {
+      case 3:
+        return 'function'; // Function
+      case 6:
+        return 'variable'; // Variable
+      case 7:
+        return 'class'; // Class
+      case 8:
+        return 'interface'; // Interface
+      case 5:
+        return 'field'; // Field
+      case 2:
+        return 'method'; // Method
+      case 10:
+        return 'property'; // Property
+      case 14:
+        return 'keyword'; // Keyword
+      case 9:
+        return 'module'; // Module
+      default:
+        return 'text';
+    }
   }
 
   #getWorker(language: string) {
