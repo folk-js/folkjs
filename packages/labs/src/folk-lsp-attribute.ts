@@ -12,6 +12,33 @@ import {
 } from 'vscode-languageserver-protocol';
 import { LanguageClient } from './lsp/LanguageClient';
 
+// Valid LSP languages
+export const VALID_LSP_LANGUAGES = ['js', 'ts', 'json', 'css'] as const;
+export type LSPLanguage = (typeof VALID_LSP_LANGUAGES)[number];
+
+// Primitive for generating unique reference-based IDs
+class RefID {
+  static #refs = new WeakMap();
+  static #counter = 0;
+
+  static get(obj: object) {
+    if (!this.#refs.has(obj)) {
+      this.#refs.set(obj, this.#toLetters(this.#counter++));
+    }
+    return this.#refs.get(obj);
+  }
+
+  static #toLetters(num: number) {
+    let result = '';
+    while (num >= 0) {
+      result = String.fromCharCode(97 + (num % 26)) + result;
+      num = Math.floor(num / 26) - 1;
+      if (num < 0) break;
+    }
+    return result;
+  }
+}
+
 // TODOs
 // incremental updates
 //  - input event only tells us what text is added.
@@ -138,11 +165,10 @@ export class FolkLSPAttribute extends CustomAttribute {
   #languageClient: LanguageClient | undefined;
 
   get #fileUri() {
-    // Generate a unique URI for this element based on its position and language
+    const refId = RefID.get(this.ownerElement);
     const language = this.value || 'txt';
-    const elementId = this.ownerElement.id || 'element';
-    const extension = language === 'js' ? 'js' : language === 'ts' ? 'ts' : language;
-    return `folk://${elementId}.${extension}`;
+    const extension = (VALID_LSP_LANGUAGES as readonly string[]).includes(language) ? language : 'txt';
+    return `${refId}.${extension}`;
   }
   #activeTooltips = new Map<string, HTMLElement>();
 
@@ -434,7 +460,7 @@ export class FolkLSPAttribute extends CustomAttribute {
       log: console.log,
     });
 
-    this.#languageClient.start();
+    await this.#languageClient.start();
     console.log('start', this.ownerElement);
     this.#languageClient.sendNotification(DidOpenTextDocumentNotification.type, {
       textDocument: {
@@ -444,5 +470,8 @@ export class FolkLSPAttribute extends CustomAttribute {
         text: this.ownerElement.textContent ?? '',
       },
     });
+
+    // Request initial diagnostics now that server is fully initialized
+    this.#requestDiagnostics();
   }
 }
