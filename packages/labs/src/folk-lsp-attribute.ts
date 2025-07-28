@@ -86,7 +86,7 @@ class LanguageServerPool {
   }
 }
 
-export class FolkLSPAttribute extends CustomAttribute {
+export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
   static override attributeName = 'folk-lsp';
 
   static override define() {
@@ -140,15 +140,57 @@ export class FolkLSPAttribute extends CustomAttribute {
 
       .folk-lsp-tooltip {
         position: fixed;
-        background: #333;
-        color: white;
+        background: #2d2d2d;
+        color: #f0f0f0;
         padding: 8px;
-        border-radius: 4px;
-        font-size: 14px;
-        max-width: 300px;
+        border-radius: 6px;
+        font-size: 13px;
+        max-width: 400px;
         z-index: 1000;
         pointer-events: none;
-        font-family: sans-serif;
+        font-family:
+          'SF Pro Text',
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        display: none;
+        flex-direction: column;
+        gap: 8px;
+        white-space: pre-line;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        border: 1px solid #404040;
+        line-height: 1.4;
+      }
+
+      .folk-lsp-diagnostic-severity {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        vertical-align: top;
+      }
+
+      .folk-lsp-diagnostic-severity.error {
+        background: #e74c3c;
+        color: white;
+      }
+
+      .folk-lsp-diagnostic-severity.warning {
+        background: #f39c12;
+        color: white;
+      }
+
+      .folk-lsp-diagnostic-severity.info {
+        background: #3498db;
+        color: white;
+      }
+
+      .folk-lsp-diagnostic-severity.hint {
+        background: #9b59b6;
+        color: white;
       }
     }
   `;
@@ -170,18 +212,24 @@ export class FolkLSPAttribute extends CustomAttribute {
     const extension = (VALID_LSP_LANGUAGES as readonly string[]).includes(language) ? language : 'txt';
     return `${refId}.${extension}`;
   }
-  #activeTooltips = new Map<string, HTMLElement>();
+  #tooltip: HTMLElement | null = null;
+  #diagnosticRanges: Array<{ range: Range; diagnostic: Diagnostic }> = [];
 
   get #highlights() {
     return (this.constructor as typeof FolkLSPAttribute).#highlightRegistry;
   }
 
   override connectedCallback(): void {
-    (this.ownerElement as HTMLElement).addEventListener('input', this.#onInput);
+    this.ownerElement.addEventListener('input', this.#onInput);
+    this.ownerElement.addEventListener('mousemove', this.#onMouseMove);
+    this.ownerElement.addEventListener('mouseleave', this.#hideTooltip);
   }
 
   override async disconnectedCallback() {
-    (this.ownerElement as HTMLElement).removeEventListener('input', this.#onInput);
+    this.ownerElement.removeEventListener('input', this.#onInput);
+    this.ownerElement.removeEventListener('mousemove', this.#onMouseMove);
+    this.ownerElement.removeEventListener('mouseleave', this.#hideTooltip);
+    this.#hideTooltip();
     this.#languageClient?.stop();
   }
 
@@ -248,95 +296,113 @@ export class FolkLSPAttribute extends CustomAttribute {
     this.#highlightDiagnostics(diagnostics);
   }
 
-  #getRangeKey(range: Range): string {
-    const start = range.startOffset;
-    const end = range.endOffset;
-    return `${start}-${end}`;
-  }
+  #onMouseMove = (event: MouseEvent) => {
+    const { clientX, clientY } = event;
+    const result = this.#getDiagnosticsAtPosition(clientX, clientY);
 
-  #createTooltip(message: string, rect: DOMRect, range: Range) {
-    const key = this.#getRangeKey(range);
-    let tooltip = this.#activeTooltips.get(key);
-    if (tooltip) {
-      return; // Tooltip already exists for this range
-    }
-
-    tooltip = document.createElement('div');
-    tooltip.className = 'folk-lsp-tooltip';
-    tooltip.textContent = message;
-
-    // Position tooltip above the highlight if there's room, otherwise below
-    document.body.appendChild(tooltip);
-    const tooltipHeight = tooltip.offsetHeight;
-    const spaceAbove = rect.top;
-    const viewportHeight = window.innerHeight;
-    const spaceBelow = viewportHeight - rect.bottom;
-
-    if (spaceAbove > tooltipHeight || spaceAbove > spaceBelow) {
-      // Position above
-      tooltip.style.top = `${rect.top - tooltipHeight - 5}px`;
+    if (result.diagnostics.length > 0 && result.range) {
+      this.#showTooltip(result.diagnostics, result.range);
     } else {
-      // Position below
-      tooltip.style.top = `${rect.bottom + 5}px`;
+      this.#hideTooltip();
     }
+  };
 
-    // Center horizontally over the highlight
-    tooltip.style.left = `${rect.left + rect.width / 2 - tooltip.offsetWidth / 2}px`;
-    this.#activeTooltips.set(key, tooltip);
-  }
+  #getDiagnosticsAtPosition(x: number, y: number): { diagnostics: Diagnostic[]; range: Range | null } {
+    const hoveredDiagnostics: Diagnostic[] = [];
+    let hoveredRange: Range | null = null;
 
-  #removeTooltip(range: Range) {
-    const key = this.#getRangeKey(range);
-    const tooltip = this.#activeTooltips.get(key);
-    if (tooltip) {
-      tooltip.remove();
-      this.#activeTooltips.delete(key);
-    }
-  }
-
-  #removeAllTooltips() {
-    for (const tooltip of this.#activeTooltips.values()) {
-      tooltip.remove();
-    }
-    this.#activeTooltips.clear();
-  }
-
-  // TODO: fix the obvious memory leak here
-  #setupTooltipListeners(range: Range, diagnostic: Diagnostic) {
-    const rects = range.getClientRects();
-    if (!rects.length) return;
-
-    // Create a single rect that encompasses all the range's rects
-    const boundingRect = range.getBoundingClientRect();
-    const rangeKey = this.#getRangeKey(range);
-
-    const checkMousePosition = (event: MouseEvent) => {
-      const { clientX, clientY } = event;
-      // Check if mouse is within any of the range's rectangles
-      // TODO: use geo utils here
+    for (const { range, diagnostic } of this.#diagnosticRanges) {
+      const rects = range.getClientRects();
       for (let i = 0; i < rects.length; i++) {
         const rect = rects[i];
-        if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
-          return true;
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+          hoveredDiagnostics.push(diagnostic);
+          if (!hoveredRange) {
+            hoveredRange = range; // Use the first range found
+          }
+          break; // Found this diagnostic, no need to check other rects
         }
       }
-      return false;
-    };
+    }
 
-    (this.ownerElement as HTMLElement).addEventListener('mousemove', (event) => {
-      const isOverRange = checkMousePosition(event);
+    return { diagnostics: hoveredDiagnostics, range: hoveredRange };
+  }
 
-      if (isOverRange && !this.#activeTooltips.has(rangeKey)) {
-        this.#createTooltip(diagnostic.message, boundingRect, range);
-      } else if (!isOverRange && this.#activeTooltips.has(rangeKey)) {
-        this.#removeTooltip(range);
-      }
-    });
+  #showTooltip(diagnostics: Diagnostic[], range: Range) {
+    if (!this.#tooltip) {
+      this.#tooltip = document.createElement('div');
+      this.#tooltip.className = 'folk-lsp-tooltip';
+      document.body.appendChild(this.#tooltip);
+    }
 
-    // Also remove tooltip when leaving the element entirely
-    this.ownerElement.addEventListener('mouseleave', () => {
-      this.#removeTooltip(range);
-    });
+    // Reset tooltip class
+    this.#tooltip.className = 'folk-lsp-tooltip';
+
+    console.log('[diagnostics]', diagnostics);
+
+    // Create structured content with severity indicators
+    const content = diagnostics
+      .map((diagnostic) => {
+        const severity = diagnostic.severity || 1;
+        const severityName = this.#getSeverity(severity);
+
+        return `<div class="folk-lsp-diagnostic-item"><span class="folk-lsp-diagnostic-severity ${severityName}">${severityName.toUpperCase()}</span>
+        <span class="folk-lsp-diagnostic-message">${diagnostic.message}</span>
+      </div>`;
+      })
+      .join('');
+
+    this.#tooltip.innerHTML = content;
+
+    // Position off-screen but visible for accurate measurement
+    this.#tooltip.style.top = '-9999px';
+    this.#tooltip.style.left = '-9999px';
+    this.#tooltip.style.display = 'flex';
+
+    const rect = range.getBoundingClientRect();
+    const tooltipHeight = this.#tooltip.offsetHeight;
+    const tooltipWidth = this.#tooltip.offsetWidth;
+    const viewportWidth = window.innerWidth;
+
+    let top = rect.top - tooltipHeight - 2;
+    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+
+    // Adjust if tooltip would go above viewport
+    if (top < 2) {
+      top = rect.bottom + 2; // Position below instead
+    }
+
+    // Adjust if tooltip would go off screen horizontally
+    if (left < 2) {
+      left = 2;
+    } else if (left + tooltipWidth > viewportWidth - 2) {
+      left = viewportWidth - tooltipWidth - 2;
+    }
+
+    // Apply final position
+    this.#tooltip.style.top = `${top}px`;
+    this.#tooltip.style.left = `${left}px`;
+  }
+
+  #getSeverity(severity: number): string {
+    switch (severity) {
+      case 1:
+        return 'error';
+      case 2:
+        return 'warning';
+      case 3:
+        return 'info';
+      case 4:
+        return 'hint';
+      default:
+        return 'info';
+    }
+  }
+
+  #hideTooltip() {
+    if (this.#tooltip) {
+      this.#tooltip.style.display = 'none';
+    }
   }
 
   #highlightDiagnostics(diagnostics: Diagnostic[]) {
@@ -344,7 +410,8 @@ export class FolkLSPAttribute extends CustomAttribute {
       highlight.clear();
     }
 
-    this.#removeAllTooltips();
+    this.#hideTooltip();
+    this.#diagnosticRanges = [];
 
     for (const diagnostic of diagnostics) {
       const { range } = diagnostic;
@@ -391,7 +458,7 @@ export class FolkLSPAttribute extends CustomAttribute {
             this.#highlights['folk-lsp-hint'].add(domRange);
             break;
         }
-        this.#setupTooltipListeners(domRange, diagnostic);
+        this.#diagnosticRanges.push({ range: domRange, diagnostic });
       } catch (e) {
         console.warn('Failed to set diagnostic highlight range:', e);
       }
