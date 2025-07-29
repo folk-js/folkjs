@@ -102,6 +102,7 @@ export function html3<T extends string>(template: T): Expand<InferRefs<T>> {
 
   for (const el of frag.querySelectorAll<HTMLElement>('[ref]')) {
     refs[el.getAttribute('ref')!] = el;
+    el.removeAttribute('ref');
   }
 
   return refs;
