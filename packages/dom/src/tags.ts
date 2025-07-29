@@ -46,14 +46,12 @@ export function html2(strings: TemplateStringsArray, ...values: string[]): DOMRe
   const str = strings
     .flatMap((str, i) => {
       if (i >= values.length) return str;
-
       const value = values[i];
       return str + value;
     })
     .join('');
 
   const documentFragment = document.createRange().createContextualFragment(str);
-
   if (documentFragment.firstElementChild === null) throw new Error();
 
   const refs: DOMReferences = {
@@ -63,6 +61,48 @@ export function html2(strings: TemplateStringsArray, ...values: string[]): DOMRe
   documentFragment.querySelectorAll<HTMLElement>('[ref]').forEach((el) => {
     refs[el.getAttribute('ref')!] = el;
   });
+
+  return refs;
+}
+
+type ExtractRefs<T extends string> = T extends `${string}ref="${infer RefName}"${infer Rest}`
+  ? RefName | ExtractRefs<Rest>
+  : never;
+
+type ExtractTagForRef<
+  T extends string,
+  RefName extends string,
+> = T extends `${string}<${infer TagAndAttrs}>${infer Rest}`
+  ? TagAndAttrs extends `${infer Tag} ${infer Attrs}`
+    ? Attrs extends `${string}ref="${RefName}"${string}`
+      ? Tag
+      : ExtractTagForRef<Rest, RefName>
+    : ExtractTagForRef<Rest, RefName>
+  : T extends `${string}<${infer TagAndAttrs}/>${infer Rest}`
+    ? TagAndAttrs extends `${infer Tag} ${infer Attrs}`
+      ? Attrs extends `${string}ref="${RefName}"${string}`
+        ? Tag
+        : ExtractTagForRef<Rest, RefName>
+      : ExtractTagForRef<Rest, RefName>
+    : never;
+
+type TagToElement<T extends string> = T extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[T] : HTMLElement;
+
+type InferRefs<T extends string> = {
+  frag: DocumentFragment;
+} & {
+  [K in ExtractRefs<T>]: TagToElement<ExtractTagForRef<T, K>>;
+};
+
+type Expand<T> = T extends infer O ? { [K in keyof O]: O[K] } : never;
+
+export function html3<T extends string>(template: T): Expand<InferRefs<T>> {
+  const frag = document.createRange().createContextualFragment(template);
+  const refs: any = { frag };
+
+  for (const el of frag.querySelectorAll<HTMLElement>('[ref]')) {
+    refs[el.getAttribute('ref')!] = el;
+  }
 
   return refs;
 }
