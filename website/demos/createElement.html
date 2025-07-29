@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Function to ReactiveElement Demo</title>
+    <style>
+      body {
+        max-width: 700px;
+        margin: 0 auto;
+        padding: 40px;
+        font-family: Georgia, serif;
+        background: #f8f8f8;
+        line-height: 1.6;
+      }
+
+      h1 {
+        margin: 0 0 24px 0;
+        font-size: 32px;
+        font-weight: normal;
+        color: #222;
+      }
+
+      p {
+        margin: 0 0 32px 0;
+        color: #444;
+        max-width: 600px;
+      }
+
+      .demo-section {
+        background: white;
+        padding: 24px;
+        margin: 24px 0;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+      }
+
+      .demo-section h3 {
+        margin-top: 0;
+        color: #333;
+      }
+
+      /* Component styles */
+      square-root {
+        display: block;
+        padding: 16px;
+        margin: 8px 0;
+        background: #e8f4fd;
+        border: 2px solid #3498db;
+        border-radius: 6px;
+        font-family: 'Courier New', monospace;
+      }
+
+      user-card {
+        display: block;
+        padding: 16px;
+        margin: 8px 0;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      user-card h3 {
+        margin: 0 0 8px 0;
+        color: #495057;
+      }
+
+      user-card .status {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: bold;
+      }
+
+      user-card .status.online {
+        background: #d4edda;
+        color: #155724;
+      }
+
+      user-card .status.offline {
+        background: #f8d7da;
+        color: #721c24;
+      }
+
+      .controls {
+        margin: 16px 0;
+        padding: 16px;
+        background: #f8f9fa;
+        border-radius: 6px;
+      }
+
+      .controls input,
+      .controls select {
+        margin: 4px 8px;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+
+      .controls button {
+        margin: 4px 8px;
+        padding: 8px 16px;
+        background: #28a745;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .controls button:hover {
+        background: #218838;
+      }
+
+      code {
+        background: #f8f9fa;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'Courier New', monospace;
+        color: #e83e8c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Function to ReactiveElement Demo</h1>
+
+    <p>
+      This demo shows how simple functions can be automatically converted into reactive web components. Just write a
+      function with destructured parameters and defaults, and get a fully reactive custom element!
+    </p>
+
+    <div class="demo-section">
+      <h3>Square Root Calculator</h3>
+      <p>A simple math component that reactively updates when the <code>num</code> attribute changes:</p>
+
+      <div id="sqrt-container"></div>
+
+      <div class="controls">
+        <input type="number" id="sqrtInput" value="16" min="0" max="1000" />
+        <button onclick="addSquareRoot()">Add Square Root</button>
+        <button onclick="updateLastSquareRoot()">Update Last One</button>
+      </div>
+    </div>
+
+    <div class="demo-section">
+      <h3>User Cards</h3>
+      <p>User profiles with multiple reactive properties including booleans:</p>
+
+      <div id="user-container"></div>
+
+      <div class="controls">
+        <input type="text" id="nameInput" placeholder="Name" value="Alice" />
+        <input type="number" id="ageInput" placeholder="Age" value="25" min="0" max="120" />
+        <select id="activeInput">
+          <option value="true">Online</option>
+          <option value="false">Offline</option>
+        </select>
+        <button onclick="addUser()">Add User</button>
+        <button onclick="toggleAllUsers()">Toggle All Status</button>
+      </div>
+    </div>
+
+    <div class="demo-section">
+      <h3>Try in Console</h3>
+      <p>Open dev tools and try:</p>
+      <code>
+        function myTest({text = "hello", num = 42}) { return `&lt;div&gt;${text} - ${num}&lt;/div&gt;` }<br />
+        const elem = createElement(myTest)<br />
+        elem.text = "world"<br />
+        document.body.appendChild(elem)
+      </code>
+    </div>
+
+    <script type="module">
+      import { createElement } from '@folkjs/labs/createElement';
+      window.createElement = createElement;
+
+      // Define our component functions
+      function squareRoot({ num = 0 }) {
+        const result = Math.sqrt(num);
+        return `<strong>√${num} = ${result.toFixed(3)}</strong>`;
+      }
+
+      function userCard({ name = '', age = 0, active = false }) {
+        return `
+        <h3>${name}</h3>
+        <p>Age: ${age}</p>
+        <span class="status ${active ? 'online' : 'offline'}">
+          ${active ? '🟢 Online' : '🔴 Offline'}
+        </span>
+      `;
+      }
+
+      // Create some initial components
+      const sqrt1 = createElement(squareRoot);
+      sqrt1.num = 16;
+      document.getElementById('sqrt-container').appendChild(sqrt1);
+
+      const sqrt2 = createElement(squareRoot);
+      sqrt2.num = 25;
+      document.getElementById('sqrt-container').appendChild(sqrt2);
+
+      const user1 = createElement(userCard);
+      user1.name = 'Alice Johnson';
+      user1.age = 28;
+      user1.active = true;
+      document.getElementById('user-container').appendChild(user1);
+
+      const user2 = createElement(userCard);
+      user2.name = 'Bob Smith';
+      user2.age = 34;
+      user2.active = false;
+      document.getElementById('user-container').appendChild(user2);
+
+      // Demo interaction functions
+      window.addSquareRoot = () => {
+        const value = document.getElementById('sqrtInput').value;
+        const elem = createElement(squareRoot);
+        elem.num = parseInt(value);
+        document.getElementById('sqrt-container').appendChild(elem);
+      };
+
+      window.updateLastSquareRoot = () => {
+        const value = document.getElementById('sqrtInput').value;
+        const container = document.getElementById('sqrt-container');
+        const lastElem = container.lastElementChild;
+        if (lastElem) {
+          lastElem.num = parseInt(value);
+        }
+      };
+
+      window.addUser = () => {
+        const name = document.getElementById('nameInput').value;
+        const age = document.getElementById('ageInput').value;
+        const active = document.getElementById('activeInput').value === 'true';
+
+        const elem = createElement(userCard);
+        elem.name = name;
+        elem.age = parseInt(age);
+        elem.active = active;
+
+        document.getElementById('user-container').appendChild(elem);
+      };
+
+      window.toggleAllUsers = () => {
+        document.querySelectorAll('user-card').forEach((user) => {
+          user.active = !user.active;
+        });
+      };
+    </script>
+  </body>
+</html>
