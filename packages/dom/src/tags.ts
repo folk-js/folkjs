@@ -65,44 +65,57 @@ export function html2(strings: TemplateStringsArray, ...values: string[]): DOMRe
   return refs;
 }
 
-type ExtractRefs<T extends string> = T extends `${string}ref="${infer RefName}"${infer Rest}`
-  ? RefName | ExtractRefs<Rest>
-  : never;
-
-type ExtractTagForRef<
+// Extract attribute values from HTML template
+type ExtractAttrValues<
   T extends string,
-  RefName extends string,
+  Attr extends string,
+> = T extends `${string}${Attr}="${infer AttrValue}"${infer Rest}` ? AttrValue | ExtractAttrValues<Rest, Attr> : never;
+
+// Find the opening tag that contains a specific attribute value
+type ExtractTagForAttrValue<
+  T extends string,
+  AttrValue extends string,
+  Attr extends string,
 > = T extends `${string}<${infer TagAndAttrs}>${infer Rest}`
   ? TagAndAttrs extends `${infer Tag} ${infer Attrs}`
-    ? Attrs extends `${string}ref="${RefName}"${string}`
+    ? Attrs extends `${string}${Attr}="${AttrValue}"${string}`
       ? Tag
-      : ExtractTagForRef<Rest, RefName>
-    : ExtractTagForRef<Rest, RefName>
+      : ExtractTagForAttrValue<Rest, AttrValue, Attr>
+    : ExtractTagForAttrValue<Rest, AttrValue, Attr>
   : T extends `${string}<${infer TagAndAttrs}/>${infer Rest}`
     ? TagAndAttrs extends `${infer Tag} ${infer Attrs}`
-      ? Attrs extends `${string}ref="${RefName}"${string}`
+      ? Attrs extends `${string}${Attr}="${AttrValue}"${string}`
         ? Tag
-        : ExtractTagForRef<Rest, RefName>
-      : ExtractTagForRef<Rest, RefName>
+        : ExtractTagForAttrValue<Rest, AttrValue, Attr>
+      : ExtractTagForAttrValue<Rest, AttrValue, Attr>
     : never;
 
+// Map tag names to HTMLElement types
 type TagToElement<T extends string> = T extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[T] : HTMLElement;
 
-type InferRefs<T extends string> = {
+// Build refs type for any attribute
+type InferRefs<T extends string, Attr extends string> = {
   frag: DocumentFragment;
 } & {
-  [K in ExtractRefs<T>]: TagToElement<ExtractTagForRef<T, K>>;
+  [K in ExtractAttrValues<T, Attr>]: TagToElement<ExtractTagForAttrValue<T, K, Attr>>;
 };
 
 type Expand<T> = T extends infer O ? { [K in keyof O]: O[K] } : never;
 
-export function html3<T extends string>(template: T): Expand<InferRefs<T>> {
+// Function overloads
+export function html3<T extends string>(template: T): Expand<InferRefs<T, 'ref'>>;
+export function html3<T extends string, A extends string>(template: T, attr: A): Expand<InferRefs<T, A>>;
+export function html3<T extends string>(template: T, attr: string = 'ref'): any {
   const frag = document.createRange().createContextualFragment(template);
   const refs: any = { frag };
 
-  for (const el of frag.querySelectorAll<HTMLElement>('[ref]')) {
-    refs[el.getAttribute('ref')!] = el;
-    el.removeAttribute('ref');
+  for (const el of frag.querySelectorAll<HTMLElement>(`[${attr}]`)) {
+    const attrName = el.getAttribute(attr)!;
+    refs[attrName] = el;
+    // Only remove attribute if it's a default 'ref'
+    if (attr === 'ref') {
+      el.removeAttribute(attr);
+    }
   }
 
   return refs;
