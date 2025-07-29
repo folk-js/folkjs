@@ -1,3 +1,22 @@
+import { render, html as uhtmlfunc } from 'uhtml';
+
+/**
+ * A wrapper around uhtml's html tag that returns an HTMLElement instead of a template.
+ * This makes it easier to use uhtml for one-off element creation.
+ * @deprecated
+ *
+ * @example
+ * ```ts
+ * const el = uhtml`<div>Hello ${name}!</div>`;
+ * document.body.appendChild(el);
+ * ```
+ */
+export function uhtml(strings: TemplateStringsArray, ...values: any[]): HTMLElement {
+  const container = document.createElement('span');
+  render(container, uhtmlfunc(strings, ...values));
+  return container;
+}
+
 /** A raw tagged template literal that just provides GLSL syntax highlighting/LSP support. */
 export const glsl = String.raw;
 

@@ -1,5 +1,5 @@
+import { uhtml } from '@folkjs/dom/tags';
 import { namedTypes as t } from 'ast-types';
-import { uhtml } from '../tags';
 
 export type GizmoStyle = 'inline' | 'block';
 
