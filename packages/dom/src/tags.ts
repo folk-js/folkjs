@@ -17,3 +17,33 @@ export function css(strings: TemplateStringsArray, ...values: any[]) {
   styles.replaceSync(String.raw(strings, ...values));
   return styles;
 }
+
+interface DOMReferences {
+  root: HTMLElement;
+  [key: string]: HTMLElement;
+}
+
+export function html2(strings: TemplateStringsArray, ...values: string[]): DOMReferences {
+  const str = strings
+    .flatMap((str, i) => {
+      if (i >= values.length) return str;
+
+      const value = values[i];
+      return str + value;
+    })
+    .join('');
+
+  const documentFragment = document.createRange().createContextualFragment(str);
+
+  if (documentFragment.firstElementChild === null) throw new Error();
+
+  const refs: DOMReferences = {
+    root: documentFragment.firstElementChild as HTMLElement,
+  };
+
+  documentFragment.querySelectorAll<HTMLElement>('[ref]').forEach((el) => {
+    refs[el.getAttribute('ref')!] = el;
+  });
+
+  return refs;
+}
