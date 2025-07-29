@@ -1,5 +1,5 @@
 import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
-import { html } from '@folkjs/dom/tags';
+import { html, html3 } from '@folkjs/dom/tags';
 import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
@@ -200,10 +200,8 @@ export class FolkShapeOverlay extends ReactiveElement {
 
   override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot() as ShadowRoot;
-
     this.popover = 'manual';
     this.tabIndex = -1;
-
     this.addEventListener('pointerdown', this);
     this.addEventListener('dblclick', this);
     this.addEventListener('keydown', this);
@@ -211,7 +209,8 @@ export class FolkShapeOverlay extends ReactiveElement {
     // prevent IOS Safari from scrolling when a shape is interacted with.
     this.addEventListener('touchmove', this, { passive: false });
 
-    (root as ShadowRoot).setHTMLUnsafe(html`
+    const { frag, ...handles } = html3(
+      `
       <button part="move-top" tabindex="-1" aria-label="Move shape from top"></button>
       <button part="move-right" tabindex="-1" aria-label="Move shape from right"></button>
       <button part="move-bottom" tabindex="-1" aria-label="Move shape from bottom"></button>
@@ -224,14 +223,12 @@ export class FolkShapeOverlay extends ReactiveElement {
       <button part="resize-top-right" aria-label="Resize shape from top right"></button>
       <button part="resize-bottom-right" aria-label="Resize shape from bottom right"></button>
       <button part="resize-bottom-left" aria-label="Resize shape from bottom left"></button>
-    `);
+    `,
+      'part',
+    );
 
-    this.#handles = Object.fromEntries(
-      Array.from(root.querySelectorAll('[part]')).map((el) => [
-        el.getAttribute('part') as ResizeHandle | RotateHandle,
-        el as HTMLElement,
-      ]),
-    ) as Record<ResizeHandle | RotateHandle, HTMLElement>;
+    root.appendChild(frag);
+    this.#handles = handles;
 
     return root;
   }
