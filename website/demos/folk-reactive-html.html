@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reactive HTML Test</title>
+  </head>
+  <body>
+    <h1>Reactive HTML Test</h1>
+
+    <h2>Built-in Counter Component</h2>
+    <my-counter></my-counter>
+
+    <h2>Manual Reactive Test</h2>
+    <div id="test"></div>
+
+    <script type="module">
+      import { reactive, reactiveHTML } from '@folkjs/labs/reactiveHtml';
+
+      const state = reactive({
+        count: 0,
+        name: 'World',
+      });
+
+      const { frag } = reactiveHTML`
+        <div>
+          <p>Count: ${() => state.count}</p>
+          <button onclick=${() => state.count++}>+</button>
+          <button onclick=${() => state.count--}>-</button>
+          
+          <p>Hello, ${() => state.name}!</p>
+          <input type="text" placeholder="Enter name" 
+                 oninput=${(e) => (state.name = e.target.value)} />
+        </div>
+      `;
+
+      document.getElementById('test').appendChild(frag);
+    </script>
+  </body>
+</html>

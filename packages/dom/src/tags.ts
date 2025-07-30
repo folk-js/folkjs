@@ -109,7 +109,7 @@ export function html3<T extends string, A extends string>(template: T, attr: A):
  * It collects references to elements that have a specified attribute (default: 'ref'),
  * making them easily accessible by their attribute value.
  *
- * @param template - The HTML template string to parse
+ * @param html - The HTML template string to parse
  * @param attr - The attribute name to use for element references (defaults to 'ref')
  * @returns An object containing the DocumentFragment and references to marked elements
  *
@@ -136,8 +136,8 @@ export function html3<T extends string, A extends string>(template: T, attr: A):
  * `, 'data-ref');
  * ```
  */
-export function html3<T extends string>(template: T, attr: string = 'ref'): any {
-  const frag = document.createRange().createContextualFragment(template);
+export function html3<T extends string>(html: T, attr: string = 'ref'): any {
+  const frag = document.createRange().createContextualFragment(html);
   const refs: any = { frag };
 
   for (const el of frag.querySelectorAll<HTMLElement>(`[${attr}]`)) {
