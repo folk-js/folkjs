@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Folk REPL</title>
+    <style>
+      body {
+        max-width: 700px;
+        margin: 0 auto;
+        padding: 40px;
+        font-family: Georgia, serif;
+        background: #f8f8f8;
+        line-height: 1.6;
+      }
+
+      h1 {
+        margin: 0 0 24px 0;
+        font-size: 32px;
+        font-weight: normal;
+        color: #222;
+      }
+
+      p {
+        margin: 0 0 32px 0;
+        color: #444;
+        max-width: 600px;
+      }
+
+      h3 {
+        margin: 32px 0 16px 0;
+        color: #222;
+        font-weight: normal;
+      }
+
+      folk-repl {
+        display: block;
+        margin: 32px 0;
+      }
+
+      ul {
+        margin: 16px 0 32px 0;
+        padding-left: 20px;
+      }
+
+      li {
+        margin-bottom: 8px;
+        color: #444;
+      }
+
+      code {
+        background: #fff;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: monospace;
+        border: 1px solid #ddd;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Folk REPL</h1>
+
+    <p>
+      An interactive JavaScript console that executes code and displays results using a visual object inspector. Type
+      JavaScript expressions and press Enter to evaluate them. Use Shift+Enter to add new lines without executing.
+    </p>
+
+    <folk-repl></folk-repl>
+
+    <h3>Example expressions to try</h3>
+    <ul>
+      <li><code>Math.PI</code> - Simple number</li>
+      <li><code>[1, 2, 3, 4, 5]</code> - Array</li>
+      <li><code>{ name: 'Alice', age: 30, hobbies: ['reading', 'coding'] }</code> - Object</li>
+      <li><code>document.querySelector('h1')</code> - DOM element</li>
+      <li><code>new Date()</code> - Date object</li>
+      <li><code>fetch</code> - Function object</li>
+      <li><code>navigator.userAgent</code> - String</li>
+      <li><code>window.location</code> - Complex object</li>
+      <li><code>Array.from({length: 5}, (_, i) => i * i)</code> - Generated array</li>
+      <li><code>document.querySelectorAll('*')</code> - NodeList</li>
+    </ul>
+
+    <script type="module">
+      import '@folkjs/labs/folk-repl';
+    </script>
+  </body>
+</html>

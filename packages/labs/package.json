@@ -96,6 +96,7 @@
     "codemirror": "^6.0.1",
     "eventemitter3": "^5.0.1",
     "gun": "^0.2020.1240",
+    "inspector-elements": "^0.1.0",
     "leaflet": "^1.9.4",
     "luby-transform": "^0.2.0",
     "peerjs": "^1.5.4",

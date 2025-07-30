@@ -102,9 +102,40 @@ type InferRefs<T extends string, Attr extends string> = {
 
 type Expand<T> = T extends infer O ? { [K in keyof O]: O[K] } : never;
 
-// Function overloads
 export function html3<T extends string>(template: T): Expand<InferRefs<T, 'ref'>>;
 export function html3<T extends string, A extends string>(template: T, attr: A): Expand<InferRefs<T, A>>;
+/**
+ * Creates a DocumentFragment from an HTML string and extracts element references.
+ * It collects references to elements that have a specified attribute (default: 'ref'),
+ * making them easily accessible by their attribute value.
+ *
+ * @param template - The HTML template string to parse
+ * @param attr - The attribute name to use for element references (defaults to 'ref')
+ * @returns An object containing the DocumentFragment and references to marked elements
+ *
+ * @example
+ * ```typescript
+ * const { frag, myButton, myInput } = html3(`
+ *   <div>
+ *     <button ref="myButton">Click me</button>
+ *     <input ref="myInput" type="text" />
+ *   </div>
+ * `);
+ *
+ * // myButton is typed as HTMLButtonElement
+ * // myInput is typed as HTMLInputElement
+ * ```
+ *
+ * @example Using a custom attribute name
+ * ```typescript
+ * const { frag, header, content } = html3(`
+ *   <div>
+ *     <h1 data-ref="header">Title</h1>
+ *     <p data-ref="content">Content</p>
+ *   </div>
+ * `, 'data-ref');
+ * ```
+ */
 export function html3<T extends string>(template: T, attr: string = 'ref'): any {
   const frag = document.createRange().createContextualFragment(template);
   const refs: any = { frag };
