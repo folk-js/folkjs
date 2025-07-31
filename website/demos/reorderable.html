@@ -240,11 +240,10 @@
     <h1>Reorderable Lists with moveBefore</h1>
 
     <p>
-      Drag items to reorder them using the new
+      Drag items to reorder them using the experimental
       <a href="https://developer.mozilla.org/en-US/docs/Web/API/Document/moveBefore">moveBefore</a> API. Unlike
-      traditional drag-and-drop libraries that clone elements or manipulate their innerHTML, this uses the native
-      <code>moveBefore()</code> API to physically relocate DOM nodes. This preserves all element state: form values,
-      video playback position, event listeners, and complex nested structures.
+      traditional drag-and-drop libraries that clone elements or manipulate their innerHTML, this directly relocates DOM
+      nodes and preserves all element state: form values, video playback position, event listeners, and child elements.
     </p>
 
     <h3>Research outline</h3>
