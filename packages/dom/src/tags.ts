@@ -21,7 +21,7 @@ export function uhtml(strings: TemplateStringsArray, ...values: any[]): HTMLElem
 export const glsl = String.raw;
 
 // Some websites with strict CSP require trusted types for using DOM APIS prone to XSS
-const policy = (window as any)?.trustedTypes?.createPolicy('folkjs', {
+const policy = window.trustedTypes?.createPolicy('folkjs', {
   createHTML: (s: string) => s,
 });
 
@@ -137,7 +137,10 @@ export function html3<T extends string, A extends string>(template: T, attr: A):
  * ```
  */
 export function html3<T extends string>(html: T, attr: string = 'ref'): any {
-  const frag = document.createRange().createContextualFragment(html);
+  // For whatever reason @types/trusted-types doesn't update DOM APIs to accept TrustedHTML
+  const frag = document
+    .createRange()
+    .createContextualFragment(policy ? (policy.createHTML(html) as unknown as string) : html);
   const refs: any = { frag };
 
   for (const el of frag.querySelectorAll<HTMLElement>(`[${attr}]`)) {

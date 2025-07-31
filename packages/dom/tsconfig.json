@@ -5,7 +5,8 @@
     "rootDir": "src",
     "outDir": "dist",
     "declaration": true,
-    "rewriteRelativeImportExtensions": true
+    "rewriteRelativeImportExtensions": true,
+    "types": ["@types/trusted-types"]
   },
   "include": ["src/"]
 }
