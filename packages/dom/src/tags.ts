@@ -81,7 +81,7 @@ export function html<T extends string, A extends string>(template: T, attr: A): 
  *
  * @example
  * ```typescript
- * const { frag, myButton, myInput } = html3(`
+ * const { frag, myButton, myInput } = html(`
  *   <div>
  *     <button ref="myButton">Click me</button>
  *     <input ref="myInput" type="text" />

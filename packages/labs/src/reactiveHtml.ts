@@ -1,5 +1,3 @@
-import { html3 } from '@folkjs/dom/tags';
-
 let watcherStack: (() => void)[] = [];
 
 export function reactive<T extends object>(obj: T): T {

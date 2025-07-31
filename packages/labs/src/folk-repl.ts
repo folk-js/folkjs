@@ -1,5 +1,5 @@
 import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
-import { html3 } from '@folkjs/dom/tags';
+import { html } from '@folkjs/dom/tags';
 import 'inspector-elements';
 
 declare global {
@@ -84,7 +84,7 @@ export class FolkRepl extends ReactiveElement {
   }
 
   #createInput = () => {
-    return html3(
+    return html(
       `<div class="input-line"><span class="prompt">❯</span><code ref="input" contenteditable="true" data-placeholder="Enter JavaScript code..."></code></div>`,
     );
   };
@@ -149,10 +149,10 @@ export class FolkRepl extends ReactiveElement {
 
     // Add result
     if (error) {
-      const { frag } = html3(`<div class="result"><div class="error">${error}</div></div>`);
+      const { frag } = html(`<div class="result"><div class="error">${error}</div></div>`);
       this.shadowRoot!.appendChild(frag);
     } else {
-      const { frag, inspector } = html3(
+      const { frag, inspector } = html(
         `<div class="result"><ix-object-inspector ref="inspector"></ix-object-inspector></div>`,
       );
       (inspector as any).data = result;
