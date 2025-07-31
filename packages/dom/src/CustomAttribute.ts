@@ -55,6 +55,9 @@ export class CustomAttributeRegistry {
   #elementMap = new WeakMap<Element, Map<string, CustomAttribute>>();
 
   #observer: MutationObserver = new MutationObserver((mutations) => {
+    // Track nodes we've already handled as moves to avoid double-processing
+    const handledMoveNodes = new Set<Node>();
+
     mutations.forEach((m: MutationRecord) => {
       if (m.type === 'attributes') {
         if (this.#attrMap.has(m.attributeName!)) {
@@ -63,20 +66,41 @@ export class CustomAttributeRegistry {
       } else {
         const addNodes = new Set(m.addedNodes);
         const removedNodes = new Set(m.removedNodes);
+
+        // Legacy Chrome: moveBefore operations show nodes in both addedNodes and removedNodes
+        // within the same mutation record
         const movedNodes = addNodes.intersection(removedNodes);
 
         movedNodes.forEach((node) => {
           addNodes.delete(node);
           removedNodes.delete(node);
+          handledMoveNodes.add(node);
         });
 
+        // New Chrome: moveBefore operations create separate mutation records for removal and addition.
+        // Check if removed nodes are still connected to detect moves.
         removedNodes.forEach((node) => {
           if (!isNodeAnElement(node)) return;
 
-          this.#elementMap.get(node)?.forEach((inst) => inst.disconnectedCallback?.());
-          this.#elementMap.delete(node);
+          if (node.isConnected) {
+            // Node is removed but still connected - this indicates a moveBefore operation
+            handledMoveNodes.add(node); // Mark as handled to avoid double-processing
+            this.#elementMap.get(node)?.forEach((inst) => {
+              if (inst.connectedMoveCallback !== undefined) {
+                inst.connectedMoveCallback();
+              } else {
+                inst.disconnectedCallback?.();
+                inst.connectedCallback?.();
+              }
+            });
+          } else {
+            // True removal - node is actually disconnected
+            this.#elementMap.get(node)?.forEach((inst) => inst.disconnectedCallback?.());
+            this.#elementMap.delete(node);
+          }
         });
 
+        // Handle legacy moved nodes (older Chrome versions)
         movedNodes.forEach((node) => {
           if (!isNodeAnElement(node)) return;
 
@@ -90,8 +114,10 @@ export class CustomAttributeRegistry {
           });
         });
 
+        // Handle newly added nodes - skip nodes already processed as moves
         addNodes.forEach((node) => {
           if (!isNodeAnElement(node)) return;
+          if (handledMoveNodes.has(node)) return; // Skip moved nodes
 
           for (const attr of node.attributes) {
             if (this.#getConstructor(attr.name)) this.#handleChange(attr.name, node, null);

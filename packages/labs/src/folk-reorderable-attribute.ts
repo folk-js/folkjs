@@ -1,5 +1,6 @@
 import { canIUseMoveBefore } from '@folkjs/dom/CanIUse';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
+import { css } from '@folkjs/dom/tags';
 
 // Type declaration for the experimental moveBefore API
 declare global {
@@ -11,10 +12,8 @@ declare global {
 export class FolkReorderableAttribute extends CustomAttribute<HTMLElement> {
   static override attributeName = 'folk-reorderable';
 
-  static styles = new CSSStyleSheet();
-
   static {
-    this.styles.replaceSync(`
+    document.adoptedStyleSheets.push(css`
       [folk-reorderable] {
         --drag-x: 0px;
         --drag-y: 0px;
@@ -23,16 +22,14 @@ export class FolkReorderableAttribute extends CustomAttribute<HTMLElement> {
         /* Fallback transform for when no custom CSS is provided */
         transform: translate(var(--drag-x), var(--drag-y));
       }
-      
-      [folk-reorderable][aria-grabbed="true"] {
+
+      [folk-reorderable][aria-grabbed='true'] {
         position: relative;
         z-index: 999999;
         transition: none;
         cursor: grabbing;
       }
     `);
-
-    document.adoptedStyleSheets.push(this.styles);
   }
 
   #container: HTMLElement | null = null;
