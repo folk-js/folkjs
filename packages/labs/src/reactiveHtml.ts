@@ -48,90 +48,120 @@ export function watch(getter: () => any, cb: (v: any) => void) {
 }
 
 export function reactiveHTML(strings: TemplateStringsArray, ...values: any[]) {
-  // Build HTML with hole sentinels
-  let html = '';
-  for (let i = 0; i < strings.length; i++) {
-    html += strings[i];
-    if (i < values.length) {
-      html += `__HOLE_${i}__`;
+  // Pass 1: Build HTML with holes, but track which holes are reactive
+  const reactiveHoles = new Set<number>();
+
+  let html = strings[0];
+  for (let i = 0; i < values.length; i++) {
+    html += `__HOLE_${i}__${strings[i + 1]}`;
+
+    if (typeof values[i] === 'function') {
+      reactiveHoles.add(i);
     }
   }
 
-  // Parse into a real DOM fragment
+  // Parse the HTML
   const frag = document.createRange().createContextualFragment(html);
   const refs: any = { frag };
 
-  // Handle refs (like html3)
-  for (const el of frag.querySelectorAll<HTMLElement>(`[ref]`)) {
-    const attrName = el.getAttribute('ref')!;
-    refs[attrName] = el;
+  // Extract refs
+  frag.querySelectorAll('[ref]').forEach((el) => {
+    refs[el.getAttribute('ref')!] = el;
     el.removeAttribute('ref');
-  }
+  });
 
-  // Handle attributes with holes
-  for (const el of frag.querySelectorAll<HTMLElement>('*')) {
-    for (const attr of Array.from(el.attributes)) {
-      const regex = /__HOLE_(\d+)__/g;
-      let match: RegExpExecArray | null;
-      let dynamic = false;
+  // Pass 2: Process holes, but with cleaner logic knowing which are reactive
 
-      while ((match = regex.exec(attr.value))) {
-        const holeIndex = parseInt(match[1], 10);
-        const val = values[holeIndex];
+  // Handle attributes
+  frag.querySelectorAll('*').forEach((el) => {
+    Array.from(el.attributes).forEach((attr) => {
+      if (!attr.value.includes('__HOLE_')) return;
 
-        if (typeof val === 'function') {
-          dynamic = true;
-          if (attr.name.startsWith('on')) {
-            const eventName = attr.name.slice(2);
-            el.addEventListener(eventName, val as EventListener);
-            el.removeAttribute(attr.name);
-          } else {
-            watch(
-              () => val(),
-              (v: any) => {
-                const newVal = attr.value.replace(regex, String(v ?? ''));
-                if (v == null) el.removeAttribute(attr.name);
-                else el.setAttribute(attr.name, newVal);
-              },
-            );
-          }
-        } else {
-          attr.value = attr.value.replace(match[0], String(val));
+      const holeRegex = /__HOLE_(\d+)__/g;
+      const matches = [...attr.value.matchAll(holeRegex)];
+      const hasReactive = matches.some((m) => reactiveHoles.has(parseInt(m[1], 10)));
+
+      // Handle pure event handlers
+      if (attr.name.startsWith('on') && matches.length === 1 && attr.value === matches[0][0]) {
+        const holeIndex = parseInt(matches[0][1], 10);
+        if (reactiveHoles.has(holeIndex)) {
+          el.addEventListener(attr.name.slice(2), values[holeIndex] as EventListener);
+          el.removeAttribute(attr.name);
+          return;
         }
       }
 
-      if (!dynamic && attr.value.includes('__HOLE_')) {
-        // Clean up unmatched holes if any remain
-        attr.value = attr.value.replace(/__HOLE_\d+__/g, '');
+      if (hasReactive) {
+        // Set up reactive attribute
+        watch(
+          () => {
+            let result = attr.value;
+            matches.forEach((match) => {
+              const holeIndex = parseInt(match[1], 10);
+              const val = values[holeIndex];
+              const resolved = typeof val === 'function' ? val() : val;
+              result = result.replace(match[0], String(resolved ?? ''));
+            });
+            return result;
+          },
+          (newVal) => {
+            if (newVal === '' || newVal === 'null' || newVal === 'undefined') {
+              el.removeAttribute(attr.name);
+            } else {
+              el.setAttribute(attr.name, newVal);
+            }
+          },
+        );
+      } else {
+        // All static - resolve immediately
+        let result = attr.value;
+        matches.forEach((match) => {
+          const holeIndex = parseInt(match[1], 10);
+          result = result.replace(match[0], String(values[holeIndex] ?? ''));
+        });
+        el.setAttribute(attr.name, result);
       }
-    }
-  }
+    });
+  });
 
-  // Handle text nodes with holes
+  // Handle text nodes
   const walker = document.createTreeWalker(frag, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const textNode = walker.currentNode as Text;
-    const regex = /__HOLE_(\d+)__/g;
-    let match: RegExpExecArray | null;
+    const nodeValue = textNode.nodeValue || '';
+    if (!nodeValue.includes('__HOLE_')) continue;
 
-    if (!regex.test(textNode.nodeValue || '')) continue;
-    const original = textNode.nodeValue!;
+    const holeRegex = /__HOLE_(\d+)__/g;
+    const matches = [...nodeValue.matchAll(holeRegex)];
+    const hasReactive = matches.some((m) => reactiveHoles.has(parseInt(m[1], 10)));
 
-    watch(
-      () => {
-        let output = original;
-        regex.lastIndex = 0;
-        while ((match = regex.exec(original))) {
-          const holeIndex = parseInt(match[1], 10);
-          const val = values[holeIndex];
-          output = output.replace(match[0], String(typeof val === 'function' ? val() : (val ?? '')));
-        }
-        return output;
-      },
-      (v) => {
-        textNode.nodeValue = v;
-      },
-    );
+    if (hasReactive) {
+      // Set up reactive text
+      const original = nodeValue;
+      watch(
+        () => {
+          let result = original;
+          matches.forEach((match) => {
+            const holeIndex = parseInt(match[1], 10);
+            const val = values[holeIndex];
+            const resolved = typeof val === 'function' ? val() : val;
+            result = result.replace(match[0], String(resolved ?? ''));
+          });
+          return result;
+        },
+        (newText) => {
+          textNode.nodeValue = newText;
+        },
+      );
+    } else {
+      // All static - resolve immediately
+      let result = nodeValue;
+      matches.forEach((match) => {
+        const holeIndex = parseInt(match[1], 10);
+        result = result.replace(match[0], String(values[holeIndex] ?? ''));
+      });
+      textNode.nodeValue = result;
+    }
   }
 
   return refs;
@@ -154,83 +184,28 @@ export class MyCounter extends HTMLElement {
   }
 }
 
-customElements.define('my-counter', MyCounter);
-
 export class MyCounterReactive extends HTMLElement {
   state = reactive({ count: 0, step: 1 });
 
   connectedCallback() {
     const { frag } = reactiveHTML`
-      <div>
-        <h1>Count: ${() => this.state.count}</h1>
-        <p>Double: ${() => this.state.count * 2}</p>
-        <p>Status: ${() => (this.state.count % 2 === 0 ? 'Even' : 'Odd')}</p>
-        <button onclick=${() => (this.state.count += this.state.step)}>+${() => this.state.step}</button>
-        <button onclick=${() => (this.state.count -= this.state.step)}>- ${() => this.state.step}</button>
-        <button onclick=${() => (this.state.count = 0)} >Reset</button>
-        <label>
-          Step:
-          <input type="number" value=${() => this.state.step}
-                 oninput=${(e: Event) => (this.state.step = parseInt((e.target as HTMLInputElement).value) || 1)} />
-        </label>
-      </div>
+    <div>
+    <h1>Count: ${() => this.state.count}</h1>
+    <p>Double: ${() => this.state.count * 2}</p>
+    <p>Status: ${() => (this.state.count % 2 === 0 ? 'Even' : 'Odd')}</p>
+    <button onclick=${() => (this.state.count += this.state.step)}>+${() => this.state.step}</button>
+    <button onclick=${() => (this.state.count -= this.state.step)}>- ${() => this.state.step}</button>
+    <button onclick=${() => (this.state.count = 0)} >Reset</button>
+    <label>
+    Step:
+    <input type="number" value=${() => this.state.step}
+    oninput=${(e: Event) => (this.state.step = parseInt((e.target as HTMLInputElement).value) || 1)} />
+    </label>
+    </div>
     `;
 
     this.attachShadow({ mode: 'open' }).appendChild(frag);
   }
 }
-
-export class MyCounterHtml3 extends HTMLElement {
-  state = { count: 0, step: 1 };
-
-  connectedCallback() {
-    const { frag, countText, doubleText, statusText, incBtn, decBtn, resetBtn, stepInput } = html3(`
-      <div>
-        <h1 ref="countText"></h1>
-        <p ref="doubleText"></p>
-        <p ref="statusText"></p>
-        <button ref="incBtn"></button>
-        <button ref="decBtn"></button>
-        <button ref="resetBtn">Reset</button>
-        <label>
-          Step:
-          <input ref="stepInput" type="number" />
-        </label>
-      </div>
-    `);
-
-    this.attachShadow({ mode: 'open' }).appendChild(frag);
-
-    const updateUI = () => {
-      countText.textContent = `Count: ${this.state.count}`;
-      doubleText.textContent = `Double: ${this.state.count * 2}`;
-      statusText.textContent = `Status: ${this.state.count % 2 === 0 ? 'Even' : 'Odd'}`;
-      incBtn.textContent = `+${this.state.step}`;
-      decBtn.textContent = `-${this.state.step}`;
-      stepInput.value = String(this.state.step);
-    };
-
-    updateUI();
-
-    incBtn.addEventListener('click', () => {
-      this.state.count += this.state.step;
-      updateUI();
-    });
-
-    decBtn.addEventListener('click', () => {
-      this.state.count -= this.state.step;
-      updateUI();
-    });
-
-    resetBtn.addEventListener('click', () => {
-      this.state.count = 0;
-      updateUI();
-    });
-
-    stepInput.addEventListener('input', (e: Event) => {
-      const val = parseInt((e.target as HTMLInputElement).value) || 1;
-      this.state.step = val;
-      updateUI();
-    });
-  }
-}
+customElements.define('my-counter', MyCounter);
+customElements.define('my-counter-2', MyCounterReactive);
