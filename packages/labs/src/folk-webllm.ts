@@ -1,4 +1,5 @@
 import { canIUseWebGPU } from '@folkjs/dom/CanIUse';
+import { html } from '@folkjs/dom/tags';
 import { CreateMLCEngine, prebuiltAppConfig } from '@mlc-ai/web-llm';
 
 export type RolePrompt = {
@@ -40,7 +41,8 @@ export class FolkWebLLM extends HTMLElement {
     super();
 
     this.attachShadow({ mode: 'open' });
-    this.shadowRoot!.innerHTML = `
+
+    const { frag, output, progressBar, status, modelControls } = html(`
       <style>
         :host {
           display: block;
@@ -138,19 +140,22 @@ export class FolkWebLLM extends HTMLElement {
         }
       </style>
       <div class="controls">
-        <div class="status" id="status">Initializing...</div>
+        <div class="status" ref="status">Initializing...</div>
         <div class="progress">
-          <div class="progress-bar" id="progress-bar"></div>
+          <div class="progress-bar" ref="progressBar"></div>
         </div>
-        <div id="model-controls"></div>
+        <div ref="modelControls"></div>
       </div>
-      <div class="output" id="output"></div>
-    `;
+      <div class="output" ref="output"></div>
+    `);
 
-    this.outputEl = this.shadowRoot!.querySelector('#output') as HTMLElement;
-    this.progressBar = this.shadowRoot!.querySelector('#progress-bar') as HTMLElement;
-    this.statusEl = this.shadowRoot!.querySelector('#status') as HTMLElement;
-    this.controlsEl = this.shadowRoot!.querySelector('#model-controls') as HTMLElement;
+    this.shadowRoot!.appendChild(frag);
+
+    // Store typed element references
+    this.outputEl = output;
+    this.progressBar = progressBar;
+    this.statusEl = status;
+    this.controlsEl = modelControls;
   }
 
   connectedCallback() {
@@ -254,26 +259,23 @@ export class FolkWebLLM extends HTMLElement {
   }
 
   showModelSelector(models: string[]) {
-    this.controlsEl.innerHTML = `
-      <select class="model-select" id="model-select" title="Select a model to load">
+    const { frag, modelSelect, loadBtn } = html(`
+      <select class="model-select" ref="modelSelect" title="Select a model to load">
         ${models.map((model) => `<option value="${model}">${model}</option>`).join('')}
       </select>
-      <button class="load-btn" id="load-model-btn">Load</button>
-    `;
+      <button class="load-btn" ref="loadBtn">Load</button>
+    `);
 
-    const loadBtn = this.shadowRoot!.querySelector('#load-model-btn');
-    if (loadBtn) {
-      loadBtn.addEventListener('click', () => {
-        const selectEl = this.shadowRoot!.querySelector('#model-select') as HTMLSelectElement;
-        if (selectEl) {
-          const selectedModel = selectEl.value;
-          this.initializeModel(selectedModel);
+    this.controlsEl.innerHTML = '';
+    this.controlsEl.appendChild(frag);
 
-          this._model = selectedModel;
-          this.setAttribute('model', selectedModel);
-        }
-      });
-    }
+    loadBtn.addEventListener('click', () => {
+      const selectedModel = modelSelect.value;
+      this.initializeModel(selectedModel);
+
+      this._model = selectedModel;
+      this.setAttribute('model', selectedModel);
+    });
   }
 
   async initializeModel(modelId: string) {

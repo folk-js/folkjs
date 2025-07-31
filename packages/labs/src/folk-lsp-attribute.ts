@@ -1,5 +1,5 @@
 import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
-import { css } from '@folkjs/dom/tags';
+import { css, html } from '@folkjs/dom/tags';
 import {
   CompletionRequest,
   Diagnostic,
@@ -13,33 +13,11 @@ import {
   type CompletionList,
 } from 'vscode-languageserver-protocol';
 import { LanguageClient } from './lsp/LanguageClient';
+import { RefID } from './utils/ref-id';
 
 // Valid LSP languages
 export const VALID_LSP_LANGUAGES = ['js', 'ts', 'json', 'css'] as const;
 export type LSPLanguage = (typeof VALID_LSP_LANGUAGES)[number];
-
-// Primitive for generating unique reference-based IDs
-class RefID {
-  static #refs = new WeakMap();
-  static #counter = 0;
-
-  static get(obj: object) {
-    if (!this.#refs.has(obj)) {
-      this.#refs.set(obj, this.#toLetters(this.#counter++));
-    }
-    return this.#refs.get(obj);
-  }
-
-  static #toLetters(num: number) {
-    let result = '';
-    while (num >= 0) {
-      result = String.fromCharCode(97 + (num % 26)) + result;
-      num = Math.floor(num / 26) - 1;
-      if (num < 0) break;
-    }
-    return result;
-  }
-}
 
 // TODOs
 // incremental updates
@@ -523,9 +501,9 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
 
   #showTooltip(diagnostics: Diagnostic[], range: Range) {
     if (!this.#tooltip) {
-      this.#tooltip = document.createElement('div');
-      this.#tooltip.className = 'folk-lsp-tooltip';
-      document.body.appendChild(this.#tooltip);
+      const { frag, tooltip } = html(`<div class="folk-lsp-tooltip" ref="tooltip"></div>`);
+      document.body.appendChild(frag);
+      this.#tooltip = tooltip;
     }
 
     // Reset tooltip class
@@ -698,9 +676,9 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
     if (this.#completionItems.length === 0) return;
 
     if (!this.#completionDropdown) {
-      this.#completionDropdown = document.createElement('div');
-      this.#completionDropdown.className = 'folk-lsp-completion';
-      document.body.appendChild(this.#completionDropdown);
+      const { frag, dropdown } = html(`<div class="folk-lsp-completion" ref="dropdown"></div>`);
+      document.body.appendChild(frag);
+      this.#completionDropdown = dropdown;
     }
 
     this.#renderCompletionItems();
@@ -713,43 +691,39 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
   #renderCompletionItems() {
     if (!this.#completionDropdown) return;
 
-    const listElement = document.createElement('div');
-    listElement.className = 'folk-lsp-completion-list';
+    // Generate HTML string for all completion items
+    const completionItemsHTML = this.#completionItems
+      .map((item, index) => {
+        const kindClass = this.#getCompletionKindClass(item.kind);
+        return `
+        <div class="folk-lsp-completion-item" data-index="${index}" ref="item${index}">
+          <span class="folk-lsp-completion-kind ${kindClass}">${kindClass}</span>
+          <span class="folk-lsp-completion-item-label">${item.label}</span>
+          ${item.detail ? `<span class="folk-lsp-completion-item-detail">${item.detail}</span>` : ''}
+        </div>
+      `;
+      })
+      .join('');
 
-    this.#completionItems.forEach((item, index) => {
-      const itemElement = document.createElement('div');
-      itemElement.className = 'folk-lsp-completion-item';
-      itemElement.dataset.index = index.toString();
+    const { frag, ...itemRefs } = html(`
+      <div class="folk-lsp-completion-list">
+        ${completionItemsHTML}
+      </div>
+    `);
 
-      const kindElement = document.createElement('span');
-      const kindClass = this.#getCompletionKindClass(item.kind);
-      kindElement.className = `folk-lsp-completion-kind ${kindClass}`;
-      kindElement.textContent = kindClass;
-
-      const labelElement = document.createElement('span');
-      labelElement.className = 'folk-lsp-completion-item-label';
-      labelElement.textContent = item.label;
-
-      const detailElement = document.createElement('span');
-      detailElement.className = 'folk-lsp-completion-item-detail';
-      detailElement.textContent = item.detail || '';
-
-      itemElement.appendChild(kindElement);
-      itemElement.appendChild(labelElement);
-      if (item.detail) {
-        itemElement.appendChild(detailElement);
+    // Set up click listeners for each item using typed references
+    this.#completionItems.forEach((_, index) => {
+      const itemElement = (itemRefs as any)[`item${index}`] as HTMLElement;
+      if (itemElement) {
+        itemElement.addEventListener('click', () => {
+          this.#selectedCompletionIndex = index;
+          this.#insertSelectedCompletion();
+        });
       }
-
-      itemElement.addEventListener('click', () => {
-        this.#selectedCompletionIndex = index;
-        this.#insertSelectedCompletion();
-      });
-
-      listElement.appendChild(itemElement);
     });
 
     this.#completionDropdown.innerHTML = '';
-    this.#completionDropdown.appendChild(listElement);
+    this.#completionDropdown.appendChild(frag);
   }
 
   #positionCompletion() {
