@@ -25,44 +25,10 @@ const policy = window.trustedTypes?.createPolicy('folkjs', {
   createHTML: (s: string) => s,
 });
 
-/** A raw tagged template literal that just provides HTML syntax highlighting/LSP support. */
-export function html(strings: TemplateStringsArray, ...values: any[]) {
-  const str = String.raw(strings, values);
-  return policy ? policy.createHTML(str) : str;
-}
-
 export function css(strings: TemplateStringsArray, ...values: any[]) {
   const styles = new CSSStyleSheet();
   styles.replaceSync(String.raw(strings, ...values));
   return styles;
-}
-
-interface DOMReferences {
-  root: HTMLElement;
-  [key: string]: HTMLElement;
-}
-
-export function html2(strings: TemplateStringsArray, ...values: string[]): DOMReferences {
-  const str = strings
-    .flatMap((str, i) => {
-      if (i >= values.length) return str;
-      const value = values[i];
-      return str + value;
-    })
-    .join('');
-
-  const documentFragment = document.createRange().createContextualFragment(str);
-  if (documentFragment.firstElementChild === null) throw new Error();
-
-  const refs: DOMReferences = {
-    root: documentFragment.firstElementChild as HTMLElement,
-  };
-
-  documentFragment.querySelectorAll<HTMLElement>('[ref]').forEach((el) => {
-    refs[el.getAttribute('ref')!] = el;
-  });
-
-  return refs;
 }
 
 // Extract attribute values from HTML template
@@ -102,8 +68,8 @@ type InferRefs<T extends string, Attr extends string> = {
 
 type Expand<T> = T extends infer O ? { [K in keyof O]: O[K] } : never;
 
-export function html3<T extends string>(template: T): Expand<InferRefs<T, 'ref'>>;
-export function html3<T extends string, A extends string>(template: T, attr: A): Expand<InferRefs<T, A>>;
+export function html<T extends string>(template: T): Expand<InferRefs<T, 'ref'>>;
+export function html<T extends string, A extends string>(template: T, attr: A): Expand<InferRefs<T, A>>;
 /**
  * Creates a DocumentFragment from an HTML string and extracts element references.
  * It collects references to elements that have a specified attribute (default: 'ref'),
@@ -121,22 +87,8 @@ export function html3<T extends string, A extends string>(template: T, attr: A):
  *     <input ref="myInput" type="text" />
  *   </div>
  * `);
- *
- * // myButton is typed as HTMLButtonElement
- * // myInput is typed as HTMLInputElement
- * ```
- *
- * @example Using a custom attribute name
- * ```typescript
- * const { frag, header, content } = html3(`
- *   <div>
- *     <h1 data-ref="header">Title</h1>
- *     <p data-ref="content">Content</p>
- *   </div>
- * `, 'data-ref');
- * ```
  */
-export function html3<T extends string>(html: T, attr: string = 'ref'): any {
+export function html<T extends string>(html: T, attr: string = 'ref'): any {
   // For whatever reason @types/trusted-types doesn't update DOM APIs to accept TrustedHTML
   const frag = document
     .createRange()

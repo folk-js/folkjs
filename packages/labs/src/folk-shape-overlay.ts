@@ -1,5 +1,5 @@
 import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
-import { html, html3 } from '@folkjs/dom/tags';
+import { html } from '@folkjs/dom/tags';
 import * as S from '@folkjs/geometry/Shape2D';
 import type { Vector2 } from '@folkjs/geometry/Vector2';
 import * as V from '@folkjs/geometry/Vector2';
@@ -209,7 +209,7 @@ export class FolkShapeOverlay extends ReactiveElement {
     // prevent IOS Safari from scrolling when a shape is interacted with.
     this.addEventListener('touchmove', this, { passive: false });
 
-    const { frag, ...handles } = html3(
+    const { frag, ...handles } = html(
       `
       <button part="move-top" tabindex="-1" aria-label="Move shape from top"></button>
       <button part="move-right" tabindex="-1" aria-label="Move shape from right"></button>

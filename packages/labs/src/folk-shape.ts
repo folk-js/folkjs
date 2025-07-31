@@ -317,8 +317,7 @@ export class FolkShape extends ReactiveElement {
     // Ideally we would creating these lazily on first focus, but the resize handlers need to be around for delegate focus to work.
     // Maybe can add the first resize handler here, and lazily instantiate the rest when needed?
     // I can see it becoming important at scale
-    (root as ShadowRoot).setHTMLUnsafe(
-      html` <button part="rotation-top-left" tabindex="-1"></button>
+    const { frag } = html(`<button part="rotation-top-left" tabindex="-1"></button>
         <button part="rotation-top-right" tabindex="-1"></button>
         <button part="rotation-bottom-right" tabindex="-1"></button>
         <button part="rotation-bottom-left" tabindex="-1"></button>
@@ -326,8 +325,9 @@ export class FolkShape extends ReactiveElement {
         <button part="resize-top-right" aria-label="Resize shape from top right"></button>
         <button part="resize-bottom-right" aria-label="Resize shape from bottom right"></button>
         <button part="resize-bottom-left" aria-label="Resize shape from bottom left"></button>
-        <div><slot></slot></div>`,
-    );
+        <div><slot></slot></div>`);
+
+    root.appendChild(frag);
 
     this.#handles = Object.fromEntries(
       Array.from(root.querySelectorAll('[part]')).map((el) => [
