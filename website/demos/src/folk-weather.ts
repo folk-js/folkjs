@@ -65,10 +65,11 @@ export class FolkWeather extends HTMLElement {
       this.setHTMLUnsafe('');
       return;
     }
-    this.setHTMLUnsafe(html`
+    const { frag } = html(`
       <p>Temperature: ${this.#results.temperature}</p>
       <p>Wind Speed: ${this.#results.windSpeed}</p>
     `);
+    this.replaceChildren(frag);
   }
 }
 

@@ -235,21 +235,20 @@ export class RecordPlayer extends HTMLElement {
     const shadow = this.attachShadow({ mode: 'open' });
     shadow.adoptedStyleSheets.push(styles);
 
-    shadow.setHTMLUnsafe(
-      html` <div class="player">
-          <div class="record">
-            <div class="label"></div>
-          </div>
-          <div class="tone-arm">
-            <div class="control"></div>
-          </div>
-          <button class="btn"></button>
-          <input type="range" class="slider" min="0" max="1" step="0.01" value="1" />
-        </div>
-        <slot></slot>`,
-    );
+    const { frag, vol } = html(` <div class="player">
+      <div class="record">
+      <div class="label"></div>
+      </div>
+      <div class="tone-arm">
+      <div class="control"></div>
+      </div>
+      <button class="btn"></button>
+      <input ref="vol" type="range" class="slider" min="0" max="1" step="0.01" value="1" />
+      </div>
+      <slot></slot>`);
 
-    this.#volumeInput = shadow.querySelector('input[type="range"]')!;
+    shadow.replaceChildren(frag);
+    this.#volumeInput = vol;
     this.#volumeInput.addEventListener('input', this);
   }
 
