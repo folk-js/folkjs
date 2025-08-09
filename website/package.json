@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "wireit",
-    "live": "npx vite-node live-2025/build.ts",
+    "live": "node --experimental-strip-types live-2025/build.ts",
     "dev": "wireit",
     "dev:host": "npm run dev -- --host",
     "preview": "npm run build && vite preview"

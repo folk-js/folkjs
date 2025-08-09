@@ -2,7 +2,6 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import matter from 'gray-matter';
 import { Marked } from 'marked';
 import markedFootnote from 'marked-footnote';
-import markedKatex from 'marked-katex-extension';
 import { basename } from 'path';
 // @ts-ignore - Package doesn't have TypeScript declarations
 import { parse as parseBibtex } from '@retorquere/bibtex-parser';
