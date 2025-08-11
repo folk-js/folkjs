@@ -176,9 +176,11 @@ export class Propagator {
 
         if (key === '()') {
           statements.push(`${value};`);
-        } else if (key.endsWith('()')) {
-          const methodName = key.slice(0, -2);
-          statements.push(`if (typeof to.${methodName} === 'function' && (${value})) to.${methodName}();`);
+        } else if (key.endsWith(')')) {
+          const [methodName, args] = key.replace(')', '').split('(');
+          statements.push(
+            `console.log(to.${methodName}, typeof to.${methodName} === 'function', (${value})); if (typeof to.${methodName} === 'function' && (${value})) to.${methodName}(${args});`,
+          );
         } else {
           statements.push(`to.${key} = ${value};`);
         }

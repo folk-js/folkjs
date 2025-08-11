@@ -324,11 +324,10 @@ async function movePiece(cancellationSignal: AbortSignal, board: ChessBoard): Pr
   return piece;
 }
 
-console.log('main');
-setTimeout(async () => {
-  while (true) {
-    console.log('start');
-    await movePiece(new AbortController().signal, document.querySelector('chess-board')!);
-    console.log('done');
-  }
-}, 5000);
+// setTimeout(async () => {
+//   while (true) {
+//     console.log('start');
+//     await movePiece(new AbortController().signal, document.querySelector('chess-board')!);
+//     console.log('done');
+//   }
+// }, 1000);

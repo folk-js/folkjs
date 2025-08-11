@@ -107,7 +107,7 @@
         source="folk-shape:has(chess-board)"
         target="folk-shape:has(folk-spreadsheet)"
         trigger="move"
-        expression="to.appendRow(`'${event.target.type}'`, `'${event.target.position}'`)"
+        expression="(): to.firstElementChild.appendRow(`'${event.target.type}'`, `'${event.target.position}'`)"
       ></folk-event-propagator>
     </main>
 

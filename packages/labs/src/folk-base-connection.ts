@@ -80,7 +80,7 @@ export class FolkBaseConnection extends ReactiveElement {
       if (this.sourceElement === null) {
         this.sourceRect = null;
       } else {
-        if (changedProperties.has('source')) this.source = '';
+        // if (!changedProperties.has('source')) this.source = '';
         folkObserver.observe(this.sourceElement, this.#sourceCallback, { iframeSelector: this.#sourceIframeSelector });
       }
     }
@@ -114,7 +114,7 @@ export class FolkBaseConnection extends ReactiveElement {
       if (this.targetElement === null) {
         this.targetRect = null;
       } else {
-        if (changedProperties.has('target')) this.target = '';
+        // if (!changedProperties.has('target')) this.target = '';
         folkObserver.observe(this.targetElement, this.#targetCallback, { iframeSelector: this.#targetIframeSelector });
       }
     }
