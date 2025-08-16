@@ -568,11 +568,11 @@ export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
     }
   }
 
-  #hideTooltip() {
+  #hideTooltip = () => {
     if (this.#tooltip) {
       this.#tooltip.style.display = 'none';
     }
-  }
+  };
 
   #highlightDiagnostics(diagnostics: Diagnostic[]) {
     for (const highlight of Object.values(this.#highlights)) {
