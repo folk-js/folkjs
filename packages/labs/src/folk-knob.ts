@@ -143,14 +143,12 @@ export class FolkKnob extends ReactiveElement {
           this.recent.pop();
         }
 
-        const { min, max } = V.bounds.apply(null, this.recent);
+        const bounds = V.bounds.apply(null, this.recent);
 
-        this.recentSize = V.subtract(max, min);
-
-        const recentCenter = V.center(min, max);
+        this.recentSize = { x: bounds.width, y: bounds.height };
 
         this.time++;
-        this.activeCenter = V.lerp(this.center, recentCenter, this.time / 100);
+        this.activeCenter = V.lerp(this.center, this.recentSize, this.time / 100);
         this.computedValue += this.#computedValueIncrement();
         this.squareness = 1 - Math.abs(Math.log(this.recentSize.x / this.recentSize.y));
         this.last = this.current;

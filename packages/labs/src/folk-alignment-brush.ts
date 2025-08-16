@@ -203,7 +203,7 @@ export class FolkAlignmentBrush extends FolkBaseSet {
     // Calculate axis based on shape distribution
     const centers = Array.from(shapes).map((shape) => shape.getTransformDOMRect().center);
     const bounds = V.bounds(...centers);
-    const isHorizontal = bounds.max.x - bounds.min.x > bounds.max.y - bounds.min.y;
+    const isHorizontal = bounds.width > bounds.height;
     const center = V.center(...centers);
 
     const positions = this.#calculateLinePoints(shapes, isHorizontal, center);
@@ -435,7 +435,7 @@ export class FolkAlignmentBrush extends FolkBaseSet {
     if (this.#isPointerDown && this.#selectedShapes.size >= 2) {
       const centers = Array.from(this.#selectedShapes).map((shape) => shape.getTransformDOMRect().center);
       const bounds = V.bounds(...centers);
-      const isHorizontal = bounds.max.x - bounds.min.x > bounds.max.y - bounds.min.y;
+      const isHorizontal = bounds.width > bounds.height;
       const center = V.center(...centers);
 
       const positions = this.#calculateLinePoints(this.#selectedShapes, isHorizontal, center);
@@ -473,7 +473,7 @@ export class FolkAlignmentBrush extends FolkBaseSet {
   #determineAlignment(shapes: Set<FolkShape>): boolean {
     const centers = Array.from(shapes).map((shape) => shape.getTransformDOMRect().center);
     const bounds = V.bounds(...centers);
-    return bounds.max.x - bounds.min.x > bounds.max.y - bounds.min.y;
+    return bounds.width > bounds.height;
   }
 
   #mergeIntoAlignment(alignment: AlignmentLine, newShapes: Set<FolkShape>) {

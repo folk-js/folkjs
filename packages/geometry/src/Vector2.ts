@@ -1,3 +1,4 @@
+import * as R from './Rect2D.ts';
 import { atan2, cos, hypot, PI, sin } from './utilities.ts';
 
 export type Vector2 = {
@@ -286,20 +287,14 @@ export function magSquared(v: Vector2Readonly): number {
  * @param {Vector2[]} Vector2s - Array of Vector2s to find bounds for
  * @returns Object containing min and max Vector2s of the bounds
  */
-export function bounds(...vectors: Vector2Readonly[]): { min: Vector2; max: Vector2 } {
-  const x = vectors.map((v) => v.x);
-  const y = vectors.map((v) => v.y);
+export function bounds(...vectors: Vector2Readonly[]): R.Rect2D {
+  const xs = vectors.map((v) => v.x);
+  const ys = vectors.map((v) => v.y);
 
-  return {
-    min: {
-      x: Math.min.apply(null, x),
-      y: Math.min.apply(null, y),
-    },
-    max: {
-      x: Math.max.apply(null, x),
-      y: Math.max.apply(null, y),
-    },
-  };
+  const x = Math.min.apply(null, xs);
+  const y = Math.min.apply(null, ys);
+
+  return R.fromValues(x, y, Math.max.apply(null, xs) - x, Math.max.apply(null, ys) - y);
 }
 
 /**
@@ -308,11 +303,8 @@ export function bounds(...vectors: Vector2Readonly[]): { min: Vector2; max: Vect
  * @returns The center Vector2
  */
 export function center(...vectors: Vector2Readonly[]): Vector2 {
-  const { min, max } = bounds.apply(null, vectors);
-  return {
-    x: (min.x + max.x) / 2,
-    y: (min.y + max.y) / 2,
-  };
+  const rect = bounds.apply(null, vectors);
+  return R.center(rect);
 }
 
 /**

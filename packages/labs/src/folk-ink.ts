@@ -1,10 +1,9 @@
 import { getSvgPathFromStroke } from '@folkjs/canvas';
 import { ReactiveElement, css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { bounds, type Point } from '@folkjs/geometry/Vector2';
 import { getStroke, type StrokeOptions } from 'perfect-freehand';
 
-export type Point = [x: number, y: number, pressure: number];
-
-export type Stroke = number[][];
+export type StrokePoint = Point & { pressure?: number };
 
 // TODO: look into any-pointer media queries to tell if the user has a mouse or touch screen
 // https://developer.mozilla.org/en-US/docs/Web/CSS/@media/any-pointer
@@ -45,7 +44,7 @@ export class FolkInk extends ReactiveElement {
 
   @property({ type: Boolean, reflect: true }) simulatePressure = true;
 
-  @property({ type: Array }) points: Point[] = [];
+  @property({ type: Array, reflect: true }) points: StrokePoint[] = [];
 
   #internals = this.attachInternals();
   #svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -58,6 +57,7 @@ export class FolkInk extends ReactiveElement {
     this.#svg.appendChild(this.#path);
 
     root.appendChild(this.#svg);
+
     return root;
   }
 
@@ -76,7 +76,7 @@ export class FolkInk extends ReactiveElement {
     return this.#tracingPromise.promise;
   }
 
-  addPoint(point: Point) {
+  addPoint(point: StrokePoint) {
     this.points.push(point);
     this.requestUpdate('points');
   }
@@ -95,7 +95,11 @@ export class FolkInk extends ReactiveElement {
         return;
       }
       case 'pointermove': {
-        this.addPoint([event.offsetX, event.offsetY, event.pressure]);
+        this.addPoint({
+          x: event.offsetX,
+          y: event.offsetY,
+          pressure: event.pressure,
+        });
         return;
       }
       case 'lostpointercapture': {
@@ -112,6 +116,10 @@ export class FolkInk extends ReactiveElement {
 
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
+
+    const b = bounds.apply(null, this.points);
+    console.log(`${b.x} ${b.y} ${b.width} ${b.height}`);
+    this.#svg.setAttribute('viewBox', `${b.x} ${b.y} ${b.width} ${b.height}`);
 
     const options: StrokeOptions = {
       size: this.size,
