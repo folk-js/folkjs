@@ -395,7 +395,7 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
         this.#shape.x = el.offsetLeft;
         this.#shape.y = el.offsetTop;
       }
-      this.ownerElement.appendChild(this.#shapeOverlay);
+      document.documentElement.appendChild(this.#shapeOverlay);
       this.#shapeOverlay.open(this, this.ownerElement as HTMLElement);
     } else if (event.type === 'blur' && event.relatedTarget !== this.#shapeOverlay) {
       this.#shapeOverlay.close();
