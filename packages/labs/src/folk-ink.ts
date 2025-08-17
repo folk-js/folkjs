@@ -1,7 +1,7 @@
-import { getSvgPathFromStroke } from '@folkjs/canvas';
 import { ReactiveElement, css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import { bounds, type Point } from '@folkjs/geometry/Vector2';
-import { getStroke, type StrokeOptions } from 'perfect-freehand';
+import { toCSSShape } from '@folkjs/geometry/Path2D';
+import { type Point } from '@folkjs/geometry/Vector2';
+import { getStroke } from 'perfect-freehand';
 
 export type StrokePoint = Point & { pressure?: number };
 
@@ -19,7 +19,7 @@ export class FolkInk extends ReactiveElement {
 
   static override styles = css`
     :host,
-    svg {
+    div {
       display: block;
       height: 100%;
       width: 100%;
@@ -27,10 +27,8 @@ export class FolkInk extends ReactiveElement {
       pointer-events: none;
     }
 
-    :host(:state(drawing)) {
-      position: fixed;
-      inset: 0 0 0 0;
-      cursor: var(--tracing-cursor, crosshair);
+    div {
+      background-color: black;
     }
   `;
 
@@ -46,23 +44,15 @@ export class FolkInk extends ReactiveElement {
 
   @property({ type: Array, reflect: true }) points: StrokePoint[] = [];
 
-  #internals = this.attachInternals();
-  #svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  #path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  #div = document.createElement('div');
   #tracingPromise: PromiseWithResolvers<void> | null = null;
 
   override createRenderRoot() {
     const root = super.createRenderRoot();
 
-    this.#svg.appendChild(this.#path);
-
-    root.appendChild(this.#svg);
+    root.appendChild(this.#div);
 
     return root;
-  }
-
-  getPathBox() {
-    return this.#path.getBBox();
   }
 
   // TODO: cancel trace?
@@ -91,7 +81,6 @@ export class FolkInk extends ReactiveElement {
         this.addEventListener('lostpointercapture', this);
         this.addEventListener('pointermove', this);
         this.setPointerCapture(event.pointerId);
-        this.#internals.states.add('drawing');
         return;
       }
       case 'pointermove': {
@@ -106,7 +95,6 @@ export class FolkInk extends ReactiveElement {
         this.removeEventListener('pointerdown', this);
         this.removeEventListener('pointermove', this);
         this.removeEventListener('lostpointercapture', this);
-        this.#internals.states.delete('drawing');
         this.#tracingPromise?.resolve();
         this.#tracingPromise = null;
         return;
@@ -117,11 +105,15 @@ export class FolkInk extends ReactiveElement {
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
 
-    const b = bounds.apply(null, this.points);
-    console.log(`${b.x} ${b.y} ${b.width} ${b.height}`);
-    this.#svg.setAttribute('viewBox', `${b.x} ${b.y} ${b.width} ${b.height}`);
+    if (this.points.length < 4) {
+      this.#div.style.clipPath = '';
+      this.#div.style.display = 'none';
+      return;
+    }
 
-    const options: StrokeOptions = {
+    this.#div.style.display = '';
+
+    const vertices = getStroke(this.points, {
       size: this.size,
       thinning: this.thinning,
       smoothing: this.smoothing,
@@ -139,7 +131,10 @@ export class FolkInk extends ReactiveElement {
         easing: (t) => t,
         cap: true,
       },
-    };
-    this.#path.setAttribute('d', getSvgPathFromStroke(getStroke(this.points, options)));
+    }).map(([x, y]) => ({ x, y }));
+
+    const path = { closed: true, vertices };
+    console.log(toCSSShape(path));
+    this.#div.style.clipPath = toCSSShape(path);
   }
 }

@@ -5,18 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ink</title>
     <style>
-      html {
+      html body {
         height: 100%;
-      }
-
-      body {
-        min-height: 100%;
-        position: relative;
         margin: 0;
       }
 
       button {
         margin: 0.5rem;
+      }
+
+      folk-ink {
+        position: absolute;
+        inset: 0;
       }
     </style>
   </head>
@@ -40,18 +40,16 @@
         document.body.appendChild(ink);
 
         await ink.draw(e);
-        const rect = ink.getPathBox();
+        // const rect = ink.getPathBox();
 
-        ink.points = ink.points.map(([x, y, p]) => [x - rect.x, y - rect.y, p]);
+        // const geometry = document.createElement('folk-shape');
+        // geometry.x = rect.x;
+        // geometry.y = rect.y;
+        // geometry.height = rect.height;
+        // geometry.width = rect.width;
+        // geometry.appendChild(ink);
 
-        const geometry = document.createElement('folk-shape');
-        geometry.x = rect.x;
-        geometry.y = rect.y;
-        geometry.height = rect.height;
-        geometry.width = rect.width;
-        geometry.appendChild(ink);
-
-        document.body.appendChild(geometry);
+        document.body.appendChild(ink);
       }
 
       let isDrawing = false;
