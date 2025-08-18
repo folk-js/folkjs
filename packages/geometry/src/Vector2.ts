@@ -1,14 +1,23 @@
 import * as R from './Rect2D.ts';
 import { atan2, cos, hypot, PI, sin } from './utilities.ts';
 
-export type Vector2 = {
+export interface Vector2 {
   x: number;
   y: number;
-};
+}
 
 export type Vector2Readonly = Readonly<Vector2>;
 
 export type Point = Vector2;
+
+export function isVector2(value: unknown): value is Vector2 {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as any).x === 'number' &&
+    typeof (value as any).y === 'number'
+  );
+}
 
 export function fromValues(x = 0, y = 0): Vector2 {
   return { x, y };
