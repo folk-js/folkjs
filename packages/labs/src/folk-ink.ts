@@ -92,9 +92,7 @@ export class FolkInk extends ReactiveElement {
 
   @property({ type: Number, reflect: true }) thinning = 0.5;
 
-  @property({ type: Number, reflect: true }) smoothing = 0.5;
-
-  @property({ type: Boolean, reflect: true }) simulatePressure = true;
+  @property({ type: Number, reflect: true }) smoothing = 0;
 
   @property({ type: String, reflect: true }) color = 'black';
 
@@ -147,7 +145,7 @@ export class FolkInk extends ReactiveElement {
       size: this.size,
       thinning: this.thinning,
       smoothing: this.smoothing,
-      simulatePressure: this.simulatePressure,
+      simulatePressure: true,
       start: {
         cap: true,
       },

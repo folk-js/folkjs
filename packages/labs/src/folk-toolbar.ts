@@ -134,9 +134,9 @@ export class FolkToolbar extends ReactiveElement {
       }
 
       input[type='radio'] {
-        /* Add if not using autoprefixer */
         -webkit-appearance: none;
         appearance: none;
+        all: unset;
         /* For iOS < 15 to remove gradient background */
         background-color: transparent;
         /* Not removed via appearance */

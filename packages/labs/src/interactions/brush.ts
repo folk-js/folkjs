@@ -1,5 +1,5 @@
-import * as P from '@folkjs/geometry/Path2D';
 import * as R from '@folkjs/geometry/Rect2D';
+import { toDOMPrecision } from '@folkjs/geometry/utilities';
 import * as V from '@folkjs/geometry/Vector2';
 import type { FolkInk, StrokePoint } from 'src/folk-ink';
 
@@ -9,6 +9,8 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
     const points: StrokePoint[] = [];
 
     function updatePoints(point: StrokePoint) {
+      point.x = toDOMPrecision(point.x);
+      point.y = toDOMPrecision(point.y);
       points.push(point);
 
       if (ink.shape === undefined) return;
@@ -32,8 +34,6 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
       container.addEventListener('pointerup', onPointerUp, { capture: true });
 
       ink.setAttribute('folk-shape', '');
-
-      if (event.pointerType !== 'mouse') ink.simulatePressure = false;
 
       container.appendChild(ink);
 
