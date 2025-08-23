@@ -11,17 +11,18 @@
       }
 
       html {
-        height: 100%;
         font-family: 'Inter', sans-serif;
         font-optical-sizing: auto;
         font-style: normal;
         font-variation-settings: 'slnt' 0;
       }
 
+      html,
       main,
       body {
         height: 100%;
         margin: 0;
+        overscroll-behavior: none;
       }
 
       button {
@@ -47,6 +48,8 @@
       import '@folkjs/labs/standalone/folk-shape-attribute';
       import '@folkjs/labs/standalone/folk-ink';
       import '@folkjs/labs/standalone/folk-toolbar';
+
+      // document.ontouchmove = (e) => e.preventDefault();
     </script>
   </body>
 </html>
