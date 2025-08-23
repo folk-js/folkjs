@@ -29,6 +29,7 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
+      container.setPointerCapture(event.pointerId);
 
       container.addEventListener('pointermove', onPointerMove, { capture: true });
       container.addEventListener('pointerup', onPointerUp, { capture: true });
@@ -57,6 +58,12 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
       resolve(ink);
     }
 
+    function onTouch(event: TouchEvent) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    }
+
     function onCancel() {
       cleanUp();
       resolve(null);
@@ -65,6 +72,7 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
     function cleanUp() {
       container.style.cursor = '';
       cancellationSignal.removeEventListener('abort', onCancel);
+      container.removeEventListener('touchmove', onTouch, { capture: true });
       container.removeEventListener('pointerdown', onPointerDown, { capture: true });
       container.removeEventListener('pointermove', onPointerMove, { capture: true });
       container.removeEventListener('pointerup', onPointerUp, { capture: true });
@@ -73,5 +81,6 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
     container.style.cursor = 'crosshair';
     cancellationSignal.addEventListener('abort', onCancel);
     container.addEventListener('pointerdown', onPointerDown, { capture: true });
+    container.addEventListener('touchmove', onTouch, { capture: true });
   });
 }
