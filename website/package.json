@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/website",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "scripts": {
     "build": "wireit",
@@ -65,10 +65,10 @@
     }
   },
   "dependencies": {
-    "@folkjs/canvas": "^0.0.3",
-    "@folkjs/dom": "^0.0.3",
-    "@folkjs/geometry": "^0.0.3",
-    "@folkjs/labs": "^0.0.3",
+    "@folkjs/canvas": "^0.0.4",
+    "@folkjs/dom": "^0.0.4",
+    "@folkjs/geometry": "^0.0.4",
+    "@folkjs/labs": "^0.0.4",
     "@retorquere/bibtex-parser": "^9.0.21",
     "gray-matter": "^4.0.3",
     "ink-mde": "^0.34.0",
