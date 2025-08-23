@@ -1,4 +1,5 @@
 import { css, property, ReactiveElement, state, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { brushInkShape } from './interactions/brush';
 import { clickToCreateArrow, clickToCreateEventPropagator } from './interactions/connection';
 import { dragToCreateShape } from './interactions/create-element';
 import { deleteElementByClick } from './interactions/delete';
@@ -22,6 +23,12 @@ export class FolkInstrument extends ReactiveElement {
       'rectangle',
       async (container, cancellationSignal) => {
         await dragToCreateShape(container, cancellationSignal, () => document.createElement('div'));
+      },
+    ],
+    [
+      'draw',
+      async (container, cancellationSignal) => {
+        await brushInkShape(container, cancellationSignal);
       },
     ],
     [

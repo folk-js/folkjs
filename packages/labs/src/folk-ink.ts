@@ -1,9 +1,16 @@
-import { ReactiveElement, css, property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import { toCSSShape } from '@folkjs/geometry/Path2D';
-import { type Point } from '@folkjs/geometry/Vector2';
+import {
+  ReactiveElement,
+  css,
+  property,
+  type ComplexAttributeConverter,
+  type PropertyValues,
+} from '@folkjs/dom/ReactiveElement';
+import { ResizeManager } from '@folkjs/dom/ResizeManger';
+import { average, toDOMPrecision } from '@folkjs/geometry/utilities';
+import * as V from '@folkjs/geometry/Vector2';
 import { getStroke } from 'perfect-freehand';
 
-export type StrokePoint = Point & { pressure?: number };
+export type StrokePoint = V.RelativePoint & { pressure?: number };
 
 // TODO: look into any-pointer media queries to tell if the user has a mouse or touch screen
 // https://developer.mozilla.org/en-US/docs/Web/CSS/@media/any-pointer
@@ -14,98 +21,115 @@ declare global {
   }
 }
 
+export function toSVGPath(vertices: V.Point[]): string {
+  const len = vertices.length;
+
+  if (len < 4) return '';
+
+  const a = vertices[0];
+  const b = vertices[1];
+  const c = vertices[2];
+
+  let result = `M${toDOMPrecision(a.x)},${toDOMPrecision(a.y)} Q${toDOMPrecision(b.x)},${toDOMPrecision(b.y)} ${toDOMPrecision(average(b.x, c.x))},${toDOMPrecision(average(b.y, c.y))} T`;
+
+  for (let i = 2, max = len - 1; i < max; i++) {
+    const p1 = vertices[i];
+    const p2 = vertices[i + 1];
+    result += ` ${toDOMPrecision(average(p1.x, p2.x))},${toDOMPrecision(average(p1.y, p2.y))}`;
+  }
+
+  result += 'Z';
+
+  return result;
+}
+
+const converter: ComplexAttributeConverter<StrokePoint[]> = {
+  fromAttribute(value) {
+    if (value === null) return [];
+    return value.split(' ').map((point) => {
+      const [x, y, pressure] = point.split(',').map(Number);
+      return {
+        x: Number(x),
+        y: Number(y),
+        pressure: Number.isNaN(pressure) ? undefined : pressure,
+      };
+    });
+  },
+  toAttribute(value) {
+    return value
+      .map((point) => {
+        let str = `${toDOMPrecision(point.x)},${toDOMPrecision(point.y)}`;
+        if (point.pressure !== undefined) str += `,${toDOMPrecision(point.pressure)}`;
+        return str;
+      })
+      .join(' ');
+  },
+};
+
+const rm = new ResizeManager();
+
 export class FolkInk extends ReactiveElement {
   static override tagName = 'folk-ink';
 
   static override styles = css`
-    :host,
-    div {
+    :host {
       display: block;
       height: 100%;
       width: 100%;
-      touch-action: none;
       pointer-events: none;
     }
 
     div {
+      height: 100%;
+      width: 100%;
       background-color: black;
+      pointer-events: all;
+      overflow: hidden;
     }
   `;
 
-  @property({ type: Number, reflect: true }) size = 16;
+  @property({ type: Number, reflect: true }) size = 8;
 
   @property({ type: Number, reflect: true }) thinning = 0.5;
 
   @property({ type: Number, reflect: true }) smoothing = 0.5;
 
-  @property({ type: Number, reflect: true }) streamline = 0.5;
-
   @property({ type: Boolean, reflect: true }) simulatePressure = true;
 
-  @property({ type: Array, reflect: true }) points: StrokePoint[] = [];
+  @property({ type: String, reflect: true }) color = 'black';
+
+  @property({ type: Array, reflect: true, converter }) points: StrokePoint[] = [];
 
   #div = document.createElement('div');
-  #tracingPromise: PromiseWithResolvers<void> | null = null;
 
   override createRenderRoot() {
     const root = super.createRenderRoot();
 
     root.appendChild(this.#div);
 
+    this.addEventListener('transform', this.#onTransform);
+
     return root;
   }
 
-  // TODO: cancel trace?
-  draw(event?: PointerEvent) {
-    if (event?.type === 'pointerdown') {
-      this.handleEvent(event);
-    } else {
-      this.addEventListener('pointerdown', this);
-    }
-    this.#tracingPromise = Promise.withResolvers();
-    return this.#tracingPromise.promise;
+  override connectedCallback(): void {
+    super.connectedCallback();
+    rm.observe(this, this.#onTransform);
   }
 
-  addPoint(point: StrokePoint) {
-    this.points.push(point);
-    this.requestUpdate('points');
-  }
-
-  handleEvent(event: PointerEvent) {
-    switch (event.type) {
-      // for some reason adding a point on pointer down causes a bug
-      case 'pointerdown': {
-        if (event.button !== 0 || event.ctrlKey) return;
-
-        this.points = [];
-        this.addEventListener('lostpointercapture', this);
-        this.addEventListener('pointermove', this);
-        this.setPointerCapture(event.pointerId);
-        return;
-      }
-      case 'pointermove': {
-        this.addPoint({
-          x: event.offsetX,
-          y: event.offsetY,
-          pressure: event.pressure,
-        });
-        return;
-      }
-      case 'lostpointercapture': {
-        this.removeEventListener('pointerdown', this);
-        this.removeEventListener('pointermove', this);
-        this.removeEventListener('lostpointercapture', this);
-        this.#tracingPromise?.resolve();
-        this.#tracingPromise = null;
-        return;
-      }
-    }
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    rm.unobserve(this, this.#onTransform);
   }
 
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
 
-    if (this.points.length < 4) {
+    if (changedProperties.has('color')) {
+      this.#div.style.backgroundColor = this.color;
+    }
+
+    if (this.points.length === 0) {
       this.#div.style.clipPath = '';
       this.#div.style.display = 'none';
       return;
@@ -113,28 +137,29 @@ export class FolkInk extends ReactiveElement {
 
     this.#div.style.display = '';
 
-    const vertices = getStroke(this.points, {
+    const rect = this.shape || this.getBoundingClientRect();
+    const vertices = this.points.map((p) => ({
+      x: p.x * rect.width,
+      y: p.y * rect.height,
+    }));
+
+    const stroke = getStroke(vertices, {
       size: this.size,
       thinning: this.thinning,
       smoothing: this.smoothing,
-      streamline: this.streamline,
       simulatePressure: this.simulatePressure,
-      // TODO: figure out how to expose these as attributes
-      easing: (t) => t,
       start: {
-        taper: 100,
-        easing: (t) => t,
         cap: true,
       },
       end: {
-        taper: 100,
-        easing: (t) => t,
         cap: true,
       },
     }).map(([x, y]) => ({ x, y }));
 
-    const path = { closed: true, vertices };
-    console.log(toCSSShape(path));
-    this.#div.style.clipPath = toCSSShape(path);
+    this.#div.style.clipPath = 'path("' + toSVGPath(stroke) + '")';
   }
+
+  #onTransform = () => {
+    this.requestUpdate();
+  };
 }

@@ -10,6 +10,13 @@ export type Vector2Readonly = Readonly<Vector2>;
 
 export type Point = Vector2;
 
+export type ReadonlyPoint = Readonly<Point>;
+
+/** Coordinates must be [0, 1] */
+export type RelativePoint = Vector2;
+
+export type ReadonlyRelativePoint = Readonly<RelativePoint>;
+
 export function isVector2(value: unknown): value is Vector2 {
   return (
     typeof value === 'object' &&
@@ -365,4 +372,18 @@ export function mortonCode({ x, y }: Vector2Readonly): number {
     throw new Error('All input coords must be in Uint15 range (0 - 32,767)');
   }
   return morton2DSplitBy2bits(x) | (morton2DSplitBy2bits(y) << 1);
+}
+
+export function toAbsolutePoint(rect: R.Rect2D, point: ReadonlyRelativePoint): Point {
+  return {
+    x: point.x * rect.width + rect.x,
+    y: point.y * rect.height + rect.y,
+  };
+}
+
+export function toRelativePoint(bounds: R.ReadonlyRect2D, point: Point): RelativePoint {
+  return {
+    x: (point.x - bounds.x) / bounds.width,
+    y: (point.y - bounds.y) / bounds.height,
+  };
 }

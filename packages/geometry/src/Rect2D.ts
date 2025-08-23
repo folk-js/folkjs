@@ -10,6 +10,8 @@ export interface Rect2D {
   height: number;
 }
 
+export type ReadonlyRect2D = Readonly<Rect2D>;
+
 export function fromValues(x = 0, y = 0, width = 0, height = 0): Rect2D {
   return { x, y, width, height };
 }
@@ -18,14 +20,18 @@ export function isRect2D(rect: unknown): rect is Rect2D {
   return isObject(rect) && isNumber(rect.x) && isNumber(rect.y) && isNumber(rect.width) && isNumber(rect.height);
 }
 
-export function center(rect: Rect2D) {
+export function clone({ x, y, width, height }: ReadonlyRect2D): Rect2D {
+  return { x, y, width, height };
+}
+
+export function center(rect: ReadonlyRect2D) {
   return {
     x: rect.x + rect.width * 0.5,
     y: rect.y + rect.height * 0.5,
   };
 }
 
-export function area(rect: Rect2D): number {
+export function area(rect: ReadonlyRect2D): number {
   return rect.width * rect.height;
 }
 
@@ -42,7 +48,7 @@ export function fromHit(pos = V.zero(), delta = V.zero(), normal = V.zero()) {
   return { pos, delta, normal };
 }
 
-export function hitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly): Hit | null {
+export function hitDetection(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D): Hit | null {
   const center1 = center(rect1);
   const center2 = center(rect2);
 
@@ -71,7 +77,7 @@ export function hitDetection(rect1: DOMRectReadOnly, rect2: DOMRectReadOnly): Hi
   return hit;
 }
 
-export function intersects(rect1: Rect2D, rect2: Rect2D): boolean {
+export function intersects(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D): boolean {
   return (
     rect1.x <= rect2.x + rect2.width &&
     rect1.x + rect1.width >= rect2.x &&
@@ -80,7 +86,7 @@ export function intersects(rect1: Rect2D, rect2: Rect2D): boolean {
   );
 }
 
-export function intersection(rect1: Rect2D, rect2: Rect2D) {
+export function intersection(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D) {
   const x = Math.max(rect1.x, rect2.x);
   const y = Math.max(rect1.y, rect2.y);
   const width = Math.min(rect1.x + rect1.width, rect2.x + rect2.width);
@@ -89,7 +95,7 @@ export function intersection(rect1: Rect2D, rect2: Rect2D) {
   return fromValues(x, y, width, height);
 }
 
-export function proximal(rect1: Rect2D, rect2: Rect2D, proximity: number): boolean {
+export function proximal(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D, proximity: number): boolean {
   return (
     rect1.x - (rect2.x + rect2.width) < proximity &&
     rect2.x - (rect1.x + rect1.width) < proximity &&
@@ -103,11 +109,11 @@ export function translateSelf(rect: Rect2D, vector: Vector2): void {
   rect.y += vector.y;
 }
 
-export function expand(rect: Rect2D, padding: number): Rect2D {
-  return fromValues(rect.x - padding, rect.y - padding, rect.width + padding, rect.height + padding);
+export function expand(rect: ReadonlyRect2D, padding: number): Rect2D {
+  return fromValues(rect.x - padding, rect.y - padding, rect.width + padding * 2, rect.height + padding * 2);
 }
 
-export function bounds(...rects: Rect2D[]): Rect2D {
+export function bounds(...rects: ReadonlyRect2D[]): Rect2D {
   let left = Infinity;
   let top = Infinity;
   let right = -Infinity;
@@ -127,7 +133,7 @@ export function bounds(...rects: Rect2D[]): Rect2D {
   return fromValues(left, top, right - left, bottom - top);
 }
 
-export function isPointInsideRect(rect: Rect2D, point: Vector2): boolean {
+export function isPointInsideRect(rect: ReadonlyRect2D, point: Vector2): boolean {
   return rect.x <= point.x && point.x <= rect.x + rect.width && rect.y <= point.y && point.y <= rect.y + rect.height;
 }
 
@@ -137,7 +143,7 @@ export function isPointInsideRect(rect: Rect2D, point: Vector2): boolean {
  * @param rect
  * @returns
  */
-export function nearestPointOnRect(rect: Rect2D, point: Vector2): Vector2 {
+export function nearestPointOnRect(rect: ReadonlyRect2D, point: Vector2): Vector2 {
   const c = center(rect);
   let qx = point.x - c.x;
   let qy = point.y - c.y;
@@ -164,7 +170,7 @@ export function nearestPointOnRect(rect: Rect2D, point: Vector2): Vector2 {
  * @returns True if the rectangle completely covers the screen
  */
 export function isScreenCoveredByRectangle(
-  rect: Rect2D,
+  rect: ReadonlyRect2D,
   transform: Matrix2D,
   containerWidth: number,
   containerHeight: number,
@@ -260,8 +266,4 @@ export function isPointInPolygon(point: Vector2, polygon: Vector2[]): boolean {
   }
 
   return inside;
-}
-
-export function clone({ x, y, width, height }: Rect2D): Rect2D {
-  return { x, y, width, height };
 }
