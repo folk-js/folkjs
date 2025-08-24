@@ -1,3 +1,4 @@
+import { TransformStack } from '@folkjs/canvas';
 import * as R from '@folkjs/geometry/Rect2D';
 import { toDOMPrecision } from '@folkjs/geometry/utilities';
 import * as V from '@folkjs/geometry/Vector2';
@@ -5,13 +6,18 @@ import type { FolkInk, StrokePoint } from 'src/folk-ink';
 
 export function brushInkShape(container: HTMLElement, cancellationSignal: AbortSignal) {
   return new Promise<FolkInk | null>((resolve) => {
+    const transformStack = new TransformStack(container.space ? [container.space] : []);
     const ink = document.createElement('folk-ink');
     const points: StrokePoint[] = [];
 
     function updatePoints(point: StrokePoint) {
-      point.x = toDOMPrecision(point.x);
-      point.y = toDOMPrecision(point.y);
-      points.push(point);
+      const transformedPoint = transformStack.mapPointToLocal(point);
+
+      points.push({
+        x: toDOMPrecision(transformedPoint.x),
+        y: toDOMPrecision(transformedPoint.y),
+        pressure: point.pressure,
+      });
 
       if (ink.shape === undefined) return;
 
@@ -38,6 +44,7 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
 
       container.appendChild(ink);
 
+      // need to wait for the shape to be added
       setTimeout(() => updatePoints({ x: event.pageX, y: event.pageY, pressure: event.pressure }));
     }
 

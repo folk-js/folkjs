@@ -31,7 +31,7 @@
         translate: -50%;
       }
 
-      [folk-shape] {
+      div[folk-shape] {
         border: solid 2px black;
         border-radius: 13px;
       }
@@ -42,8 +42,8 @@
 
     <folk-toolbar container="main">
       <folk-instrument type="select">Select</folk-instrument>
-      <!-- <folk-instrument type="pan">Pan</folk-instrument>
-      <folk-instrument type="draw">Draw</folk-instrument> -->
+      <!-- <folk-instrument type="pan">Pan</folk-instrument> -->
+      <folk-instrument type="draw">Draw</folk-instrument>
       <folk-instrument type="erase">Erase</folk-instrument>
       <folk-instrument type="rectangle">Rectangle</folk-instrument>
       <folk-instrument type="text">Text</folk-instrument>
@@ -55,6 +55,7 @@
   <script type="module">
     import '@folkjs/labs/standalone/folk-space-attribute';
     import '@folkjs/labs/standalone/folk-shape-attribute';
+    import '@folkjs/labs/standalone/folk-ink';
     import '@folkjs/labs/standalone/folk-sync-attribute';
     import '@folkjs/labs/standalone/folk-arrow';
     import '@folkjs/labs/standalone/folk-event-propagator';
