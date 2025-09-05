@@ -79,12 +79,26 @@ export class FolkInk extends ReactiveElement {
       pointer-events: none;
     }
 
-    div {
-      height: 100%;
-      width: 100%;
-      background-color: black;
+    [part='stroke'],
+    [part='stroke-overlay'] {
+      position: absolute;
+      inset: 0;
       pointer-events: all;
       overflow: hidden;
+    }
+
+    [part='stroke'] {
+      background-color: black;
+    }
+
+    [part='stroke-overlay'] {
+      background-color: rgba(0, 0, 0, 0.1);
+      opacity: 0;
+      transition: opacity 0.1s ease-out;
+
+      &:hover {
+        opacity: 1;
+      }
     }
   `;
 
@@ -98,12 +112,16 @@ export class FolkInk extends ReactiveElement {
 
   @property({ type: Array, reflect: true, converter }) points: StrokePoint[] = [];
 
-  #div = document.createElement('div');
+  #stroke = document.createElement('div');
+  #strokeOverlay = document.createElement('div');
 
   override createRenderRoot() {
     const root = super.createRenderRoot();
 
-    root.appendChild(this.#div);
+    this.#stroke.part.add('stroke');
+    this.#strokeOverlay.part.add('stroke-overlay');
+
+    root.append(this.#stroke, this.#strokeOverlay);
 
     this.addEventListener('transform', this.#onTransform);
 
@@ -124,16 +142,16 @@ export class FolkInk extends ReactiveElement {
     super.update(changedProperties);
 
     if (changedProperties.has('color')) {
-      this.#div.style.backgroundColor = this.color;
+      this.#stroke.style.backgroundColor = this.color;
     }
 
     if (this.points.length === 0) {
-      this.#div.style.clipPath = '';
-      this.#div.style.display = 'none';
+      this.#stroke.style.clipPath = this.#strokeOverlay.style.clipPath = '';
+      this.#stroke.style.display = this.#strokeOverlay.style.display = 'none';
       return;
     }
 
-    this.#div.style.display = '';
+    this.#stroke.style.display = this.#strokeOverlay.style.display = '';
 
     const width = this.offsetWidth;
     const height = this.offsetHeight;
@@ -155,7 +173,22 @@ export class FolkInk extends ReactiveElement {
       },
     }).map(([x, y]) => ({ x, y }));
 
-    this.#div.style.clipPath = 'path("' + toSVGPath(stroke) + '")';
+    this.#stroke.style.clipPath = 'path("' + toSVGPath(stroke) + '")';
+
+    const strokeOverlay = getStroke(vertices, {
+      size: this.size + 5,
+      thinning: 0,
+      smoothing: this.smoothing,
+      simulatePressure: true,
+      start: {
+        cap: true,
+      },
+      end: {
+        cap: true,
+      },
+    }).map(([x, y]) => ({ x, y }));
+
+    this.#strokeOverlay.style.clipPath = 'path("' + toSVGPath(strokeOverlay) + '")';
   }
 
   #onTransform = () => {
