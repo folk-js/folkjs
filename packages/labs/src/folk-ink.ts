@@ -135,10 +135,11 @@ export class FolkInk extends ReactiveElement {
 
     this.#div.style.display = '';
 
-    const rect = this.shape || this.getBoundingClientRect();
+    const width = this.offsetWidth;
+    const height = this.offsetHeight;
     const vertices = this.points.map((p) => ({
-      x: p.x * rect.width,
-      y: p.y * rect.height,
+      x: p.x * width,
+      y: p.y * height,
     }));
 
     const stroke = getStroke(vertices, {
