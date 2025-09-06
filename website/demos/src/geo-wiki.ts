@@ -29,26 +29,32 @@ export class GeoWiki extends HTMLElement {
   }
 
   async searchWiki([lat, long]: LatLng) {
-    const params = new URLSearchParams({
-      action: 'query',
-      format: 'json',
-      list: 'geosearch',
-      gscoord: `${lat}|${long}`,
-      gsradius: '1000',
-      gslimit: '50',
-      origin: '*',
-    });
-    // https://www.mediawiki.org/wiki/API:Geosearch
-    this.#results = await fetch(`https://en.wikipedia.org/w/api.php?${params}`)
-      .then((response) => response.json())
-      .then((data) => data?.query?.geosearch ?? []);
-
-    this.#renderResults();
+    try {
+      const params = new URLSearchParams({
+        action: 'query',
+        format: 'json',
+        list: 'geosearch',
+        gscoord: `${lat}|${long}`,
+        gsradius: '1000',
+        gslimit: '50',
+        origin: '*',
+      });
+      // https://www.mediawiki.org/wiki/API:Geosearch
+      this.#results = await fetch(`https://en.wikipedia.org/w/api.php?${params}`)
+        .then((response) => response.json())
+        .then((data) => data?.query?.geosearch ?? []);
+    } catch {
+      this.#results = [];
+    } finally {
+      this.#renderResults();
+    }
   }
 
   #renderResults() {
-    this.firstElementChild?.remove();
-
+    if (this.#results.length === 0) {
+      this.setHTMLUnsafe(`No wiki results for ${this.#coordinates[0]},${this.#coordinates[1]}`);
+      return;
+    }
     const list = document.createElement('ul');
 
     for (const result of this.#results) {
@@ -60,7 +66,7 @@ export class GeoWiki extends HTMLElement {
       list.appendChild(li);
     }
 
-    this.appendChild(list);
+    this.replaceChildren(list);
   }
 }
 

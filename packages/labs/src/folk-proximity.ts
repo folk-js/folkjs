@@ -15,7 +15,7 @@ export interface ElementConfig<E extends Element = Element> {
 }
 
 // TODO don't hard code this
-const PROXIMITY = 100;
+const PROXIMITY = 125;
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -41,20 +41,21 @@ export class FolkCluster extends FolkHull {
 
   isElementInProximity(element: FolkShape) {
     for (const el of this.sourceElements) {
-      if (proximal((el as FolkShape).getTransformDOMRect(), element.getTransformDOMRect(), PROXIMITY)) return true;
+      if (proximal(el as FolkShape, element, PROXIMITY)) {
+        return true;
+      }
     }
     return false;
   }
 
   addElements(...elements: FolkShape[]) {
-    this.sources = Array.from(this.sourceElements)
-      .concat(elements)
-      .map((el) => `#${el.id}`)
-      .join(', ');
+    const elementsSet = new Set(elements);
+    const newElements = elementsSet.difference(this.sourceElements);
+    this.sourceElements = this.sourceElements.union(elementsSet);
 
     let data = {};
 
-    for (const geometry of elements) {
+    for (const geometry of newElements) {
       const element = geometry.firstElementChild;
 
       if (element === null) continue;
@@ -65,7 +66,6 @@ export class FolkCluster extends FolkHull {
         for (const event of Object.keys(config.events || {})) {
           element.addEventListener(event, this.#handleEvent);
         }
-
         const newData = config.onAdd?.(element);
         data = Object.assign(data, newData);
       }
@@ -130,13 +130,12 @@ export class FolkProximity extends HTMLElement {
 
   static define() {
     if (customElements.get(this.tagName)) return;
-    FolkShape.define();
     FolkCluster.define();
     customElements.define(this.tagName, this);
+    FolkShape.define();
   }
 
   #clusters = new Set<FolkCluster>();
-  #geometries = Array.from(this.querySelectorAll('folk-shape'));
 
   constructor() {
     super();
@@ -158,21 +157,15 @@ export class FolkProximity extends HTMLElement {
         }
       }
 
-      for (const geometry of this.#geometries) {
-        if (geometry === el) break;
-
-        if (proximal(geometry.getTransformDOMRect(), el.getTransformDOMRect(), PROXIMITY)) {
-          const cluster = document.createElement('folk-cluster');
-          cluster.addElements(geometry, el);
-          this.#clusters.add(cluster);
-          this.appendChild(cluster);
-          return;
-        }
-      }
+      // The shape is not in a cluster so create a new one.
+      const cluster = document.createElement('folk-cluster');
+      cluster.addElements(el);
+      this.#clusters.add(cluster);
+      this.appendChild(cluster);
     } else {
       const isInCluster = Array.from(cluster.sourceElements)
         .filter((element) => el !== element)
-        .some((element) => proximal(el.getTransformDOMRect(), (element as FolkShape).getTransformDOMRect(), PROXIMITY));
+        .some((element) => proximal(el, element as FolkShape, PROXIMITY));
 
       if (!isInCluster) {
         cluster.removeElement(el);

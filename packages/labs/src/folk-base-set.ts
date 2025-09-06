@@ -55,6 +55,16 @@ export class FolkBaseSet extends ReactiveElement {
   override willUpdate(changedProperties: PropertyValues<this>) {
     if (changedProperties.has('sources')) {
       this.#observeSources();
+    } else if (changedProperties.has('sourceElements')) {
+      const oldElements = changedProperties.get('sourceElements') || new Set();
+      const elementsToObserve = this.sourceElements.difference(oldElements);
+      const elementsToUnobserve = oldElements.difference(this.sourceElements);
+
+      this.#unobserveSources(elementsToUnobserve);
+
+      for (const el of elementsToObserve) {
+        folkObserver.observe(el, this.#sourcesCallback);
+      }
     }
   }
 
@@ -98,9 +108,8 @@ export class FolkBaseSet extends ReactiveElement {
 
   addElement(element: Element) {
     if (this.sourceElements.has(element)) return;
-    const set = new Set<Element>();
+    const set = new Set<Element>(this.sourceElements);
     set.add(element);
-    this.sourceElements.forEach((el) => set.add(el));
     this.sourceElements = set;
   }
 

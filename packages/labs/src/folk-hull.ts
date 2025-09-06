@@ -49,14 +49,13 @@ export class FolkHull extends FolkBaseSet {
     super.update(changedProperties);
 
     if (this.sourcesMap.size !== this.sourceElements.size) {
-      this.style.clipPath = '';
-      this.style.display = 'none';
+      this.#hullEl.style.clipPath = '';
+      this.#hullEl.style.display = 'none';
       return;
     }
 
-    this.style.display = '';
-
     this.#hull = makeHull(this.sourceRects);
+    this.#hullEl.style.display = '';
     this.#hullEl.style.clipPath = verticesToPolygon(this.#hull);
   }
 }

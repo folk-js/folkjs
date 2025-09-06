@@ -42,27 +42,31 @@ export class FolkWeather extends HTMLElement {
   }
 
   async fetchWeather([lat, long]: readonly [number, number]) {
-    const params = new URLSearchParams({
-      latitude: lat.toString(),
-      longitude: long.toString(),
-      current: 'temperature_2m,wind_speed_10m',
-      temperature_unit: 'fahrenheit',
-      wind_speed_unit: 'mph',
-    });
-    // https://www.mediawiki.org/wiki/API:Geosearch
-    this.#results = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`)
-      .then((response) => response.json())
-      .then(({ current, current_units }) => ({
-        temperature: `${current.temperature_2m} ${current_units.temperature_2m}`,
-        windSpeed: `${current.wind_speed_10m} ${current_units.wind_speed_10m}`,
-      }));
-
-    this.#renderResults();
+    try {
+      const params = new URLSearchParams({
+        latitude: lat.toString(),
+        longitude: long.toString(),
+        current: 'temperature_2m,wind_speed_10m',
+        temperature_unit: 'fahrenheit',
+        wind_speed_unit: 'mph',
+      });
+      // https://www.mediawiki.org/wiki/API:Geosearch
+      this.#results = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`)
+        .then((response) => response.json())
+        .then(({ current, current_units }) => ({
+          temperature: `${current.temperature_2m} ${current_units.temperature_2m}`,
+          windSpeed: `${current.wind_speed_10m} ${current_units.wind_speed_10m}`,
+        }));
+    } catch (error) {
+      this.#results = null;
+    } finally {
+      this.#renderResults();
+    }
   }
 
   #renderResults() {
     if (this.#results === null) {
-      this.setHTMLUnsafe('');
+      this.setHTMLUnsafe(`No weather for ${this.#coordinates[0]},${this.#coordinates[1]}`);
       return;
     }
     const { frag } = html(`
