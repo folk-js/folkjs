@@ -40,10 +40,10 @@ function findContainer(selector: string, nodeIndex: number): Node {
 const regex =
   /::range\((?<startSelector>.*), (?<startIndex>.*), (?<startOffset>.*), (?<endSelector>.*), (?<endIndex>.*), (?<endOffset>.*)\)/;
 
-export function decodeRange(str: string): Range {
+export function decodeRange(str: string): Range | null {
   const groups = regex.exec(str)?.groups;
 
-  if (groups == null) throw new Error('Invalid range string.');
+  if (groups == null) return null;
 
   let { startSelector, startIndex, startOffset, endSelector, endIndex, endOffset } = groups;
 

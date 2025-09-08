@@ -141,21 +141,21 @@ export function pointsOnBezierCurves(points: readonly Point[], tolerance: number
   return newPoints;
 }
 
-export function getSvgPathFromStroke(stroke: number[][]): string {
+export function getSvgPathFromStroke(stroke: Point[]): string {
   if (stroke.length === 0) return '';
 
   for (const point of stroke) {
-    point[0] = Math.round(point[0]! * 100) / 100;
-    point[1] = Math.round(point[1]! * 100) / 100;
+    point.x = Math.round(point.x * 100) / 100;
+    point.y = Math.round(point.y * 100) / 100;
   }
 
   const d = stroke.reduce(
-    (acc, [x0, y0], i, arr) => {
-      const [x1, y1] = arr[(i + 1) % arr.length]!;
-      acc.push(x0!, y0!, (x0! + x1!) / 2, (y0! + y1!) / 2);
+    (acc, { x: x0, y: y0 }, i, arr) => {
+      const { x: x1, y: y1 } = arr[(i + 1) % arr.length]!;
+      acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
       return acc;
     },
-    ['M', ...stroke[0]!, 'Q'],
+    ['M', stroke[0].x, stroke[0].y, 'Q'],
   );
 
   d.push('Z');

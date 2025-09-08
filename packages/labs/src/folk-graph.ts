@@ -104,8 +104,8 @@ export class FolkGraph extends FolkBaseSet implements AnimationFrameControllerHo
       .filter((element) => element instanceof FolkBaseConnection)
       .map((arrow) => {
         this.#arrows.add(arrow);
-        const source = this.#nodes.get(arrow.sourceElement as FolkShape);
-        const target = this.#nodes.get(arrow.targetElement as FolkShape);
+        const source = this.#nodes.get(arrow.source as FolkShape);
+        const target = this.#nodes.get(arrow.target as FolkShape);
         return source !== undefined && target !== undefined ? { source, target } : null;
       })
       .filter((link): link is { source: number; target: number } => link !== null);

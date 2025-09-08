@@ -109,9 +109,11 @@ export class FolkEventPropagator extends FolkRope {
   #initializePropagator() {
     this.#propagator?.dispose();
 
+    if (!(this.source instanceof Element && this.target instanceof Element)) return;
+
     const options = {
-      source: this.sourceElement,
-      target: this.targetElement,
+      source: this.source,
+      target: this.target,
       event: this.trigger,
       handler: this.expression,
       onParseError: () => {

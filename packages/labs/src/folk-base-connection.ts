@@ -1,12 +1,21 @@
 import { type ClientRectObserverEntry } from '@folkjs/dom/ClientRectObserver';
-import { property, type PropertyValues, ReactiveElement, state } from '@folkjs/dom/ReactiveElement';
-import type { Point, Vector2 } from '@folkjs/geometry/Vector2';
-import { FolkObserver, parseDeepCSSSelector } from './folk-observer';
+import {
+  property,
+  ReactiveElement,
+  state,
+  type ComplexAttributeConverter,
+  type PropertyValues,
+} from '@folkjs/dom/ReactiveElement';
+import { findCssSelector } from '@folkjs/dom/css-selector';
+import { decodeRange, encodeRange } from '@folkjs/dom/range';
+import { type Point, type Vector2 } from '@folkjs/geometry/Vector2';
+import { toDOMPrecision } from '@folkjs/geometry/utilities';
+import { FolkObserver } from './folk-observer';
 
-const vertexRegex = /\:\:point\((?<x>-?([0-9]*[.])?[0-9]+),\s*(?<y>-?([0-9]*[.])?[0-9]+)\)/;
+const pointRegex = /\:\:point\((?<x>-?([0-9]*[.])?[0-9]+),\s*(?<y>-?([0-9]*[.])?[0-9]+)\)/;
 
-export function decodePointToPseudoElement(str: string): Vector2 | null {
-  const results = vertexRegex.exec(str);
+export function decodePointFromPseudoElement(str: string): Vector2 | null {
+  const results = pointRegex.exec(str);
 
   if (results === null || results.groups === undefined) return null;
 
@@ -18,110 +27,85 @@ export function decodePointToPseudoElement(str: string): Vector2 | null {
   };
 }
 
-export function encodeToPseudoElement(v: Point): string {
-  return `::point(${v.x}, ${v.y})`;
+function encodePoint(v: Point): string {
+  return `::point(${toDOMPrecision(v.x)}, ${toDOMPrecision(v.y)})`;
 }
 
 const folkObserver = new FolkObserver();
 
+type SelectorValue = Element | Range | Point | null;
+
+const converter: ComplexAttributeConverter<SelectorValue> = {
+  fromAttribute(value) {
+    if (value === null) return null;
+
+    const point = decodePointFromPseudoElement(value);
+    if (point) return point;
+
+    const range = decodeRange(value);
+    if (range) return range;
+
+    return document.querySelector(value);
+  },
+  toAttribute(value) {
+    if (value === null) return '';
+    else if (value instanceof Element) return findCssSelector(value);
+    else if (value instanceof Range) return encodeRange(value);
+    else return encodePoint(value);
+  },
+};
+
+// TODO really need to rethink this
 export class FolkBaseConnection extends ReactiveElement {
-  @property({ reflect: true }) source?: string;
-
-  #sourceIframeSelector: string | undefined = undefined;
-
-  @state() sourceElement: Element | null = null;
-
-  @state() sourceRange: Range | null = null;
-
-  @state() sourcePoint: Point | null = null;
+  @property({ reflect: true, converter }) source: SelectorValue = null;
 
   @state() sourceRect: DOMRectReadOnly | null = null;
 
-  @property({ reflect: true }) target?: string;
-
-  #targetIframeSelector: string | undefined = undefined;
-
-  @state() targetElement: Element | null = null;
-
-  @state() targetRange: Range | null = null;
-
-  @state() targetPoint: Point | null = null;
+  @property({ reflect: true, converter }) target: SelectorValue = null;
 
   @state() targetRect: DOMRectReadOnly | null = null;
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-    this.#unobserveSource();
-    this.#unobserveTarget();
+
+    this.#unobserve(this.source, this.#sourceCallback);
+    this.#unobserve(this.target, this.#targetCallback);
   }
 
   override willUpdate(changedProperties: PropertyValues<this>) {
     if (changedProperties.has('source')) {
-      this.#unobserveSource();
+      const oldSource = changedProperties.get('source') || null;
 
-      if (!this.source) return;
-
-      const point = decodePointToPseudoElement(this.source);
-
-      if (point) {
-        this.sourcePoint = point;
-        this.sourceRect = DOMRectReadOnly.fromRect(point);
-      } else {
-        const [el] = parseDeepCSSSelector(this.source);
-
-        if (el !== undefined) {
-          this.sourceElement = el[0];
-          this.#sourceIframeSelector = el[1];
-        }
-      }
-    }
-
-    if (changedProperties.has('sourceElement')) {
-      if (this.sourceElement === null) {
-        this.sourceRect = null;
-      } else {
-        // if (!changedProperties.has('source')) this.source = '';
-        folkObserver.observe(this.sourceElement, this.#sourceCallback, { iframeSelector: this.#sourceIframeSelector });
-      }
-    }
-
-    if (changedProperties.has('sourcePoint') && this.sourcePoint) {
-      this.sourceRect = DOMRectReadOnly.fromRect(this.sourcePoint);
-      this.source = `${this.sourcePoint.x},${this.sourcePoint.y}`;
+      this.#unobserve(oldSource, this.#sourceCallback);
+      this.#observe(this.source, this.#sourceCallback);
     }
 
     if (changedProperties.has('target')) {
-      this.#unobserveTarget();
+      const oldTarget = changedProperties.get('target') || null;
 
-      if (!this.target) return;
-
-      const point = decodePointToPseudoElement(this.target);
-
-      if (point) {
-        this.targetPoint = point;
-        this.targetRect = DOMRectReadOnly.fromRect(point);
-      } else {
-        const [el] = parseDeepCSSSelector(this.target);
-
-        if (el !== undefined) {
-          this.targetElement = el[0];
-          this.#targetIframeSelector = el[1];
-        }
-      }
+      this.#unobserve(oldTarget, this.#targetCallback);
+      this.#observe(this.target, this.#targetCallback);
     }
+  }
 
-    if (changedProperties.has('targetElement')) {
-      if (this.targetElement === null) {
-        this.targetRect = null;
-      } else {
-        // if (!changedProperties.has('target')) this.target = '';
-        folkObserver.observe(this.targetElement, this.#targetCallback, { iframeSelector: this.#targetIframeSelector });
-      }
+  #observe(value: SelectorValue, callback: (entry: ClientRectObserverEntry) => void) {
+    if (value === null) return;
+
+    if (value instanceof Element) {
+      folkObserver.observe(value, callback);
+    } else if (value instanceof Range) {
+      folkObserver.observe(value.commonAncestorContainer as Element, callback);
+    } else {
+      callback({ target: this, contentRect: new DOMRectReadOnly(value.x, value.y, 0, 0) });
     }
+  }
 
-    if (changedProperties.has('targetPoint') && this.targetPoint) {
-      this.targetRect = DOMRectReadOnly.fromRect(this.targetPoint);
-      this.target = `${this.targetPoint.x},${this.targetPoint.y}`;
+  #unobserve(value: SelectorValue, callback: (entry: ClientRectObserverEntry) => void) {
+    const oldElement =
+      value instanceof Element ? value : value instanceof Range ? (value.commonAncestorContainer as Element) : null;
+
+    if (oldElement !== null) {
+      folkObserver.unobserve(oldElement, callback);
     }
   }
 
@@ -129,18 +113,7 @@ export class FolkBaseConnection extends ReactiveElement {
     this.sourceRect = entry.contentRect;
   };
 
-  #unobserveSource() {
-    if (this.sourceElement === null) return;
-
-    folkObserver.unobserve(this.sourceElement, this.#sourceCallback, { iframeSelector: this.#sourceIframeSelector });
-  }
-
   #targetCallback = (entry: ClientRectObserverEntry) => {
     this.targetRect = entry.contentRect;
   };
-
-  #unobserveTarget() {
-    if (this.targetElement === null) return;
-    folkObserver.unobserve(this.targetElement, this.#targetCallback, { iframeSelector: this.#targetIframeSelector });
-  }
 }

@@ -76,7 +76,7 @@ export class FolkPropagatorTool extends FolkInteractionHandler {
         }
 
         this.#currentPropagator = new FolkEventPropagator();
-        this.#currentPropagator.source = `#${target.id}`;
+        this.#currentPropagator.source = target;
 
         document.body.appendChild(this.#currentPropagator);
         break;
@@ -87,7 +87,10 @@ export class FolkPropagatorTool extends FolkInteractionHandler {
 
         // Update the target position to follow the mouse
         const rect = document.body.getBoundingClientRect();
-        const targetPoint = `${event.clientX - rect.left}, ${event.clientY - rect.top}`;
+        const targetPoint = {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        };
         this.#currentPropagator.target = targetPoint;
         this.#currentPropagator.stretch();
         break;
@@ -112,7 +115,7 @@ export class FolkPropagatorTool extends FolkInteractionHandler {
             finalTarget.id = `folk-target-${Date.now()}`;
           }
 
-          this.#currentPropagator.target = `#${finalTarget.id}`;
+          this.#currentPropagator.target = finalTarget;
         }
 
         this.#currentPropagator.trigger = 'transform';

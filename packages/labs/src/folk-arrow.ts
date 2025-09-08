@@ -1,25 +1,9 @@
 import { getSvgPathFromStroke, pointsOnBezierCurves } from '@folkjs/canvas';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import * as R from '@folkjs/geometry/Rect2D';
+import * as V from '@folkjs/geometry/Vector2';
 import { getBoxToBoxArrow } from 'perfect-arrows';
 import { getStroke } from 'perfect-freehand';
 import { FolkBaseConnection } from './folk-base-connection';
-
-function boundingBoxFromCurve(points: number[][]): R.Rect2D {
-  let left = Infinity;
-  let top = Infinity;
-  let right = -Infinity;
-  let bottom = -Infinity;
-
-  for (const [x, y] of points) {
-    if (y < top) top = y;
-    if (y > bottom) bottom = y;
-    if (x < left) left = x;
-    if (x > right) right = x;
-  }
-
-  return R.fromValues(left, top, right - left, bottom - top);
-}
 
 export type Arrow = [
   /** The x position of the (padded) starting point. */
@@ -58,28 +42,31 @@ export class FolkArrow extends FolkBaseConnection {
       background: black;
     }
 
-    /*[part='source'] {
-      position: absolute;
+    [part='source'] {
+      display: none;
     }
-
-    
 
     [part='target'] {
       position: absolute;
-      inset: 0;
+      top: var(--folk-target-y);
+      left: var(--folk-target-x);
+      translate: -50% -50%;
+      width: 22px;
+      aspect-ratio: 1;
+      rotate: var(--folk-target-angle);
       background: black;
-    }*/
+    }
   `;
 
-  #source = document.createElement('div');
   #arc = document.createElement('div');
+  #source = document.createElement('div');
   #target = document.createElement('div');
 
   override createRenderRoot() {
     const root = super.createRenderRoot();
 
-    this.#source.part.add('source');
     this.#arc.part.add('arc');
+    this.#source.part.add('source');
     this.#target.part.add('target');
 
     const stroke = getStroke(
@@ -89,7 +76,7 @@ export class FolkArrow extends FolkBaseConnection {
         { x: -8, y: 8 },
       ],
       {
-        size: 4,
+        size: 5,
         thinning: -0.25,
         smoothing: 0.5,
         streamline: 0,
@@ -107,13 +94,21 @@ export class FolkArrow extends FolkBaseConnection {
           cap: true,
         },
       },
-    );
+    ).map(([x, y]) => ({ x, y }));
+
+    const bounds = V.bounds.apply(null, stroke);
+
+    // Make curve relative to it's bounding box
+    for (const point of stroke) {
+      point.x -= bounds.x;
+      point.y -= bounds.y;
+    }
 
     const path = getSvgPathFromStroke(stroke);
 
     this.#target.style.clipPath = `path("${path}")`;
 
-    root.append(this.#source, this.#arc, this.#target);
+    root.append(this.#arc, this.#source, this.#target);
     return root;
   }
 
@@ -129,7 +124,7 @@ export class FolkArrow extends FolkBaseConnection {
 
     this.style.display = '';
 
-    const [sx, sy, cx, cy, ex, ey, ae] = getBoxToBoxArrow(
+    const [sx, sy, cx, cy, ex, ey, ae, as, ac] = getBoxToBoxArrow(
       sourceRect.x,
       sourceRect.y,
       sourceRect.width,
@@ -138,7 +133,7 @@ export class FolkArrow extends FolkBaseConnection {
       targetRect.y,
       targetRect.width,
       targetRect.height,
-      { padStart: 1, padEnd: 15 },
+      { padStart: 5, padEnd: 15 },
     ) as Arrow;
 
     const curve = [
@@ -152,28 +147,25 @@ export class FolkArrow extends FolkBaseConnection {
     const points = pointsOnBezierCurves(curve);
 
     const stroke = getStroke(points, {
-      size: 5,
+      size: 6,
       thinning: 0.4,
       smoothing: 0,
       streamline: 0,
       simulatePressure: true,
-      // TODO: figure out how to expose these as attributes
-      easing: (t) => t,
       start: {
-        taper: 40,
-        easing: (t) => t,
+        cap: true,
       },
       end: {
         cap: true,
       },
-    });
+    }).map(([x, y]) => ({ x, y }));
 
-    const bounds = boundingBoxFromCurve(stroke);
+    const bounds = V.bounds.apply(null, stroke);
 
     // Make curve relative to it's bounding box
     for (const point of stroke) {
-      point[0] -= bounds.x;
-      point[1] -= bounds.y;
+      point.x -= bounds.x;
+      point.y -= bounds.y;
     }
 
     const path = getSvgPathFromStroke(stroke);
@@ -184,15 +176,12 @@ export class FolkArrow extends FolkBaseConnection {
     this.style.height = `${bounds.height}px`;
     this.#arc.style.clipPath = `path("${path}")`;
 
-    const start = stroke[0];
-    const end = stroke.at(-1)!;
-
-    this.style.setProperty('--folk-source-x', `${start[0]}px`);
-    this.style.setProperty('--folk-source-y', `${start[1]}px`);
-    this.style.setProperty('--folk-target-x', `${end[0]}px`);
-    this.style.setProperty('--folk-target-y', `${end[1]}px`);
-
-    this.#target.style.translate = `${ex}px ${ey}px`;
-    this.#target.style.rotate = `${ae}rad`;
+    this.style.setProperty('--folk-source-x', `${sx - bounds.x}px`);
+    this.style.setProperty('--folk-source-y', `${sy - bounds.y}px`);
+    this.style.setProperty('--folk-target-x', `${ex - bounds.x}px`);
+    this.style.setProperty('--folk-target-y', `${ey - bounds.y}px`);
+    this.style.setProperty('--folk-source-angle', `${as}rad`);
+    this.style.setProperty('--folk-center-angle', `${ac}rad`);
+    this.style.setProperty('--folk-target-angle', `${ae}rad`);
   }
 }

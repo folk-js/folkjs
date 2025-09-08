@@ -1,6 +1,6 @@
 import { verticesToPolygon } from '@folkjs/canvas';
 import { css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import type { Point } from '@folkjs/geometry/Vector2';
+import { bounds, type Point } from '@folkjs/geometry/Vector2';
 import { FolkBaseConnection } from './folk-base-connection.js';
 
 export class FolkXanadu extends FolkBaseConnection {
@@ -10,7 +10,6 @@ export class FolkXanadu extends FolkBaseConnection {
     :host {
       display: block;
       position: absolute;
-      inset: 0;
       pointer-events: none;
     }
   `;
@@ -60,7 +59,20 @@ export class FolkXanadu extends FolkBaseConnection {
 
     sourceVertices = sourceVertices.slice(index).concat(sourceVertices.slice(0, index));
 
-    this.style.clipPath = verticesToPolygon(sourceVertices.concat(targetVertices));
+    const vertices = sourceVertices.concat(targetVertices);
+    const rect = bounds.apply(null, vertices);
+
+    // Make curve relative to it's bounding box
+    for (const point of vertices) {
+      point.x -= rect.x;
+      point.y -= rect.y;
+    }
+
+    this.style.top = `${rect.y}px`;
+    this.style.left = `${rect.x}px`;
+    this.style.width = `${rect.width}px`;
+    this.style.height = `${rect.height}px`;
+    this.style.clipPath = verticesToPolygon(vertices);
   }
 }
 

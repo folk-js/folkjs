@@ -34,7 +34,7 @@ export async function clickToCreateConnection<T extends FolkBaseConnection = Fol
       pointerPosition = container.space?.mapPointFromParent(pointerPosition);
     }
 
-    connection.targetPoint = pointerPosition;
+    connection.target = pointerPosition;
   }
 
   container.addEventListener('pointermove', onPointerMove, { capture: true, signal: cancellationSignal });
@@ -43,7 +43,7 @@ export async function clickToCreateConnection<T extends FolkBaseConnection = Fol
 
   if (!source) return;
 
-  connection.sourceElement = source;
+  connection.source = source;
 
   const target = await selectElement(cancellationSignal, container);
   console.log(target);
@@ -52,7 +52,7 @@ export async function clickToCreateConnection<T extends FolkBaseConnection = Fol
 
   if (!target) return;
 
-  connection.targetElement = target;
+  connection.target = target;
 
   return connection;
 }
