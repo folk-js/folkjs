@@ -19,7 +19,12 @@ export class FolkXanadu extends FolkBaseConnection {
 
     let { sourceRect, targetRect } = this;
 
-    if (sourceRect === null || targetRect === null) {
+    if (
+      sourceRect === null ||
+      targetRect === null ||
+      !(this.source instanceof Element || this.source instanceof Range) ||
+      !(this.target instanceof Element || this.target instanceof Range)
+    ) {
       this.style.clipPath = '';
       this.style.display = 'none';
       return;
@@ -35,8 +40,8 @@ export class FolkXanadu extends FolkBaseConnection {
     }
 
     // TODO: add getTransformDOMRects to iframe protocol.
-    let sourceVertices = computeInlineVertices(Array.from([sourceRect]));
-    const targetVertices = computeInlineVertices(Array.from([targetRect]));
+    let sourceVertices = computeInlineVertices(Array.from(this.source.getClientRects()));
+    const targetVertices = computeInlineVertices(Array.from(this.target.getClientRects()));
 
     if (sourceVertices.length === 0 || targetVertices.length === 0) {
       this.style.clipPath = '';
