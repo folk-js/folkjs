@@ -16,7 +16,7 @@ export function arrange(rects: R.Rect2D[], repulsionSteps: number, compactionSte
 
         const overlap = R.intersection(r1, r2);
 
-        if (overlap.width > 0 && overlap.height > 0) {
+        if (overlap !== null) {
           const expandedOverlap = R.expand(overlap, 10);
 
           const accumulated = forces.get(r1) || V.zero();
@@ -61,7 +61,7 @@ export function arrange(rects: R.Rect2D[], repulsionSteps: number, compactionSte
 
         const overlap = R.intersection(r1, r2);
 
-        if (overlap.width > 0 && overlap.height > 0) {
+        if (overlap !== null) {
           if (overlap.width >= overlap.height) {
             R.translateSelf(r1, { x: 0, y: -Math.sign(step.y) * overlap.height });
           } else {

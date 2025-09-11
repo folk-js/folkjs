@@ -16,6 +16,10 @@ export function fromValues(x = 0, y = 0, width = 0, height = 0): Rect2D {
   return { x, y, width, height };
 }
 
+export function fromPoints(min: V.Point, max: V.Point): Rect2D {
+  return fromValues(min.x, min.y, max.x - min.x, max.y - min.y);
+}
+
 export function isRect2D(rect: unknown): rect is Rect2D {
   return isObject(rect) && isNumber(rect.x) && isNumber(rect.y) && isNumber(rect.width) && isNumber(rect.height);
 }
@@ -86,13 +90,24 @@ export function intersects(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D): boolea
   );
 }
 
-export function intersection(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D) {
+export function intersection(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D): Rect2D | null {
+  if (!intersects(rect1, rect2)) return null;
+
   const x = Math.max(rect1.x, rect2.x);
   const y = Math.max(rect1.y, rect2.y);
-  const width = Math.min(rect1.x + rect1.width, rect2.x + rect2.width);
-  const height = Math.min(rect1.x + rect1.width, rect2.x + rect2.width);
+  const maxX = Math.min(rect1.x + rect1.width, rect2.x + rect2.width);
+  const maxY = Math.min(rect1.y + rect1.height, rect2.y + rect2.height);
 
-  return fromValues(x, y, width, height);
+  return fromValues(x, y, maxX - x, maxY - y);
+}
+
+/** Calculate the percentage overlap of rect2 in rect1.  */
+export function overlap(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D) {
+  const rect = intersection(rect1, rect2);
+
+  if (rect === null) return 0;
+
+  return area(rect) / area(rect2);
 }
 
 export function proximal(rect1: ReadonlyRect2D, rect2: ReadonlyRect2D, proximity: number): boolean {

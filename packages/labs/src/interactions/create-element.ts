@@ -108,16 +108,24 @@ export async function dragToCreateShape<T extends Element = Element>(
   return el;
 }
 
-export function clickToCreateShapes<T extends Element = Element>(
+export async function clickToCreateShapes<T extends Element = Element>(
   container: HTMLElement,
   cancellationSignal: AbortSignal,
   completionSignal: AbortSignal,
-): Promise<T[] | null> {
-  return new Promise(async (resolve) => {
-    const elements = await selectElements(completionSignal, cancellationSignal);
+): Promise<T[]> {
+  const elements = await selectElements(completionSignal, cancellationSignal);
 
-    for (const el of elements) {
-      el.setAttribute('folk-shape', '');
-    }
+  for (const el of elements) {
+    el.setAttribute('folk-shape', '');
+  }
+
+  return elements as T[];
+}
+
+export async function dragToCreateRegion(container: HTMLElement, cancellationSignal: AbortSignal) {
+  return await dragToCreateShape(container, cancellationSignal, () => {
+    const r = document.createElement('folk-region');
+    r.setAttribute('folk-sync', '');
+    return r;
   });
 }

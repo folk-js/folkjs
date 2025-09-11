@@ -37,7 +37,7 @@ export class CustomAttribute<E extends Element = Element> {
 
   connectedCallback() {}
 
-  connectedMoveCallback?: () => void;
+  connectedMoveCallback() {}
 
   disconnectedCallback() {}
 

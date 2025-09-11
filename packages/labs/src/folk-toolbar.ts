@@ -122,7 +122,7 @@ export class FolkToolbar extends ReactiveElement {
       label {
         white-space: nowrap;
         position: relative;
-        padding: 1rem;
+        padding: 1rem 0.75rem;
 
         &:hover {
           cursor: pointer;

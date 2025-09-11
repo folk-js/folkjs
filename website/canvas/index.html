@@ -34,11 +34,12 @@
       div[folk-shape] {
         border: solid 2px black;
         border-radius: 13px;
+        background: green;
       }
     </style>
   </head>
   <body>
-    <main folk-space="grid: true" folk-sync></main>
+    <main folk-space="grid: true"></main>
 
     <folk-toolbar container="main">
       <folk-instrument type="select">Select</folk-instrument>
@@ -47,6 +48,7 @@
       <folk-instrument type="erase">Erase</folk-instrument>
       <folk-instrument type="rectangle">Rectangle</folk-instrument>
       <folk-instrument type="text">Text</folk-instrument>
+      <folk-instrument type="region">Region</folk-instrument>
       <folk-instrument type="arrow">Arrow</folk-instrument>
       <folk-instrument type="event-propagator">Event Propagator</folk-instrument>
     </folk-toolbar>
@@ -56,9 +58,16 @@
     import '@folkjs/labs/standalone/folk-space-attribute';
     import '@folkjs/labs/standalone/folk-shape-attribute';
     import '@folkjs/labs/standalone/folk-ink';
-    import '@folkjs/labs/standalone/folk-sync-attribute';
+    import '@folkjs/labs/standalone/folk-region';
     import '@folkjs/labs/standalone/folk-arrow';
     import '@folkjs/labs/standalone/folk-event-propagator';
-    import '@folkjs/labs/standalone/folk-toolbar';
+    import '@folkjs/labs/standalone/folk-sync-attribute';
+    import { FolkToolbar, FolkInstrument } from '@folkjs/labs/folk-toolbar';
+    import { dragToCreateRegion } from '@folkjs/labs/interactions/create-element';
+
+    FolkInstrument.setInteraction('region', dragToCreateRegion);
+
+    FolkInstrument.define();
+    FolkToolbar.define();
   </script>
 </html>

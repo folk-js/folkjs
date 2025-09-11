@@ -1,9 +1,10 @@
-import { TransformStack } from '@folkjs/canvas';
+import { IPointTransform, TransformStack } from '@folkjs/canvas';
 import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
 import { ResizeManager } from '@folkjs/dom/ResizeManger';
 import { css } from '@folkjs/dom/tags';
+import * as M from '@folkjs/geometry/Matrix2D';
 import * as S from '@folkjs/geometry/Shape2D';
-import type { Vector2 } from '@folkjs/geometry/Vector2';
+import type { Point, Vector2 } from '@folkjs/geometry/Vector2';
 import { toDOMPrecision } from '@folkjs/geometry/utilities';
 import { FolkShapeOverlay } from './folk-shape-overlay';
 import { ShapeConnectedEvent, ShapeDisconnectedEvent, TransformEvent, type Shape2DObject } from './shape-events';
@@ -17,7 +18,7 @@ declare global {
 const resizeManager = new ResizeManager();
 
 // TODO: if an auto position/size is defined as a style then we should probably save it and set it back
-export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject {
+export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject, IPointTransform {
   static override attributeName = 'folk-shape';
 
   static override define() {
@@ -308,6 +309,7 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
 
     el.addEventListener('focus', this);
     el.addEventListener('blur', this);
+    el.addEventListener('shape-connected', this.#onShapeConnected);
 
     // We need to make this element focusable if it isn't already
     // Edge case: <video> tabIndex property is 0, but we need a tab index attribute to focus it.
@@ -370,6 +372,7 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
 
     el.removeEventListener('focus', this);
     el.removeEventListener('blur', this);
+    el.removeEventListener('shape-connected', this.#onShapeConnected);
 
     if (this.#autoHeight || this.#autoWidth) {
       resizeManager.unobserve(el, this.#onResize);
@@ -383,6 +386,15 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
 
     this.ownerElement.dispatchEvent(new ShapeDisconnectedEvent(this));
     this.#transformStack = new TransformStack();
+  }
+
+  override connectedMoveCallback() {
+    const event = new ShapeConnectedEvent(this);
+    this.ownerElement.dispatchEvent(event);
+    this.#transformStack = new TransformStack(event.spaces);
+    if (this.#shapeOverlay.isOpen) {
+      this.#shapeOverlay.open(this, this.ownerElement as HTMLElement);
+    }
   }
 
   handleEvent(event: FocusEvent) {
@@ -402,6 +414,75 @@ export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject
       this.#shapeOverlay.remove();
     }
   }
+
+  /**
+   * Converts a point from parent coordinates to local space coordinates.
+   *
+   * @param point The point in parent coordinates
+   * @returns The point in local space coordinates
+   */
+  mapPointFromParent(point: Point): Point {
+    // Create an inverse of the current transformation matrix
+    const matrix = M.fromValues();
+    M.translateSelf(matrix, this.x, this.y);
+    M.rotateSelf(matrix, this.rotation);
+    M.invertSelf(matrix);
+
+    // Apply the inverse transformation to convert from parent to space coordinates
+    return M.applyToPoint(matrix, point);
+  }
+
+  /**
+   * Converts a vector from parent coordinates to local space coordinates.
+   * Vectors are affected by scale and rotation, but not by translation.
+   *
+   * @param vector The vector in parent coordinates
+   * @returns The vector in local space coordinates
+   */
+  mapVectorFromParent(vector: Point): Point {
+    // For vectors, we only need to apply scale (and rotation if present)
+    // Create a matrix with just the scale component
+    const scaleMatrix = M.fromValues(1, 0, 0, 1, 0, 0);
+
+    // Apply the inverse transformation to the vector
+    return M.applyToPoint(M.invertSelf(scaleMatrix), vector);
+  }
+
+  /**
+   * Converts a point from local space coordinates to parent coordinates.
+   *
+   * @param point The point in local space coordinates
+   * @returns The point in parent coordinates
+   */
+  mapPointToParent(point: Point): Point {
+    // Apply the space's transformation matrix directly
+    const matrix = M.fromValues();
+    M.translateSelf(matrix, this.x, this.y);
+    M.rotateSelf(matrix, this.rotation);
+    return M.applyToPoint(matrix, point);
+  }
+
+  /**
+   * Converts a point from local space coordinates to parent coordinates.
+   *
+   * @param vector The point in local space coordinates
+   * @returns The point in parent coordinates
+   */
+  mapVectorToParent(point: Point): Point {
+    // For vectors, we only need to apply scale (and rotation if present)
+    // Create a matrix with just the scale component
+    const scaleMatrix = M.fromValues(1, 0, 0, 1, 0, 0);
+
+    // Apply the transformation to the vector
+    return M.applyToPoint(scaleMatrix, point);
+  }
+
+  #onShapeConnected = (event: ShapeConnectedEvent) => {
+    // A shape shouldn't be in it's own transform stack
+    if (event.shape === this) return;
+
+    event.registerSpace(this);
+  };
 
   #updateRequested = false;
 
