@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/web-extension",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "description": "folkjs web extension",
   "author": "Christopher Shank <chris.shank.23@gmail.com>",
@@ -34,10 +34,10 @@
     }
   },
   "dependencies": {
-    "@folkjs/canvas": "0.0.4",
-    "@folkjs/dom": "0.0.4",
-    "@folkjs/geometry": "0.0.4",
-    "@folkjs/labs": "0.0.4",
+    "@folkjs/canvas": "0.0.5",
+    "@folkjs/dom": "0.0.5",
+    "@folkjs/geometry": "0.0.5",
+    "@folkjs/labs": "0.0.5",
     "webextension-polyfill": "^0.12.0"
   },
   "devDependencies": {

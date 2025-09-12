@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/repo-utils",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "description": "Repository utilities",
   "author": "Christopher Shank <chris.shank.23@gmail.com>",
