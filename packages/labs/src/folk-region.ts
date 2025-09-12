@@ -7,8 +7,13 @@ export class FolkRegion extends ReactiveElement {
 
   static override styles = css`
     :host {
-      background-color: lightblue;
-      overflow: visible !important;
+      background-color: oklch(87% 0.065 274.039);
+      box-shadow:
+        inset 0 2px 4px color-mix(in oklab, oklch(58.5% 0.233 277.117) 100%, transparent),
+        0 0 #0000,
+        0 0 #0000,
+        0 0 #0000,
+        0 0 #0000;
     }
   `;
 
