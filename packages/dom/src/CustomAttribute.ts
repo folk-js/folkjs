@@ -28,8 +28,6 @@ export class CustomAttribute<E extends Element = Element> {
   }
 
   constructor(ownerElement: E, name: string, value: string) {
-    if (!name.includes('-')) throw new Error(`Custom attribute '${name}' must include a hyphen.`);
-
     this.#name = name;
     this.#value = value;
     this.#ownerElement = ownerElement;
@@ -135,6 +133,8 @@ export class CustomAttributeRegistry {
   }
 
   define(attrName: string, Class: typeof CustomAttribute) {
+    if (!attrName.includes('-')) throw new Error(`Custom attribute '${name}' must include a hyphen.`);
+
     this.#attrMap.set(attrName, Class);
     this.#upgradeAttr(attrName);
     this.#observer.disconnect();
