@@ -12,7 +12,7 @@ import {
   type PeerId,
   type Prop,
 } from '@folkjs/collab/automerge';
-import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
+import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
 import type { DOMJElement, DOMJNode } from '@folkjs/labs/dom-json';
 
 /**
@@ -39,6 +39,18 @@ function getNodePath(path: Prop[]): Prop[] {
 
 export class FolkSyncAttribute extends CustomAttribute {
   static override attributeName = 'folk-sync';
+
+  static override define() {
+    if (!customAttributes.isDefined(this.attributeName)) {
+      Object.defineProperty(Element.prototype, 'folkSync', {
+        get() {
+          return customAttributes.get(this, FolkSyncAttribute.attributeName) as FolkSyncAttribute | undefined;
+        },
+      });
+    }
+
+    super.define();
+  }
 
   // Automerge repository and document handle
   #repo!: Repo;
