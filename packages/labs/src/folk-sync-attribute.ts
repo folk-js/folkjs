@@ -11,7 +11,7 @@ import {
   type Patch,
   type PeerId,
   type Prop,
-} from '@automerge/vanillajs';
+} from '@folkjs/collab/automerge';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import type { DOMJElement, DOMJNode } from '@folkjs/labs/dom-json';
 

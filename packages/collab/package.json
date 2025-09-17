@@ -1,0 +1,54 @@
+{
+  "name": "@folkjs/collab",
+  "version": "0.0.5",
+  "description": "Collaboration and P2P utilities",
+  "keywords": [],
+  "author": "Christopher Shank <chris.shank.23@gmail.com>",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./*": {
+      "import": "./dist/*.js",
+      "types": "./dist/*.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "wireit",
+    "publish": "wireit",
+    "test:dev": "npm run test --watch"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty && vite build",
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    },
+    "publish": {
+      "command": "npm publish --access public",
+      "dependencies": [
+        "build",
+        "test"
+      ]
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "vite": "^7.1.5",
+    "vite-plugin-wasm": "^3.5.0"
+  },
+  "dependencies": {
+    "@automerge/vanillajs": "^2.3.0"
+  }
+}

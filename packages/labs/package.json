@@ -49,6 +49,7 @@
       "clean": "if-file-deleted",
       "dependencies": [
         "../dom:build",
+        "../collab:build",
         "../geometry:build",
         "../canvas:build",
         "../propagators:build"
@@ -82,11 +83,11 @@
     }
   },
   "dependencies": {
-    "@automerge/vanillajs": "^2.3.0",
     "@codemirror/lang-javascript": "^6.2.3",
     "@codemirror/view": "^6.36.5",
     "@dimforge/rapier2d": "^0.15.0",
     "@folkjs/canvas": "0.0.5",
+    "@folkjs/collab": "0.0.5",
     "@folkjs/dom": "0.0.5",
     "@folkjs/geometry": "0.0.5",
     "@folkjs/propagators": "0.0.5",

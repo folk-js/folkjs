@@ -1,4 +1,4 @@
-import type { ImmutableString } from '@automerge/vanillajs';
+import type { ImmutableString } from '@folkjs/collab/automerge';
 
 // TODO: make this 1:1 correspondence with DOM node types
 // TODO: don't couple to Automerge types

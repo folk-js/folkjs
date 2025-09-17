@@ -23,6 +23,7 @@
       "dependencies": [
         "./packages/geometry:publish",
         "./packages/dom:publish",
+        "./packages/collab:publish",
         "./packages/propagators:publish",
         "./packages/canvas:publish",
         "./packages/labs:publish"
