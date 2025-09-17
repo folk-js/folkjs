@@ -195,10 +195,9 @@
     </div>
 
     <script type="module">
+      import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-shape-attribute';
-
-      import '@folkjs/labs/standalone/folk-sync-attribute';
 
       // Get the synced container
       const syncContainer = document.querySelector('.sync-container');
@@ -390,6 +389,20 @@
       };
 
       console.log('🧪 Sync test interface loaded. Use the buttons on the right to test various operations.');
+
+      document.body.addEventListener('doc-change', (e) => {
+        location.hash = e.docId;
+      });
+
+      function hashChange() {
+        document.querySelector('[folk-sync]')?.setAttribute('folk-sync', location.hash.slice(1));
+      }
+
+      window.addEventListener('hashchange', hashChange);
+
+      hashChange();
+
+      FolkSyncAttribute.define();
     </script>
   </body>
 </html>

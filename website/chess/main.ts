@@ -1,9 +1,9 @@
 import { css, property, ReactiveElement, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
 import { selectElement } from '@folkjs/labs/interactions/dom-selection';
 import '@folkjs/labs/standalone/folk-event-propagator';
 import '@folkjs/labs/standalone/folk-shape';
 import '@folkjs/labs/standalone/folk-spreadsheet';
-import '@folkjs/labs/standalone/folk-sync-attribute';
 
 // https://github.com/lichess-org/chessground
 // https://chessboardjs.com/#start
@@ -331,3 +331,17 @@ async function movePiece(cancellationSignal: AbortSignal, board: ChessBoard): Pr
 //     console.log('done');
 //   }
 // }, 1000);
+
+document.body.addEventListener('doc-change', (e) => {
+  location.hash = e.docId;
+});
+
+function hashChange() {
+  document.querySelector('[folk-sync]')?.setAttribute('folk-sync', location.hash.slice(1));
+}
+
+window.addEventListener('hashchange', hashChange);
+
+hashChange();
+
+FolkSyncAttribute.define();

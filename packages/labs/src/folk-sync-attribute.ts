@@ -1,6 +1,5 @@
 import {
   DocHandle,
-  generateAutomergeUrl,
   getObjectId,
   ImmutableString,
   isValidAutomergeUrl,
@@ -37,6 +36,31 @@ function getNodePath(path: Prop[]): Prop[] {
   return [];
 }
 
+export class DocChangeEvent extends Event {
+  #docId;
+
+  get docId() {
+    return this.#docId;
+  }
+
+  constructor(docId: string) {
+    super('doc-change', { bubbles: true });
+    this.#docId = docId;
+  }
+}
+
+declare global {
+  interface ElementEventMap {
+    'doc-change': DocChangeEvent;
+  }
+}
+
+declare global {
+  interface Element {
+    folkSync: FolkSyncAttribute | undefined;
+  }
+}
+
 export class FolkSyncAttribute extends CustomAttribute {
   static override attributeName = 'folk-sync';
 
@@ -67,9 +91,6 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   // Flag to prevent recursive updates
   #isApplyingRemoteChanges = false;
-
-  // Hash change listener
-  #hashChangeListener?: () => void;
 
   /**
    * Helper to store DOM-Automerge mapping
@@ -453,33 +474,33 @@ export class FolkSyncAttribute extends CustomAttribute {
     if (this.#observer) {
       this.#observer.disconnect();
     }
+
+    // Clear mappings
+    this.#domToAutomergeId = new Map<Node, string>();
+    this.#automergeIdToDom = new Map<string, Node>();
   }
 
   /**
    * Create a new document from the current DOM state and initialize it
    */
-  #createNewDocument(): void {
+  async #createNewDocument() {
     const initialDoc = this.#buildAutomergeFromDOM(this.ownerElement);
     this.#handle = this.#repo.create<DOMJElement>(initialDoc as any);
 
-    this.#handle
-      .whenReady()
-      .then(async () => {
-        // Update the URL hash only if not using attribute value
-        if (!this.value) {
-          window.location.hash = this.#handle.url;
-        }
+    await this.#handle.whenReady();
 
-        // Initialize as a new document
-        const doc = this.#handle.doc();
-        if (doc) {
-          this.#initializeWithDocument(doc, true);
-        }
-      })
-      .catch((error: any) => {
-        console.error('FolkSync initialization promise rejected:', error);
-        throw error;
-      });
+    // Reflect document if is it doesnt exist
+    if (!this.value) {
+      this.value = this.#handle.url;
+    }
+
+    // Initialize as a new document
+    const doc = this.#handle.doc();
+    if (doc) {
+      this.#initializeWithDocument(doc, true);
+    }
+
+    this.ownerElement.dispatchEvent(new DocChangeEvent(this.value));
   }
 
   /**
@@ -488,20 +509,14 @@ export class FolkSyncAttribute extends CustomAttribute {
   override connectedCallback(): void {
     // Initialize Automerge repository
     this.#initializeRepo();
+  }
 
-    // Initialize document based on current hash
+  override changedCallback(): void {
+    // Stop current sync
+    this.#stopObserving();
+
+    // Initialize with new hash
     this.#initializeDocument();
-
-    // Set up hash change listener only if not using attribute value
-    if (!this.value) {
-      this.#hashChangeListener = () => {
-        this.#reinitialize();
-      };
-      window.addEventListener('hashchange', this.#hashChangeListener);
-    }
-
-    // DEBUG: just here for testing atm
-    (window as any).aid = generateAutomergeUrl;
   }
 
   /**
@@ -522,11 +537,10 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /**
-   * Initialize document based on attribute value or current URL hash
+   * Initialize document based on attribute value
    */
   async #initializeDocument(): Promise<void> {
-    // Use attribute value if provided, otherwise fall back to URL hash
-    const docId = this.value || window.location.hash.slice(1);
+    const docId = this.value;
 
     // If no valid document ID, create new document
     if (!docId || !isValidAutomergeUrl(docId)) {
@@ -548,21 +562,6 @@ export class FolkSyncAttribute extends CustomAttribute {
       console.error('Error finding document:', error);
       this.#createNewDocument();
     }
-  }
-
-  /**
-   * Reinitialize when hash changes
-   */
-  #reinitialize(): void {
-    // Stop current sync
-    this.#stopObserving();
-
-    // Clear mappings
-    this.#domToAutomergeId = new Map<Node, string>();
-    this.#automergeIdToDom = new Map<string, Node>();
-
-    // Initialize with new hash
-    this.#initializeDocument();
   }
 
   /**
@@ -609,12 +608,6 @@ export class FolkSyncAttribute extends CustomAttribute {
    */
   override disconnectedCallback(): void {
     this.#stopObserving();
-
-    // Remove hash change listener
-    if (this.#hashChangeListener) {
-      window.removeEventListener('hashchange', this.#hashChangeListener);
-      this.#hashChangeListener = undefined;
-    }
   }
 
   /**
