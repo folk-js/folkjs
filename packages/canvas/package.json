@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/canvas",
-  "version": "0.0.5",
+  "version": "0.0.7",
   "description": "FolkJS Canvas ",
   "keywords": [
     "matrix",
@@ -67,8 +67,8 @@
     }
   },
   "dependencies": {
-    "@folkjs/dom": "0.0.5",
-    "@folkjs/geometry": "0.0.5"
+    "@folkjs/dom": "0.0.7",
+    "@folkjs/geometry": "0.0.7"
   },
   "devDependencies": {
     "expect": "^29.7.0",
