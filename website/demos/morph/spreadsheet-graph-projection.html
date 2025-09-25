@@ -24,6 +24,24 @@
         top: 1rem;
       }
 
+      folk-cell[column='A'][row='1'] {
+        --cell-top: 100px;
+        --cell-left: 100px;
+        view-transition-name: A1;
+      }
+
+      folk-cell[column='A'][row='2'] {
+        --cell-top: 200px;
+        --cell-left: 100px;
+        view-transition-name: A2;
+      }
+
+      folk-cell[column='A'][row='3'] {
+        --cell-top: 150px;
+        --cell-left: 250px;
+        view-transition-name: A3;
+      }
+
       body[overlay] {
         folk-spreadsheet::after {
           display: block;
@@ -49,12 +67,7 @@
     <button>Toggle Dependency graph</button>
     <folk-shape x="50" y="50">
       <folk-spreadsheet>
-        <folk-cell
-          column="A"
-          row="1"
-          expression=""
-          style="--cell-top: 100px; --cell-left: 100px; view-transition-name: A1"
-        ></folk-cell>
+        <folk-cell column="A" row="1" expression="1"></folk-cell>
         <folk-cell column="B" row="1"></folk-cell>
         <folk-cell column="C" row="1"></folk-cell>
         <folk-cell column="D" row="1"></folk-cell>
@@ -64,12 +77,7 @@
         <folk-cell column="H" row="1"></folk-cell>
         <folk-cell column="I" row="1"></folk-cell>
         <folk-cell column="J" row="1"></folk-cell>
-        <folk-cell
-          column="A"
-          row="2"
-          expression=""
-          style="--cell-top: 200px; --cell-left: 100px; view-transition-name: A2"
-        ></folk-cell>
+        <folk-cell column="A" row="2" expression="2"></folk-cell>
         <folk-cell column="B" row="2"></folk-cell>
         <folk-cell column="C" row="2"></folk-cell>
         <folk-cell column="D" row="2"></folk-cell>
@@ -79,11 +87,7 @@
         <folk-cell column="H" row="2"></folk-cell>
         <folk-cell column="I" row="2"></folk-cell>
         <folk-cell column="J" row="2"></folk-cell>
-        <folk-cell
-          column="A"
-          row="3"
-          style="--cell-top: 150px; --cell-left: 250px; view-transition-name: A3"
-        ></folk-cell>
+        <folk-cell column="A" row="3" expression="A1 + A2"></folk-cell>
         <folk-cell column="B" row="3"></folk-cell>
         <folk-cell column="C" row="3"></folk-cell>
         <folk-cell column="D" row="3"></folk-cell>
@@ -294,8 +298,8 @@
             dep.setAttribute('graph', '');
 
             const connection = document.createElement('folk-arrow');
-            connection.source = `folk-cell[row="${dep.row}"][column="${dep.column}"]`;
-            connection.target = `folk-cell[row="${cell.row}"][column="${cell.column}"]`;
+            connection.source = dep;
+            connection.target = cell;
 
             document.body.appendChild(connection);
           }
