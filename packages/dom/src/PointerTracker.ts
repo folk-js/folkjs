@@ -39,14 +39,12 @@ export interface PointerTrackerOptions {
    * events, for actions such as scrolling.
    */
   end?: EndCallback;
+
   /**
-   * Avoid pointer events in favour of touch and mouse events?
-   *
-   * Even if the browser supports pointer events, you may want to force the browser to use
-   * mouse/touch fallbacks, to work around bugs such as
-   * https://bugs.webkit.org/show_bug.cgi?id=220196.
+   * Abort signal to automatically cancel and clean up the PointerTracker
    */
-  avoidPointerEvents?: boolean;
+  signal?: AbortSignal;
+
   /**
    * Use raw pointer updates? Pointer events are usually synchronised to requestAnimationFrame.
    * However, if you're targeting a desynchronised canvas, then faster 'raw' updates are better.
@@ -74,6 +72,7 @@ export default class PointerTracker {
   #startCallback: StartCallback;
   #moveCallback: MoveCallback;
   #endCallback: EndCallback;
+  #signal: AbortSignal | undefined;
   #rawUpdates = 'onpointerrawupdate' in window;
 
   /**
@@ -91,25 +90,31 @@ export default class PointerTracker {
    * @param element Element to monitor.
    * @param options
    */
-  constructor(element: HTMLElement, { start = () => true, move = noop, end = noop }: PointerTrackerOptions = {}) {
+  constructor(
+    element: HTMLElement,
+    { start = () => true, move = noop, end = noop, signal }: PointerTrackerOptions = {},
+  ) {
     this.#element = element;
     this.#startCallback = start;
     this.#moveCallback = move;
     this.#endCallback = end;
+    this.#signal = signal;
 
     // Add listeners
     this.#element.addEventListener('pointerdown', this.#pointerStart);
+    this.#signal?.addEventListener('abort', this.stop);
   }
 
   /**
    * Remove all listeners.
    */
-  stop() {
+  stop = () => {
     this.#element.removeEventListener('pointerdown', this.#pointerStart);
     this.#element.removeEventListener(this.#rawUpdates ? 'pointerrawupdate' : 'pointermove', this.#move as any);
     this.#element.removeEventListener('pointerup', this.#pointerEnd);
     this.#element.removeEventListener('pointercancel', this.#pointerEnd);
-  }
+    this.#signal?.removeEventListener('abort', this.stop);
+  };
 
   /**
    * Call the start callback for this pointer, and track it if the user wants.
