@@ -101,11 +101,30 @@ export async function dragToCreateShape<T extends Element = Element>(
 
       if (shape === undefined) return;
 
-      shape.width = point.x - shape.x;
-      shape.height = point.y - shape.y;
+      if (point.x < shape.x || point.x - shape.x < shape.x + shape.width - point.x) {
+        shape.width += shape.x - point.x;
+        shape.x = point.x;
+      } else {
+        shape.width = point.x - shape.x;
+      }
+
+      if (point.y < shape.y || point.y - shape.y < shape.y + shape.height - point.y) {
+        shape.height += shape.y - point.y;
+        shape.y = point.y;
+      } else {
+        shape.height = point.y - shape.y;
+      }
     },
   );
   return el;
+}
+
+export async function dragToCreateRegion(container: HTMLElement, cancellationSignal: AbortSignal) {
+  return await dragToCreateShape(container, cancellationSignal, () => {
+    const r = document.createElement('folk-region');
+    r.setAttribute('folk-sync', '');
+    return r;
+  });
 }
 
 export async function clickToCreateShapes<T extends Element = Element>(
@@ -120,12 +139,4 @@ export async function clickToCreateShapes<T extends Element = Element>(
   }
 
   return elements as T[];
-}
-
-export async function dragToCreateRegion(container: HTMLElement, cancellationSignal: AbortSignal) {
-  return await dragToCreateShape(container, cancellationSignal, () => {
-    const r = document.createElement('folk-region');
-    r.setAttribute('folk-sync', '');
-    return r;
-  });
 }
