@@ -1,8 +1,7 @@
 import { css, property, ReactiveElement, state, type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import { brushInkShape } from './interactions/brush';
+import { brushInkShape, brushToDeleteElements } from './interactions/brush';
 import { clickToCreateArrow, clickToCreateEventPropagator } from './interactions/connection';
 import { dragToCreateShape } from './interactions/create-element';
-import { deleteElementByClick } from './interactions/delete';
 
 export type Interaction = (container: HTMLElement, cancellationSignal: AbortSignal) => Promise<void>;
 
@@ -16,7 +15,9 @@ export class FolkInstrument extends ReactiveElement {
     [
       'erase',
       async (container, cancellationSignal) => {
-        await deleteElementByClick(container, cancellationSignal);
+        await brushToDeleteElements(container, cancellationSignal, (el) =>
+          el.shape !== undefined && el.parentElement === container ? el : null,
+        );
       },
     ],
     [

@@ -91,3 +91,119 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
     container.addEventListener('touchmove', onTouch, { capture: true });
   });
 }
+
+const styles = new CSSStyleSheet();
+styles.replaceSync(`
+  html:has([folk-selected-element]) * {
+    cursor: crosshair;
+  }
+
+  [folk-selected-element] {
+    outline: solid 1px blue !important;
+    outline-offset: -1px;
+  }
+`);
+
+export function brushToSelectElements<T extends Element = Element>(
+  container: HTMLElement,
+  cancellationSignal: AbortSignal,
+  filter?: (el: Element) => T | null,
+) {
+  return new Promise<T[]>((resolve) => {
+    const elements = new Set<T>();
+
+    function elementsToSelect(event: PointerEvent) {
+      document.elementsFromPoint(event.pageX, event.pageY).forEach((el) => {
+        if (filter === undefined) {
+          el.setAttribute('folk-selected-element', '');
+          elements.add(el as T);
+          return;
+        }
+
+        const filteredEl = filter(el);
+        if (filteredEl) {
+          elements.add(el as T);
+          el.setAttribute('folk-selected-element', '');
+        }
+      });
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      container.setPointerCapture(event.pointerId);
+
+      container.addEventListener('pointermove', onPointerMove, { capture: true });
+      container.addEventListener('pointerup', onPointerUp, { capture: true });
+      elementsToSelect(event);
+    }
+
+    function onPointerMove(event: PointerEvent) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      elementsToSelect(event);
+    }
+
+    function onPointerUp(event: PointerEvent) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+
+      cleanUp();
+      resolve(Array.from(elements));
+    }
+
+    function onTouch(event: TouchEvent) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    }
+
+    function onCancel() {
+      cleanUp();
+      resolve([]);
+    }
+
+    function cleanUp() {
+      elements.forEach((el) => el.removeAttribute('folk-selected-element'));
+      cancellationSignal.removeEventListener('abort', onCancel);
+      container.removeEventListener('touchmove', onTouch, { capture: true });
+      container.removeEventListener('pointerdown', onPointerDown, { capture: true });
+      container.removeEventListener('pointermove', onPointerMove, { capture: true });
+      container.removeEventListener('pointerup', onPointerUp, { capture: true });
+      container.ownerDocument.adoptedStyleSheets.splice(container.ownerDocument.adoptedStyleSheets.indexOf(styles), 1);
+    }
+
+    cancellationSignal.addEventListener('abort', onCancel);
+    container.addEventListener('pointerdown', onPointerDown, { capture: true });
+    container.addEventListener('touchmove', onTouch, { capture: true });
+    container.ownerDocument.adoptedStyleSheets.push(styles);
+  });
+}
+
+const deleteStyles = new CSSStyleSheet();
+styles.replaceSync(`
+  [folk-selected-element] {
+    outline: none;
+    opacity: 0.4;
+  }
+`);
+
+export async function brushToDeleteElements<T extends Element = Element>(
+  container: HTMLElement,
+  cancellationSignal: AbortSignal,
+  filter?: (el: Element) => T | null,
+) {
+  container.ownerDocument.adoptedStyleSheets.push(deleteStyles);
+  const elements = await brushToSelectElements<T>(container, cancellationSignal, filter);
+  container.ownerDocument.adoptedStyleSheets.splice(
+    container.ownerDocument.adoptedStyleSheets.indexOf(deleteStyles),
+    1,
+  );
+
+  elements.forEach((el) => el.remove());
+
+  return elements;
+}
