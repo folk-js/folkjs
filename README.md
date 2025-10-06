@@ -6,7 +6,7 @@
 
 - How do we make the web feel more alive and soft?
 - How can we more easily connect web pages and their data?
-- How easily can we turn a HTML document into a spatial canvas and visa versa?
+- How easily can we turn a HTML document into a spatial canvas and vice versa?
 - What would it look like if the browser had primitives for building spatial canvases?
 - How can someone annotate, re-layout, and program web pages they did not make or distribute?
 - How can we compose visual programming interfaces, hypermedia, and LLMs that work on any web page?
