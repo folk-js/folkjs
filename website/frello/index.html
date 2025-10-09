@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kanban Board</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet" />
+    <style>
+      html {
+        height: 100%;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: 'Inter', system-ui;
+        font-optical-sizing: auto;
+        font-style: normal;
+        height: 100%;
+        margin: 0;
+
+        display: flex;
+        flex-direction: column;
+
+        --bgColor-default: #0d1117;
+        --bgColor-muted: #151b23;
+        --bgColor-inset: #010409;
+        --bgColor-emphasis: #3d444d;
+        --overlay-bgColor: #151b23;
+        --borderColor-default: #3d444d;
+        --bgColor-accent-emphasis: #1f6feb;
+        --transparent-bgColor-hover: #656c7633;
+        --fgColor-muted: #9198a1;
+        --bgColor-accent-emphasis: #1f6feb;
+
+        color: #f0f6fc;
+        background-color: var(--bgColor-default);
+      }
+
+      header {
+        background-color: var(--bgColor-inset);
+        border-bottom: solid 1px var(--borderColor-default);
+        padding: 8px 16px;
+
+        h1 {
+          font-size: 20px;
+          margin: 0;
+        }
+      }
+
+      main {
+        flex: 1;
+        min-height: 0; /* Makes the columns overflow scroll if there are too many cards. */
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>folk kanban</h1>
+    </header>
+
+    <main folk-sync>
+      <kanban-board name="My stuff">
+        <kanban-column name="Backlog">
+          <kanban-card name="Finish the board" description="blah blah"></kanban-card>
+          <kanban-card name="Add collaboration" description="blah blah"></kanban-card>
+        </kanban-column>
+
+        <kanban-column name="In progress"></kanban-column>
+
+        <kanban-column name="Done"></kanban-column>
+      </kanban-board>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
