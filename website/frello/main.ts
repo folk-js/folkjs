@@ -1,6 +1,6 @@
 import { type PropertyValues, ReactiveElement, css, property } from '@folkjs/dom/ReactiveElement';
 import { html } from '@folkjs/dom/tags';
-import '@folkjs/labs/standalone/folk-sync-attribute';
+import { FolkSyncAttribute } from '@folkjs/labs/folk-sync-attribute';
 
 const sharedStyles = css`
   :focus,
@@ -610,3 +610,17 @@ function closestSibling(el: Element, selector: string, where: 'before' | 'after'
   }
   return sibling;
 }
+
+document.body.addEventListener('doc-change', (e) => {
+  location.hash = e.docId;
+});
+
+function hashChange() {
+  document.querySelector('[folk-sync]')?.setAttribute('folk-sync', location.hash.slice(1));
+}
+
+window.addEventListener('hashchange', hashChange);
+
+hashChange();
+
+FolkSyncAttribute.define();
