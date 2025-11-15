@@ -37,7 +37,7 @@
       }
 
       .mode-selector {
-        display: none; /* Hidden on desktop */
+        display: flex;
         justify-content: center;
         margin-bottom: 20px;
         gap: 10px;
@@ -273,10 +273,6 @@
           margin-bottom: 16px;
         }
 
-        .mode-selector {
-          display: flex; /* Show mode selector on mobile */
-        }
-
         .media-container {
           flex-direction: column;
           margin-bottom: 0px;
@@ -330,6 +326,54 @@
           max-width: 100%;
           margin: 0 auto;
         }
+
+        /* Passthrough mode - show both video and QR code, hide progress */
+        .passthrough-mode .title {
+          font-size: 16px;
+          margin-bottom: 12px;
+        }
+
+        .passthrough-mode .mode-selector {
+          margin-bottom: 12px;
+        }
+
+        .passthrough-mode .progress-section {
+          display: none;
+        }
+
+        .passthrough-mode .media-container {
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .passthrough-mode #videoContainer {
+          display: block;
+          max-width: 100%;
+          height: 25vh;
+          min-height: 150px;
+          aspect-ratio: auto;
+        }
+
+        .passthrough-mode .qr-container {
+          display: flex;
+          max-width: 100%;
+          height: calc(75vh - 180px);
+          min-height: 300px;
+          aspect-ratio: 1;
+        }
+
+        .passthrough-mode #qrcode {
+          width: 100%;
+          height: 100%;
+          border: 2px solid #000;
+        }
+
+        .passthrough-mode #qrcode canvas {
+          width: 100% !important;
+          height: 100% !important;
+          max-width: 100% !important;
+          max-height: 100% !important;
+        }
       }
     </style>
   </head>
@@ -337,10 +381,11 @@
     <div class="app-container">
       <div class="title">Data over QR (Fountain Codes)</div>
 
-      <!-- Mode selector (mobile only) -->
+      <!-- Mode selector -->
       <div class="mode-selector">
         <div id="senderBtn" class="mode-btn active">Send</div>
         <div id="receiverBtn" class="mode-btn">Receive</div>
+        <div id="passthroughBtn" class="mode-btn">Passthrough</div>
       </div>
 
       <!-- Container for QR and camera side-by-side -->
@@ -464,6 +509,7 @@
           indicesDisplay: document.getElementById('indicesDisplay'),
           senderBtn: document.getElementById('senderBtn'),
           receiverBtn: document.getElementById('receiverBtn'),
+          passthroughBtn: document.getElementById('passthroughBtn'),
           scanRateDisplay: document.getElementById('scanRateDisplay'),
         };
       }
@@ -475,11 +521,17 @@
         currentMode = mode;
 
         // Update UI classes
-        document.body.classList.toggle('receiver-mode', mode === 'receiver');
+        document.body.classList.remove('receiver-mode', 'passthrough-mode');
+        if (mode === 'receiver') {
+          document.body.classList.add('receiver-mode');
+        } else if (mode === 'passthrough') {
+          document.body.classList.add('passthrough-mode');
+        }
 
         // Update button states
         elements.senderBtn.classList.toggle('active', mode === 'sender');
         elements.receiverBtn.classList.toggle('active', mode === 'receiver');
+        elements.passthroughBtn.classList.toggle('active', mode === 'passthrough');
 
         // Reset protocol state
         qrtpc.reset();
@@ -498,10 +550,20 @@
           if (text) {
             startSending(text, elements);
           }
-        } else {
+        } else if (mode === 'receiver') {
           // receiver mode
           // Stop sending
           stopSending(elements);
+          // Start camera if not active
+          if (!cameraActive) {
+            startCamera(elements);
+          }
+        } else if (mode === 'passthrough') {
+          // passthrough mode - scan and display
+          // Stop sending
+          stopSending(elements);
+          // Clear QR code display initially
+          updateQRCode('', elements.qrcodeContainer);
           // Start camera if not active
           if (!cameraActive) {
             startCamera(elements);
@@ -609,13 +671,17 @@
           }
         });
 
-        // Mode switcher handlers (mobile only)
+        // Mode switcher handlers
         elements.senderBtn.addEventListener('click', function () {
           setMode('sender', elements);
         });
 
         elements.receiverBtn.addEventListener('click', function () {
           setMode('receiver', elements);
+        });
+
+        elements.passthroughBtn.addEventListener('click', function () {
+          setMode('passthrough', elements);
         });
       }
 
@@ -669,6 +735,12 @@
 
       // Receiving functions
       async function processQRCode(qrData, elements) {
+        // Handle passthrough mode - just display the QR code
+        if (currentMode === 'passthrough') {
+          updateQRCode(qrData, elements.qrcodeContainer);
+          return;
+        }
+
         try {
           const progress = qrtpc.receive(qrData);
 
@@ -798,13 +870,18 @@
 
         // Calculate container size to determine QR code size
         const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        const qrSize = Math.min(containerWidth, containerHeight);
+
+        // Use smaller margin for passthrough mode to maximize QR code size
+        const margin = currentMode === 'passthrough' ? 1 : 2;
 
         QRCode.toCanvas(
           canvas,
           qrData,
           {
-            width: containerWidth,
-            margin: 2,
+            width: qrSize,
+            margin: margin,
             errorCorrectionLevel: 'L', // Low error correction for maximum data
           },
           function (error) {

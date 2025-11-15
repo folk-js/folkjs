@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>TODO List over QR Codes (Automerge + QRTPC)</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        font-family: system-ui, sans-serif;
+        background-color: #f5f5f5;
+        overflow-x: hidden;
+        min-height: 100vh;
+        position: relative;
+      }
+
+      .app-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px 16px;
+      }
+
+      .title {
+        font-size: 28px;
+        font-weight: 600;
+        text-align: center;
+        margin-bottom: 24px;
+        color: #000;
+      }
+
+      .subtitle {
+        font-size: 14px;
+        text-align: center;
+        margin-bottom: 32px;
+        color: #666;
+      }
+
+      .main-layout {
+        display: flex;
+        gap: 32px;
+        align-items: flex-start;
+      }
+
+      .todo-section {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .qr-section {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .section-title {
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 16px;
+        color: #000;
+      }
+
+      .todo-list {
+        background: white;
+        border: 2px solid #000;
+        border-radius: 8px;
+        padding: 20px;
+        min-height: 300px;
+      }
+
+      .todo-input-container {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 20px;
+      }
+
+      .todo-input {
+        flex: 1;
+        padding: 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 14px;
+        font-family: inherit;
+      }
+
+      .add-btn {
+        padding: 12px 24px;
+        background-color: #000;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 500;
+        font-size: 14px;
+      }
+
+      .add-btn:hover {
+        background-color: #333;
+      }
+
+      .todo-items {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      .todo-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border-bottom: 1px solid #eee;
+        transition: background-color 0.2s;
+      }
+
+      .todo-item:hover {
+        background-color: #f9f9f9;
+      }
+
+      .todo-item:last-child {
+        border-bottom: none;
+      }
+
+      .todo-checkbox {
+        width: 20px;
+        height: 20px;
+        cursor: pointer;
+      }
+
+      .todo-text {
+        flex: 1;
+        font-size: 14px;
+        color: #333;
+      }
+
+      .todo-text.completed {
+        text-decoration: line-through;
+        color: #999;
+      }
+
+      .delete-btn {
+        padding: 6px 12px;
+        background-color: #f44336;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        opacity: 0;
+        transition: opacity 0.2s;
+      }
+
+      .todo-item:hover .delete-btn {
+        opacity: 1;
+      }
+
+      .delete-btn:hover {
+        background-color: #d32f2f;
+      }
+
+      .qr-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+
+      .qr-box {
+        border: 2px solid #000;
+        border-radius: 8px;
+        overflow: hidden;
+        background: white;
+      }
+
+      .qr-header {
+        background-color: #000;
+        color: white;
+        padding: 12px;
+        text-align: center;
+        font-weight: 500;
+        font-size: 14px;
+      }
+
+      .qr-display {
+        aspect-ratio: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        position: relative;
+      }
+
+      .qr-display canvas {
+        max-width: 100%;
+        max-height: 100%;
+      }
+
+      .qr-placeholder {
+        color: #999;
+        font-size: 14px;
+        text-align: center;
+      }
+
+      #videoContainer {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        overflow: hidden;
+        background-color: #000;
+        cursor: pointer;
+      }
+
+      #video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .camera-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: rgba(0, 0, 0, 0.5);
+        transition: opacity 0.3s ease;
+      }
+
+      .camera-label {
+        color: white;
+        font-size: 14px;
+        font-weight: 500;
+        text-align: center;
+        padding: 10px;
+      }
+
+      .camera-active .camera-overlay {
+        opacity: 0;
+        visibility: hidden;
+      }
+
+      @media (hover: hover) {
+        .camera-active:hover .camera-overlay {
+          opacity: 1;
+          visibility: visible;
+          background-color: rgba(0, 0, 0, 0.7);
+        }
+      }
+
+      .sync-status {
+        margin-top: 20px;
+        padding: 12px;
+        background-color: #f5f5f5;
+        border-radius: 4px;
+        font-size: 12px;
+        color: #666;
+      }
+
+      .peer-id {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #000;
+        font-weight: 500;
+      }
+
+      /* Mobile responsiveness */
+      @media (max-width: 968px) {
+        .main-layout {
+          flex-direction: column;
+        }
+
+        .qr-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-container">
+      <div class="title">📋 TODO List over QR Codes</div>
+      <div class="subtitle">Sync your TODO list across devices using Automerge + QR codes with fountain codes</div>
+
+      <div class="main-layout">
+        <!-- TODO List Section -->
+        <div class="todo-section">
+          <div class="section-title">Your TODOs</div>
+          <div class="todo-list">
+            <div class="todo-input-container">
+              <input
+                type="text"
+                id="todoInput"
+                class="todo-input"
+                placeholder="What needs to be done?"
+                autocomplete="off"
+              />
+              <button id="addBtn" class="add-btn">Add</button>
+            </div>
+            <ul id="todoItems" class="todo-items">
+              <!-- TODO items will be rendered here -->
+            </ul>
+          </div>
+          <div class="sync-status">
+            <div>Peer ID: <span id="peerId" class="peer-id">Connecting...</span></div>
+            <div id="syncStatus">Waiting to sync...</div>
+          </div>
+        </div>
+
+        <!-- QR Code Section -->
+        <div class="qr-section">
+          <div class="section-title">Sync QR Codes</div>
+          <div class="qr-grid">
+            <!-- Outgoing QR Code -->
+            <div class="qr-box">
+              <div class="qr-header">Send (show to other device)</div>
+              <div id="qrcodeSend" class="qr-display">
+                <div class="qr-placeholder">Waiting for changes...</div>
+              </div>
+            </div>
+
+            <!-- Incoming Camera -->
+            <div class="qr-box">
+              <div class="qr-header">Receive (scan other device)</div>
+              <div id="videoContainer" class="qr-display">
+                <video id="video" playsinline></video>
+                <div id="cameraOverlay" class="camera-overlay">
+                  <div class="camera-label">Click to Start Camera</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- QR Code libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+    <!-- Import QR Scanner, Automerge, and network adapter -->
+    <script type="module">
+      import QrScanner from 'https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js';
+      import { Repo } from '@automerge/vanillajs';
+      import { AutomergeQRNetwork } from '@folkjs/labs/automerge-qr-network';
+
+      // Make modules available globally for debugging
+      window.QrScanner = QrScanner;
+
+      // Core state
+      let qrScanner = null;
+      let cameraActive = false;
+      let repo = null;
+      let docHandle = null;
+      let network = null;
+
+      // Initialize after DOM is loaded
+      document.addEventListener('DOMContentLoaded', initApp);
+
+      async function initApp() {
+        // Get DOM elements
+        const elements = getElements();
+
+        // Initialize Automerge repo with QR network
+        await initializeAutomerge(elements);
+
+        // Setup event handlers
+        setupUIEvents(elements);
+
+        // Start camera automatically
+        startCamera(elements);
+      }
+
+      function getElements() {
+        return {
+          todoInput: document.getElementById('todoInput'),
+          addBtn: document.getElementById('addBtn'),
+          todoItems: document.getElementById('todoItems'),
+          peerId: document.getElementById('peerId'),
+          syncStatus: document.getElementById('syncStatus'),
+          qrcodeSend: document.getElementById('qrcodeSend'),
+          video: document.getElementById('video'),
+          videoContainer: document.getElementById('videoContainer'),
+          cameraOverlay: document.getElementById('cameraOverlay'),
+          cameraLabel: document.getElementById('cameraOverlay').querySelector('.camera-label'),
+        };
+      }
+
+      async function initializeAutomerge(elements) {
+        // Create QR network adapter
+        network = new AutomergeQRNetwork();
+
+        // Setup QR code display callback
+        network.onQRUpdate((qrData) => {
+          updateQRCode(qrData, elements.qrcodeSend);
+        });
+
+        // Create Automerge repo
+        repo = new Repo({
+          network: [network],
+        });
+
+        // Display peer ID
+        elements.peerId.textContent = repo.networkSubsystem.peerId.slice(0, 8) + '...';
+
+        // Create or load document
+        docHandle = repo.create();
+        docHandle.change((doc) => {
+          doc.todos = [];
+        });
+
+        // Make globally accessible for debugging
+        window.repo = repo;
+        window.docHandle = docHandle;
+
+        // Subscribe to document changes
+        docHandle.on('change', ({ doc }) => {
+          renderTodos(doc, elements);
+          updateSyncStatus(elements);
+        });
+
+        // Initial render
+        const doc = await docHandle.doc();
+        renderTodos(doc, elements);
+
+        elements.syncStatus.textContent = 'Ready to sync!';
+      }
+
+      function setupUIEvents(elements) {
+        // Add todo
+        const addTodo = () => {
+          const text = elements.todoInput.value.trim();
+          if (!text) return;
+
+          docHandle.change((doc) => {
+            if (!doc.todos) doc.todos = [];
+            doc.todos.push({
+              id: generateId(),
+              text: text,
+              completed: false,
+            });
+          });
+
+          elements.todoInput.value = '';
+        };
+
+        elements.addBtn.addEventListener('click', addTodo);
+        elements.todoInput.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') addTodo();
+        });
+
+        // Camera toggle
+        elements.videoContainer.addEventListener('click', () => {
+          if (cameraActive) {
+            stopCamera(elements);
+          } else {
+            startCamera(elements);
+          }
+        });
+      }
+
+      function renderTodos(doc, elements) {
+        const todos = doc?.todos || [];
+        elements.todoItems.innerHTML = '';
+
+        if (todos.length === 0) {
+          elements.todoItems.innerHTML =
+            '<li style="padding: 20px; text-align: center; color: #999;">No todos yet. Add one above!</li>';
+          return;
+        }
+
+        todos.forEach((todo, index) => {
+          const li = document.createElement('li');
+          li.className = 'todo-item';
+
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.className = 'todo-checkbox';
+          checkbox.checked = todo.completed;
+          checkbox.addEventListener('change', () => {
+            docHandle.change((doc) => {
+              if (doc.todos[index]) {
+                doc.todos[index].completed = checkbox.checked;
+              }
+            });
+          });
+
+          const text = document.createElement('span');
+          text.className = 'todo-text' + (todo.completed ? ' completed' : '');
+          text.textContent = todo.text;
+
+          const deleteBtn = document.createElement('button');
+          deleteBtn.className = 'delete-btn';
+          deleteBtn.textContent = 'Delete';
+          deleteBtn.addEventListener('click', () => {
+            docHandle.change((doc) => {
+              doc.todos.splice(index, 1);
+            });
+          });
+
+          li.appendChild(checkbox);
+          li.appendChild(text);
+          li.appendChild(deleteBtn);
+          elements.todoItems.appendChild(li);
+        });
+      }
+
+      function updateSyncStatus(elements) {
+        const doc = docHandle.docSync();
+        const todoCount = doc?.todos?.length || 0;
+        elements.syncStatus.textContent = `${todoCount} todo${todoCount !== 1 ? 's' : ''} • Syncing via QR...`;
+      }
+
+      function generateId() {
+        return Date.now().toString(36) + Math.random().toString(36).substr(2);
+      }
+
+      // QR Code receiving
+      function processQRCode(qrData, elements) {
+        try {
+          const success = network.receiveQRCode(qrData);
+          if (success) {
+            elements.syncStatus.textContent = 'Message received! Syncing...';
+          }
+        } catch (error) {
+          console.error('QR processing error:', error);
+        }
+      }
+
+      // Camera control functions
+      async function startCamera(elements) {
+        try {
+          const video = elements.video;
+
+          // Initialize QR Scanner
+          qrScanner = new QrScanner(
+            video,
+            (result) => {
+              // Process detected QR code
+              processQRCode(result.data, elements);
+            },
+            {
+              returnDetailedScanResult: true,
+              highlightScanRegion: true,
+              highlightCodeOutline: true,
+              maxScansPerSecond: 25,
+            },
+          );
+
+          await qrScanner.start();
+
+          // Update UI
+          cameraActive = true;
+          elements.videoContainer.classList.add('camera-active');
+          elements.cameraLabel.textContent = 'Click to Stop Camera';
+        } catch (error) {
+          console.error('Camera error:', error);
+          elements.cameraLabel.textContent = 'Camera Error';
+        }
+      }
+
+      function stopCamera(elements) {
+        if (qrScanner) {
+          qrScanner.stop();
+          qrScanner.destroy();
+          qrScanner = null;
+        }
+
+        // Update UI
+        cameraActive = false;
+        elements.videoContainer.classList.remove('camera-active');
+        elements.cameraLabel.textContent = 'Click to Start Camera';
+      }
+
+      // UI update helper functions
+      function updateQRCode(qrData, container) {
+        // Clear previous QR code
+        container.innerHTML = '';
+
+        if (!qrData) {
+          container.innerHTML = '<div class="qr-placeholder">Waiting for changes...</div>';
+          return;
+        }
+
+        // Create a new canvas element
+        const canvas = document.createElement('canvas');
+        container.appendChild(canvas);
+
+        // Calculate container size to determine QR code size
+        const containerWidth = container.clientWidth;
+        const size = Math.min(containerWidth, 400);
+
+        QRCode.toCanvas(
+          canvas,
+          qrData,
+          {
+            width: size,
+            margin: 2,
+            errorCorrectionLevel: 'L', // Low error correction for maximum data
+          },
+          function (error) {
+            if (error) {
+              console.error('QR encoding error:', error);
+            }
+          },
+        );
+      }
+    </script>
+  </body>
+</html>
