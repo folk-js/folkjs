@@ -6,8 +6,6 @@ const WORKGROUP_SIZE = 8;
 /**
  * WebGPU-based falling sand simulation using block cellular automata with Margolus offsets.
  * Based on "Probabilistic Cellular Automata for Granular Media in Video Games" (https://arxiv.org/abs/2008.06341)
- *
- * Simplified from WebGL2 version - no shadows/lighting, fewer particle types.
  */
 export class FolkSandWebGPU extends FolkBaseSet {
   static override tagName = 'folk-sand-webgpu';
@@ -17,10 +15,9 @@ export class FolkSandWebGPU extends FolkBaseSet {
     css`
       canvas {
         position: absolute;
-        top: 0;
-        left: 0;
-        height: 100%;
+        inset: 0;
         width: 100%;
+        height: 100%;
         pointer-events: auto;
       }
     `,
@@ -33,51 +30,58 @@ export class FolkSandWebGPU extends FolkBaseSet {
   initialSand = 0.15;
 
   #canvas!: HTMLCanvasElement;
-  #device!: GPUDevice;
-  #context!: GPUCanvasContext;
-  #presentationFormat!: GPUTextureFormat;
+  #gpu!: {
+    device: GPUDevice;
+    context: GPUCanvasContext;
+    format: GPUTextureFormat;
+  };
 
-  // Simulation dimensions (coarser than display)
   #PIXELS_PER_PARTICLE = 4;
   #bufferWidth = 0;
   #bufferHeight = 0;
 
   // Pipelines
-  #initPipeline!: GPUComputePipeline;
-  #simulationPipeline!: GPUComputePipeline;
-  #renderPipeline!: GPURenderPipeline;
-
-  // Textures for simulation state (ping-pong)
-  #stateTextures: GPUTexture[] = [];
-  #currentStateIndex = 0;
-
-  // Collision texture
-  #collisionTexture!: GPUTexture;
-
-  // Shape data buffer for collision
-  #shapeDataBuffer?: GPUBuffer;
-  #shapeCount = 0;
-
-  // Uniform buffers
-  #paramsBuffer!: GPUBuffer;
-  #mouseBuffer!: GPUBuffer;
-
-  // Bind group layouts (cached)
-  #initBindGroupLayout!: GPUBindGroupLayout;
-  #simBindGroupLayout!: GPUBindGroupLayout;
-  #renderBindGroupLayout!: GPUBindGroupLayout;
-  #collisionBindGroupLayout!: GPUBindGroupLayout;
-  #collisionPipeline!: GPUComputePipeline;
-
-  // Input state
-  #pointer = {
-    x: -1,
-    y: -1,
-    prevX: -1,
-    prevY: -1,
-    down: false,
+  #pipelines!: {
+    init: GPUComputePipeline;
+    collision: GPUComputePipeline;
+    simulation: GPUComputePipeline;
+    render: GPURenderPipeline;
   };
 
+  // Textures with cached views
+  #stateTextures: Array<{ texture: GPUTexture; view: GPUTextureView }> = [];
+  #collisionTexture!: { texture: GPUTexture; view: GPUTextureView };
+  #currentStateIndex = 0;
+
+  // Cached bind groups (recreated when textures change)
+  #bindGroups!: {
+    init: GPUBindGroup;
+    simulation: [GPUBindGroup, GPUBindGroup]; // For ping-pong
+    render: [GPUBindGroup, GPUBindGroup]; // For ping-pong
+    collision?: GPUBindGroup;
+  };
+
+  // Buffers
+  #buffers!: {
+    params: GPUBuffer;
+    mouse: GPUBuffer;
+    collisionParams: GPUBuffer;
+    shapeData?: GPUBuffer;
+  };
+
+  // Pre-allocated typed arrays for uniform updates
+  #uniformData = {
+    params: new ArrayBuffer(32),
+    paramsView: null as DataView | null,
+    mouse: new Float32Array(4),
+    collisionParams: new Uint32Array(4),
+  };
+
+  #shapeCount = 0;
+  #bindGroupsDirty = true;
+
+  // Input state
+  #pointer = { x: -1, y: -1, prevX: -1, prevY: -1, down: false };
   #materialType = 4; // SAND
   #brushRadius = 5;
   #frame = 0;
@@ -93,9 +97,6 @@ export class FolkSandWebGPU extends FolkBaseSet {
 
     try {
       await this.#initWebGPU();
-      this.#initResources();
-      await this.#initPipelines();
-      this.#runInitPass();
       this.#attachEventListeners();
       this.#render();
     } catch (e) {
@@ -107,166 +108,199 @@ export class FolkSandWebGPU extends FolkBaseSet {
     super.disconnectedCallback();
     this.#detachEventListeners();
     cancelAnimationFrame(this.#animationId);
-    this.#cleanupResources();
+    this.#cleanup();
   }
 
   async #initWebGPU() {
-    if (!navigator.gpu) {
-      throw new Error('WebGPU is not supported in this browser.');
-    }
+    if (!navigator.gpu) throw new Error('WebGPU not supported');
 
     const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) {
-      throw new Error('Failed to get GPU adapter.');
-    }
+    if (!adapter) throw new Error('No GPU adapter');
 
-    this.#device = await adapter.requestDevice();
+    const device = await adapter.requestDevice();
+    const context = this.#canvas.getContext('webgpu')!;
+    const format = navigator.gpu.getPreferredCanvasFormat();
 
+    this.#gpu = { device, context, format };
+    this.#uniformData.paramsView = new DataView(this.#uniformData.params);
+
+    // Size canvas and configure context
     this.#canvas.width = this.clientWidth * devicePixelRatio;
     this.#canvas.height = this.clientHeight * devicePixelRatio;
-
-    const context = this.#canvas.getContext('webgpu');
-    if (!context) {
-      throw new Error('Failed to get WebGPU context.');
-    }
-
-    this.#context = context;
-    this.#presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-
-    this.#context.configure({
-      device: this.#device,
-      format: this.#presentationFormat,
-      alphaMode: 'premultiplied',
-    });
+    context.configure({ device, format, alphaMode: 'premultiplied' });
 
     this.#bufferWidth = Math.ceil(this.#canvas.width / this.#PIXELS_PER_PARTICLE);
     this.#bufferHeight = Math.ceil(this.#canvas.height / this.#PIXELS_PER_PARTICLE);
+
+    this.#createPipelines();
+    this.#createBuffers();
+    this.#createTextures();
+    this.#createBindGroups();
+    this.#runInitPass();
   }
 
-  #initResources() {
-    const device = this.#device;
+  #createPipelines() {
+    const { device, format } = this.#gpu;
 
-    // Create state textures for ping-pong (rgba8uint: r=random, g=unused, b=data, a=type)
-    for (let i = 0; i < 2; i++) {
-      this.#stateTextures[i] = device.createTexture({
-        size: { width: this.#bufferWidth, height: this.#bufferHeight },
-        format: 'rgba8uint',
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      });
-    }
+    this.#pipelines = {
+      init: device.createComputePipeline({
+        layout: 'auto',
+        compute: { module: device.createShaderModule({ code: initShader }), entryPoint: 'main' },
+      }),
+      collision: device.createComputePipeline({
+        layout: 'auto',
+        compute: { module: device.createShaderModule({ code: collisionShader }), entryPoint: 'main' },
+      }),
+      simulation: device.createComputePipeline({
+        layout: 'auto',
+        compute: { module: device.createShaderModule({ code: simulationShader }), entryPoint: 'main' },
+      }),
+      render: device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module: device.createShaderModule({ code: renderShader }), entryPoint: 'vertex_main' },
+        fragment: {
+          module: device.createShaderModule({ code: renderShader }),
+          entryPoint: 'fragment_main',
+          targets: [{ format }],
+        },
+        primitive: { topology: 'triangle-strip' },
+      }),
+    };
+  }
 
-    // Collision texture - must use r32uint for storage binding compatibility
-    this.#collisionTexture = device.createTexture({
+  #createBuffers() {
+    const { device } = this.#gpu;
+
+    this.#buffers = {
+      params: device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+      mouse: device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+      collisionParams: device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+    };
+  }
+
+  #createTexture(format: GPUTextureFormat, usage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING) {
+    const texture = this.#gpu.device.createTexture({
       size: { width: this.#bufferWidth, height: this.#bufferHeight },
-      format: 'r32uint',
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      format,
+      usage,
     });
-
-    // Params buffer: width, height, frame, materialType, brushRadius, initialSand
-    this.#paramsBuffer = device.createBuffer({
-      size: 32, // 6 u32s + padding
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    // Mouse buffer: x, y, prevX, prevY (in buffer coordinates)
-    this.#mouseBuffer = device.createBuffer({
-      size: 16, // 4 f32s
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    return { texture, view: texture.createView() };
   }
 
-  async #initPipelines() {
-    const device = this.#device;
+  #createTextures() {
+    // Destroy old textures
+    this.#stateTextures.forEach((t) => t.texture.destroy());
+    this.#collisionTexture?.texture.destroy();
 
-    // === Initialization Pipeline ===
-    const initModule = device.createShaderModule({ code: initShader });
-    this.#initPipeline = device.createComputePipeline({
-      layout: 'auto',
-      compute: { module: initModule, entryPoint: 'main' },
-    });
-    this.#initBindGroupLayout = this.#initPipeline.getBindGroupLayout(0);
-
-    // === Collision Pipeline ===
-    const collisionModule = device.createShaderModule({ code: collisionShader });
-    this.#collisionPipeline = device.createComputePipeline({
-      layout: 'auto',
-      compute: { module: collisionModule, entryPoint: 'main' },
-    });
-    this.#collisionBindGroupLayout = this.#collisionPipeline.getBindGroupLayout(0);
-
-    // === Simulation Pipeline ===
-    const simModule = device.createShaderModule({ code: simulationShader });
-    this.#simulationPipeline = device.createComputePipeline({
-      layout: 'auto',
-      compute: { module: simModule, entryPoint: 'main' },
-    });
-    this.#simBindGroupLayout = this.#simulationPipeline.getBindGroupLayout(0);
-
-    // === Render Pipeline ===
-    const renderModule = device.createShaderModule({ code: renderShader });
-    this.#renderPipeline = device.createRenderPipeline({
-      layout: 'auto',
-      vertex: { module: renderModule, entryPoint: 'vertex_main' },
-      fragment: {
-        module: renderModule,
-        entryPoint: 'fragment_main',
-        targets: [{ format: this.#presentationFormat }],
-      },
-      primitive: { topology: 'triangle-strip' },
-    });
-    this.#renderBindGroupLayout = this.#renderPipeline.getBindGroupLayout(0);
+    // Create new textures with cached views
+    this.#stateTextures = [this.#createTexture('rgba8uint'), this.#createTexture('rgba8uint')];
+    this.#collisionTexture = this.#createTexture('r32uint');
+    this.#currentStateIndex = 0;
+    this.#bindGroupsDirty = true;
   }
 
-  #runInitPass() {
-    this.#updateParamsBuffer(0);
+  #createBindGroups() {
+    const { device } = this.#gpu;
+    const { init, collision, simulation, render } = this.#pipelines;
+    const { params, mouse, collisionParams, shapeData } = this.#buffers;
 
-    const encoder = this.#device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-
-    const bindGroup = this.#device.createBindGroup({
-      layout: this.#initBindGroupLayout,
+    // Init bind group
+    const initBindGroup = device.createBindGroup({
+      layout: init.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: this.#stateTextures[0].createView() },
-        { binding: 1, resource: { buffer: this.#paramsBuffer } },
+        { binding: 0, resource: this.#stateTextures[0].view },
+        { binding: 1, resource: { buffer: params } },
       ],
     });
 
-    pass.setPipeline(this.#initPipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(
-      Math.ceil(this.#bufferWidth / WORKGROUP_SIZE),
-      Math.ceil(this.#bufferHeight / WORKGROUP_SIZE),
-    );
-    pass.end();
+    // Simulation bind groups (one for each ping-pong direction)
+    const createSimBindGroup = (inputIdx: number) =>
+      device.createBindGroup({
+        layout: simulation.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this.#stateTextures[inputIdx].view },
+          { binding: 1, resource: this.#stateTextures[1 - inputIdx].view },
+          { binding: 2, resource: this.#collisionTexture.view },
+          { binding: 3, resource: { buffer: params } },
+          { binding: 4, resource: { buffer: mouse } },
+        ],
+      });
 
-    this.#device.queue.submit([encoder.finish()]);
+    // Render bind groups (one for each state texture)
+    const createRenderBindGroup = (idx: number) =>
+      device.createBindGroup({
+        layout: render.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this.#stateTextures[idx].view },
+          { binding: 1, resource: { buffer: params } },
+        ],
+      });
+
+    this.#bindGroups = {
+      init: initBindGroup,
+      simulation: [createSimBindGroup(0), createSimBindGroup(1)],
+      render: [createRenderBindGroup(0), createRenderBindGroup(1)],
+      collision: shapeData
+        ? device.createBindGroup({
+            layout: collision.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: this.#collisionTexture.view },
+              { binding: 1, resource: { buffer: collisionParams } },
+              { binding: 2, resource: { buffer: shapeData } },
+            ],
+          })
+        : undefined,
+    };
+
+    this.#bindGroupsDirty = false;
   }
 
-  #updateParamsBuffer(frame: number) {
-    const data = new ArrayBuffer(32);
-    const view = new DataView(data);
+  #workgroups() {
+    return {
+      x: Math.ceil(this.#bufferWidth / WORKGROUP_SIZE),
+      y: Math.ceil(this.#bufferHeight / WORKGROUP_SIZE),
+    };
+  }
+
+  #updateParams(frame: number) {
+    const view = this.#uniformData.paramsView!;
     view.setUint32(0, this.#bufferWidth, true);
     view.setUint32(4, this.#bufferHeight, true);
     view.setUint32(8, frame, true);
     view.setUint32(12, this.#materialType, true);
     view.setFloat32(16, this.#brushRadius, true);
     view.setFloat32(20, this.initialSand, true);
-    this.#device.queue.writeBuffer(this.#paramsBuffer, 0, data);
+    this.#gpu.device.queue.writeBuffer(this.#buffers.params, 0, this.#uniformData.params);
   }
 
-  #updateMouseBuffer() {
-    const mx = (this.#pointer.x / this.#canvas.width) * this.#bufferWidth;
-    const my = (1.0 - this.#pointer.y / this.#canvas.height) * this.#bufferHeight;
-    const mpx = (this.#pointer.prevX / this.#canvas.width) * this.#bufferWidth;
-    const mpy = (1.0 - this.#pointer.prevY / this.#canvas.height) * this.#bufferHeight;
+  #updateMouse() {
+    const { x, y, prevX, prevY, down } = this.#pointer;
+    const mx = (x / this.#canvas.width) * this.#bufferWidth;
+    const my = (1 - y / this.#canvas.height) * this.#bufferHeight;
+    const mpx = (prevX / this.#canvas.width) * this.#bufferWidth;
+    const mpy = (1 - prevY / this.#canvas.height) * this.#bufferHeight;
 
-    const data = new Float32Array([
-      this.#pointer.down ? mx : -1,
-      this.#pointer.down ? my : -1,
-      this.#pointer.down ? mpx : -1,
-      this.#pointer.down ? mpy : -1,
-    ]);
-    this.#device.queue.writeBuffer(this.#mouseBuffer, 0, data);
+    const data = this.#uniformData.mouse;
+    data[0] = down ? mx : -1;
+    data[1] = down ? my : -1;
+    data[2] = down ? mpx : -1;
+    data[3] = down ? mpy : -1;
+    this.#gpu.device.queue.writeBuffer(this.#buffers.mouse, 0, data);
+  }
+
+  #runInitPass() {
+    this.#updateParams(0);
+
+    const encoder = this.#gpu.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    const { x, y } = this.#workgroups();
+
+    pass.setPipeline(this.#pipelines.init);
+    pass.setBindGroup(0, this.#bindGroups.init);
+    pass.dispatchWorkgroups(x, y);
+    pass.end();
+
+    this.#gpu.device.queue.submit([encoder.finish()]);
   }
 
   #render = () => {
@@ -279,120 +313,73 @@ export class FolkSandWebGPU extends FolkBaseSet {
       this.#handleResize(width, height);
     }
 
-    // Run simulation passes (3 per frame for better mixing)
+    // Recreate bind groups if needed
+    if (this.#bindGroupsDirty) {
+      this.#createBindGroups();
+    }
+
+    const { device, context } = this.#gpu;
+    const { x, y } = this.#workgroups();
+
+    // Run 3 simulation passes per frame for better mixing
+    // Each pass needs separate submit to ensure uniform buffer is updated
     const PASSES = 3;
     for (let i = 0; i < PASSES; i++) {
-      this.#runSimulationPass(this.#frame * PASSES + i);
+      const frame = this.#frame * PASSES + i;
+      this.#updateParams(frame);
+      this.#updateMouse();
+
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(this.#pipelines.simulation);
+      pass.setBindGroup(0, this.#bindGroups.simulation[this.#currentStateIndex]);
+      pass.dispatchWorkgroups(x, y);
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+
+      this.#currentStateIndex = 1 - this.#currentStateIndex;
     }
     this.#frame++;
 
-    // Render to screen
-    this.#runRenderPass();
-
-    // Update previous pointer position
-    this.#pointer.prevX = this.#pointer.x;
-    this.#pointer.prevY = this.#pointer.y;
-  };
-
-  #runSimulationPass(frame: number) {
-    this.#updateParamsBuffer(frame);
-    this.#updateMouseBuffer();
-
-    const encoder = this.#device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-
-    const inputTex = this.#stateTextures[this.#currentStateIndex];
-    const outputTex = this.#stateTextures[1 - this.#currentStateIndex];
-
-    const bindGroup = this.#device.createBindGroup({
-      layout: this.#simBindGroupLayout,
-      entries: [
-        { binding: 0, resource: inputTex.createView() },
-        { binding: 1, resource: outputTex.createView() },
-        { binding: 2, resource: this.#collisionTexture.createView() },
-        { binding: 3, resource: { buffer: this.#paramsBuffer } },
-        { binding: 4, resource: { buffer: this.#mouseBuffer } },
-      ],
-    });
-
-    pass.setPipeline(this.#simulationPipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(
-      Math.ceil(this.#bufferWidth / WORKGROUP_SIZE),
-      Math.ceil(this.#bufferHeight / WORKGROUP_SIZE),
-    );
-    pass.end();
-
-    this.#device.queue.submit([encoder.finish()]);
-    this.#currentStateIndex = 1 - this.#currentStateIndex;
-  }
-
-  #runRenderPass() {
-    const encoder = this.#device.createCommandEncoder();
-
-    const bindGroup = this.#device.createBindGroup({
-      layout: this.#renderBindGroupLayout,
-      entries: [
-        { binding: 0, resource: this.#stateTextures[this.#currentStateIndex].createView() },
-        { binding: 1, resource: { buffer: this.#paramsBuffer } },
-      ],
-    });
-
-    const pass = encoder.beginRenderPass({
+    // Render pass (separate encoder)
+    const renderEncoder = device.createCommandEncoder();
+    const renderPass = renderEncoder.beginRenderPass({
       colorAttachments: [
         {
-          view: this.#context.getCurrentTexture().createView(),
+          view: context.getCurrentTexture().createView(),
           clearValue: { r: 0.12, g: 0.13, b: 0.14, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
         },
       ],
     });
+    renderPass.setPipeline(this.#pipelines.render);
+    renderPass.setBindGroup(0, this.#bindGroups.render[this.#currentStateIndex]);
+    renderPass.draw(4);
+    renderPass.end();
+    device.queue.submit([renderEncoder.finish()]);
 
-    pass.setPipeline(this.#renderPipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.draw(4);
-    pass.end();
-
-    this.#device.queue.submit([encoder.finish()]);
-  }
+    this.#pointer.prevX = this.#pointer.x;
+    this.#pointer.prevY = this.#pointer.y;
+  };
 
   #handleResize(width: number, height: number) {
     this.#canvas.width = width;
     this.#canvas.height = height;
-
-    this.#context.configure({
-      device: this.#device,
-      format: this.#presentationFormat,
+    this.#gpu.context.configure({
+      device: this.#gpu.device,
+      format: this.#gpu.format,
       alphaMode: 'premultiplied',
     });
 
-    const newBufferWidth = Math.ceil(width / this.#PIXELS_PER_PARTICLE);
-    const newBufferHeight = Math.ceil(height / this.#PIXELS_PER_PARTICLE);
+    const newW = Math.ceil(width / this.#PIXELS_PER_PARTICLE);
+    const newH = Math.ceil(height / this.#PIXELS_PER_PARTICLE);
 
-    if (newBufferWidth !== this.#bufferWidth || newBufferHeight !== this.#bufferHeight) {
-      this.#bufferWidth = newBufferWidth;
-      this.#bufferHeight = newBufferHeight;
-
-      // Recreate textures
-      this.#stateTextures.forEach((t) => t.destroy());
-      this.#collisionTexture.destroy();
-
-      for (let i = 0; i < 2; i++) {
-        this.#stateTextures[i] = this.#device.createTexture({
-          size: { width: this.#bufferWidth, height: this.#bufferHeight },
-          format: 'rgba8uint',
-          usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-        });
-      }
-
-      this.#collisionTexture = this.#device.createTexture({
-        size: { width: this.#bufferWidth, height: this.#bufferHeight },
-        format: 'r32uint',
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      });
-
-      this.#currentStateIndex = 0;
+    if (newW !== this.#bufferWidth || newH !== this.#bufferHeight) {
+      this.#bufferWidth = newW;
+      this.#bufferHeight = newH;
+      this.#createTextures();
+      this.#createBindGroups();
       this.#runInitPass();
       this.#updateCollisionTexture();
     }
@@ -404,125 +391,103 @@ export class FolkSandWebGPU extends FolkBaseSet {
     const shapeData: number[] = [];
 
     this.sourceRects.forEach((rect) => {
-      // Normalize to [0, 1] and flip Y for simulation coordinates (Y=0 at bottom)
       const left = rect.left / this.clientWidth;
       const right = rect.right / this.clientWidth;
-      // Flip Y: DOM top becomes simulation maxY, DOM bottom becomes simulation minY
-      const minY = 1.0 - rect.bottom / this.clientHeight;
-      const maxY = 1.0 - rect.top / this.clientHeight;
-
+      const minY = 1 - rect.bottom / this.clientHeight;
+      const maxY = 1 - rect.top / this.clientHeight;
       shapeData.push(left, minY, right, maxY);
     });
 
     this.#shapeCount = this.sourceRects.length;
 
     if (shapeData.length === 0) {
-      this.#shapeDataBuffer?.destroy();
-      this.#shapeDataBuffer = undefined;
+      this.#buffers.shapeData?.destroy();
+      this.#buffers.shapeData = undefined;
+      this.#bindGroupsDirty = true;
       return;
     }
 
     const requiredSize = shapeData.length * 4;
-    if (!this.#shapeDataBuffer || this.#shapeDataBuffer.size < requiredSize) {
-      this.#shapeDataBuffer?.destroy();
-      this.#shapeDataBuffer = this.#device.createBuffer({
-        size: Math.max(requiredSize, 64), // Minimum size
+    if (!this.#buffers.shapeData || this.#buffers.shapeData.size < requiredSize) {
+      this.#buffers.shapeData?.destroy();
+      this.#buffers.shapeData = this.#gpu.device.createBuffer({
+        size: Math.max(requiredSize, 64),
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       });
+      this.#bindGroupsDirty = true;
     }
 
-    this.#device.queue.writeBuffer(this.#shapeDataBuffer, 0, new Float32Array(shapeData));
+    this.#gpu.device.queue.writeBuffer(this.#buffers.shapeData, 0, new Float32Array(shapeData));
   }
 
   #updateCollisionTexture() {
-    if (!this.#device) return;
+    if (!this.#gpu?.device) return;
 
     this.#updateShapeData();
 
-    // Clear collision texture first
-    const encoder = this.#device.createCommandEncoder();
+    if (this.#bindGroupsDirty) {
+      this.#createBindGroups();
+    }
 
-    if (this.#shapeCount > 0 && this.#shapeDataBuffer) {
+    if (this.#shapeCount > 0 && this.#bindGroups.collision) {
+      const data = this.#uniformData.collisionParams;
+      data[0] = this.#bufferWidth;
+      data[1] = this.#bufferHeight;
+      data[2] = this.#shapeCount;
+      data[3] = 0;
+      this.#gpu.device.queue.writeBuffer(this.#buffers.collisionParams, 0, data);
+
+      const encoder = this.#gpu.device.createCommandEncoder();
       const pass = encoder.beginComputePass();
+      const { x, y } = this.#workgroups();
 
-      // Create params buffer for collision
-      const paramsData = new Uint32Array([this.#bufferWidth, this.#bufferHeight, this.#shapeCount, 0]);
-      const collisionParamsBuffer = this.#device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
-      this.#device.queue.writeBuffer(collisionParamsBuffer, 0, paramsData);
-
-      const bindGroup = this.#device.createBindGroup({
-        layout: this.#collisionBindGroupLayout,
-        entries: [
-          { binding: 0, resource: this.#collisionTexture.createView() },
-          { binding: 1, resource: { buffer: collisionParamsBuffer } },
-          { binding: 2, resource: { buffer: this.#shapeDataBuffer } },
-        ],
-      });
-
-      pass.setPipeline(this.#collisionPipeline);
-      pass.setBindGroup(0, bindGroup);
-      pass.dispatchWorkgroups(
-        Math.ceil(this.#bufferWidth / WORKGROUP_SIZE),
-        Math.ceil(this.#bufferHeight / WORKGROUP_SIZE),
-      );
+      pass.setPipeline(this.#pipelines.collision);
+      pass.setBindGroup(0, this.#bindGroups.collision);
+      pass.dispatchWorkgroups(x, y);
       pass.end();
 
-      this.#device.queue.submit([encoder.finish()]);
-      collisionParamsBuffer.destroy();
-    } else {
-      this.#device.queue.submit([encoder.finish()]);
+      this.#gpu.device.queue.submit([encoder.finish()]);
     }
   }
 
   // === Event Handlers ===
 
   #attachEventListeners() {
-    this.#canvas.addEventListener('pointerdown', this.#handlePointerDown);
-    this.#canvas.addEventListener('pointermove', this.#handlePointerMove);
-    this.#canvas.addEventListener('pointerup', this.#handlePointerUp);
-    this.#canvas.addEventListener('pointerleave', this.#handlePointerUp);
-    document.addEventListener('keydown', this.#handleKeyDown);
+    this.#canvas.addEventListener('pointerdown', this.#onPointerDown);
+    this.#canvas.addEventListener('pointermove', this.#onPointerMove);
+    this.#canvas.addEventListener('pointerup', this.#onPointerUp);
+    this.#canvas.addEventListener('pointerleave', this.#onPointerUp);
+    document.addEventListener('keydown', this.#onKeyDown);
   }
 
   #detachEventListeners() {
-    this.#canvas.removeEventListener('pointerdown', this.#handlePointerDown);
-    this.#canvas.removeEventListener('pointermove', this.#handlePointerMove);
-    this.#canvas.removeEventListener('pointerup', this.#handlePointerUp);
-    this.#canvas.removeEventListener('pointerleave', this.#handlePointerUp);
-    document.removeEventListener('keydown', this.#handleKeyDown);
+    this.#canvas.removeEventListener('pointerdown', this.#onPointerDown);
+    this.#canvas.removeEventListener('pointermove', this.#onPointerMove);
+    this.#canvas.removeEventListener('pointerup', this.#onPointerUp);
+    this.#canvas.removeEventListener('pointerleave', this.#onPointerUp);
+    document.removeEventListener('keydown', this.#onKeyDown);
   }
 
-  #handlePointerDown = (e: PointerEvent) => {
+  #onPointerDown = (e: PointerEvent) => {
     const rect = this.#canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) * devicePixelRatio;
     const y = (e.clientY - rect.top) * devicePixelRatio;
-
-    this.#pointer.x = x;
-    this.#pointer.y = y;
-    this.#pointer.prevX = x;
-    this.#pointer.prevY = y;
-    this.#pointer.down = true;
+    this.#pointer = { x, y, prevX: x, prevY: y, down: true };
   };
 
-  #handlePointerMove = (e: PointerEvent) => {
+  #onPointerMove = (e: PointerEvent) => {
     const rect = this.#canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * devicePixelRatio;
-    const y = (e.clientY - rect.top) * devicePixelRatio;
-
     this.#pointer.prevX = this.#pointer.x;
     this.#pointer.prevY = this.#pointer.y;
-    this.#pointer.x = x;
-    this.#pointer.y = y;
+    this.#pointer.x = (e.clientX - rect.left) * devicePixelRatio;
+    this.#pointer.y = (e.clientY - rect.top) * devicePixelRatio;
   };
 
-  #handlePointerUp = () => {
+  #onPointerUp = () => {
     this.#pointer.down = false;
   };
 
-  #handleKeyDown = (e: KeyboardEvent) => {
+  #onKeyDown = (e: KeyboardEvent) => {
     const key = parseInt(e.key);
     if (!isNaN(key) && key >= 0 && key <= 6) {
       this.#materialType = key;
@@ -530,20 +495,19 @@ export class FolkSandWebGPU extends FolkBaseSet {
     }
   };
 
-  #cleanupResources() {
-    this.#stateTextures.forEach((t) => t.destroy());
-    this.#collisionTexture?.destroy();
-    this.#paramsBuffer?.destroy();
-    this.#mouseBuffer?.destroy();
-    this.#shapeDataBuffer?.destroy();
+  #cleanup() {
+    this.#stateTextures.forEach((t) => t.texture.destroy());
+    this.#collisionTexture?.texture.destroy();
+    this.#buffers?.params.destroy();
+    this.#buffers?.mouse.destroy();
+    this.#buffers?.collisionParams.destroy();
+    this.#buffers?.shapeData?.destroy();
   }
 
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
-
-    if (!this.#device) return;
+    if (!this.#gpu?.device) return;
     if (this.sourcesMap.size !== this.sourceElements.size) return;
-
     this.#updateCollisionTexture();
   }
 }
@@ -568,7 +532,6 @@ struct Mouse {
   prevY: f32,
 }`;
 
-// Particle type constants
 const particleTypes = /*wgsl*/ `
 const AIR: u32 = 0u;
 const SMOKE: u32 = 1u;
@@ -580,7 +543,6 @@ const WALL: u32 = 6u;
 const COLLISION: u32 = 99u;
 `;
 
-// Hash function for randomness
 const hashFunctions = /*wgsl*/ `
 fn hash12(p: vec2f) -> f32 {
   var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
@@ -601,7 +563,6 @@ fn hash44(p: vec4f) -> vec4f {
 }
 `;
 
-// Initialization shader
 const initShader = /*wgsl*/ `
 ${paramsStruct}
 ${particleTypes}
@@ -611,26 +572,17 @@ ${hashFunctions}
 @group(0) @binding(1) var<uniform> params: Params;
 
 @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
-fn main(@builtin(global_invocation_id) global_id: vec3u) {
-  let coord = global_id.xy;
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  if (gid.x >= params.width || gid.y >= params.height) { return; }
   
-  if (coord.x >= params.width || coord.y >= params.height) {
-    return;
-  }
+  let r = hash12(vec2f(gid.xy));
+  let particleType = select(AIR, SAND, r < params.initialSand);
+  let randByte = u32(hash12(vec2f(gid.xy) + 0.5) * 255.0);
   
-  let r = hash12(vec2f(coord));
-  var particleType = AIR;
-  
-  if (r < params.initialSand) {
-    particleType = SAND;
-  }
-  
-  let randByte = u32(hash12(vec2f(coord) + 0.5) * 255.0);
-  textureStore(outputTex, coord, vec4u(randByte, 0u, 0u, particleType));
+  textureStore(outputTex, gid.xy, vec4u(randByte, 0u, 0u, particleType));
 }
 `;
 
-// Collision shader - rasterizes shapes into collision texture
 const collisionShader = /*wgsl*/ `
 struct CollisionParams {
   width: u32,
@@ -639,43 +591,31 @@ struct CollisionParams {
   padding: u32,
 }
 
-struct Shape {
-  minX: f32,
-  minY: f32,
-  maxX: f32,
-  maxY: f32,
-}
+struct Shape { minX: f32, minY: f32, maxX: f32, maxY: f32, }
 
 @group(0) @binding(0) var collisionTex: texture_storage_2d<r32uint, write>;
 @group(0) @binding(1) var<uniform> params: CollisionParams;
 @group(0) @binding(2) var<storage, read> shapes: array<Shape>;
 
 @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
-fn main(@builtin(global_invocation_id) global_id: vec3u) {
-  let coord = global_id.xy;
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  if (gid.x >= params.width || gid.y >= params.height) { return; }
   
-  if (coord.x >= params.width || coord.y >= params.height) {
-    return;
-  }
-  
-  let pixel = vec2f(f32(coord.x) / f32(params.width), f32(coord.y) / f32(params.height));
-  
+  let pixel = vec2f(gid.xy) / vec2f(f32(params.width), f32(params.height));
   var isCollision = 0u;
   
   for (var i = 0u; i < params.shapeCount; i++) {
-    let shape = shapes[i];
-    if (pixel.x >= shape.minX && pixel.x <= shape.maxX &&
-        pixel.y >= shape.minY && pixel.y <= shape.maxY) {
+    let s = shapes[i];
+    if (pixel.x >= s.minX && pixel.x <= s.maxX && pixel.y >= s.minY && pixel.y <= s.maxY) {
       isCollision = 1u;
       break;
     }
   }
   
-  textureStore(collisionTex, coord, vec4u(isCollision, 0u, 0u, 0u));
+  textureStore(collisionTex, gid.xy, vec4u(isCollision, 0u, 0u, 0u));
 }
 `;
 
-// Main simulation shader with Margolus neighborhood
 const simulationShader = /*wgsl*/ `
 ${paramsStruct}
 ${mouseStruct}
@@ -688,15 +628,12 @@ ${hashFunctions}
 @group(0) @binding(3) var<uniform> params: Params;
 @group(0) @binding(4) var<uniform> mouse: Mouse;
 
-// Signed distance to line segment
 fn sdSegment(p: vec2f, a: vec2f, b: vec2f) -> f32 {
-  let pa = p - a;
-  let ba = b - a;
+  let pa = p - a; let ba = b - a;
   let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
   return length(pa - ba * h);
 }
 
-// Get Margolus offset for this frame
 fn getOffset(frame: u32) -> vec2i {
   let i = frame % 4u;
   if (i == 0u) { return vec2i(0, 0); }
@@ -705,230 +642,140 @@ fn getOffset(frame: u32) -> vec2i {
   return vec2i(1, 0);
 }
 
-// Read particle data at position
 fn getData(p: vec2i) -> vec4u {
   if (p.x < 0 || p.y < 0 || p.x >= i32(params.width) || p.y >= i32(params.height)) {
     return vec4u(0u, 0u, 0u, WALL);
   }
-  
-  let collision = textureLoad(collisionTex, vec2u(p), 0).r;
-  if (collision > 0u) {
+  if (textureLoad(collisionTex, vec2u(p), 0).r > 0u) {
     return vec4u(0u, 0u, 0u, COLLISION);
   }
-  
   return textureLoad(inputTex, vec2u(p), 0);
 }
 
-// Create a new particle
-fn createParticle(particleType: u32, coord: vec2i, frame: u32) -> vec4u {
-  let randByte = u32(hash14(vec4f(vec2f(coord), f32(frame), f32(particleType))) * 255.0);
-  return vec4u(randByte, 0u, 0u, particleType);
+fn createParticle(ptype: u32, coord: vec2i, frame: u32) -> vec4u {
+  let randByte = u32(hash14(vec4f(vec2f(coord), f32(frame), f32(ptype))) * 255.0);
+  return vec4u(randByte, 0u, 0u, ptype);
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
-fn main(@builtin(global_invocation_id) global_id: vec3u) {
-  let coord = vec2i(global_id.xy);
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let coord = vec2i(gid.xy);
+  if (coord.x >= i32(params.width) || coord.y >= i32(params.height)) { return; }
   
-  if (coord.x >= i32(params.width) || coord.y >= i32(params.height)) {
+  // Mouse input
+  if (mouse.x > 0.0 && sdSegment(vec2f(coord), vec2f(mouse.x, mouse.y), vec2f(mouse.prevX, mouse.prevY)) < params.brushRadius) {
+    textureStore(outputTex, vec2u(coord), createParticle(params.materialType, coord, params.frame));
     return;
   }
   
-  // Check mouse input first
-  if (mouse.x > 0.0) {
-    let d = sdSegment(vec2f(coord), vec2f(mouse.x, mouse.y), vec2f(mouse.prevX, mouse.prevY));
-    if (d < params.brushRadius) {
-      textureStore(outputTex, vec2u(coord), createParticle(params.materialType, coord, params.frame));
-      return;
-    }
-  }
-  
-  // Get Margolus offset and calculate block position
+  // Margolus neighborhood
   let offset = getOffset(params.frame);
   let fc = coord + offset;
   let p = (fc / 2) * 2 - offset;
   let xy = fc % 2;
   let i = xy.x + xy.y * 2;
   
-  // Load 2x2 block
-  var t00 = getData(p);                  // top-left
-  var t10 = getData(p + vec2i(1, 0));    // top-right  
-  var t01 = getData(p + vec2i(0, 1));    // bottom-left
-  var t11 = getData(p + vec2i(1, 1));    // bottom-right
-  
-  // Check neighbors above for water spreading
+  var t00 = getData(p);
+  var t10 = getData(p + vec2i(1, 0));
+  var t01 = getData(p + vec2i(0, 1));
+  var t11 = getData(p + vec2i(1, 1));
   let tn00 = getData(p + vec2i(0, -1));
   let tn10 = getData(p + vec2i(1, -1));
   
-  // Early exit if all same type
+  // Early exit if uniform
   if (t00.a == t10.a && t01.a == t11.a && t00.a == t01.a) {
-    let result = select(select(select(t00, t10, i == 1), t01, i == 2), t11, i == 3);
-    textureStore(outputTex, vec2u(coord), result);
+    textureStore(outputTex, vec2u(coord), select(select(select(t00, t10, i == 1), t01, i == 2), t11, i == 3));
     return;
   }
   
-  // Random values for this block
   let r = hash44(vec4f(vec2f(p), f32(params.frame), 0.0));
   
-  // === SMOKE behavior (rises) ===
+  // SMOKE
   if (t00.a == SMOKE) {
-    if (t01.a < SMOKE && r.y < 0.25) {
-      let tmp = t00; t00 = t01; t01 = tmp;
-    } else if (r.z < 0.003) {
-      t00 = createParticle(AIR, p, params.frame);
-    }
+    if (t01.a < SMOKE && r.y < 0.25) { let tmp = t00; t00 = t01; t01 = tmp; }
+    else if (r.z < 0.003) { t00 = createParticle(AIR, p, params.frame); }
   }
   if (t10.a == SMOKE) {
-    if (t11.a < SMOKE && r.y < 0.25) {
-      let tmp = t10; t10 = t11; t11 = tmp;
-    } else if (r.z < 0.003) {
-      t10 = createParticle(AIR, p + vec2i(1, 0), params.frame);
-    }
+    if (t11.a < SMOKE && r.y < 0.25) { let tmp = t10; t10 = t11; t11 = tmp; }
+    else if (r.z < 0.003) { t10 = createParticle(AIR, p + vec2i(1, 0), params.frame); }
   }
-  
-  // Horizontal smoke spreading
   if ((t01.a == SMOKE && t11.a < SMOKE) || (t01.a < SMOKE && t11.a == SMOKE)) {
-    if (r.x < 0.25) {
-      let tmp = t01; t01 = t11; t11 = tmp;
-    }
+    if (r.x < 0.25) { let tmp = t01; t01 = t11; t11 = tmp; }
   }
   
-  // === SAND behavior ===
-  // Horizontal jitter when both below are sand and nothing above
-  if (((t01.a == SAND && t11.a < SAND) || (t01.a < SAND && t11.a == SAND)) &&
-      t00.a < SAND && t10.a < SAND && r.x < 0.4) {
+  // SAND
+  if (((t01.a == SAND && t11.a < SAND) || (t01.a < SAND && t11.a == SAND)) && t00.a < SAND && t10.a < SAND && r.x < 0.4) {
     let tmp = t01; t01 = t11; t11 = tmp;
   }
-  
-  // Sand falling
   if (t01.a == SAND || t01.a == STONE) {
-    if (t00.a < SAND && t00.a != WATER && t00.a != LAVA) {
-      if (r.y < 0.9) {
-        let tmp = t01; t01 = t00; t00 = tmp;
-      }
-    } else if (t00.a == WATER && r.y < 0.3) {
-      let tmp = t01; t01 = t00; t00 = tmp;
-    } else if (t00.a == LAVA && r.y < 0.15) {
-      let tmp = t01; t01 = t00; t00 = tmp;
-    } else if (t11.a < SAND && t10.a < SAND) {
-      let tmp = t01; t01 = t10; t10 = tmp;
-    }
+    if (t00.a < SAND && t00.a != WATER && t00.a != LAVA && r.y < 0.9) { let tmp = t01; t01 = t00; t00 = tmp; }
+    else if (t00.a == WATER && r.y < 0.3) { let tmp = t01; t01 = t00; t00 = tmp; }
+    else if (t00.a == LAVA && r.y < 0.15) { let tmp = t01; t01 = t00; t00 = tmp; }
+    else if (t11.a < SAND && t10.a < SAND) { let tmp = t01; t01 = t10; t10 = tmp; }
   }
-  
   if (t11.a == SAND || t11.a == STONE) {
-    if (t10.a < SAND && t10.a != WATER && t10.a != LAVA) {
-      if (r.y < 0.9) {
-        let tmp = t11; t11 = t10; t10 = tmp;
-      }
-    } else if (t10.a == WATER && r.y < 0.3) {
-      let tmp = t11; t11 = t10; t10 = tmp;
-    } else if (t10.a == LAVA && r.y < 0.15) {
-      let tmp = t11; t11 = t10; t10 = tmp;
-    } else if (t01.a < SAND && t00.a < SAND) {
-      let tmp = t11; t11 = t00; t00 = tmp;
-    }
+    if (t10.a < SAND && t10.a != WATER && t10.a != LAVA && r.y < 0.9) { let tmp = t11; t11 = t10; t10 = tmp; }
+    else if (t10.a == WATER && r.y < 0.3) { let tmp = t11; t11 = t10; t10 = tmp; }
+    else if (t10.a == LAVA && r.y < 0.15) { let tmp = t11; t11 = t10; t10 = tmp; }
+    else if (t01.a < SAND && t00.a < SAND) { let tmp = t11; t11 = t00; t00 = tmp; }
   }
   
-  // === WATER behavior ===
+  // WATER
   var drop = false;
-  
   if (t01.a == WATER) {
-    if (t00.a < WATER && r.y < 0.95) {
-      let tmp = t01; t01 = t00; t00 = tmp;
-      drop = true;
-    } else if (t11.a < WATER && t10.a < WATER && r.z < 0.3) {
-      let tmp = t01; t01 = t10; t10 = tmp;
-      drop = true;
-    }
+    if (t00.a < WATER && r.y < 0.95) { let tmp = t01; t01 = t00; t00 = tmp; drop = true; }
+    else if (t11.a < WATER && t10.a < WATER && r.z < 0.3) { let tmp = t01; t01 = t10; t10 = tmp; drop = true; }
   }
-  
   if (t11.a == WATER) {
-    if (t10.a < WATER && r.y < 0.95) {
-      let tmp = t11; t11 = t10; t10 = tmp;
-      drop = true;
-    } else if (t01.a < WATER && t00.a < WATER && r.z < 0.3) {
-      let tmp = t11; t11 = t00; t00 = tmp;
-      drop = true;
-    }
+    if (t10.a < WATER && r.y < 0.95) { let tmp = t11; t11 = t10; t10 = tmp; drop = true; }
+    else if (t01.a < WATER && t00.a < WATER && r.z < 0.3) { let tmp = t11; t11 = t00; t00 = tmp; drop = true; }
   }
-  
-  // Water horizontal spreading
   if (!drop) {
     if ((t01.a == WATER && t11.a < WATER) || (t01.a < WATER && t11.a == WATER)) {
-      if ((t00.a >= WATER && t10.a >= WATER) || r.w < 0.8) {
-        let tmp = t01; t01 = t11; t11 = tmp;
-      }
+      if ((t00.a >= WATER && t10.a >= WATER) || r.w < 0.8) { let tmp = t01; t01 = t11; t11 = tmp; }
     }
     if ((t00.a == WATER && t10.a < WATER) || (t00.a < WATER && t10.a == WATER)) {
-      if ((tn00.a >= WATER && tn10.a >= WATER) || r.w < 0.8) {
-        let tmp = t00; t00 = t10; t10 = tmp;
-      }
+      if ((tn00.a >= WATER && tn10.a >= WATER) || r.w < 0.8) { let tmp = t00; t00 = t10; t10 = tmp; }
     }
   }
   
-  // === LAVA behavior ===
+  // LAVA
   if (t01.a == LAVA) {
-    if (t00.a < LAVA && r.y < 0.8) {
-      let tmp = t01; t01 = t00; t00 = tmp;
-    } else if (t11.a < LAVA && t10.a < LAVA && r.z < 0.2) {
-      let tmp = t01; t01 = t10; t10 = tmp;
-    }
+    if (t00.a < LAVA && r.y < 0.8) { let tmp = t01; t01 = t00; t00 = tmp; }
+    else if (t11.a < LAVA && t10.a < LAVA && r.z < 0.2) { let tmp = t01; t01 = t10; t10 = tmp; }
   }
-  
   if (t11.a == LAVA) {
-    if (t10.a < LAVA && r.y < 0.8) {
-      let tmp = t11; t11 = t10; t10 = tmp;
-    } else if (t01.a < LAVA && t00.a < LAVA && r.z < 0.2) {
-      let tmp = t11; t11 = t00; t00 = tmp;
-    }
+    if (t10.a < LAVA && r.y < 0.8) { let tmp = t11; t11 = t10; t10 = tmp; }
+    else if (t01.a < LAVA && t00.a < LAVA && r.z < 0.2) { let tmp = t11; t11 = t00; t00 = tmp; }
   }
   
-  // Lava + Water = Stone + Smoke
+  // Lava + Water reactions
   if (t00.a == LAVA) {
-    if (t01.a == WATER) {
-      t00 = createParticle(STONE, p, params.frame);
-      t01 = createParticle(SMOKE, p + vec2i(0, 1), params.frame);
-    } else if (t10.a == WATER) {
-      t00 = createParticle(STONE, p, params.frame);
-      t10 = createParticle(SMOKE, p + vec2i(1, 0), params.frame);
-    }
+    if (t01.a == WATER) { t00 = createParticle(STONE, p, params.frame); t01 = createParticle(SMOKE, p + vec2i(0, 1), params.frame); }
+    else if (t10.a == WATER) { t00 = createParticle(STONE, p, params.frame); t10 = createParticle(SMOKE, p + vec2i(1, 0), params.frame); }
   }
-  
   if (t10.a == LAVA) {
-    if (t11.a == WATER) {
-      t10 = createParticle(STONE, p + vec2i(1, 0), params.frame);
-      t11 = createParticle(SMOKE, p + vec2i(1, 1), params.frame);
-    } else if (t00.a == WATER) {
-      t10 = createParticle(STONE, p + vec2i(1, 0), params.frame);
-      t00 = createParticle(SMOKE, p, params.frame);
-    }
+    if (t11.a == WATER) { t10 = createParticle(STONE, p + vec2i(1, 0), params.frame); t11 = createParticle(SMOKE, p + vec2i(1, 1), params.frame); }
+    else if (t00.a == WATER) { t10 = createParticle(STONE, p + vec2i(1, 0), params.frame); t00 = createParticle(SMOKE, p, params.frame); }
   }
-  
-  // Horizontal lava spreading
   if ((t01.a == LAVA && t11.a < LAVA) || (t01.a < LAVA && t11.a == LAVA)) {
-    if (r.x < 0.6) {
-      let tmp = t01; t01 = t11; t11 = tmp;
-    }
+    if (r.x < 0.6) { let tmp = t01; t01 = t11; t11 = tmp; }
   }
   
-  // Output the appropriate cell based on position in block
+  // Output
   var result = t00;
   if (i == 1) { result = t10; }
   else if (i == 2) { result = t01; }
   else if (i == 3) { result = t11; }
   
-  // Handle collision cells becoming air when collision removed
-  if (result.a == COLLISION) {
-    let collision = textureLoad(collisionTex, vec2u(coord), 0).r;
-    if (collision == 0u) {
-      result = createParticle(AIR, coord, params.frame);
-    }
+  if (result.a == COLLISION && textureLoad(collisionTex, vec2u(coord), 0).r == 0u) {
+    result = createParticle(AIR, coord, params.frame);
   }
   
   textureStore(outputTex, vec2u(coord), result);
 }
 `;
 
-// Render shader - visualizes the simulation
 const renderShader = /*wgsl*/ `
 ${paramsStruct}
 ${particleTypes}
@@ -941,10 +788,8 @@ struct VertexOutput {
 @vertex
 fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
   let pos = vec2f(f32(vi & 1u), f32(vi >> 1u)) * 2.0 - 1.0;
-  
   var out: VertexOutput;
   out.position = vec4f(pos, 0.0, 1.0);
-  // Don't flip Y - simulation Y=0 is at bottom, screen Y=-1 is at bottom
   out.texCoord = pos * 0.5 + 0.5;
   return out;
 }
@@ -956,55 +801,27 @@ const bgColor = vec3f(0.12, 0.133, 0.141);
 
 fn getParticleColor(data: vec4u) -> vec3f {
   let rand = f32(data.r) / 255.0;
-  let particleType = data.a;
+  let t = data.a;
   
-  if (particleType == AIR) {
-    return bgColor;
-  }
-  if (particleType == SMOKE) {
-    return mix(bgColor, vec3f(0.15), 0.4 + rand * 0.2);
-  }
-  if (particleType == WATER) {
-    let waterColor = vec3f(0.2, 0.4, 0.8);
-    return mix(bgColor, waterColor, 0.6 + rand * 0.2);
-  }
-  if (particleType == LAVA) {
-    let baseColor = vec3f(0.9, 0.3, 0.1);
-    let glowColor = vec3f(1.0, 0.6, 0.2);
-    return mix(baseColor, glowColor, rand);
-  }
-  if (particleType == SAND) {
-    let baseColor = vec3f(0.86, 0.62, 0.27);
-    let altColor = vec3f(0.82, 0.58, 0.23);
-    return mix(baseColor, altColor, rand) * (0.8 + rand * 0.3);
-  }
-  if (particleType == STONE) {
-    let baseColor = vec3f(0.08, 0.1, 0.12);
-    let altColor = vec3f(0.12, 0.14, 0.16);
-    return mix(baseColor, altColor, rand) * (0.7 + rand * 0.3);
-  }
-  if (particleType == WALL || particleType == COLLISION) {
-    return bgColor * 0.5 * (rand * 0.4 + 0.6);
-  }
-  
+  if (t == AIR) { return bgColor; }
+  if (t == SMOKE) { return mix(bgColor, vec3f(0.15), 0.4 + rand * 0.2); }
+  if (t == WATER) { return mix(bgColor, vec3f(0.2, 0.4, 0.8), 0.6 + rand * 0.2); }
+  if (t == LAVA) { return mix(vec3f(0.9, 0.3, 0.1), vec3f(1.0, 0.6, 0.2), rand); }
+  if (t == SAND) { return mix(vec3f(0.86, 0.62, 0.27), vec3f(0.82, 0.58, 0.23), rand) * (0.8 + rand * 0.3); }
+  if (t == STONE) { return mix(vec3f(0.08, 0.1, 0.12), vec3f(0.12, 0.14, 0.16), rand) * (0.7 + rand * 0.3); }
+  if (t == WALL || t == COLLISION) { return bgColor * 0.5 * (rand * 0.4 + 0.6); }
   return bgColor;
 }
 
 fn linearTosRGB(col: vec3f) -> vec3f {
   let cutoff = col < vec3f(0.0031308);
-  let higher = 1.055 * pow(col, vec3f(1.0 / 2.4)) - 0.055;
-  let lower = col * 12.92;
-  return select(higher, lower, cutoff);
+  return select(1.055 * pow(col, vec3f(1.0 / 2.4)) - 0.055, col * 12.92, cutoff);
 }
 
 @fragment
 fn fragment_main(@location(0) texCoord: vec2f) -> @location(0) vec4f {
   let coord = vec2u(texCoord * vec2f(f32(params.width), f32(params.height)));
   let data = textureLoad(stateTex, coord, 0);
-  
-  var color = getParticleColor(data);
-  color = linearTosRGB(color);
-  
-  return vec4f(color, 1.0);
+  return vec4f(linearTosRGB(getParticleColor(data)), 1.0);
 }
 `;
