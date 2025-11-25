@@ -30,55 +30,48 @@ export class FolkSandWebGPU extends FolkBaseSet {
   initialSand = 0.15;
 
   #canvas!: HTMLCanvasElement;
-  #gpu!: {
-    device: GPUDevice;
-    context: GPUCanvasContext;
-    format: GPUTextureFormat;
-  };
+  #device!: GPUDevice;
+  #context!: GPUCanvasContext;
+  #format!: GPUTextureFormat;
 
   #PIXELS_PER_PARTICLE = 4;
   #bufferWidth = 0;
   #bufferHeight = 0;
 
   // Pipelines
-  #pipelines!: {
-    init: GPUComputePipeline;
-    collision: GPUComputePipeline;
-    simulation: GPUComputePipeline;
-    render: GPURenderPipeline;
-  };
+  #initPipeline!: GPUComputePipeline;
+  #collisionPipeline!: GPUComputePipeline;
+  #simulationPipeline!: GPUComputePipeline;
+  #renderPipeline!: GPURenderPipeline;
 
-  // Textures with cached views
-  #stateTextures: Array<{ texture: GPUTexture; view: GPUTextureView }> = [];
-  #collisionTexture!: { texture: GPUTexture; view: GPUTextureView };
+  // Textures (views created on demand via getter-like access in bind groups)
+  #stateTextures: GPUTexture[] = [];
+  #collisionTexture!: GPUTexture;
   #currentStateIndex = 0;
 
-  // Cached bind groups (recreated when textures change)
-  #bindGroups!: {
-    init: GPUBindGroup;
-    simulation: [GPUBindGroup, GPUBindGroup]; // For ping-pong
-    render: [GPUBindGroup, GPUBindGroup]; // For ping-pong
-    collision?: GPUBindGroup;
-  };
+  // Cached bind groups
+  #initBindGroup!: GPUBindGroup;
+  #simBindGroups!: [GPUBindGroup, GPUBindGroup];
+  #renderBindGroups!: [GPUBindGroup, GPUBindGroup];
+  #collisionBindGroup?: GPUBindGroup;
+  #bindGroupsDirty = true;
 
   // Buffers
-  #buffers!: {
-    params: GPUBuffer;
-    mouse: GPUBuffer;
-    collisionParams: GPUBuffer;
-    shapeData?: GPUBuffer;
-  };
+  #paramsBuffer!: GPUBuffer;
+  #mouseBuffer!: GPUBuffer;
+  #collisionParamsBuffer!: GPUBuffer;
+  #shapeDataBuffer?: GPUBuffer;
 
-  // Pre-allocated typed arrays for uniform updates
-  #uniformData = {
-    params: new ArrayBuffer(32),
-    paramsView: null as DataView | null,
-    mouse: new Float32Array(4),
-    collisionParams: new Uint32Array(4),
-  };
+  // Pre-allocated uniform data
+  #paramsData = new ArrayBuffer(32);
+  #paramsView = new DataView(this.#paramsData);
+  #mouseData = new Float32Array(4);
+  #collisionParams = new Uint32Array(4);
+
+  // Resources to destroy on cleanup
+  #resources: { destroy(): void }[] = [];
 
   #shapeCount = 0;
-  #bindGroupsDirty = true;
 
   // Input state
   #pointer = { x: -1, y: -1, prevX: -1, prevY: -1, down: false };
@@ -108,8 +101,48 @@ export class FolkSandWebGPU extends FolkBaseSet {
     super.disconnectedCallback();
     this.#detachEventListeners();
     cancelAnimationFrame(this.#animationId);
-    this.#cleanup();
+    this.#resources.forEach((r) => r.destroy());
   }
+
+  // === Helpers ===
+
+  #createComputePipeline(code: string): GPUComputePipeline {
+    return this.#device.createComputePipeline({
+      layout: 'auto',
+      compute: { module: this.#device.createShaderModule({ code }), entryPoint: 'main' },
+    });
+  }
+
+  #createBuffer(size: number, usage: GPUBufferUsageFlags): GPUBuffer {
+    const buffer = this.#device.createBuffer({ size, usage });
+    this.#resources.push(buffer);
+    return buffer;
+  }
+
+  #createTexture(format: GPUTextureFormat): GPUTexture {
+    const texture = this.#device.createTexture({
+      size: { width: this.#bufferWidth, height: this.#bufferHeight },
+      format,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.#resources.push(texture);
+    return texture;
+  }
+
+  #runCompute(pipeline: GPUComputePipeline, bindGroup: GPUBindGroup) {
+    const encoder = this.#device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(
+      Math.ceil(this.#bufferWidth / WORKGROUP_SIZE),
+      Math.ceil(this.#bufferHeight / WORKGROUP_SIZE),
+    );
+    pass.end();
+    this.#device.queue.submit([encoder.finish()]);
+  }
+
+  // === Initialization ===
 
   async #initWebGPU() {
     if (!navigator.gpu) throw new Error('WebGPU not supported');
@@ -117,191 +150,128 @@ export class FolkSandWebGPU extends FolkBaseSet {
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('No GPU adapter');
 
-    const device = await adapter.requestDevice();
-    const context = this.#canvas.getContext('webgpu')!;
-    const format = navigator.gpu.getPreferredCanvasFormat();
+    this.#device = await adapter.requestDevice();
+    this.#context = this.#canvas.getContext('webgpu')!;
+    this.#format = navigator.gpu.getPreferredCanvasFormat();
 
-    this.#gpu = { device, context, format };
-    this.#uniformData.paramsView = new DataView(this.#uniformData.params);
-
-    // Size canvas and configure context
     this.#canvas.width = this.clientWidth * devicePixelRatio;
     this.#canvas.height = this.clientHeight * devicePixelRatio;
-    context.configure({ device, format, alphaMode: 'premultiplied' });
+    this.#context.configure({ device: this.#device, format: this.#format, alphaMode: 'premultiplied' });
 
     this.#bufferWidth = Math.ceil(this.#canvas.width / this.#PIXELS_PER_PARTICLE);
     this.#bufferHeight = Math.ceil(this.#canvas.height / this.#PIXELS_PER_PARTICLE);
 
     this.#createPipelines();
-    this.#createBuffers();
-    this.#createTextures();
+    this.#createResources();
     this.#createBindGroups();
-    this.#runInitPass();
+
+    this.#updateUniforms(0);
+    this.#runCompute(this.#initPipeline, this.#initBindGroup);
   }
 
   #createPipelines() {
-    const { device, format } = this.#gpu;
+    this.#initPipeline = this.#createComputePipeline(initShader);
+    this.#collisionPipeline = this.#createComputePipeline(collisionShader);
+    this.#simulationPipeline = this.#createComputePipeline(simulationShader);
 
-    this.#pipelines = {
-      init: device.createComputePipeline({
-        layout: 'auto',
-        compute: { module: device.createShaderModule({ code: initShader }), entryPoint: 'main' },
-      }),
-      collision: device.createComputePipeline({
-        layout: 'auto',
-        compute: { module: device.createShaderModule({ code: collisionShader }), entryPoint: 'main' },
-      }),
-      simulation: device.createComputePipeline({
-        layout: 'auto',
-        compute: { module: device.createShaderModule({ code: simulationShader }), entryPoint: 'main' },
-      }),
-      render: device.createRenderPipeline({
-        layout: 'auto',
-        vertex: { module: device.createShaderModule({ code: renderShader }), entryPoint: 'vertex_main' },
-        fragment: {
-          module: device.createShaderModule({ code: renderShader }),
-          entryPoint: 'fragment_main',
-          targets: [{ format }],
-        },
-        primitive: { topology: 'triangle-strip' },
-      }),
-    };
-  }
-
-  #createBuffers() {
-    const { device } = this.#gpu;
-
-    this.#buffers = {
-      params: device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
-      mouse: device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
-      collisionParams: device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
-    };
-  }
-
-  #createTexture(format: GPUTextureFormat, usage = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING) {
-    const texture = this.#gpu.device.createTexture({
-      size: { width: this.#bufferWidth, height: this.#bufferHeight },
-      format,
-      usage,
+    this.#renderPipeline = this.#device.createRenderPipeline({
+      layout: 'auto',
+      vertex: { module: this.#device.createShaderModule({ code: renderShader }), entryPoint: 'vertex_main' },
+      fragment: {
+        module: this.#device.createShaderModule({ code: renderShader }),
+        entryPoint: 'fragment_main',
+        targets: [{ format: this.#format }],
+      },
+      primitive: { topology: 'triangle-strip' },
     });
-    return { texture, view: texture.createView() };
   }
 
-  #createTextures() {
-    // Destroy old textures
-    this.#stateTextures.forEach((t) => t.texture.destroy());
-    this.#collisionTexture?.texture.destroy();
+  #createResources() {
+    this.#paramsBuffer = this.#createBuffer(32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.#mouseBuffer = this.#createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.#collisionParamsBuffer = this.#createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
 
-    // Create new textures with cached views
     this.#stateTextures = [this.#createTexture('rgba8uint'), this.#createTexture('rgba8uint')];
     this.#collisionTexture = this.#createTexture('r32uint');
-    this.#currentStateIndex = 0;
-    this.#bindGroupsDirty = true;
   }
 
   #createBindGroups() {
-    const { device } = this.#gpu;
-    const { init, collision, simulation, render } = this.#pipelines;
-    const { params, mouse, collisionParams, shapeData } = this.#buffers;
+    const stateViews = this.#stateTextures.map((t) => t.createView());
+    const collisionView = this.#collisionTexture.createView();
 
-    // Init bind group
-    const initBindGroup = device.createBindGroup({
-      layout: init.getBindGroupLayout(0),
+    this.#initBindGroup = this.#device.createBindGroup({
+      layout: this.#initPipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: this.#stateTextures[0].view },
-        { binding: 1, resource: { buffer: params } },
+        { binding: 0, resource: stateViews[0] },
+        { binding: 1, resource: { buffer: this.#paramsBuffer } },
       ],
     });
 
-    // Simulation bind groups (one for each ping-pong direction)
-    const createSimBindGroup = (inputIdx: number) =>
-      device.createBindGroup({
-        layout: simulation.getBindGroupLayout(0),
+    this.#simBindGroups = [0, 1].map((i) =>
+      this.#device.createBindGroup({
+        layout: this.#simulationPipeline.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: this.#stateTextures[inputIdx].view },
-          { binding: 1, resource: this.#stateTextures[1 - inputIdx].view },
-          { binding: 2, resource: this.#collisionTexture.view },
-          { binding: 3, resource: { buffer: params } },
-          { binding: 4, resource: { buffer: mouse } },
+          { binding: 0, resource: stateViews[i] },
+          { binding: 1, resource: stateViews[1 - i] },
+          { binding: 2, resource: collisionView },
+          { binding: 3, resource: { buffer: this.#paramsBuffer } },
+          { binding: 4, resource: { buffer: this.#mouseBuffer } },
+        ],
+      }),
+    ) as [GPUBindGroup, GPUBindGroup];
+
+    this.#renderBindGroups = [0, 1].map((i) =>
+      this.#device.createBindGroup({
+        layout: this.#renderPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: stateViews[i] },
+          { binding: 1, resource: { buffer: this.#paramsBuffer } },
+        ],
+      }),
+    ) as [GPUBindGroup, GPUBindGroup];
+
+    if (this.#shapeDataBuffer) {
+      this.#collisionBindGroup = this.#device.createBindGroup({
+        layout: this.#collisionPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: collisionView },
+          { binding: 1, resource: { buffer: this.#collisionParamsBuffer } },
+          { binding: 2, resource: { buffer: this.#shapeDataBuffer } },
         ],
       });
-
-    // Render bind groups (one for each state texture)
-    const createRenderBindGroup = (idx: number) =>
-      device.createBindGroup({
-        layout: render.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.#stateTextures[idx].view },
-          { binding: 1, resource: { buffer: params } },
-        ],
-      });
-
-    this.#bindGroups = {
-      init: initBindGroup,
-      simulation: [createSimBindGroup(0), createSimBindGroup(1)],
-      render: [createRenderBindGroup(0), createRenderBindGroup(1)],
-      collision: shapeData
-        ? device.createBindGroup({
-            layout: collision.getBindGroupLayout(0),
-            entries: [
-              { binding: 0, resource: this.#collisionTexture.view },
-              { binding: 1, resource: { buffer: collisionParams } },
-              { binding: 2, resource: { buffer: shapeData } },
-            ],
-          })
-        : undefined,
-    };
+    }
 
     this.#bindGroupsDirty = false;
   }
 
-  #workgroups() {
-    return {
-      x: Math.ceil(this.#bufferWidth / WORKGROUP_SIZE),
-      y: Math.ceil(this.#bufferHeight / WORKGROUP_SIZE),
-    };
-  }
+  // === Uniform Updates ===
 
-  #updateParams(frame: number) {
-    const view = this.#uniformData.paramsView!;
-    view.setUint32(0, this.#bufferWidth, true);
-    view.setUint32(4, this.#bufferHeight, true);
-    view.setUint32(8, frame, true);
-    view.setUint32(12, this.#materialType, true);
-    view.setFloat32(16, this.#brushRadius, true);
-    view.setFloat32(20, this.initialSand, true);
-    this.#gpu.device.queue.writeBuffer(this.#buffers.params, 0, this.#uniformData.params);
-  }
-
-  #updateMouse() {
+  #updateUniforms(frame: number) {
+    const v = this.#paramsView;
     const { x, y, prevX, prevY, down } = this.#pointer;
+
+    // Params
+    v.setUint32(0, this.#bufferWidth, true);
+    v.setUint32(4, this.#bufferHeight, true);
+    v.setUint32(8, frame, true);
+    v.setUint32(12, this.#materialType, true);
+    v.setFloat32(16, this.#brushRadius, true);
+    v.setFloat32(20, this.initialSand, true);
+    this.#device.queue.writeBuffer(this.#paramsBuffer, 0, this.#paramsData);
+
+    // Mouse
     const mx = (x / this.#canvas.width) * this.#bufferWidth;
     const my = (1 - y / this.#canvas.height) * this.#bufferHeight;
     const mpx = (prevX / this.#canvas.width) * this.#bufferWidth;
     const mpy = (1 - prevY / this.#canvas.height) * this.#bufferHeight;
-
-    const data = this.#uniformData.mouse;
-    data[0] = down ? mx : -1;
-    data[1] = down ? my : -1;
-    data[2] = down ? mpx : -1;
-    data[3] = down ? mpy : -1;
-    this.#gpu.device.queue.writeBuffer(this.#buffers.mouse, 0, data);
+    this.#mouseData[0] = down ? mx : -1;
+    this.#mouseData[1] = down ? my : -1;
+    this.#mouseData[2] = down ? mpx : -1;
+    this.#mouseData[3] = down ? mpy : -1;
+    this.#device.queue.writeBuffer(this.#mouseBuffer, 0, this.#mouseData);
   }
 
-  #runInitPass() {
-    this.#updateParams(0);
-
-    const encoder = this.#gpu.device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    const { x, y } = this.#workgroups();
-
-    pass.setPipeline(this.#pipelines.init);
-    pass.setBindGroup(0, this.#bindGroups.init);
-    pass.dispatchWorkgroups(x, y);
-    pass.end();
-
-    this.#gpu.device.queue.submit([encoder.finish()]);
-  }
+  // === Render Loop ===
 
   #render = () => {
     this.#animationId = requestAnimationFrame(this.#render);
@@ -313,51 +283,33 @@ export class FolkSandWebGPU extends FolkBaseSet {
       this.#handleResize(width, height);
     }
 
-    // Recreate bind groups if needed
-    if (this.#bindGroupsDirty) {
-      this.#createBindGroups();
-    }
+    if (this.#bindGroupsDirty) this.#createBindGroups();
 
-    const { device, context } = this.#gpu;
-    const { x, y } = this.#workgroups();
-
-    // Run 3 simulation passes per frame for better mixing
-    // Each pass needs separate submit to ensure uniform buffer is updated
-    const PASSES = 3;
-    for (let i = 0; i < PASSES; i++) {
-      const frame = this.#frame * PASSES + i;
-      this.#updateParams(frame);
-      this.#updateMouse();
-
-      const encoder = device.createCommandEncoder();
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.#pipelines.simulation);
-      pass.setBindGroup(0, this.#bindGroups.simulation[this.#currentStateIndex]);
-      pass.dispatchWorkgroups(x, y);
-      pass.end();
-      device.queue.submit([encoder.finish()]);
-
+    // Run 3 simulation passes per frame (each needs separate submit for uniform sync)
+    for (let i = 0; i < 3; i++) {
+      this.#updateUniforms(this.#frame * 3 + i);
+      this.#runCompute(this.#simulationPipeline, this.#simBindGroups[this.#currentStateIndex]);
       this.#currentStateIndex = 1 - this.#currentStateIndex;
     }
     this.#frame++;
 
-    // Render pass (separate encoder)
-    const renderEncoder = device.createCommandEncoder();
-    const renderPass = renderEncoder.beginRenderPass({
+    // Render
+    const encoder = this.#device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: context.getCurrentTexture().createView(),
+          view: this.#context.getCurrentTexture().createView(),
           clearValue: { r: 0.12, g: 0.13, b: 0.14, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
         },
       ],
     });
-    renderPass.setPipeline(this.#pipelines.render);
-    renderPass.setBindGroup(0, this.#bindGroups.render[this.#currentStateIndex]);
-    renderPass.draw(4);
-    renderPass.end();
-    device.queue.submit([renderEncoder.finish()]);
+    pass.setPipeline(this.#renderPipeline);
+    pass.setBindGroup(0, this.#renderBindGroups[this.#currentStateIndex]);
+    pass.draw(4);
+    pass.end();
+    this.#device.queue.submit([encoder.finish()]);
 
     this.#pointer.prevX = this.#pointer.x;
     this.#pointer.prevY = this.#pointer.y;
@@ -366,11 +318,7 @@ export class FolkSandWebGPU extends FolkBaseSet {
   #handleResize(width: number, height: number) {
     this.#canvas.width = width;
     this.#canvas.height = height;
-    this.#gpu.context.configure({
-      device: this.#gpu.device,
-      format: this.#gpu.format,
-      alphaMode: 'premultiplied',
-    });
+    this.#context.configure({ device: this.#device, format: this.#format, alphaMode: 'premultiplied' });
 
     const newW = Math.ceil(width / this.#PIXELS_PER_PARTICLE);
     const newH = Math.ceil(height / this.#PIXELS_PER_PARTICLE);
@@ -378,75 +326,60 @@ export class FolkSandWebGPU extends FolkBaseSet {
     if (newW !== this.#bufferWidth || newH !== this.#bufferHeight) {
       this.#bufferWidth = newW;
       this.#bufferHeight = newH;
-      this.#createTextures();
+
+      // Recreate textures (old ones stay in #resources for cleanup)
+      this.#stateTextures = [this.#createTexture('rgba8uint'), this.#createTexture('rgba8uint')];
+      this.#collisionTexture = this.#createTexture('r32uint');
+      this.#currentStateIndex = 0;
+
       this.#createBindGroups();
-      this.#runInitPass();
+      this.#updateUniforms(0);
+      this.#runCompute(this.#initPipeline, this.#initBindGroup);
       this.#updateCollisionTexture();
     }
   }
 
   // === Collision Detection ===
 
-  #updateShapeData() {
+  #updateCollisionTexture() {
+    if (!this.#device) return;
+
+    // Collect shape data
     const shapeData: number[] = [];
-
     this.sourceRects.forEach((rect) => {
-      const left = rect.left / this.clientWidth;
-      const right = rect.right / this.clientWidth;
-      const minY = 1 - rect.bottom / this.clientHeight;
-      const maxY = 1 - rect.top / this.clientHeight;
-      shapeData.push(left, minY, right, maxY);
+      shapeData.push(
+        rect.left / this.clientWidth,
+        1 - rect.bottom / this.clientHeight,
+        rect.right / this.clientWidth,
+        1 - rect.top / this.clientHeight,
+      );
     });
-
     this.#shapeCount = this.sourceRects.length;
 
     if (shapeData.length === 0) {
-      this.#buffers.shapeData?.destroy();
-      this.#buffers.shapeData = undefined;
-      this.#bindGroupsDirty = true;
+      this.#shapeDataBuffer = undefined;
+      this.#collisionBindGroup = undefined;
       return;
     }
 
+    // Resize buffer if needed
     const requiredSize = shapeData.length * 4;
-    if (!this.#buffers.shapeData || this.#buffers.shapeData.size < requiredSize) {
-      this.#buffers.shapeData?.destroy();
-      this.#buffers.shapeData = this.#gpu.device.createBuffer({
-        size: Math.max(requiredSize, 64),
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      });
+    if (!this.#shapeDataBuffer || this.#shapeDataBuffer.size < requiredSize) {
+      this.#shapeDataBuffer = this.#createBuffer(
+        Math.max(requiredSize, 64),
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      );
       this.#bindGroupsDirty = true;
     }
 
-    this.#gpu.device.queue.writeBuffer(this.#buffers.shapeData, 0, new Float32Array(shapeData));
-  }
+    this.#device.queue.writeBuffer(this.#shapeDataBuffer, 0, new Float32Array(shapeData));
 
-  #updateCollisionTexture() {
-    if (!this.#gpu?.device) return;
+    if (this.#bindGroupsDirty) this.#createBindGroups();
 
-    this.#updateShapeData();
-
-    if (this.#bindGroupsDirty) {
-      this.#createBindGroups();
-    }
-
-    if (this.#shapeCount > 0 && this.#bindGroups.collision) {
-      const data = this.#uniformData.collisionParams;
-      data[0] = this.#bufferWidth;
-      data[1] = this.#bufferHeight;
-      data[2] = this.#shapeCount;
-      data[3] = 0;
-      this.#gpu.device.queue.writeBuffer(this.#buffers.collisionParams, 0, data);
-
-      const encoder = this.#gpu.device.createCommandEncoder();
-      const pass = encoder.beginComputePass();
-      const { x, y } = this.#workgroups();
-
-      pass.setPipeline(this.#pipelines.collision);
-      pass.setBindGroup(0, this.#bindGroups.collision);
-      pass.dispatchWorkgroups(x, y);
-      pass.end();
-
-      this.#gpu.device.queue.submit([encoder.finish()]);
+    if (this.#collisionBindGroup) {
+      this.#collisionParams.set([this.#bufferWidth, this.#bufferHeight, this.#shapeCount, 0]);
+      this.#device.queue.writeBuffer(this.#collisionParamsBuffer, 0, this.#collisionParams);
+      this.#runCompute(this.#collisionPipeline, this.#collisionBindGroup);
     }
   }
 
@@ -489,24 +422,15 @@ export class FolkSandWebGPU extends FolkBaseSet {
 
   #onKeyDown = (e: KeyboardEvent) => {
     const key = parseInt(e.key);
-    if (!isNaN(key) && key >= 0 && key <= 6) {
+    if (!isNaN(key) && key >= 0 && key <= 9) {
       this.#materialType = key;
       this.onMaterialChange?.(this.#materialType);
     }
   };
 
-  #cleanup() {
-    this.#stateTextures.forEach((t) => t.texture.destroy());
-    this.#collisionTexture?.texture.destroy();
-    this.#buffers?.params.destroy();
-    this.#buffers?.mouse.destroy();
-    this.#buffers?.collisionParams.destroy();
-    this.#buffers?.shapeData?.destroy();
-  }
-
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
-    if (!this.#gpu?.device) return;
+    if (!this.#device) return;
     if (this.sourcesMap.size !== this.sourceElements.size) return;
     this.#updateCollisionTexture();
   }
