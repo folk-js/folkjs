@@ -1,8 +1,17 @@
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseSet } from './folk-base-set';
 
-/** A raw tagged template literal that just provides WGSL syntax highlighting/LSP support. */
-const wgsl = String.raw;
+/** Shared WGSL struct for compute and render parameters */
+const paramsStruct = /*wgsl*/ `
+struct Params {
+  width: u32,
+  height: u32,
+  stepSize: u32,
+  shapeCount: u32,
+  aspectRatio: f32,
+}`;
+
+const WORKGROUP_SIZE = 8;
 
 /**
  * WebGPU-based distance field calculation using the Jump Flooding Algorithm (JFA).
@@ -19,6 +28,12 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   #context!: GPUCanvasContext;
   #presentationFormat!: GPUTextureFormat;
 
+  // Shader modules (cached)
+  #seedShaderModule!: GPUShaderModule;
+  #jfaShaderModule!: GPUShaderModule;
+  #renderVertexShaderModule!: GPUShaderModule;
+  #renderFragmentShaderModule!: GPUShaderModule;
+
   // Pipelines
   #seedComputePipeline!: GPUComputePipeline;
   #jfaComputePipeline!: GPUComputePipeline;
@@ -30,9 +45,6 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   // Shape data
   #shapeDataBuffer?: GPUBuffer;
   #shapeCount = 0;
-
-  // Uniform buffer for params (width, height, stepSize, shapeCount)
-  #paramsBuffer!: GPUBuffer;
 
   // Cached bind group layouts
   #seedBindGroupLayout!: GPUBindGroupLayout;
@@ -94,11 +106,17 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   }
 
   async #initPipelines() {
+    // Create and cache shader modules
+    this.#seedShaderModule = this.#device.createShaderModule({ code: seedComputeShader });
+    this.#jfaShaderModule = this.#device.createShaderModule({ code: jfaComputeShader });
+    this.#renderVertexShaderModule = this.#device.createShaderModule({ code: renderVertexShader });
+    this.#renderFragmentShaderModule = this.#device.createShaderModule({ code: renderFragmentShader });
+
     // Create compute pipeline for seed initialization
     this.#seedComputePipeline = this.#device.createComputePipeline({
       layout: 'auto',
       compute: {
-        module: this.#device.createShaderModule({ code: seedComputeShader }),
+        module: this.#seedShaderModule,
         entryPoint: 'main',
       },
     });
@@ -110,7 +128,7 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
     this.#jfaComputePipeline = this.#device.createComputePipeline({
       layout: 'auto',
       compute: {
-        module: this.#device.createShaderModule({ code: jfaComputeShader }),
+        module: this.#jfaShaderModule,
         entryPoint: 'main',
       },
     });
@@ -121,11 +139,11 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
     this.#renderPipeline = this.#device.createRenderPipeline({
       layout: 'auto',
       vertex: {
-        module: this.#device.createShaderModule({ code: renderVertexShader }),
+        module: this.#renderVertexShaderModule,
         entryPoint: 'main',
       },
       fragment: {
-        module: this.#device.createShaderModule({ code: renderFragmentShader }),
+        module: this.#renderFragmentShaderModule,
         entryPoint: 'main',
         targets: [{ format: this.#presentationFormat }],
       },
@@ -152,12 +170,6 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       });
     }
-
-    // Create params buffer for canvas size and step size
-    this.#paramsBuffer = this.#device.createBuffer({
-      size: 16, // vec4<u32>: width, height, stepSize, shapeCount
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
   }
 
   /**
@@ -190,8 +202,8 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
 
       const shapeID = index + 1; // Avoid zero
 
-      // Store shape as: minX, minY, maxX, maxY, shapeID, padding...
-      shapeData.push(left, top, right, bottom, shapeID, 0, 0, 0);
+      // Store shape as: minX, minY, maxX, maxY, shapeID
+      shapeData.push(left, top, right, bottom, shapeID);
     });
 
     this.#shapeCount = this.sourceRects.length;
@@ -220,79 +232,95 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
 
     const width = this.#canvas.width;
     const height = this.#canvas.height;
+    const aspectRatio = width / height;
+    const workgroupsX = Math.ceil(width / WORKGROUP_SIZE);
+    const workgroupsY = Math.ceil(height / WORKGROUP_SIZE);
 
-    // Update params buffer BEFORE creating command encoder
-    this.#device.queue.writeBuffer(this.#paramsBuffer, 0, new Uint32Array([width, height, 0, this.#shapeCount]));
+    const maxStepSize = 1 << Math.floor(Math.log2(Math.max(width, height)));
+    const jfaPassCount = Math.floor(Math.log2(maxStepSize)) + 1;
+    const paramsBuffers: GPUBuffer[] = [];
+
+    // Create params buffers for each JFA pass
+    // Struct layout: width(u32), height(u32), stepSize(u32), shapeCount(u32), aspectRatio(f32), _pad1(f32), _pad2(f32), _pad3(f32)
+    let stepSize = maxStepSize;
+    for (let i = 0; i < jfaPassCount; i++) {
+      const paramsData = new ArrayBuffer(32);
+      const uintView = new Uint32Array(paramsData, 0, 4);
+      const floatView = new Float32Array(paramsData, 16, 4);
+
+      uintView[0] = width;
+      uintView[1] = height;
+      uintView[2] = stepSize;
+      uintView[3] = this.#shapeCount;
+      floatView[0] = aspectRatio;
+
+      const buffer = this.#device.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Uint8Array(buffer.getMappedRange()).set(new Uint8Array(paramsData));
+      buffer.unmap();
+      paramsBuffers.push(buffer);
+      stepSize >>= 1;
+    }
 
     const encoder = this.#device.createCommandEncoder();
+    const computePass = encoder.beginComputePass();
 
     // Step 1: Initialize seeds
     const seedBindGroup = this.#device.createBindGroup({
       layout: this.#seedBindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.#distanceBuffers[0] } },
-        { binding: 1, resource: { buffer: this.#paramsBuffer } },
+        { binding: 1, resource: { buffer: paramsBuffers[0] } },
         { binding: 2, resource: { buffer: this.#shapeDataBuffer } },
       ],
     });
 
-    const seedPass = encoder.beginComputePass();
-    seedPass.setPipeline(this.#seedComputePipeline);
-    seedPass.setBindGroup(0, seedBindGroup);
-    seedPass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
-    seedPass.end();
+    computePass.setPipeline(this.#seedComputePipeline);
+    computePass.setBindGroup(0, seedBindGroup);
+    computePass.dispatchWorkgroups(workgroupsX, workgroupsY);
 
-    // Submit the seed pass
-    this.#device.queue.submit([encoder.finish()]);
+    // TODO: Check if running all JFA passes in a single compute pass causes synchronization issues.
+    // WebGPU may not guarantee proper memory synchronization between storage buffer writes/reads
+    // within the same compute pass. If artifacts appear, split into separate compute passes.
 
-    // Step 2: Run JFA passes - each in its own command buffer for proper synchronization
-    let stepSize = 1 << Math.floor(Math.log2(Math.max(width, height)));
+    // Step 2: Run all JFA passes
     this.#currentBufferIndex = 0;
 
-    while (stepSize >= 1) {
+    for (let i = 0; i < jfaPassCount; i++) {
       const inputBuffer = this.#distanceBuffers[this.#currentBufferIndex];
       const outputBuffer = this.#distanceBuffers[1 - this.#currentBufferIndex];
-
-      // Write step size for this pass
-      const paramsData = new Uint32Array([width, height, stepSize, this.#shapeCount]);
-      this.#device.queue.writeBuffer(this.#paramsBuffer, 0, paramsData);
-
-      const jfaEncoder = this.#device.createCommandEncoder();
 
       const bindGroup = this.#device.createBindGroup({
         layout: this.#jfaBindGroupLayout,
         entries: [
           { binding: 0, resource: { buffer: inputBuffer } },
           { binding: 1, resource: { buffer: outputBuffer } },
-          { binding: 2, resource: { buffer: this.#paramsBuffer } },
+          { binding: 2, resource: { buffer: paramsBuffers[i] } },
         ],
       });
 
-      const jfaPass = jfaEncoder.beginComputePass();
-      jfaPass.setPipeline(this.#jfaComputePipeline);
-      jfaPass.setBindGroup(0, bindGroup);
-      jfaPass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
-      jfaPass.end();
-
-      // Submit this JFA pass
-      this.#device.queue.submit([jfaEncoder.finish()]);
+      computePass.setPipeline(this.#jfaComputePipeline);
+      computePass.setBindGroup(0, bindGroup);
+      computePass.dispatchWorkgroups(workgroupsX, workgroupsY);
 
       this.#currentBufferIndex = 1 - this.#currentBufferIndex;
-      stepSize >>= 1;
     }
 
-    // Step 3: Render to screen in a final pass
-    const renderEncoder = this.#device.createCommandEncoder();
+    computePass.end();
 
+    // Step 3: Render to screen
     const renderBindGroup = this.#device.createBindGroup({
       layout: this.#renderBindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.#distanceBuffers[this.#currentBufferIndex] } },
-        { binding: 1, resource: { buffer: this.#paramsBuffer } },
+        { binding: 1, resource: { buffer: paramsBuffers[0] } },
       ],
     });
 
-    const renderPass = renderEncoder.beginRenderPass({
+    const renderPass = encoder.beginRenderPass({
       colorAttachments: [
         {
           view: this.#context.getCurrentTexture().createView(),
@@ -308,7 +336,8 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
     renderPass.draw(4);
     renderPass.end();
 
-    this.#device.queue.submit([renderEncoder.finish()]);
+    this.#device.queue.submit([encoder.finish()]);
+    paramsBuffers.forEach((buffer) => buffer.destroy());
   }
 
   #handleResize = () => {
@@ -335,7 +364,6 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   #cleanupResources() {
     this.#distanceBuffers.forEach((buffer) => buffer.destroy());
     this.#shapeDataBuffer?.destroy();
-    this.#paramsBuffer?.destroy();
   }
 }
 
@@ -343,13 +371,8 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
  * Compute shader for seed initialization.
  * Rasterizes shapes and marks pixels inside them as seed points.
  */
-const seedComputeShader = wgsl`
-struct Params {
-  width: u32,
-  height: u32,
-  stepSize: u32,
-  shapeCount: u32,
-}
+const seedComputeShader = /*wgsl*/ `
+${paramsStruct}
 
 struct ShapeData {
   minX: f32,
@@ -357,28 +380,26 @@ struct ShapeData {
   maxX: f32,
   maxY: f32,
   shapeID: f32,
-  _pad1: f32,
-  _pad2: f32,
-  _pad3: f32,
 }
+
+const MAX_DISTANCE: f32 = ${FolkDistanceFieldWebGPU.MAX_DISTANCE};
 
 @group(0) @binding(0) var<storage, read_write> distanceField: array<vec4<f32>>;
 @group(0) @binding(1) var<uniform> params: Params;
 @group(0) @binding(2) var<storage, read> shapes: array<ShapeData>;
 
-@compute @workgroup_size(8, 8)
+@compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-  let x = global_id.x;
-  let y = global_id.y;
+  let coord = global_id.xy;
   
-  if (x >= params.width || y >= params.height) {
+  if (coord.x >= params.width || coord.y >= params.height) {
     return;
   }
 
-  let index = y * params.width + x;
-  let pixel = vec2<f32>(f32(x) / f32(params.width), f32(y) / f32(params.height));
+  let index = coord.y * params.width + coord.x;
+  let pixel = vec2<f32>(coord) / vec2<f32>(f32(params.width), f32(params.height));
   
-  var minDist = 99999.0;
+  var minDist = MAX_DISTANCE;
   var nearestSeed = vec2<f32>(-1.0, -1.0); // Use -1,-1 as "no seed" marker
   var shapeID = 0.0;
   
@@ -406,60 +427,53 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
  * Compute shader for JFA passes.
  * Updates each pixel with the nearest seed by checking neighbors at step distance.
  */
-const jfaComputeShader = wgsl`
-struct Params {
-  width: u32,
-  height: u32,
-  stepSize: u32,
-  shapeCount: u32,
-}
+const jfaComputeShader = /*wgsl*/ `
+${paramsStruct}
 
 @group(0) @binding(0) var<storage, read> inputField: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read_write> outputField: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> params: Params;
 
-@compute @workgroup_size(8, 8)
+@compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-  let x = global_id.x;
-  let y = global_id.y;
+  let coord = global_id.xy;
   
-  if (x >= params.width || y >= params.height) {
+  if (coord.x >= params.width || coord.y >= params.height) {
     return;
   }
 
-  let index = y * params.width + x;
-  let pixel = vec2<f32>(f32(x) / f32(params.width), f32(y) / f32(params.height));
+  let index = coord.y * params.width + coord.x;
+  let pixel = vec2<f32>(coord) / vec2<f32>(f32(params.width), f32(params.height));
   
   var nearest = inputField[index];
   var minDist = nearest.w;
   
   let step = i32(params.stepSize);
-  let aspectRatio = f32(params.width) / f32(params.height);
   
   // Check 9 neighbors in a grid around current pixel
   for (var dy = -1; dy <= 1; dy++) {
     for (var dx = -1; dx <= 1; dx++) {
-      let nx = i32(x) + dx * step;
-      let ny = i32(y) + dy * step;
+      let neighborCoord = vec2<i32>(coord) + vec2<i32>(dx, dy) * step;
       
       // Check bounds
-      if (nx < 0 || nx >= i32(params.width) || ny < 0 || ny >= i32(params.height)) {
+      if (neighborCoord.x < 0 || neighborCoord.x >= i32(params.width) || 
+          neighborCoord.y < 0 || neighborCoord.y >= i32(params.height)) {
         continue;
       }
       
-      let neighborIndex = u32(ny) * params.width + u32(nx);
+      let neighborIndex = u32(neighborCoord.y) * params.width + u32(neighborCoord.x);
       let neighbor = inputField[neighborIndex];
       
       // Skip if no seed assigned yet (check for -1,-1 marker)
       if (neighbor.x < 0.0) {
         continue;
       }
-      
+
       // Calculate distance with aspect ratio correction
-      let seedPos = vec2<f32>(neighbor.x * aspectRatio, neighbor.y);
-      let pixelPos = vec2<f32>(pixel.x * aspectRatio, pixel.y);
+      let seedPos = vec2<f32>(neighbor.x * params.aspectRatio, neighbor.y);
+      let pixelPos = vec2<f32>(pixel.x * params.aspectRatio, pixel.y);
       let dist = distance(seedPos, pixelPos);
-      
+
       if (dist < minDist) {
         nearest = vec4<f32>(neighbor.x, neighbor.y, neighbor.z, dist);
         minDist = dist;
@@ -474,7 +488,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 /**
  * Vertex shader for fullscreen quad rendering.
  */
-const renderVertexShader = wgsl`
+const renderVertexShader = /*wgsl*/ `
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
   @location(0) texCoord: vec2<f32>,
@@ -498,13 +512,8 @@ fn main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
 /**
  * Fragment shader for visualizing the distance field.
  */
-const renderFragmentShader = wgsl`
-struct Params {
-  width: u32,
-  height: u32,
-  stepSize: u32,
-  shapeCount: u32,
-}
+const renderFragmentShader = /*wgsl*/ `
+${paramsStruct}
 
 @group(0) @binding(0) var<storage, read> distanceField: array<vec4<f32>>;
 @group(0) @binding(1) var<uniform> params: Params;
@@ -517,9 +526,8 @@ fn hsv2rgb(c: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
-  let x = u32(texCoord.x * f32(params.width));
-  let y = u32(texCoord.y * f32(params.height));
-  let index = y * params.width + x;
+  let coord = vec2<u32>(texCoord * vec2<f32>(f32(params.width), f32(params.height)));
+  let index = coord.y * params.width + coord.x;
   
   let data = distanceField[index];
   let shapeID = data.z;
@@ -530,7 +538,7 @@ fn main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
   var color = hsv2rgb(vec3<f32>(hue, 0.5, 0.95));
   
   // Apply exponential falloff (distance is in normalized [0,1] coordinates)
-  let falloff = 2.0; // Tune this for desired glow size
+  let falloff = 8.0;
   color *= exp(-distance * falloff);
   
   return vec4<f32>(color, 1.0);
