@@ -25,6 +25,7 @@
     "module": "ESNext",
     "sourceMap": true,
     "lib": ["esnext", "dom", "dom.iterable"],
+    "types": ["@webgpu/types"],
     "composite": true,
     "declarationMap": true
   }

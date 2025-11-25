@@ -5,8 +5,8 @@ import { FolkBaseSet } from './folk-base-set';
 const wgsl = String.raw;
 
 /**
- * The DistanceField class calculates a distance field using the Jump Flooding Algorithm (JFA) in WebGPU.
- * It uses compute shaders for seed initialization and JFA passes, eliminating the need for ping-pong textures.
+ * WebGPU-based distance field calculation using the Jump Flooding Algorithm (JFA).
+ * Uses compute shaders for seed initialization and JFA passes, eliminating the need for ping-pong textures.
  * Previous implementations: WebGL2 (folk-distance-field.ts), CPU-based (github.com/folk-canvas/folk-canvas/commit/fdd7fb9d84d93ad665875cad25783c232fd17bcc)
  */
 export class FolkDistanceFieldWebGPU extends FolkBaseSet {
@@ -15,33 +15,31 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   static readonly MAX_DISTANCE = 99999.0;
 
   #canvas!: HTMLCanvasElement;
-  #device!: any; // GPUDevice
-  #context!: any; // GPUCanvasContext
-  #presentationFormat!: any; // GPUTextureFormat
+  #device!: GPUDevice;
+  #context!: GPUCanvasContext;
+  #presentationFormat!: GPUTextureFormat;
 
-  // Compute pipelines
-  #seedComputePipeline!: any; // GPUComputePipeline
-  #jfaComputePipeline!: any; // GPUComputePipeline
+  // Pipelines
+  #seedComputePipeline!: GPUComputePipeline;
+  #jfaComputePipeline!: GPUComputePipeline;
+  #renderPipeline!: GPURenderPipeline;
 
-  // Render pipeline
-  #renderPipeline!: any; // GPURenderPipeline
+  // Storage buffers for distance field data (ping-pong between passes)
+  #distanceBuffers: GPUBuffer[] = [];
 
-  // Storage buffers for distance field data (ping-pong)
-  #distanceBuffers: any[] = []; // GPUBuffer[]
-  #bufferSize = 0;
-
-  // Shape data buffer
-  #shapeDataBuffer!: any; // GPUBuffer
+  // Shape data
+  #shapeDataBuffer?: GPUBuffer;
   #shapeCount = 0;
 
-  // Uniform buffers
-  #paramsBuffer!: any; // GPUBuffer
+  // Uniform buffer for params (width, height, stepSize, shapeCount)
+  #paramsBuffer!: GPUBuffer;
 
-  // Bind groups
-  #seedBindGroup!: any; // GPUBindGroup
-  #jfaBindGroups: any[] = []; // GPUBindGroup[]
-  #renderBindGroup!: any; // GPUBindGroup
+  // Cached bind group layouts
+  #seedBindGroupLayout!: GPUBindGroupLayout;
+  #jfaBindGroupLayout!: GPUBindGroupLayout;
+  #renderBindGroupLayout!: GPUBindGroupLayout;
 
+  // Current buffer index for ping-pong
   #currentBufferIndex = 0;
 
   override async connectedCallback() {
@@ -59,19 +57,16 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
-
     window.removeEventListener('resize', this.#handleResize);
-
-    this.#cleanupWebGPUResources();
+    this.#cleanupResources();
   }
 
   async #initWebGPU() {
-    const nav = navigator as any;
-    if (!nav.gpu) {
+    if (!navigator.gpu) {
       throw new Error('WebGPU is not supported in this browser.');
     }
 
-    const adapter = await nav.gpu.requestAdapter();
+    const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) {
       throw new Error('Failed to get GPU adapter.');
     }
@@ -89,7 +84,7 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
     }
 
     this.#context = context;
-    this.#presentationFormat = nav.gpu.getPreferredCanvasFormat();
+    this.#presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
     this.#context.configure({
       device: this.#device,
@@ -108,6 +103,9 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
       },
     });
 
+    // Cache the bind group layout
+    this.#seedBindGroupLayout = this.#seedComputePipeline.getBindGroupLayout(0);
+
     // Create compute pipeline for JFA passes
     this.#jfaComputePipeline = this.#device.createComputePipeline({
       layout: 'auto',
@@ -116,6 +114,8 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
         entryPoint: 'main',
       },
     });
+
+    this.#jfaBindGroupLayout = this.#jfaComputePipeline.getBindGroupLayout(0);
 
     // Create render pipeline for visualization
     this.#renderPipeline = this.#device.createRenderPipeline({
@@ -133,6 +133,8 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
         topology: 'triangle-strip',
       },
     });
+
+    this.#renderBindGroupLayout = this.#renderPipeline.getBindGroupLayout(0);
   }
 
   #initBuffers() {
@@ -141,26 +143,21 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
 
     // Each pixel stores: vec4<f32> (seedX, seedY, shapeID, distance)
     // 4 floats * 4 bytes = 16 bytes per pixel
-    this.#bufferSize = width * height * 16;
-
-    const BufferUsage = (window as any).GPUBufferUsage;
+    const bufferSize = width * height * 16;
 
     // Create ping-pong storage buffers
     for (let i = 0; i < 2; i++) {
       this.#distanceBuffers[i] = this.#device.createBuffer({
-        size: this.#bufferSize,
-        usage: BufferUsage.STORAGE | BufferUsage.COPY_DST,
+        size: bufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       });
     }
 
     // Create params buffer for canvas size and step size
     this.#paramsBuffer = this.#device.createBuffer({
       size: 16, // vec4<u32>: width, height, stepSize, shapeCount
-      usage: BufferUsage.UNIFORM | BufferUsage.COPY_DST,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-
-    // Shape data buffer will be created on first update
-    // this.#shapeDataBuffer will be initialized in #updateShapeData
   }
 
   /**
@@ -205,15 +202,12 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
 
     // Resize shape data buffer if needed
     const requiredSize = shapeData.length * 4; // 4 bytes per float32
-    const BufferUsage = (window as any).GPUBufferUsage;
 
     if (!this.#shapeDataBuffer || this.#shapeDataBuffer.size < requiredSize) {
-      if (this.#shapeDataBuffer) {
-        this.#shapeDataBuffer.destroy();
-      }
+      this.#shapeDataBuffer?.destroy();
       this.#shapeDataBuffer = this.#device.createBuffer({
         size: requiredSize,
-        usage: BufferUsage.STORAGE | BufferUsage.COPY_DST,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       });
     }
 
@@ -222,7 +216,7 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   }
 
   #runJumpFloodingAlgorithm() {
-    if (this.#shapeCount === 0) return;
+    if (this.#shapeCount === 0 || !this.#shapeDataBuffer) return;
 
     const width = this.#canvas.width;
     const height = this.#canvas.height;
@@ -233,8 +227,8 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
     const encoder = this.#device.createCommandEncoder();
 
     // Step 1: Initialize seeds
-    this.#seedBindGroup = this.#device.createBindGroup({
-      layout: this.#seedComputePipeline.getBindGroupLayout(0),
+    const seedBindGroup = this.#device.createBindGroup({
+      layout: this.#seedBindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.#distanceBuffers[0] } },
         { binding: 1, resource: { buffer: this.#paramsBuffer } },
@@ -244,7 +238,7 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
 
     const seedPass = encoder.beginComputePass();
     seedPass.setPipeline(this.#seedComputePipeline);
-    seedPass.setBindGroup(0, this.#seedBindGroup);
+    seedPass.setBindGroup(0, seedBindGroup);
     seedPass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
     seedPass.end();
 
@@ -266,7 +260,7 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
       const jfaEncoder = this.#device.createCommandEncoder();
 
       const bindGroup = this.#device.createBindGroup({
-        layout: this.#jfaComputePipeline.getBindGroupLayout(0),
+        layout: this.#jfaBindGroupLayout,
         entries: [
           { binding: 0, resource: { buffer: inputBuffer } },
           { binding: 1, resource: { buffer: outputBuffer } },
@@ -290,8 +284,8 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
     // Step 3: Render to screen in a final pass
     const renderEncoder = this.#device.createCommandEncoder();
 
-    this.#renderBindGroup = this.#device.createBindGroup({
-      layout: this.#renderPipeline.getBindGroupLayout(0),
+    const renderBindGroup = this.#device.createBindGroup({
+      layout: this.#renderBindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.#distanceBuffers[this.#currentBufferIndex] } },
         { binding: 1, resource: { buffer: this.#paramsBuffer } },
@@ -310,7 +304,7 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
     });
 
     renderPass.setPipeline(this.#renderPipeline);
-    renderPass.setBindGroup(0, this.#renderBindGroup);
+    renderPass.setBindGroup(0, renderBindGroup);
     renderPass.draw(4);
     renderPass.end();
 
@@ -338,7 +332,7 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
     this.#runJumpFloodingAlgorithm();
   };
 
-  #cleanupWebGPUResources() {
+  #cleanupResources() {
     this.#distanceBuffers.forEach((buffer) => buffer.destroy());
     this.#shapeDataBuffer?.destroy();
     this.#paramsBuffer?.destroy();
@@ -465,10 +459,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
       let seedPos = vec2<f32>(neighbor.x * aspectRatio, neighbor.y);
       let pixelPos = vec2<f32>(pixel.x * aspectRatio, pixel.y);
       let dist = distance(seedPos, pixelPos);
-
-        if (dist < minDist) {
+      
+      if (dist < minDist) {
         nearest = vec4<f32>(neighbor.x, neighbor.y, neighbor.z, dist);
-            minDist = dist;
+        minDist = dist;
       }
     }
   }
