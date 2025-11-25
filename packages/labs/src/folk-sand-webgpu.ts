@@ -44,9 +44,9 @@ export class FolkSandWebGPU extends FolkBaseSet {
   #simulationPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
-  // Textures (views created on demand via getter-like access in bind groups)
-  #stateTextures: GPUTexture[] = [];
-  #collisionTexture!: GPUTexture;
+  // State storage buffers (ping-pong) and collision buffer
+  #stateBuffers: GPUBuffer[] = [];
+  #collisionBuffer!: GPUBuffer;
   #currentStateIndex = 0;
 
   // Cached bind groups
@@ -90,8 +90,8 @@ export class FolkSandWebGPU extends FolkBaseSet {
 
     try {
       await this.#initWebGPU();
-      this.#attachEventListeners();
-      this.#render();
+    this.#attachEventListeners();
+    this.#render();
     } catch (e) {
       console.error('WebGPU initialization failed:', e);
     }
@@ -119,14 +119,8 @@ export class FolkSandWebGPU extends FolkBaseSet {
     return buffer;
   }
 
-  #createTexture(format: GPUTextureFormat): GPUTexture {
-    const texture = this.#device.createTexture({
-      size: { width: this.#bufferWidth, height: this.#bufferHeight },
-      format,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    this.#resources.push(texture);
-    return texture;
+  #stateBufferSize() {
+    return this.#bufferWidth * this.#bufferHeight * 8; // Particle struct: 2 x u32
   }
 
   #runCompute(pipeline: GPUComputePipeline, bindGroup: GPUBindGroup) {
@@ -191,18 +185,19 @@ export class FolkSandWebGPU extends FolkBaseSet {
     this.#mouseBuffer = this.#createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.#collisionParamsBuffer = this.#createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
 
-    this.#stateTextures = [this.#createTexture('rgba8uint'), this.#createTexture('rgba8uint')];
-    this.#collisionTexture = this.#createTexture('r32uint');
+    const stateSize = this.#stateBufferSize();
+    this.#stateBuffers = [
+      this.#createBuffer(stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
+      this.#createBuffer(stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
+    ];
+    this.#collisionBuffer = this.#createBuffer(stateSize, GPUBufferUsage.STORAGE);
   }
 
   #createBindGroups() {
-    const stateViews = this.#stateTextures.map((t) => t.createView());
-    const collisionView = this.#collisionTexture.createView();
-
     this.#initBindGroup = this.#device.createBindGroup({
       layout: this.#initPipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: stateViews[0] },
+        { binding: 0, resource: { buffer: this.#stateBuffers[0] } },
         { binding: 1, resource: { buffer: this.#paramsBuffer } },
       ],
     });
@@ -211,9 +206,9 @@ export class FolkSandWebGPU extends FolkBaseSet {
       this.#device.createBindGroup({
         layout: this.#simulationPipeline.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: stateViews[i] },
-          { binding: 1, resource: stateViews[1 - i] },
-          { binding: 2, resource: collisionView },
+          { binding: 0, resource: { buffer: this.#stateBuffers[i] } },
+          { binding: 1, resource: { buffer: this.#stateBuffers[1 - i] } },
+          { binding: 2, resource: { buffer: this.#collisionBuffer } },
           { binding: 3, resource: { buffer: this.#paramsBuffer } },
           { binding: 4, resource: { buffer: this.#mouseBuffer } },
         ],
@@ -224,24 +219,29 @@ export class FolkSandWebGPU extends FolkBaseSet {
       this.#device.createBindGroup({
         layout: this.#renderPipeline.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: stateViews[i] },
+          { binding: 0, resource: { buffer: this.#stateBuffers[i] } },
           { binding: 1, resource: { buffer: this.#paramsBuffer } },
         ],
       }),
     ) as [GPUBindGroup, GPUBindGroup];
 
-    if (this.#shapeDataBuffer) {
-      this.#collisionBindGroup = this.#device.createBindGroup({
-        layout: this.#collisionPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: collisionView },
-          { binding: 1, resource: { buffer: this.#collisionParamsBuffer } },
-          { binding: 2, resource: { buffer: this.#shapeDataBuffer } },
-        ],
-      });
-    }
-
+    this.#updateCollisionBindGroup();
     this.#bindGroupsDirty = false;
+  }
+
+  #updateCollisionBindGroup() {
+    if (!this.#shapeDataBuffer) {
+      this.#collisionBindGroup = undefined;
+      return;
+    }
+    this.#collisionBindGroup = this.#device.createBindGroup({
+      layout: this.#collisionPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.#collisionBuffer } },
+        { binding: 1, resource: { buffer: this.#collisionParamsBuffer } },
+        { binding: 2, resource: { buffer: this.#shapeDataBuffer } },
+      ],
+    });
   }
 
   // === Uniform Updates ===
@@ -327,9 +327,13 @@ export class FolkSandWebGPU extends FolkBaseSet {
       this.#bufferWidth = newW;
       this.#bufferHeight = newH;
 
-      // Recreate textures (old ones stay in #resources for cleanup)
-      this.#stateTextures = [this.#createTexture('rgba8uint'), this.#createTexture('rgba8uint')];
-      this.#collisionTexture = this.#createTexture('r32uint');
+      // Recreate buffers (old ones stay in #resources for cleanup)
+      const stateSize = this.#stateBufferSize();
+      this.#stateBuffers = [
+        this.#createBuffer(stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
+        this.#createBuffer(stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
+      ];
+      this.#collisionBuffer = this.#createBuffer(stateSize, GPUBufferUsage.STORAGE);
       this.#currentStateIndex = 0;
 
       this.#createBindGroups();
@@ -362,19 +366,17 @@ export class FolkSandWebGPU extends FolkBaseSet {
       return;
     }
 
-    // Resize buffer if needed
+    // Resize buffer if needed, and update collision bind group
     const requiredSize = shapeData.length * 4;
     if (!this.#shapeDataBuffer || this.#shapeDataBuffer.size < requiredSize) {
       this.#shapeDataBuffer = this.#createBuffer(
         Math.max(requiredSize, 64),
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       );
-      this.#bindGroupsDirty = true;
+      this.#updateCollisionBindGroup();
     }
 
     this.#device.queue.writeBuffer(this.#shapeDataBuffer, 0, new Float32Array(shapeData));
-
-    if (this.#bindGroupsDirty) this.#createBindGroups();
 
     if (this.#collisionBindGroup) {
       this.#collisionParams.set([this.#bufferWidth, this.#bufferHeight, this.#shapeCount, 0]);
@@ -487,12 +489,28 @@ fn hash44(p: vec4f) -> vec4f {
 }
 `;
 
+const particleStruct = /*wgsl*/ `
+struct Particle {
+  ptype: u32,
+  rand: u32,
+}
+
+fn getIndex(x: u32, y: u32, width: u32) -> u32 {
+  return y * width + x;
+}
+
+fn particle(ptype: u32, rand: u32) -> Particle {
+  return Particle(ptype, rand);
+}
+`;
+
 const initShader = /*wgsl*/ `
 ${paramsStruct}
 ${particleTypes}
 ${hashFunctions}
+${particleStruct}
 
-@group(0) @binding(0) var outputTex: texture_storage_2d<rgba8uint, write>;
+@group(0) @binding(0) var<storage, read_write> output: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
 
 @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
@@ -500,10 +518,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= params.width || gid.y >= params.height) { return; }
   
   let r = hash12(vec2f(gid.xy));
-  let particleType = select(AIR, SAND, r < params.initialSand);
-  let randByte = u32(hash12(vec2f(gid.xy) + 0.5) * 255.0);
+  let ptype = select(AIR, SAND, r < params.initialSand);
+  let rand = u32(hash12(vec2f(gid.xy) + 0.5) * 255.0);
   
-  textureStore(outputTex, gid.xy, vec4u(randByte, 0u, 0u, particleType));
+  output[getIndex(gid.x, gid.y, params.width)] = particle(ptype, rand);
 }
 `;
 
@@ -517,7 +535,7 @@ struct CollisionParams {
 
 struct Shape { minX: f32, minY: f32, maxX: f32, maxY: f32, }
 
-@group(0) @binding(0) var collisionTex: texture_storage_2d<r32uint, write>;
+@group(0) @binding(0) var<storage, read_write> collision: array<u32>;
 @group(0) @binding(1) var<uniform> params: CollisionParams;
 @group(0) @binding(2) var<storage, read> shapes: array<Shape>;
 
@@ -536,7 +554,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
   }
   
-  textureStore(collisionTex, gid.xy, vec4u(isCollision, 0u, 0u, 0u));
+  collision[gid.y * params.width + gid.x] = isCollision;
 }
 `;
 
@@ -545,10 +563,11 @@ ${paramsStruct}
 ${mouseStruct}
 ${particleTypes}
 ${hashFunctions}
+${particleStruct}
 
-@group(0) @binding(0) var inputTex: texture_2d<u32>;
-@group(0) @binding(1) var outputTex: texture_storage_2d<rgba8uint, write>;
-@group(0) @binding(2) var collisionTex: texture_2d<u32>;
+@group(0) @binding(0) var<storage, read> input: array<Particle>;
+@group(0) @binding(1) var<storage, read_write> output: array<Particle>;
+@group(0) @binding(2) var<storage, read> collision: array<u32>;
 @group(0) @binding(3) var<uniform> params: Params;
 @group(0) @binding(4) var<uniform> mouse: Mouse;
 
@@ -566,19 +585,20 @@ fn getOffset(frame: u32) -> vec2i {
   return vec2i(1, 0);
 }
 
-fn getData(p: vec2i) -> vec4u {
+fn getData(p: vec2i) -> Particle {
   if (p.x < 0 || p.y < 0 || p.x >= i32(params.width) || p.y >= i32(params.height)) {
-    return vec4u(0u, 0u, 0u, WALL);
+    return particle(WALL, 0u);
   }
-  if (textureLoad(collisionTex, vec2u(p), 0).r > 0u) {
-    return vec4u(0u, 0u, 0u, COLLISION);
+  let idx = getIndex(u32(p.x), u32(p.y), params.width);
+  if (collision[idx] > 0u) {
+    return particle(COLLISION, 0u);
   }
-  return textureLoad(inputTex, vec2u(p), 0);
+  return input[idx];
 }
 
-fn createParticle(ptype: u32, coord: vec2i, frame: u32) -> vec4u {
-  let randByte = u32(hash14(vec4f(vec2f(coord), f32(frame), f32(ptype))) * 255.0);
-  return vec4u(randByte, 0u, 0u, ptype);
+fn newParticle(ptype: u32, coord: vec2i, frame: u32) -> Particle {
+  let rand = u32(hash14(vec4f(vec2f(coord), f32(frame), f32(ptype))) * 255.0);
+  return particle(ptype, rand);
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
@@ -586,9 +606,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let coord = vec2i(gid.xy);
   if (coord.x >= i32(params.width) || coord.y >= i32(params.height)) { return; }
   
+  let outIdx = getIndex(gid.x, gid.y, params.width);
+  
   // Mouse input
   if (mouse.x > 0.0 && sdSegment(vec2f(coord), vec2f(mouse.x, mouse.y), vec2f(mouse.prevX, mouse.prevY)) < params.brushRadius) {
-    textureStore(outputTex, vec2u(coord), createParticle(params.materialType, coord, params.frame));
+    output[outIdx] = newParticle(params.materialType, coord, params.frame);
     return;
   }
   
@@ -607,82 +629,86 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let tn10 = getData(p + vec2i(1, -1));
   
   // Early exit if uniform
-  if (t00.a == t10.a && t01.a == t11.a && t00.a == t01.a) {
-    textureStore(outputTex, vec2u(coord), select(select(select(t00, t10, i == 1), t01, i == 2), t11, i == 3));
+  if (t00.ptype == t10.ptype && t01.ptype == t11.ptype && t00.ptype == t01.ptype) {
+    var result = t00;
+    if (i == 1) { result = t10; }
+    else if (i == 2) { result = t01; }
+    else if (i == 3) { result = t11; }
+    output[outIdx] = result;
     return;
   }
   
   let r = hash44(vec4f(vec2f(p), f32(params.frame), 0.0));
   
   // SMOKE
-  if (t00.a == SMOKE) {
-    if (t01.a < SMOKE && r.y < 0.25) { let tmp = t00; t00 = t01; t01 = tmp; }
-    else if (r.z < 0.003) { t00 = createParticle(AIR, p, params.frame); }
+  if (t00.ptype == SMOKE) {
+    if (t01.ptype < SMOKE && r.y < 0.25) { let tmp = t00; t00 = t01; t01 = tmp; }
+    else if (r.z < 0.003) { t00 = newParticle(AIR, p, params.frame); }
   }
-  if (t10.a == SMOKE) {
-    if (t11.a < SMOKE && r.y < 0.25) { let tmp = t10; t10 = t11; t11 = tmp; }
-    else if (r.z < 0.003) { t10 = createParticle(AIR, p + vec2i(1, 0), params.frame); }
+  if (t10.ptype == SMOKE) {
+    if (t11.ptype < SMOKE && r.y < 0.25) { let tmp = t10; t10 = t11; t11 = tmp; }
+    else if (r.z < 0.003) { t10 = newParticle(AIR, p + vec2i(1, 0), params.frame); }
   }
-  if ((t01.a == SMOKE && t11.a < SMOKE) || (t01.a < SMOKE && t11.a == SMOKE)) {
+  if ((t01.ptype == SMOKE && t11.ptype < SMOKE) || (t01.ptype < SMOKE && t11.ptype == SMOKE)) {
     if (r.x < 0.25) { let tmp = t01; t01 = t11; t11 = tmp; }
   }
   
   // SAND
-  if (((t01.a == SAND && t11.a < SAND) || (t01.a < SAND && t11.a == SAND)) && t00.a < SAND && t10.a < SAND && r.x < 0.4) {
+  if (((t01.ptype == SAND && t11.ptype < SAND) || (t01.ptype < SAND && t11.ptype == SAND)) && t00.ptype < SAND && t10.ptype < SAND && r.x < 0.4) {
     let tmp = t01; t01 = t11; t11 = tmp;
   }
-  if (t01.a == SAND || t01.a == STONE) {
-    if (t00.a < SAND && t00.a != WATER && t00.a != LAVA && r.y < 0.9) { let tmp = t01; t01 = t00; t00 = tmp; }
-    else if (t00.a == WATER && r.y < 0.3) { let tmp = t01; t01 = t00; t00 = tmp; }
-    else if (t00.a == LAVA && r.y < 0.15) { let tmp = t01; t01 = t00; t00 = tmp; }
-    else if (t11.a < SAND && t10.a < SAND) { let tmp = t01; t01 = t10; t10 = tmp; }
+  if (t01.ptype == SAND || t01.ptype == STONE) {
+    if (t00.ptype < SAND && t00.ptype != WATER && t00.ptype != LAVA && r.y < 0.9) { let tmp = t01; t01 = t00; t00 = tmp; }
+    else if (t00.ptype == WATER && r.y < 0.3) { let tmp = t01; t01 = t00; t00 = tmp; }
+    else if (t00.ptype == LAVA && r.y < 0.15) { let tmp = t01; t01 = t00; t00 = tmp; }
+    else if (t11.ptype < SAND && t10.ptype < SAND) { let tmp = t01; t01 = t10; t10 = tmp; }
   }
-  if (t11.a == SAND || t11.a == STONE) {
-    if (t10.a < SAND && t10.a != WATER && t10.a != LAVA && r.y < 0.9) { let tmp = t11; t11 = t10; t10 = tmp; }
-    else if (t10.a == WATER && r.y < 0.3) { let tmp = t11; t11 = t10; t10 = tmp; }
-    else if (t10.a == LAVA && r.y < 0.15) { let tmp = t11; t11 = t10; t10 = tmp; }
-    else if (t01.a < SAND && t00.a < SAND) { let tmp = t11; t11 = t00; t00 = tmp; }
+  if (t11.ptype == SAND || t11.ptype == STONE) {
+    if (t10.ptype < SAND && t10.ptype != WATER && t10.ptype != LAVA && r.y < 0.9) { let tmp = t11; t11 = t10; t10 = tmp; }
+    else if (t10.ptype == WATER && r.y < 0.3) { let tmp = t11; t11 = t10; t10 = tmp; }
+    else if (t10.ptype == LAVA && r.y < 0.15) { let tmp = t11; t11 = t10; t10 = tmp; }
+    else if (t01.ptype < SAND && t00.ptype < SAND) { let tmp = t11; t11 = t00; t00 = tmp; }
   }
   
   // WATER
   var drop = false;
-  if (t01.a == WATER) {
-    if (t00.a < WATER && r.y < 0.95) { let tmp = t01; t01 = t00; t00 = tmp; drop = true; }
-    else if (t11.a < WATER && t10.a < WATER && r.z < 0.3) { let tmp = t01; t01 = t10; t10 = tmp; drop = true; }
+  if (t01.ptype == WATER) {
+    if (t00.ptype < WATER && r.y < 0.95) { let tmp = t01; t01 = t00; t00 = tmp; drop = true; }
+    else if (t11.ptype < WATER && t10.ptype < WATER && r.z < 0.3) { let tmp = t01; t01 = t10; t10 = tmp; drop = true; }
   }
-  if (t11.a == WATER) {
-    if (t10.a < WATER && r.y < 0.95) { let tmp = t11; t11 = t10; t10 = tmp; drop = true; }
-    else if (t01.a < WATER && t00.a < WATER && r.z < 0.3) { let tmp = t11; t11 = t00; t00 = tmp; drop = true; }
+  if (t11.ptype == WATER) {
+    if (t10.ptype < WATER && r.y < 0.95) { let tmp = t11; t11 = t10; t10 = tmp; drop = true; }
+    else if (t01.ptype < WATER && t00.ptype < WATER && r.z < 0.3) { let tmp = t11; t11 = t00; t00 = tmp; drop = true; }
   }
   if (!drop) {
-    if ((t01.a == WATER && t11.a < WATER) || (t01.a < WATER && t11.a == WATER)) {
-      if ((t00.a >= WATER && t10.a >= WATER) || r.w < 0.8) { let tmp = t01; t01 = t11; t11 = tmp; }
+    if ((t01.ptype == WATER && t11.ptype < WATER) || (t01.ptype < WATER && t11.ptype == WATER)) {
+      if ((t00.ptype >= WATER && t10.ptype >= WATER) || r.w < 0.8) { let tmp = t01; t01 = t11; t11 = tmp; }
     }
-    if ((t00.a == WATER && t10.a < WATER) || (t00.a < WATER && t10.a == WATER)) {
-      if ((tn00.a >= WATER && tn10.a >= WATER) || r.w < 0.8) { let tmp = t00; t00 = t10; t10 = tmp; }
+    if ((t00.ptype == WATER && t10.ptype < WATER) || (t00.ptype < WATER && t10.ptype == WATER)) {
+      if ((tn00.ptype >= WATER && tn10.ptype >= WATER) || r.w < 0.8) { let tmp = t00; t00 = t10; t10 = tmp; }
     }
   }
   
   // LAVA
-  if (t01.a == LAVA) {
-    if (t00.a < LAVA && r.y < 0.8) { let tmp = t01; t01 = t00; t00 = tmp; }
-    else if (t11.a < LAVA && t10.a < LAVA && r.z < 0.2) { let tmp = t01; t01 = t10; t10 = tmp; }
+  if (t01.ptype == LAVA) {
+    if (t00.ptype < LAVA && r.y < 0.8) { let tmp = t01; t01 = t00; t00 = tmp; }
+    else if (t11.ptype < LAVA && t10.ptype < LAVA && r.z < 0.2) { let tmp = t01; t01 = t10; t10 = tmp; }
   }
-  if (t11.a == LAVA) {
-    if (t10.a < LAVA && r.y < 0.8) { let tmp = t11; t11 = t10; t10 = tmp; }
-    else if (t01.a < LAVA && t00.a < LAVA && r.z < 0.2) { let tmp = t11; t11 = t00; t00 = tmp; }
+  if (t11.ptype == LAVA) {
+    if (t10.ptype < LAVA && r.y < 0.8) { let tmp = t11; t11 = t10; t10 = tmp; }
+    else if (t01.ptype < LAVA && t00.ptype < LAVA && r.z < 0.2) { let tmp = t11; t11 = t00; t00 = tmp; }
   }
   
   // Lava + Water reactions
-  if (t00.a == LAVA) {
-    if (t01.a == WATER) { t00 = createParticle(STONE, p, params.frame); t01 = createParticle(SMOKE, p + vec2i(0, 1), params.frame); }
-    else if (t10.a == WATER) { t00 = createParticle(STONE, p, params.frame); t10 = createParticle(SMOKE, p + vec2i(1, 0), params.frame); }
+  if (t00.ptype == LAVA) {
+    if (t01.ptype == WATER) { t00 = newParticle(STONE, p, params.frame); t01 = newParticle(SMOKE, p + vec2i(0, 1), params.frame); }
+    else if (t10.ptype == WATER) { t00 = newParticle(STONE, p, params.frame); t10 = newParticle(SMOKE, p + vec2i(1, 0), params.frame); }
   }
-  if (t10.a == LAVA) {
-    if (t11.a == WATER) { t10 = createParticle(STONE, p + vec2i(1, 0), params.frame); t11 = createParticle(SMOKE, p + vec2i(1, 1), params.frame); }
-    else if (t00.a == WATER) { t10 = createParticle(STONE, p + vec2i(1, 0), params.frame); t00 = createParticle(SMOKE, p, params.frame); }
+  if (t10.ptype == LAVA) {
+    if (t11.ptype == WATER) { t10 = newParticle(STONE, p + vec2i(1, 0), params.frame); t11 = newParticle(SMOKE, p + vec2i(1, 1), params.frame); }
+    else if (t00.ptype == WATER) { t10 = newParticle(STONE, p + vec2i(1, 0), params.frame); t00 = newParticle(SMOKE, p, params.frame); }
   }
-  if ((t01.a == LAVA && t11.a < LAVA) || (t01.a < LAVA && t11.a == LAVA)) {
+  if ((t01.ptype == LAVA && t11.ptype < LAVA) || (t01.ptype < LAVA && t11.ptype == LAVA)) {
     if (r.x < 0.6) { let tmp = t01; t01 = t11; t11 = tmp; }
   }
   
@@ -692,17 +718,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   else if (i == 2) { result = t01; }
   else if (i == 3) { result = t11; }
   
-  if (result.a == COLLISION && textureLoad(collisionTex, vec2u(coord), 0).r == 0u) {
-    result = createParticle(AIR, coord, params.frame);
+  if (result.ptype == COLLISION && collision[outIdx] == 0u) {
+    result = newParticle(AIR, coord, params.frame);
   }
   
-  textureStore(outputTex, vec2u(coord), result);
+  output[outIdx] = result;
 }
 `;
 
 const renderShader = /*wgsl*/ `
 ${paramsStruct}
 ${particleTypes}
+${particleStruct}
 
 struct VertexOutput {
   @builtin(position) position: vec4f,
@@ -718,14 +745,14 @@ fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
   return out;
 }
 
-@group(0) @binding(0) var stateTex: texture_2d<u32>;
+@group(0) @binding(0) var<storage, read> state: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
 
 const bgColor = vec3f(0.12, 0.133, 0.141);
 
-fn getParticleColor(data: vec4u) -> vec3f {
-  let rand = f32(data.r) / 255.0;
-  let t = data.a;
+fn getParticleColor(p: Particle) -> vec3f {
+  let rand = f32(p.rand) / 255.0;
+  let t = p.ptype;
   
   if (t == AIR) { return bgColor; }
   if (t == SMOKE) { return mix(bgColor, vec3f(0.15), 0.4 + rand * 0.2); }
@@ -745,7 +772,7 @@ fn linearTosRGB(col: vec3f) -> vec3f {
 @fragment
 fn fragment_main(@location(0) texCoord: vec2f) -> @location(0) vec4f {
   let coord = vec2u(texCoord * vec2f(f32(params.width), f32(params.height)));
-  let data = textureLoad(stateTex, coord, 0);
-  return vec4f(linearTosRGB(getParticleColor(data)), 1.0);
+  let p = state[getIndex(coord.x, coord.y, params.width)];
+  return vec4f(linearTosRGB(getParticleColor(p)), 1.0);
 }
 `;
