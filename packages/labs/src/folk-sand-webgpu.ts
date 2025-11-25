@@ -113,10 +113,22 @@ export class FolkSandWebGPU extends FolkBaseSet {
     });
   }
 
-  #createBuffer(size: number, usage: GPUBufferUsageFlags): GPUBuffer {
+  #createBuffer(size: number, type: 'uniform' | 'storage' | 'storage-rw'): GPUBuffer {
+    const usage = {
+      uniform: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      storage: GPUBufferUsage.STORAGE,
+      'storage-rw': GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    }[type];
     const buffer = this.#device.createBuffer({ size, usage });
     this.#resources.push(buffer);
     return buffer;
+  }
+
+  #createBindGroup(pipeline: GPUComputePipeline | GPURenderPipeline, buffers: GPUBuffer[]): GPUBindGroup {
+    return this.#device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: buffers.map((buffer, i) => ({ binding: i, resource: { buffer } })),
+    });
   }
 
   #stateBufferSize() {
@@ -196,48 +208,30 @@ export class FolkSandWebGPU extends FolkBaseSet {
   }
 
   #createResources() {
-    this.#paramsBuffer = this.#createBuffer(32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    this.#mouseBuffer = this.#createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    this.#collisionParamsBuffer = this.#createBuffer(16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.#paramsBuffer = this.#createBuffer(32, 'uniform');
+    this.#mouseBuffer = this.#createBuffer(16, 'uniform');
+    this.#collisionParamsBuffer = this.#createBuffer(16, 'uniform');
 
     const stateSize = this.#stateBufferSize();
-    this.#stateBuffers = [
-      this.#createBuffer(stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
-      this.#createBuffer(stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
-    ];
-    this.#collisionBuffer = this.#createBuffer(stateSize, GPUBufferUsage.STORAGE);
+    this.#stateBuffers = [this.#createBuffer(stateSize, 'storage'), this.#createBuffer(stateSize, 'storage')];
+    this.#collisionBuffer = this.#createBuffer(stateSize, 'storage');
   }
 
   #createBindGroups() {
-    this.#initBindGroup = this.#device.createBindGroup({
-      layout: this.#initPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: this.#stateBuffers[0] } },
-        { binding: 1, resource: { buffer: this.#paramsBuffer } },
-      ],
-    });
+    this.#initBindGroup = this.#createBindGroup(this.#initPipeline, [this.#stateBuffers[0], this.#paramsBuffer]);
 
     this.#simBindGroups = [0, 1].map((i) =>
-      this.#device.createBindGroup({
-        layout: this.#simulationPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: this.#stateBuffers[i] } },
-          { binding: 1, resource: { buffer: this.#stateBuffers[1 - i] } },
-          { binding: 2, resource: { buffer: this.#collisionBuffer } },
-          { binding: 3, resource: { buffer: this.#paramsBuffer } },
-          { binding: 4, resource: { buffer: this.#mouseBuffer } },
-        ],
-      }),
+      this.#createBindGroup(this.#simulationPipeline, [
+        this.#stateBuffers[i],
+        this.#stateBuffers[1 - i],
+        this.#collisionBuffer,
+        this.#paramsBuffer,
+        this.#mouseBuffer,
+      ]),
     ) as [GPUBindGroup, GPUBindGroup];
 
     this.#renderBindGroups = [0, 1].map((i) =>
-      this.#device.createBindGroup({
-        layout: this.#renderPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: this.#stateBuffers[i] } },
-          { binding: 1, resource: { buffer: this.#paramsBuffer } },
-        ],
-      }),
+      this.#createBindGroup(this.#renderPipeline, [this.#stateBuffers[i], this.#paramsBuffer]),
     ) as [GPUBindGroup, GPUBindGroup];
 
     this.#updateCollisionBindGroup();
@@ -249,14 +243,11 @@ export class FolkSandWebGPU extends FolkBaseSet {
       this.#collisionBindGroup = undefined;
       return;
     }
-    this.#collisionBindGroup = this.#device.createBindGroup({
-      layout: this.#collisionPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: this.#collisionBuffer } },
-        { binding: 1, resource: { buffer: this.#collisionParamsBuffer } },
-        { binding: 2, resource: { buffer: this.#shapeDataBuffer } },
-      ],
-    });
+    this.#collisionBindGroup = this.#createBindGroup(this.#collisionPipeline, [
+      this.#collisionBuffer,
+      this.#collisionParamsBuffer,
+      this.#shapeDataBuffer,
+    ]);
   }
 
   // === Uniform Updates ===
@@ -344,11 +335,8 @@ export class FolkSandWebGPU extends FolkBaseSet {
 
       // Recreate buffers (old ones stay in #resources for cleanup)
       const stateSize = this.#stateBufferSize();
-      this.#stateBuffers = [
-        this.#createBuffer(stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
-        this.#createBuffer(stateSize, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
-      ];
-      this.#collisionBuffer = this.#createBuffer(stateSize, GPUBufferUsage.STORAGE);
+      this.#stateBuffers = [this.#createBuffer(stateSize, 'storage'), this.#createBuffer(stateSize, 'storage')];
+      this.#collisionBuffer = this.#createBuffer(stateSize, 'storage');
       this.#currentStateIndex = 0;
 
       this.#createBindGroups();
@@ -384,10 +372,7 @@ export class FolkSandWebGPU extends FolkBaseSet {
     // Resize buffer if needed, and update collision bind group
     const requiredSize = shapeData.length * 4;
     if (!this.#shapeDataBuffer || this.#shapeDataBuffer.size < requiredSize) {
-      this.#shapeDataBuffer = this.#createBuffer(
-        Math.max(requiredSize, 64),
-        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      );
+      this.#shapeDataBuffer = this.#createBuffer(Math.max(requiredSize, 64), 'storage-rw');
       this.#updateCollisionBindGroup();
     }
 
@@ -473,17 +458,6 @@ struct Mouse {
   prevY: f32,
 }`;
 
-const particleTypes = /*wgsl*/ `
-const AIR: u32 = 0u;
-const SMOKE: u32 = 1u;
-const WATER: u32 = 2u;
-const LAVA: u32 = 3u;
-const SAND: u32 = 4u;
-const STONE: u32 = 5u;
-const WALL: u32 = 6u;
-const COLLISION: u32 = 99u;
-`;
-
 const hashFunctions = /*wgsl*/ `
 fn hash12(p: vec2f) -> f32 {
   var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
@@ -504,14 +478,33 @@ fn hash44(p: vec4f) -> vec4f {
 }
 `;
 
-const particleStruct = /*wgsl*/ `
-struct Particle {
-  ptype: u32,  // particle type (only needs ~4 bits, but u32 is WGSL's smallest)
-  rand: u32,   // visual variation (only needs 8 bits)
-}
-
+const wgslUtils = /*wgsl*/ `
 fn getIndex(x: u32, y: u32, width: u32) -> u32 {
   return y * width + x;
+}
+
+fn getIndexI(p: vec2i, width: u32) -> u32 {
+  return u32(p.y) * width + u32(p.x);
+}
+
+fn inBounds(p: vec2i, width: u32, height: u32) -> bool {
+  return p.x >= 0 && p.y >= 0 && p.x < i32(width) && p.y < i32(height);
+}
+`;
+
+const particleDefs = /*wgsl*/ `
+const AIR: u32 = 0u;
+const SMOKE: u32 = 1u;
+const WATER: u32 = 2u;
+const LAVA: u32 = 3u;
+const SAND: u32 = 4u;
+const STONE: u32 = 5u;
+const WALL: u32 = 6u;
+const COLLISION: u32 = 99u;
+
+struct Particle {
+  ptype: u32,
+  rand: u32,
 }
 
 fn particle(ptype: u32, rand: u32) -> Particle {
@@ -521,9 +514,9 @@ fn particle(ptype: u32, rand: u32) -> Particle {
 
 const initShader = /*wgsl*/ `
 ${paramsStruct}
-${particleTypes}
+${particleDefs}
 ${hashFunctions}
-${particleStruct}
+${wgslUtils}
 
 @group(0) @binding(0) var<storage, read_write> output: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
@@ -576,9 +569,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 const simulationShader = /*wgsl*/ `
 ${paramsStruct}
 ${mouseStruct}
-${particleTypes}
+${particleDefs}
 ${hashFunctions}
-${particleStruct}
+${wgslUtils}
 
 @group(0) @binding(0) var<storage, read> input: array<Particle>;
 @group(0) @binding(1) var<storage, read_write> output: array<Particle>;
@@ -601,13 +594,9 @@ fn getOffset(frame: u32) -> vec2i {
 }
 
 fn getData(p: vec2i) -> Particle {
-  if (p.x < 0 || p.y < 0 || p.x >= i32(params.width) || p.y >= i32(params.height)) {
-    return particle(WALL, 0u);
-  }
-  let idx = getIndex(u32(p.x), u32(p.y), params.width);
-  if (collision[idx] > 0u) {
-    return particle(COLLISION, 0u);
-  }
+  if (!inBounds(p, params.width, params.height)) { return particle(WALL, 0u); }
+  let idx = getIndexI(p, params.width);
+  if (collision[idx] > 0u) { return particle(COLLISION, 0u); }
   return input[idx];
 }
 
@@ -617,12 +606,14 @@ fn newParticle(ptype: u32, coord: vec2i, frame: u32) -> Particle {
 }
 
 fn isCollision(p: vec2i) -> bool {
-  if (p.x < 0 || p.y < 0 || p.x >= i32(params.width) || p.y >= i32(params.height)) { return false; }
-  return collision[getIndex(u32(p.x), u32(p.y), params.width)] > 0u;
+  if (!inBounds(p, params.width, params.height)) { return false; }
+  return collision[getIndexI(p, params.width)] > 0u;
 }
 
-fn inBounds(p: vec2i) -> bool {
-  return p.x >= 0 && p.y >= 0 && p.x < i32(params.width) && p.y < i32(params.height);
+fn writeIfInBounds(p: vec2i, val: Particle) {
+  if (inBounds(p, params.width, params.height)) {
+    output[getIndexI(p, params.width)] = val;
+  }
 }
 
 // Block-based: each thread processes one 2x2 Margolus block
@@ -741,17 +732,17 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (t11.ptype == COLLISION && !isCollision(p + vec2i(1, 1))) { t11 = newParticle(AIR, p + vec2i(1, 1), params.frame); }
   
   // Write only in-bounds cells
-  if (inBounds(p)) { output[getIndex(u32(p.x), u32(p.y), params.width)] = t00; }
-  if (inBounds(p + vec2i(1, 0))) { output[getIndex(u32(p.x + 1), u32(p.y), params.width)] = t10; }
-  if (inBounds(p + vec2i(0, 1))) { output[getIndex(u32(p.x), u32(p.y + 1), params.width)] = t01; }
-  if (inBounds(p + vec2i(1, 1))) { output[getIndex(u32(p.x + 1), u32(p.y + 1), params.width)] = t11; }
+  writeIfInBounds(p, t00);
+  writeIfInBounds(p + vec2i(1, 0), t10);
+  writeIfInBounds(p + vec2i(0, 1), t01);
+  writeIfInBounds(p + vec2i(1, 1), t11);
 }
 `;
 
 const renderShader = /*wgsl*/ `
 ${paramsStruct}
-${particleTypes}
-${particleStruct}
+${particleDefs}
+${wgslUtils}
 
 struct VertexOutput {
   @builtin(position) position: vec4f,
