@@ -1,12 +1,13 @@
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
-import { glsl } from '@folkjs/dom/tags';
-import { WebGLUtils } from '@folkjs/dom/webgl';
 import { FolkBaseSet } from './folk-base-set';
+
+/** A raw tagged template literal that just provides WGSL syntax highlighting/LSP support. */
+const wgsl = String.raw;
 
 /**
  * The DistanceField class calculates a distance field using the Jump Flooding Algorithm (JFA) in WebGPU.
- * It renders shapes as seed points and computes the distance from each pixel to the nearest seed point.
- * Previous CPU-based implementation: github.com/folk-canvas/folk-canvas/commit/fdd7fb9d84d93ad665875cad25783c232fd17bcc
+ * It uses compute shaders for seed initialization and JFA passes, eliminating the need for ping-pong textures.
+ * Previous implementations: WebGL2 (folk-distance-field.ts), CPU-based (github.com/folk-canvas/folk-canvas/commit/fdd7fb9d84d93ad665875cad25783c232fd17bcc)
  */
 export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   static override tagName = 'folk-distance-field-webgpu';
@@ -14,62 +15,46 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   static readonly MAX_DISTANCE = 99999.0;
 
   #canvas!: HTMLCanvasElement;
-  #glContext!: WebGL2RenderingContext;
-  #framebuffer!: WebGLFramebuffer;
-  #fullscreenQuadVAO!: WebGLVertexArrayObject;
-  #jfaProgram!: WebGLProgram; // Shader program for the Jump Flooding Algorithm
-  #renderProgram!: WebGLProgram; // Shader program for final rendering
-  #seedProgram!: WebGLProgram; // Shader program for rendering seed points
+  #device!: any; // GPUDevice
+  #context!: any; // GPUCanvasContext
+  #presentationFormat!: any; // GPUTextureFormat
 
-  /**
-   * Groups data for handling different sets of shapes.
-   * 'mergeA' and 'mergeB' shapes will have their distance fields merged in rendering,
-   * while 'others' will be processed separately.
-   */
-  #groups: {
-    [groupName: string]: {
-      textures: WebGLTexture[];
-      isPingTexture: boolean;
-      shapeVAO: WebGLVertexArrayObject;
-      positionBuffer: WebGLBuffer | null;
-    };
-  } = {};
+  // Compute pipelines
+  #seedComputePipeline!: any; // GPUComputePipeline
+  #jfaComputePipeline!: any; // GPUComputePipeline
 
-  // Add class property to store Float32Arrays
-  #groupBuffers: {
-    [groupName: string]: Float32Array;
-  } = {};
+  // Render pipeline
+  #renderPipeline!: any; // GPURenderPipeline
 
-  override connectedCallback() {
+  // Storage buffers for distance field data (ping-pong)
+  #distanceBuffers: any[] = []; // GPUBuffer[]
+  #bufferSize = 0;
+
+  // Shape data buffer
+  #shapeDataBuffer!: any; // GPUBuffer
+  #shapeCount = 0;
+
+  // Uniform buffers
+  #paramsBuffer!: any; // GPUBuffer
+
+  // Bind groups
+  #seedBindGroup!: any; // GPUBindGroup
+  #jfaBindGroups: any[] = []; // GPUBindGroup[]
+  #renderBindGroup!: any; // GPUBindGroup
+
+  #currentBufferIndex = 0;
+
+  override async connectedCallback() {
     super.connectedCallback();
 
-    // Initialize groups for 'mergeA', 'mergeB', and 'others'
-    this.#groups = {
-      mergeA: {
-        textures: [],
-        isPingTexture: true,
-        shapeVAO: null!,
-        positionBuffer: null,
-      },
-      mergeB: {
-        textures: [],
-        isPingTexture: true,
-        shapeVAO: null!,
-        positionBuffer: null,
-      },
-      others: {
-        textures: [],
-        isPingTexture: true,
-        shapeVAO: null!,
-        positionBuffer: null,
-      },
-    };
-
-    this.#initWebGL();
-    this.#initShaders();
-    this.#initPingPongTextures();
+    await this.#initWebGPU();
+    await this.#initPipelines();
+    this.#initBuffers();
 
     window.addEventListener('resize', this.#handleResize);
+
+    // Trigger initial render now that WebGPU is ready
+    this.requestUpdate();
   }
 
   override disconnectedCallback() {
@@ -77,25 +62,105 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
 
     window.removeEventListener('resize', this.#handleResize);
 
-    this.#cleanupWebGLResources();
+    this.#cleanupWebGPUResources();
   }
 
-  #initWebGL() {
-    const { gl, canvas } = WebGLUtils.createWebGLCanvas(this.clientWidth, this.clientHeight);
-
-    if (!gl || !canvas) {
-      throw new Error('Failed to initialize WebGL context.');
+  async #initWebGPU() {
+    const nav = navigator as any;
+    if (!nav.gpu) {
+      throw new Error('WebGPU is not supported in this browser.');
     }
 
-    this.#canvas = canvas;
-    this.renderRoot.prepend(canvas);
-    this.#glContext = gl;
-
-    // Create framebuffer object
-    this.#framebuffer = gl.createFramebuffer()!;
-    if (!this.#framebuffer) {
-      throw new Error('Failed to create framebuffer.');
+    const adapter = await nav.gpu.requestAdapter();
+    if (!adapter) {
+      throw new Error('Failed to get GPU adapter.');
     }
+
+    this.#device = await adapter.requestDevice();
+
+    this.#canvas = document.createElement('canvas');
+    this.#canvas.width = this.clientWidth;
+    this.#canvas.height = this.clientHeight;
+    this.renderRoot.prepend(this.#canvas);
+
+    const context = this.#canvas.getContext('webgpu');
+    if (!context) {
+      throw new Error('Failed to get WebGPU context.');
+    }
+
+    this.#context = context;
+    this.#presentationFormat = nav.gpu.getPreferredCanvasFormat();
+
+    this.#context.configure({
+      device: this.#device,
+      format: this.#presentationFormat,
+      alphaMode: 'premultiplied',
+    });
+  }
+
+  async #initPipelines() {
+    // Create compute pipeline for seed initialization
+    this.#seedComputePipeline = this.#device.createComputePipeline({
+      layout: 'auto',
+      compute: {
+        module: this.#device.createShaderModule({ code: seedComputeShader }),
+        entryPoint: 'main',
+      },
+    });
+
+    // Create compute pipeline for JFA passes
+    this.#jfaComputePipeline = this.#device.createComputePipeline({
+      layout: 'auto',
+      compute: {
+        module: this.#device.createShaderModule({ code: jfaComputeShader }),
+        entryPoint: 'main',
+      },
+    });
+
+    // Create render pipeline for visualization
+    this.#renderPipeline = this.#device.createRenderPipeline({
+      layout: 'auto',
+      vertex: {
+        module: this.#device.createShaderModule({ code: renderVertexShader }),
+        entryPoint: 'main',
+      },
+      fragment: {
+        module: this.#device.createShaderModule({ code: renderFragmentShader }),
+        entryPoint: 'main',
+        targets: [{ format: this.#presentationFormat }],
+      },
+      primitive: {
+        topology: 'triangle-strip',
+      },
+    });
+  }
+
+  #initBuffers() {
+    const width = this.#canvas.width;
+    const height = this.#canvas.height;
+
+    // Each pixel stores: vec4<f32> (seedX, seedY, shapeID, distance)
+    // 4 floats * 4 bytes = 16 bytes per pixel
+    this.#bufferSize = width * height * 16;
+
+    const BufferUsage = (window as any).GPUBufferUsage;
+
+    // Create ping-pong storage buffers
+    for (let i = 0; i < 2; i++) {
+      this.#distanceBuffers[i] = this.#device.createBuffer({
+        size: this.#bufferSize,
+        usage: BufferUsage.STORAGE | BufferUsage.COPY_DST,
+      });
+    }
+
+    // Create params buffer for canvas size and step size
+    this.#paramsBuffer = this.#device.createBuffer({
+      size: 16, // vec4<u32>: width, height, stepSize, shapeCount
+      usage: BufferUsage.UNIFORM | BufferUsage.COPY_DST,
+    });
+
+    // Shape data buffer will be created on first update
+    // this.#shapeDataBuffer will be initialized in #updateShapeData
   }
 
   /**
@@ -104,637 +169,376 @@ export class FolkDistanceFieldWebGPU extends FolkBaseSet {
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
 
+    // Wait for WebGPU to be initialized
+    if (!this.#device) return;
     if (this.sourcesMap.size !== this.sourceElements.size) return;
 
-    this.#populateSeedPoints();
+    this.#updateShapeData();
     this.#runJumpFloodingAlgorithm();
   }
 
-  /**
-   * Initializes all shader programs used in rendering.
-   */
-  #initShaders() {
-    this.#jfaProgram = WebGLUtils.createShaderProgram(this.#glContext, commonVertShader, jfaFragShader);
-    this.#renderProgram = WebGLUtils.createShaderProgram(this.#glContext, commonVertShader, renderFragShader);
-    this.#seedProgram = WebGLUtils.createShaderProgram(this.#glContext, seedVertShader, seedFragShader);
-  }
-
-  /**
-   * Initializes textures and framebuffer for ping-pong rendering.
-   * Supports separate textures for 'mergeA', 'mergeB', and 'others' groups.
-   */
-  #initPingPongTextures() {
-    // Initialize textures for each group
-    for (const groupName in this.#groups) {
-      this.#groups[groupName].textures = this.#createPingPongTextures();
-      this.#groups[groupName].isPingTexture = true;
-    }
-  }
-
-  /**
-   * Utility method to create ping-pong textures.
-   */
-  #createPingPongTextures(): WebGLTexture[] {
-    const gl = this.#glContext;
-    const width = this.#canvas.width;
-    const height = this.#canvas.height;
-    const textures: WebGLTexture[] = [];
-
-    // Enable the EXT_color_buffer_half_float extension for high-precision floating-point textures
-    const ext = gl.getExtension('EXT_color_buffer_half_float');
-    if (!ext) {
-      console.error('EXT_color_buffer_half_float extension is not supported.');
-      return textures;
-    }
-
-    for (let i = 0; i < 2; i++) {
-      const texture = gl.createTexture()!;
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-
-      // Set texture parameters
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-      // Use high-precision format for accurate distance calculations
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.HALF_FLOAT, null);
-
-      textures.push(texture);
-    }
-
-    return textures;
-  }
-
-  /**
-   * Populates seed points and assigns shapes to 'mergeA', 'mergeB', or 'others' groups.
-   * Shapes with index 0 and 1 are assigned to 'mergeA' and 'mergeB' respectively.
-   */
-  #populateSeedPoints() {
-    const gl = this.#glContext;
-    const groupPositions: { [groupName: string]: number[] } = {
-      mergeA: [],
-      mergeB: [],
-      others: [],
-    };
+  #updateShapeData() {
+    const shapeData: number[] = [];
 
     const containerWidth = this.clientWidth;
     const containerHeight = this.clientHeight;
 
-    // Collect positions and assign shapes to groups
+    // Collect all shape rectangles
     this.sourceRects.forEach((rect, index) => {
-      // TODO: rotation
-      const topLeftParent = { x: rect.left, y: rect.top };
-      const topRightParent = { x: rect.right, y: rect.top };
-      const bottomLeftParent = { x: rect.left, y: rect.bottom };
-      const bottomRightParent = { x: rect.right, y: rect.bottom };
+      // Normalize coordinates to [0, 1] range
+      const left = rect.left / containerWidth;
+      const right = rect.right / containerWidth;
+      const top = rect.top / containerHeight;
+      const bottom = rect.bottom / containerHeight;
 
-      // Convert rotated coordinates to NDC using container dimensions
-      const x1 = (topLeftParent.x / containerWidth) * 2 - 1;
-      const y1 = -((topLeftParent.y / containerHeight) * 2 - 1);
-      const x2 = (topRightParent.x / containerWidth) * 2 - 1;
-      const y2 = -((topRightParent.y / containerHeight) * 2 - 1);
-      const x3 = (bottomLeftParent.x / containerWidth) * 2 - 1;
-      const y3 = -((bottomLeftParent.y / containerHeight) * 2 - 1);
-      const x4 = (bottomRightParent.x / containerWidth) * 2 - 1;
-      const y4 = -((bottomRightParent.y / containerHeight) * 2 - 1);
+      const shapeID = index + 1; // Avoid zero
 
-      const shapeID = index + 1; // Avoid zero to prevent hash function issues
-
-      // Represent each rectangle as two triangles, including shapeID as the z component
-      const rectPositions = [
-        x1,
-        y1,
-        shapeID,
-        x2,
-        y2,
-        shapeID,
-        x3,
-        y3,
-        shapeID,
-
-        x3,
-        y3,
-        shapeID,
-        x2,
-        y2,
-        shapeID,
-        x4,
-        y4,
-        shapeID,
-      ];
-
-      // Assign shapes to groups based on index or any other criteria
-      let groupName: string;
-      if (index === 0) {
-        groupName = 'mergeA';
-      } else if (index === 1) {
-        groupName = 'mergeB';
-      } else {
-        groupName = 'others';
-      }
-
-      groupPositions[groupName].push(...rectPositions);
+      // Store shape as: minX, minY, maxX, maxY, shapeID, padding...
+      shapeData.push(left, top, right, bottom, shapeID, 0, 0, 0);
     });
 
-    // Initialize buffers and VAOs for each group
-    for (const groupName in groupPositions) {
-      const positions = groupPositions[groupName];
-      const group = this.#groups[groupName];
+    this.#shapeCount = this.sourceRects.length;
 
-      if (!group.shapeVAO) {
-        // First time initialization
-        group.shapeVAO = gl.createVertexArray()!;
-        gl.bindVertexArray(group.shapeVAO);
-        group.positionBuffer = gl.createBuffer()!;
+    if (shapeData.length === 0) {
+      return;
+    }
 
-        // Create and store the Float32Array
-        this.#groupBuffers[groupName] = new Float32Array(positions);
+    // Resize shape data buffer if needed
+    const requiredSize = shapeData.length * 4; // 4 bytes per float32
+    const BufferUsage = (window as any).GPUBufferUsage;
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, group.positionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, this.#groupBuffers[groupName], gl.DYNAMIC_DRAW);
-
-        const positionLocation = gl.getAttribLocation(this.#seedProgram, 'a_position');
-        gl.enableVertexAttribArray(positionLocation);
-        gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
-        gl.bindVertexArray(null);
-      } else {
-        // Reuse existing Float32Array if size hasn't changed
-        const existingArray = this.#groupBuffers[groupName];
-        if (positions.length !== existingArray.length) {
-          // Only create new array if size changed
-          this.#groupBuffers[groupName] = new Float32Array(positions);
-          gl.bindBuffer(gl.ARRAY_BUFFER, group.positionBuffer!);
-          gl.bufferData(gl.ARRAY_BUFFER, this.#groupBuffers[groupName], gl.DYNAMIC_DRAW);
-        } else {
-          // Reuse existing array
-          existingArray.set(positions);
-          gl.bindBuffer(gl.ARRAY_BUFFER, group.positionBuffer!);
-          gl.bufferData(gl.ARRAY_BUFFER, existingArray, gl.DYNAMIC_DRAW);
-        }
+    if (!this.#shapeDataBuffer || this.#shapeDataBuffer.size < requiredSize) {
+      if (this.#shapeDataBuffer) {
+        this.#shapeDataBuffer.destroy();
       }
+      this.#shapeDataBuffer = this.#device.createBuffer({
+        size: requiredSize,
+        usage: BufferUsage.STORAGE | BufferUsage.COPY_DST,
+      });
     }
 
-    // Render the seed points into the textures for each group
-    for (const groupName in groupPositions) {
-      const positions = groupPositions[groupName];
-      const vertexCount = positions.length / 3;
-      this.#renderSeedPointsForGroup(
-        this.#groups[groupName].shapeVAO,
-        this.#groups[groupName].textures[this.#groups[groupName].isPingTexture ? 0 : 1],
-        vertexCount,
-      );
-    }
+    // Upload shape data
+    this.#device.queue.writeBuffer(this.#shapeDataBuffer, 0, new Float32Array(shapeData));
   }
 
-  /**
-   * Utility method to render seed points for a given group.
-   */
-  #renderSeedPointsForGroup(vao: WebGLVertexArrayObject, seedTexture: WebGLTexture, vertexCount: number) {
-    const gl = this.#glContext;
-
-    // Bind framebuffer to render to the seed texture
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.#framebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, seedTexture, 0);
-
-    // Clear the texture with a large initial distance
-    gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
-    gl.clearColor(0.0, 0.0, 0.0, FolkDistanceFieldWebGPU.MAX_DISTANCE);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-
-    // Use the seed shader program
-    gl.useProgram(this.#seedProgram);
-
-    // Set the canvas size uniform
-    const canvasSizeLocation = gl.getUniformLocation(this.#seedProgram, 'u_canvasSize');
-    gl.uniform2f(canvasSizeLocation, this.#canvas.width, this.#canvas.height);
-
-    // Bind VAO and draw shapes
-    gl.bindVertexArray(vao);
-    gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
-    gl.bindVertexArray(null);
-
-    // Unbind framebuffer
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  }
-
-  /**
-   * Executes the Jump Flooding Algorithm (JFA) for each group separately.
-   * 'mergeA' and 'mergeB' groups will have their distance fields merged in rendering.
-   */
   #runJumpFloodingAlgorithm() {
-    // Compute initial step size
-    let stepSize = 1 << Math.floor(Math.log2(Math.max(this.#canvas.width, this.#canvas.height)));
+    if (this.#shapeCount === 0) return;
 
-    // Perform passes with decreasing step sizes for each group
-    for (const groupName in this.#groups) {
-      const group = this.#groups[groupName];
-      const textures = group.textures;
-      let isPingTexture = group.isPingTexture;
+    const width = this.#canvas.width;
+    const height = this.#canvas.height;
 
-      for (let size = stepSize; size >= 1; size >>= 1) {
-        this.#renderPass(size, textures, isPingTexture);
-        isPingTexture = !isPingTexture;
-      }
+    // Update params buffer BEFORE creating command encoder
+    this.#device.queue.writeBuffer(this.#paramsBuffer, 0, new Uint32Array([width, height, 0, this.#shapeCount]));
 
-      group.isPingTexture = isPingTexture; // Update the ping-pong status
+    const encoder = this.#device.createCommandEncoder();
+
+    // Step 1: Initialize seeds
+    this.#seedBindGroup = this.#device.createBindGroup({
+      layout: this.#seedComputePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.#distanceBuffers[0] } },
+        { binding: 1, resource: { buffer: this.#paramsBuffer } },
+        { binding: 2, resource: { buffer: this.#shapeDataBuffer } },
+      ],
+    });
+
+    const seedPass = encoder.beginComputePass();
+    seedPass.setPipeline(this.#seedComputePipeline);
+    seedPass.setBindGroup(0, this.#seedBindGroup);
+    seedPass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
+    seedPass.end();
+
+    // Submit the seed pass
+    this.#device.queue.submit([encoder.finish()]);
+
+    // Step 2: Run JFA passes - each in its own command buffer for proper synchronization
+    let stepSize = 1 << Math.floor(Math.log2(Math.max(width, height)));
+    this.#currentBufferIndex = 0;
+
+    while (stepSize >= 1) {
+      const inputBuffer = this.#distanceBuffers[this.#currentBufferIndex];
+      const outputBuffer = this.#distanceBuffers[1 - this.#currentBufferIndex];
+
+      // Write step size for this pass
+      const paramsData = new Uint32Array([width, height, stepSize, this.#shapeCount]);
+      this.#device.queue.writeBuffer(this.#paramsBuffer, 0, paramsData);
+
+      const jfaEncoder = this.#device.createCommandEncoder();
+
+      const bindGroup = this.#device.createBindGroup({
+        layout: this.#jfaComputePipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: inputBuffer } },
+          { binding: 1, resource: { buffer: outputBuffer } },
+          { binding: 2, resource: { buffer: this.#paramsBuffer } },
+        ],
+      });
+
+      const jfaPass = jfaEncoder.beginComputePass();
+      jfaPass.setPipeline(this.#jfaComputePipeline);
+      jfaPass.setBindGroup(0, bindGroup);
+      jfaPass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
+      jfaPass.end();
+
+      // Submit this JFA pass
+      this.#device.queue.submit([jfaEncoder.finish()]);
+
+      this.#currentBufferIndex = 1 - this.#currentBufferIndex;
+      stepSize >>= 1;
     }
 
-    // Render the final result to the screen
-    this.#renderToScreen();
+    // Step 3: Render to screen in a final pass
+    const renderEncoder = this.#device.createCommandEncoder();
+
+    this.#renderBindGroup = this.#device.createBindGroup({
+      layout: this.#renderPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: this.#distanceBuffers[this.#currentBufferIndex] } },
+        { binding: 1, resource: { buffer: this.#paramsBuffer } },
+      ],
+    });
+
+    const renderPass = renderEncoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.#context.getCurrentTexture().createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        },
+      ],
+    });
+
+    renderPass.setPipeline(this.#renderPipeline);
+    renderPass.setBindGroup(0, this.#renderBindGroup);
+    renderPass.draw(4);
+    renderPass.end();
+
+    this.#device.queue.submit([renderEncoder.finish()]);
   }
 
-  /**
-   * Performs a single pass of the Jump Flooding Algorithm with a given step size for a specific distance field.
-   */
-  #renderPass(stepSize: number, textures: WebGLTexture[], isPingTexture: boolean) {
-    const gl = this.#glContext;
-
-    // Swap textures for ping-pong rendering
-    const inputTexture = isPingTexture ? textures[0] : textures[1];
-    const outputTexture = isPingTexture ? textures[1] : textures[0];
-
-    // Bind framebuffer to output texture
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.#framebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, outputTexture, 0);
-
-    // Use the JFA shader program
-    gl.useProgram(this.#jfaProgram);
-
-    // Compute and set the offsets uniform for neighboring pixels
-    const offsets = this.#computeOffsets(stepSize);
-    const offsetsLocation = gl.getUniformLocation(this.#jfaProgram, 'u_offsets');
-    gl.uniform2fv(offsetsLocation, offsets);
-
-    // Bind input texture containing the previous step's results
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, inputTexture);
-    gl.uniform1i(gl.getUniformLocation(this.#jfaProgram, 'u_previousTexture'), 0);
-
-    // Draw a fullscreen quad to process all pixels
-    this.#drawFullscreenQuad();
-
-    // Unbind framebuffer
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  }
-
-  /**
-   * Renders the final distance field to the screen using the render shader program.
-   * Merges 'mergeA' and 'mergeB' distance fields during rendering, while 'others' are not merged.
-   */
-  #renderToScreen() {
-    const gl = this.#glContext;
-
-    // Unbind framebuffer to render directly to the canvas
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
-
-    // Use the render shader program
-    gl.useProgram(this.#renderProgram);
-
-    // Bind the final textures from each group
-    let textureUnit = 0;
-    for (const groupName in this.#groups) {
-      const group = this.#groups[groupName];
-      const finalTexture = group.textures[group.isPingTexture ? 0 : 1];
-      gl.activeTexture(gl.TEXTURE0 + textureUnit);
-      gl.bindTexture(gl.TEXTURE_2D, finalTexture);
-      gl.uniform1i(gl.getUniformLocation(this.#renderProgram, `u_texture_${groupName}`), textureUnit);
-      textureUnit++;
-    }
-
-    // Draw a fullscreen quad to display the result
-    this.#drawFullscreenQuad();
-  }
-
-  /**
-   * Draws a fullscreen quad to cover the entire canvas.
-   * This is used in shader passes where every pixel needs to be processed.
-   */
-  #drawFullscreenQuad() {
-    const gl = this.#glContext;
-
-    // Initialize the quad geometry if it hasn't been done yet
-    if (!this.#fullscreenQuadVAO) {
-      this.#initFullscreenQuad();
-    }
-
-    gl.bindVertexArray(this.#fullscreenQuadVAO);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    gl.bindVertexArray(null);
-  }
-
-  /**
-   * Initializes the geometry and buffers for the fullscreen quad.
-   */
-  #initFullscreenQuad() {
-    const gl = this.#glContext;
-
-    // Define positions for a quad covering the entire screen
-    const positions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
-
-    this.#fullscreenQuadVAO = gl.createVertexArray()!;
-    gl.bindVertexArray(this.#fullscreenQuadVAO);
-
-    const positionBuffer = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-
-    const positionAttributeLocation = gl.getAttribLocation(this.#jfaProgram, 'a_position');
-    gl.enableVertexAttribArray(positionAttributeLocation);
-    gl.vertexAttribPointer(
-      positionAttributeLocation,
-      2, // size (x, y)
-      gl.FLOAT, // type
-      false, // normalize
-      0, // stride
-      0, // offset
-    );
-
-    gl.bindVertexArray(null);
-  }
-
-  /**
-   * Handles window resize events by updating canvas size, re-initializing textures and seed points,
-   * and rerunning the Jump Flooding Algorithm.
-   */
   #handleResize = () => {
-    const gl = this.#glContext;
-
-    // Update canvas size to match the container instead of window
+    // Update canvas size
     this.#canvas.width = this.clientWidth;
     this.#canvas.height = this.clientHeight;
 
-    // Update the viewport
-    gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
+    // Reconfigure context
+    this.#context.configure({
+      device: this.#device,
+      format: this.#presentationFormat,
+      alphaMode: 'premultiplied',
+    });
 
-    // Re-initialize textures with the new dimensions
-    this.#initPingPongTextures();
+    // Reinitialize buffers with new size
+    this.#distanceBuffers.forEach((buffer) => buffer.destroy());
+    this.#initBuffers();
 
-    // Re-initialize seed point rendering to update positions
-    this.#populateSeedPoints();
-
-    // Rerun the Jump Flooding Algorithm with the new sizes
+    // Rerun algorithm
+    this.#updateShapeData();
     this.#runJumpFloodingAlgorithm();
   };
 
-  /**
-   * Computes the offsets to sample neighboring pixels based on the current step size.
-   * These offsets are used in the JFA shader to determine where to look for potential nearer seed points.
-   * @param stepSize The current step size for neighbor sampling.
-   * @returns A Float32Array of offsets.
-   */
-  #computeOffsets(stepSize: number): Float32Array {
-    const aspectRatio = this.#canvas.width / this.#canvas.height;
-    const offsets: number[] = [];
-    for (let y = -1; y <= 1; y++) {
-      for (let x = -1; x <= 1; x++) {
-        // Adjust x offset by aspect ratio to maintain uniform distances
-        offsets.push((x * stepSize * aspectRatio) / this.#canvas.width, (y * stepSize) / this.#canvas.height);
-      }
-    }
-    return new Float32Array(offsets);
-  }
-
-  /**
-   * Cleans up WebGL resources to prevent memory leaks.
-   * This is called when the element is disconnected from the DOM.
-   */
-  #cleanupWebGLResources() {
-    const gl = this.#glContext;
-
-    // Delete resources for each group
-    for (const groupName in this.#groups) {
-      const group = this.#groups[groupName];
-
-      // Delete textures
-      group.textures.forEach((texture) => gl.deleteTexture(texture));
-      group.textures = [];
-
-      // Delete VAOs
-      if (group.shapeVAO) {
-        gl.deleteVertexArray(group.shapeVAO);
-      }
-
-      // Delete buffers
-      if (group.positionBuffer) {
-        gl.deleteBuffer(group.positionBuffer);
-      }
-    }
-
-    // Delete framebuffer
-    if (this.#framebuffer) {
-      gl.deleteFramebuffer(this.#framebuffer);
-    }
-
-    // Delete fullscreen quad VAO
-    if (this.#fullscreenQuadVAO) {
-      gl.deleteVertexArray(this.#fullscreenQuadVAO);
-    }
-
-    // Delete shader programs
-    if (this.#jfaProgram) {
-      gl.deleteProgram(this.#jfaProgram);
-    }
-    if (this.#renderProgram) {
-      gl.deleteProgram(this.#renderProgram);
-    }
-    if (this.#seedProgram) {
-      gl.deleteProgram(this.#seedProgram);
-    }
-
-    this.#groupBuffers = {};
+  #cleanupWebGPUResources() {
+    this.#distanceBuffers.forEach((buffer) => buffer.destroy());
+    this.#shapeDataBuffer?.destroy();
+    this.#paramsBuffer?.destroy();
   }
 }
 
 /**
- * Vertex shader shared by multiple programs.
- * Transforms vertices to normalized device coordinates and passes texture coordinates to the fragment shader.
+ * Compute shader for seed initialization.
+ * Rasterizes shapes and marks pixels inside them as seed points.
  */
-const commonVertShader = glsl`#version 300 es
-precision mediump float;
-in vec2 a_position;
-out vec2 v_texCoord;
+const seedComputeShader = wgsl`
+struct Params {
+  width: u32,
+  height: u32,
+  stepSize: u32,
+  shapeCount: u32,
+}
 
-void main() {
-  v_texCoord = a_position * 0.5 + 0.5; // Transform to [0, 1] range
-  gl_Position = vec4(a_position, 0.0, 1.0);
-}`;
+struct ShapeData {
+  minX: f32,
+  minY: f32,
+  maxX: f32,
+  maxY: f32,
+  shapeID: f32,
+  _pad1: f32,
+  _pad2: f32,
+  _pad3: f32,
+}
+
+@group(0) @binding(0) var<storage, read_write> distanceField: array<vec4<f32>>;
+@group(0) @binding(1) var<uniform> params: Params;
+@group(0) @binding(2) var<storage, read> shapes: array<ShapeData>;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+  let x = global_id.x;
+  let y = global_id.y;
+  
+  if (x >= params.width || y >= params.height) {
+    return;
+  }
+
+  let index = y * params.width + x;
+  let pixel = vec2<f32>(f32(x) / f32(params.width), f32(y) / f32(params.height));
+  
+  var minDist = 99999.0;
+  var nearestSeed = vec2<f32>(-1.0, -1.0); // Use -1,-1 as "no seed" marker
+  var shapeID = 0.0;
+  
+  // Check all shapes to see if this pixel is inside any
+  for (var i = 0u; i < params.shapeCount; i++) {
+    let shape = shapes[i];
+    
+    // Check if pixel is inside this shape
+    if (pixel.x >= shape.minX && pixel.x <= shape.maxX &&
+        pixel.y >= shape.minY && pixel.y <= shape.maxY) {
+      // Inside shape - this is a seed point with distance 0
+      nearestSeed = pixel;
+      shapeID = shape.shapeID;
+      minDist = 0.0;
+      break;
+    }
+  }
+  
+  // Write initial seed data
+  distanceField[index] = vec4<f32>(nearestSeed.x, nearestSeed.y, shapeID, minDist);
+}
+`;
 
 /**
- * Fragment shader for the Jump Flooding Algorithm.
- * Updates the nearest seed point and distance for each pixel by examining neighboring pixels.
+ * Compute shader for JFA passes.
+ * Updates each pixel with the nearest seed by checking neighbors at step distance.
  */
-const jfaFragShader = glsl`#version 300 es
-precision mediump float;
-precision mediump int;
+const jfaComputeShader = wgsl`
+struct Params {
+  width: u32,
+  height: u32,
+  stepSize: u32,
+  shapeCount: u32,
+}
 
-in vec2 v_texCoord;
-out vec4 outColor;
+@group(0) @binding(0) var<storage, read> inputField: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read_write> outputField: array<vec4<f32>>;
+@group(0) @binding(2) var<uniform> params: Params;
 
-uniform sampler2D u_previousTexture;
-uniform vec2 u_offsets[9];
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+  let x = global_id.x;
+  let y = global_id.y;
+  
+  if (x >= params.width || y >= params.height) {
+    return;
+  }
 
-void main() {
-    vec4 nearest = texture(u_previousTexture, v_texCoord);
-    float minDist = nearest.a;
-
-    float aspectRatio = float(textureSize(u_previousTexture, 0).x) / float(textureSize(u_previousTexture, 0).y);
-    
-    for (int i = 0; i < 9; ++i) {
-        vec2 sampleCoord = v_texCoord + u_offsets[i];
-        sampleCoord = clamp(sampleCoord, vec2(0.0), vec2(1.0));
-        vec4 sampled = texture(u_previousTexture, sampleCoord);
-
-        if (sampled.z == 0.0) {
-            continue;
-        }
-
-        // Adjust x coordinate by aspect ratio when calculating distance
-        vec2 adjustedCoord = vec2(v_texCoord.x * aspectRatio, v_texCoord.y);
-        vec2 adjustedSampledCoord = vec2(sampled.x * aspectRatio, sampled.y);
-        float dist = distance(adjustedSampledCoord, adjustedCoord);
+  let index = y * params.width + x;
+  let pixel = vec2<f32>(f32(x) / f32(params.width), f32(y) / f32(params.height));
+  
+  var nearest = inputField[index];
+  var minDist = nearest.w;
+  
+  let step = i32(params.stepSize);
+  let aspectRatio = f32(params.width) / f32(params.height);
+  
+  // Check 9 neighbors in a grid around current pixel
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let nx = i32(x) + dx * step;
+      let ny = i32(y) + dy * step;
+      
+      // Check bounds
+      if (nx < 0 || nx >= i32(params.width) || ny < 0 || ny >= i32(params.height)) {
+        continue;
+      }
+      
+      let neighborIndex = u32(ny) * params.width + u32(nx);
+      let neighbor = inputField[neighborIndex];
+      
+      // Skip if no seed assigned yet (check for -1,-1 marker)
+      if (neighbor.x < 0.0) {
+        continue;
+      }
+      
+      // Calculate distance with aspect ratio correction
+      let seedPos = vec2<f32>(neighbor.x * aspectRatio, neighbor.y);
+      let pixelPos = vec2<f32>(pixel.x * aspectRatio, pixel.y);
+      let dist = distance(seedPos, pixelPos);
 
         if (dist < minDist) {
-            nearest = sampled;
-            nearest.a = dist;
+        nearest = vec4<f32>(neighbor.x, neighbor.y, neighbor.z, dist);
             minDist = dist;
-        }
+      }
     }
-
-    outColor = nearest;
-}`;
+  }
+  
+  outputField[index] = nearest;
+}
+`;
 
 /**
- * Fragment shader for rendering the final distance field.
- * Merges 'mergeA' and 'mergeB' distance fields during rendering.
+ * Vertex shader for fullscreen quad rendering.
  */
-const renderFragShader = glsl`#version 300 es
-precision mediump float;
-
-#define DEBUG_MODULO false
-#define DEBUG_HARD_CUTOFF false
-#define FALLOFF_FACTOR 10.0
-#define SMOOTHING_FACTOR 0.1
-#define DEBUG_HARD_CUTOFF_DISTANCE 0.2
-
-in vec2 v_texCoord;
-out vec4 outColor;
-
-uniform sampler2D u_texture_mergeA;
-uniform sampler2D u_texture_mergeB;
-uniform sampler2D u_texture_others;
-
-vec3 hsv2rgb(vec3 c) {
-  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+const renderVertexShader = wgsl`
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) texCoord: vec2<f32>,
 }
 
-// Smooth minimum function
-float smoothMin(float a, float b, float k) {
-  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-  return mix(b, a, h) - k * h * (1.0 - h);
+@vertex
+fn main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+  var output: VertexOutput;
+  
+  // Generate fullscreen quad from vertex index
+  let x = f32((vertexIndex & 1u) << 1u) - 1.0;
+  let y = f32((vertexIndex & 2u)) - 1.0;
+  
+  output.position = vec4<f32>(x, y, 0.0, 1.0);
+  output.texCoord = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
+  
+  return output;
+}
+`;
+
+/**
+ * Fragment shader for visualizing the distance field.
+ */
+const renderFragmentShader = wgsl`
+struct Params {
+  width: u32,
+  height: u32,
+  stepSize: u32,
+  shapeCount: u32,
 }
 
-void main() {
-  vec4 texelMergeA = texture(u_texture_mergeA, v_texCoord);
-  vec4 texelMergeB = texture(u_texture_mergeB, v_texCoord);
-  vec4 texelOthers = texture(u_texture_others, v_texCoord);
+@group(0) @binding(0) var<storage, read> distanceField: array<vec4<f32>>;
+@group(0) @binding(1) var<uniform> params: Params;
 
-  // Extract shape IDs and distances
-  float shapeIDMergeA = texelMergeA.z;
-  float distanceMergeA = texelMergeA.a;
+fn hsv2rgb(c: vec3<f32>) -> vec3<f32> {
+  let K = vec4<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  let p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+}
 
-  float shapeIDMergeB = texelMergeB.z;
-  float distanceMergeB = texelMergeB.a;
-
-  float shapeIDOthers = texelOthers.z;
-  float distanceOthers = texelOthers.a;
-
-  // Compute colors for mergeA and mergeB
-  float hueMergeA = fract(shapeIDMergeA * 0.61803398875);
-  vec3 colorMergeA = hsv2rgb(vec3(hueMergeA, 0.5, 0.95));
-
-  float hueMergeB = fract(shapeIDMergeB * 0.61803398875);
-  vec3 colorMergeB = hsv2rgb(vec3(hueMergeB, 0.5, 0.95));
-
-  // Merge distances of mergeA and mergeB
-  float mergedDistanceAB = smoothMin(distanceMergeA, distanceMergeB, SMOOTHING_FACTOR);
-
-  // Calculate blend factor for colors
-  float hAB = clamp(0.5 + 0.5 * (distanceMergeB - distanceMergeA) / SMOOTHING_FACTOR, 0.0, 1.0);
-  vec3 mergedColorAB = mix(colorMergeB, colorMergeA, hAB);
-
-  // Compute color and distance for others
-  float hueOthers = fract(shapeIDOthers * 0.61803398875);
-  vec3 colorOthers = hsv2rgb(vec3(hueOthers, 0.5, 0.95));
-
-  // Decide between merged distances and others
-  float finalDistance;
-  vec3 finalColor;
-
-  if (mergedDistanceAB <= distanceOthers) {
-    finalDistance = mergedDistanceAB;
-    finalColor = mergedColorAB;
-  } else {
-    finalDistance = distanceOthers;
-    finalColor = colorOthers;
-  }
-
-  if (DEBUG_MODULO) {
-    // Visualize distance bands using modulo
-    float bandWidth = 0.02; // Adjust this value to change the width of the bands
-    float distanceBand = mod(finalDistance, bandWidth) / bandWidth;
-    
-    // Create alternating black and white bands
-    float bandColor = step(0.1, distanceBand);
-    
-    // Mix the band visualization with the merged color
-    finalColor = mix(vec3(0.0), finalColor, bandColor);
-  }
-
-  // Before applying any effects, check if we should use hard cutoff
-  if (DEBUG_HARD_CUTOFF) {
-    // If distance is greater than cutoff, set intensity to 0, otherwise 1
-    finalColor *= finalDistance > DEBUG_HARD_CUTOFF_DISTANCE ? 0.0 : exp(-finalDistance * FALLOFF_FACTOR);
-  } else {
-    // Use the original smooth falloff
-    finalColor *= exp(-finalDistance * FALLOFF_FACTOR);
-  }
-
-
-  outColor = vec4(finalColor, 1.0);
-}`;
-
-/**
- * Vertex shader for rendering seed points.
- * Outputs the shape ID to the fragment shader.
- */
-const seedVertShader = glsl`#version 300 es
-precision mediump float;
-
-in vec3 a_position; // x, y position and shapeID as z
-flat out float v_shapeID;
-
-void main() {
-  gl_Position = vec4(a_position.xy, 0.0, 1.0);
-  v_shapeID = a_position.z; // Pass shape ID to fragment shader
-}`;
-
-/**
- * Fragment shader for rendering seed points.
- * Initializes the texture with seed point positions and shape IDs.
- */
-const seedFragShader = glsl`#version 300 es
-precision mediump float;
-
-flat in float v_shapeID;
-uniform vec2 u_canvasSize;
-
-out vec4 outColor;
-
-void main() {
-  vec2 seedCoord = gl_FragCoord.xy / u_canvasSize;
-  outColor = vec4(seedCoord, v_shapeID, 0.0);  // Seed coords (x, y), shape ID (z), initial distance (a)
-}`;
+@fragment
+fn main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
+  let x = u32(texCoord.x * f32(params.width));
+  let y = u32(texCoord.y * f32(params.height));
+  let index = y * params.width + x;
+  
+  let data = distanceField[index];
+  let shapeID = data.z;
+  let distance = data.w;
+  
+  // Generate color from shape ID using golden ratio for nice distribution
+  let hue = fract(shapeID * 0.61803398875);
+  var color = hsv2rgb(vec3<f32>(hue, 0.5, 0.95));
+  
+  // Apply exponential falloff (distance is in normalized [0,1] coordinates)
+  let falloff = 2.0; // Tune this for desired glow size
+  color *= exp(-distance * falloff);
+  
+  return vec4<f32>(color, 1.0);
+}
+`;
