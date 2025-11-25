@@ -116,6 +116,7 @@
     "webcola": "^3.4.0"
   },
   "devDependencies": {
+    "@types/wicg-file-system-access": "^2023.10.7",
     "expect": "^29.7.0",
     "mitata": "^1.0.34",
     "typescript": "^5.8.2"

@@ -5,7 +5,8 @@
     "rootDir": "src",
     "outDir": "dist",
     "declaration": true,
-    "rewriteRelativeImportExtensions": true
+    "rewriteRelativeImportExtensions": true,
+    "types": ["@webgpu/types", "@types/wicg-file-system-access"]
   },
   "include": ["src/"]
 }
