@@ -90,8 +90,8 @@ export class FolkSandWebGPU extends FolkBaseSet {
 
     try {
       await this.#initWebGPU();
-    this.#attachEventListeners();
-    this.#render();
+      this.#attachEventListeners();
+      this.#render();
     } catch (e) {
       console.error('WebGPU initialization failed:', e);
     }
@@ -131,6 +131,21 @@ export class FolkSandWebGPU extends FolkBaseSet {
     pass.dispatchWorkgroups(
       Math.ceil(this.#bufferWidth / WORKGROUP_SIZE),
       Math.ceil(this.#bufferHeight / WORKGROUP_SIZE),
+    );
+    pass.end();
+    this.#device.queue.submit([encoder.finish()]);
+  }
+
+  // Block-based dispatch: each thread processes one 2x2 Margolus block
+  // +1 ensures coverage when offset is (1,1) - rightmost/bottommost pixels still get processed
+  #runSimulation(bindGroup: GPUBindGroup) {
+    const encoder = this.#device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this.#simulationPipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(
+      Math.ceil((this.#bufferWidth + 1) / 2 / WORKGROUP_SIZE),
+      Math.ceil((this.#bufferHeight + 1) / 2 / WORKGROUP_SIZE),
     );
     pass.end();
     this.#device.queue.submit([encoder.finish()]);
@@ -288,7 +303,7 @@ export class FolkSandWebGPU extends FolkBaseSet {
     // Run 3 simulation passes per frame (each needs separate submit for uniform sync)
     for (let i = 0; i < 3; i++) {
       this.#updateUniforms(this.#frame * 3 + i);
-      this.#runCompute(this.#simulationPipeline, this.#simBindGroups[this.#currentStateIndex]);
+      this.#runSimulation(this.#simBindGroups[this.#currentStateIndex]);
       this.#currentStateIndex = 1 - this.#currentStateIndex;
     }
     this.#frame++;
@@ -491,8 +506,8 @@ fn hash44(p: vec4f) -> vec4f {
 
 const particleStruct = /*wgsl*/ `
 struct Particle {
-  ptype: u32,
-  rand: u32,
+  ptype: u32,  // particle type (only needs ~4 bits, but u32 is WGSL's smallest)
+  rand: u32,   // visual variation (only needs 8 bits)
 }
 
 fn getIndex(x: u32, y: u32, width: u32) -> u32 {
@@ -601,26 +616,22 @@ fn newParticle(ptype: u32, coord: vec2i, frame: u32) -> Particle {
   return particle(ptype, rand);
 }
 
+fn isCollision(p: vec2i) -> bool {
+  if (p.x < 0 || p.y < 0 || p.x >= i32(params.width) || p.y >= i32(params.height)) { return false; }
+  return collision[getIndex(u32(p.x), u32(p.y), params.width)] > 0u;
+}
+
+fn inBounds(p: vec2i) -> bool {
+  return p.x >= 0 && p.y >= 0 && p.x < i32(params.width) && p.y < i32(params.height);
+}
+
+// Block-based: each thread processes one 2x2 Margolus block
 @compute @workgroup_size(${WORKGROUP_SIZE}, ${WORKGROUP_SIZE})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let coord = vec2i(gid.xy);
-  if (coord.x >= i32(params.width) || coord.y >= i32(params.height)) { return; }
-  
-  let outIdx = getIndex(gid.x, gid.y, params.width);
-  
-  // Mouse input
-  if (mouse.x > 0.0 && sdSegment(vec2f(coord), vec2f(mouse.x, mouse.y), vec2f(mouse.prevX, mouse.prevY)) < params.brushRadius) {
-    output[outIdx] = newParticle(params.materialType, coord, params.frame);
-    return;
-  }
-  
-  // Margolus neighborhood
   let offset = getOffset(params.frame);
-  let fc = coord + offset;
-  let p = (fc / 2) * 2 - offset;
-  let xy = fc % 2;
-  let i = xy.x + xy.y * 2;
+  let p = vec2i(gid.xy) * 2 - offset;
   
+  // Load block (getData handles out-of-bounds → WALL)
   var t00 = getData(p);
   var t10 = getData(p + vec2i(1, 0));
   var t01 = getData(p + vec2i(0, 1));
@@ -628,101 +639,112 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let tn00 = getData(p + vec2i(0, -1));
   let tn10 = getData(p + vec2i(1, -1));
   
-  // Early exit if uniform
-  if (t00.ptype == t10.ptype && t01.ptype == t11.ptype && t00.ptype == t01.ptype) {
-    var result = t00;
-    if (i == 1) { result = t10; }
-    else if (i == 2) { result = t01; }
-    else if (i == 3) { result = t11; }
-    output[outIdx] = result;
-    return;
-  }
-  
-  let r = hash44(vec4f(vec2f(p), f32(params.frame), 0.0));
-  
-  // SMOKE
-  if (t00.ptype == SMOKE) {
-    if (t01.ptype < SMOKE && r.y < 0.25) { let tmp = t00; t00 = t01; t01 = tmp; }
-    else if (r.z < 0.003) { t00 = newParticle(AIR, p, params.frame); }
-  }
-  if (t10.ptype == SMOKE) {
-    if (t11.ptype < SMOKE && r.y < 0.25) { let tmp = t10; t10 = t11; t11 = tmp; }
-    else if (r.z < 0.003) { t10 = newParticle(AIR, p + vec2i(1, 0), params.frame); }
-  }
-  if ((t01.ptype == SMOKE && t11.ptype < SMOKE) || (t01.ptype < SMOKE && t11.ptype == SMOKE)) {
-    if (r.x < 0.25) { let tmp = t01; t01 = t11; t11 = tmp; }
-  }
-  
-  // SAND
-  if (((t01.ptype == SAND && t11.ptype < SAND) || (t01.ptype < SAND && t11.ptype == SAND)) && t00.ptype < SAND && t10.ptype < SAND && r.x < 0.4) {
-    let tmp = t01; t01 = t11; t11 = tmp;
-  }
-  if (t01.ptype == SAND || t01.ptype == STONE) {
-    if (t00.ptype < SAND && t00.ptype != WATER && t00.ptype != LAVA && r.y < 0.9) { let tmp = t01; t01 = t00; t00 = tmp; }
-    else if (t00.ptype == WATER && r.y < 0.3) { let tmp = t01; t01 = t00; t00 = tmp; }
-    else if (t00.ptype == LAVA && r.y < 0.15) { let tmp = t01; t01 = t00; t00 = tmp; }
-    else if (t11.ptype < SAND && t10.ptype < SAND) { let tmp = t01; t01 = t10; t10 = tmp; }
-  }
-  if (t11.ptype == SAND || t11.ptype == STONE) {
-    if (t10.ptype < SAND && t10.ptype != WATER && t10.ptype != LAVA && r.y < 0.9) { let tmp = t11; t11 = t10; t10 = tmp; }
-    else if (t10.ptype == WATER && r.y < 0.3) { let tmp = t11; t11 = t10; t10 = tmp; }
-    else if (t10.ptype == LAVA && r.y < 0.15) { let tmp = t11; t11 = t10; t10 = tmp; }
-    else if (t01.ptype < SAND && t00.ptype < SAND) { let tmp = t11; t11 = t00; t00 = tmp; }
-  }
-  
-  // WATER
-  var drop = false;
-  if (t01.ptype == WATER) {
-    if (t00.ptype < WATER && r.y < 0.95) { let tmp = t01; t01 = t00; t00 = tmp; drop = true; }
-    else if (t11.ptype < WATER && t10.ptype < WATER && r.z < 0.3) { let tmp = t01; t01 = t10; t10 = tmp; drop = true; }
-  }
-  if (t11.ptype == WATER) {
-    if (t10.ptype < WATER && r.y < 0.95) { let tmp = t11; t11 = t10; t10 = tmp; drop = true; }
-    else if (t01.ptype < WATER && t00.ptype < WATER && r.z < 0.3) { let tmp = t11; t11 = t00; t00 = tmp; drop = true; }
-  }
-  if (!drop) {
-    if ((t01.ptype == WATER && t11.ptype < WATER) || (t01.ptype < WATER && t11.ptype == WATER)) {
-      if ((t00.ptype >= WATER && t10.ptype >= WATER) || r.w < 0.8) { let tmp = t01; t01 = t11; t11 = tmp; }
+  // Mouse input - apply to each cell before physics
+  if (mouse.x > 0.0) {
+    let m = vec2f(mouse.x, mouse.y);
+    let mp = vec2f(mouse.prevX, mouse.prevY);
+    if (sdSegment(vec2f(p), m, mp) < params.brushRadius) {
+      t00 = newParticle(params.materialType, p, params.frame);
     }
-    if ((t00.ptype == WATER && t10.ptype < WATER) || (t00.ptype < WATER && t10.ptype == WATER)) {
-      if ((tn00.ptype >= WATER && tn10.ptype >= WATER) || r.w < 0.8) { let tmp = t00; t00 = t10; t10 = tmp; }
+    if (sdSegment(vec2f(p + vec2i(1, 0)), m, mp) < params.brushRadius) {
+      t10 = newParticle(params.materialType, p + vec2i(1, 0), params.frame);
+    }
+    if (sdSegment(vec2f(p + vec2i(0, 1)), m, mp) < params.brushRadius) {
+      t01 = newParticle(params.materialType, p + vec2i(0, 1), params.frame);
+    }
+    if (sdSegment(vec2f(p + vec2i(1, 1)), m, mp) < params.brushRadius) {
+      t11 = newParticle(params.materialType, p + vec2i(1, 1), params.frame);
     }
   }
   
-  // LAVA
-  if (t01.ptype == LAVA) {
-    if (t00.ptype < LAVA && r.y < 0.8) { let tmp = t01; t01 = t00; t00 = tmp; }
-    else if (t11.ptype < LAVA && t10.ptype < LAVA && r.z < 0.2) { let tmp = t01; t01 = t10; t10 = tmp; }
-  }
-  if (t11.ptype == LAVA) {
-    if (t10.ptype < LAVA && r.y < 0.8) { let tmp = t11; t11 = t10; t10 = tmp; }
-    else if (t01.ptype < LAVA && t00.ptype < LAVA && r.z < 0.2) { let tmp = t11; t11 = t00; t00 = tmp; }
+  // Physics (skip if uniform block)
+  if (!(t00.ptype == t10.ptype && t01.ptype == t11.ptype && t00.ptype == t01.ptype)) {
+    let r = hash44(vec4f(vec2f(p), f32(params.frame), 0.0));
+    
+    // SMOKE
+    if (t00.ptype == SMOKE) {
+      if (t01.ptype < SMOKE && r.y < 0.25) { let tmp = t00; t00 = t01; t01 = tmp; }
+      else if (r.z < 0.003) { t00 = newParticle(AIR, p, params.frame); }
+    }
+    if (t10.ptype == SMOKE) {
+      if (t11.ptype < SMOKE && r.y < 0.25) { let tmp = t10; t10 = t11; t11 = tmp; }
+      else if (r.z < 0.003) { t10 = newParticle(AIR, p + vec2i(1, 0), params.frame); }
+    }
+    if ((t01.ptype == SMOKE && t11.ptype < SMOKE) || (t01.ptype < SMOKE && t11.ptype == SMOKE)) {
+      if (r.x < 0.25) { let tmp = t01; t01 = t11; t11 = tmp; }
+    }
+    
+    // SAND
+    if (((t01.ptype == SAND && t11.ptype < SAND) || (t01.ptype < SAND && t11.ptype == SAND)) && t00.ptype < SAND && t10.ptype < SAND && r.x < 0.4) {
+      let tmp = t01; t01 = t11; t11 = tmp;
+    }
+    if (t01.ptype == SAND || t01.ptype == STONE) {
+      if (t00.ptype < SAND && t00.ptype != WATER && t00.ptype != LAVA && r.y < 0.9) { let tmp = t01; t01 = t00; t00 = tmp; }
+      else if (t00.ptype == WATER && r.y < 0.3) { let tmp = t01; t01 = t00; t00 = tmp; }
+      else if (t00.ptype == LAVA && r.y < 0.15) { let tmp = t01; t01 = t00; t00 = tmp; }
+      else if (t11.ptype < SAND && t10.ptype < SAND) { let tmp = t01; t01 = t10; t10 = tmp; }
+    }
+    if (t11.ptype == SAND || t11.ptype == STONE) {
+      if (t10.ptype < SAND && t10.ptype != WATER && t10.ptype != LAVA && r.y < 0.9) { let tmp = t11; t11 = t10; t10 = tmp; }
+      else if (t10.ptype == WATER && r.y < 0.3) { let tmp = t11; t11 = t10; t10 = tmp; }
+      else if (t10.ptype == LAVA && r.y < 0.15) { let tmp = t11; t11 = t10; t10 = tmp; }
+      else if (t01.ptype < SAND && t00.ptype < SAND) { let tmp = t11; t11 = t00; t00 = tmp; }
+    }
+    
+    // WATER
+    var drop = false;
+    if (t01.ptype == WATER) {
+      if (t00.ptype < WATER && r.y < 0.95) { let tmp = t01; t01 = t00; t00 = tmp; drop = true; }
+      else if (t11.ptype < WATER && t10.ptype < WATER && r.z < 0.3) { let tmp = t01; t01 = t10; t10 = tmp; drop = true; }
+    }
+    if (t11.ptype == WATER) {
+      if (t10.ptype < WATER && r.y < 0.95) { let tmp = t11; t11 = t10; t10 = tmp; drop = true; }
+      else if (t01.ptype < WATER && t00.ptype < WATER && r.z < 0.3) { let tmp = t11; t11 = t00; t00 = tmp; drop = true; }
+    }
+    if (!drop) {
+      if ((t01.ptype == WATER && t11.ptype < WATER) || (t01.ptype < WATER && t11.ptype == WATER)) {
+        if ((t00.ptype >= WATER && t10.ptype >= WATER) || r.w < 0.8) { let tmp = t01; t01 = t11; t11 = tmp; }
+      }
+      if ((t00.ptype == WATER && t10.ptype < WATER) || (t00.ptype < WATER && t10.ptype == WATER)) {
+        if ((tn00.ptype >= WATER && tn10.ptype >= WATER) || r.w < 0.8) { let tmp = t00; t00 = t10; t10 = tmp; }
+      }
+    }
+    
+    // LAVA
+    if (t01.ptype == LAVA) {
+      if (t00.ptype < LAVA && r.y < 0.8) { let tmp = t01; t01 = t00; t00 = tmp; }
+      else if (t11.ptype < LAVA && t10.ptype < LAVA && r.z < 0.2) { let tmp = t01; t01 = t10; t10 = tmp; }
+    }
+    if (t11.ptype == LAVA) {
+      if (t10.ptype < LAVA && r.y < 0.8) { let tmp = t11; t11 = t10; t10 = tmp; }
+      else if (t01.ptype < LAVA && t00.ptype < LAVA && r.z < 0.2) { let tmp = t11; t11 = t00; t00 = tmp; }
+    }
+    
+    // Lava + Water reactions
+    if (t00.ptype == LAVA) {
+      if (t01.ptype == WATER) { t00 = newParticle(STONE, p, params.frame); t01 = newParticle(SMOKE, p + vec2i(0, 1), params.frame); }
+      else if (t10.ptype == WATER) { t00 = newParticle(STONE, p, params.frame); t10 = newParticle(SMOKE, p + vec2i(1, 0), params.frame); }
+    }
+    if (t10.ptype == LAVA) {
+      if (t11.ptype == WATER) { t10 = newParticle(STONE, p + vec2i(1, 0), params.frame); t11 = newParticle(SMOKE, p + vec2i(1, 1), params.frame); }
+      else if (t00.ptype == WATER) { t10 = newParticle(STONE, p + vec2i(1, 0), params.frame); t00 = newParticle(SMOKE, p, params.frame); }
+    }
+    if ((t01.ptype == LAVA && t11.ptype < LAVA) || (t01.ptype < LAVA && t11.ptype == LAVA)) {
+      if (r.x < 0.6) { let tmp = t01; t01 = t11; t11 = tmp; }
+    }
   }
   
-  // Lava + Water reactions
-  if (t00.ptype == LAVA) {
-    if (t01.ptype == WATER) { t00 = newParticle(STONE, p, params.frame); t01 = newParticle(SMOKE, p + vec2i(0, 1), params.frame); }
-    else if (t10.ptype == WATER) { t00 = newParticle(STONE, p, params.frame); t10 = newParticle(SMOKE, p + vec2i(1, 0), params.frame); }
-  }
-  if (t10.ptype == LAVA) {
-    if (t11.ptype == WATER) { t10 = newParticle(STONE, p + vec2i(1, 0), params.frame); t11 = newParticle(SMOKE, p + vec2i(1, 1), params.frame); }
-    else if (t00.ptype == WATER) { t10 = newParticle(STONE, p + vec2i(1, 0), params.frame); t00 = newParticle(SMOKE, p, params.frame); }
-  }
-  if ((t01.ptype == LAVA && t11.ptype < LAVA) || (t01.ptype < LAVA && t11.ptype == LAVA)) {
-    if (r.x < 0.6) { let tmp = t01; t01 = t11; t11 = tmp; }
-  }
+  // Collision cleanup - particles becoming air when collision removed
+  if (t00.ptype == COLLISION && !isCollision(p)) { t00 = newParticle(AIR, p, params.frame); }
+  if (t10.ptype == COLLISION && !isCollision(p + vec2i(1, 0))) { t10 = newParticle(AIR, p + vec2i(1, 0), params.frame); }
+  if (t01.ptype == COLLISION && !isCollision(p + vec2i(0, 1))) { t01 = newParticle(AIR, p + vec2i(0, 1), params.frame); }
+  if (t11.ptype == COLLISION && !isCollision(p + vec2i(1, 1))) { t11 = newParticle(AIR, p + vec2i(1, 1), params.frame); }
   
-  // Output
-  var result = t00;
-  if (i == 1) { result = t10; }
-  else if (i == 2) { result = t01; }
-  else if (i == 3) { result = t11; }
-  
-  if (result.ptype == COLLISION && collision[outIdx] == 0u) {
-    result = newParticle(AIR, coord, params.frame);
-  }
-  
-  output[outIdx] = result;
+  // Write only in-bounds cells
+  if (inBounds(p)) { output[getIndex(u32(p.x), u32(p.y), params.width)] = t00; }
+  if (inBounds(p + vec2i(1, 0))) { output[getIndex(u32(p.x + 1), u32(p.y), params.width)] = t10; }
+  if (inBounds(p + vec2i(0, 1))) { output[getIndex(u32(p.x), u32(p.y + 1), params.width)] = t01; }
+  if (inBounds(p + vec2i(1, 1))) { output[getIndex(u32(p.x + 1), u32(p.y + 1), params.width)] = t11; }
 }
 `;
 
@@ -751,17 +773,17 @@ fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 const bgColor = vec3f(0.12, 0.133, 0.141);
 
 fn getParticleColor(p: Particle) -> vec3f {
-  let rand = f32(p.rand) / 255.0;
-  let t = p.ptype;
-  
-  if (t == AIR) { return bgColor; }
-  if (t == SMOKE) { return mix(bgColor, vec3f(0.15), 0.4 + rand * 0.2); }
-  if (t == WATER) { return mix(bgColor, vec3f(0.2, 0.4, 0.8), 0.6 + rand * 0.2); }
-  if (t == LAVA) { return mix(vec3f(0.9, 0.3, 0.1), vec3f(1.0, 0.6, 0.2), rand); }
-  if (t == SAND) { return mix(vec3f(0.86, 0.62, 0.27), vec3f(0.82, 0.58, 0.23), rand) * (0.8 + rand * 0.3); }
-  if (t == STONE) { return mix(vec3f(0.08, 0.1, 0.12), vec3f(0.12, 0.14, 0.16), rand) * (0.7 + rand * 0.3); }
-  if (t == WALL || t == COLLISION) { return bgColor * 0.5 * (rand * 0.4 + 0.6); }
-  return bgColor;
+  let r = f32(p.rand) / 255.0;
+  switch p.ptype {
+    case AIR:       { return bgColor; }
+    case SMOKE:     { return mix(bgColor, vec3f(0.15), 0.4 + r * 0.2); }
+    case WATER:     { return mix(bgColor, vec3f(0.2, 0.4, 0.8), 0.6 + r * 0.2); }
+    case LAVA:      { return mix(vec3f(0.9, 0.3, 0.1), vec3f(1.0, 0.6, 0.2), r); }
+    case SAND:      { return mix(vec3f(0.86, 0.62, 0.27), vec3f(0.82, 0.58, 0.23), r) * (0.8 + r * 0.3); }
+    case STONE:     { return mix(vec3f(0.08, 0.1, 0.12), vec3f(0.12, 0.14, 0.16), r) * (0.7 + r * 0.3); }
+    case WALL, COLLISION: { return bgColor * 0.5 * (r * 0.4 + 0.6); }
+    default:        { return bgColor; }
+  }
 }
 
 fn linearTosRGB(col: vec3f) -> vec3f {
