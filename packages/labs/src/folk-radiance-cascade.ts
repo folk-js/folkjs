@@ -6,6 +6,7 @@ const RAY_COUNT_POWER = 3; // 2^3 = 8 rays per probe at level 0
 const BRANCHING_FACTOR = 2; // 2^2 = 4 rays merge per level
 const INTERVAL_RADIUS = 2; // Base interval radius
 const MAX_CASCADE_LEVELS = 6;
+const RESOLUTION_SCALE = 1; // Higher = sharper lines but more GPU work
 
 /**
  * WebGPU-based Radiance Cascades for 2D global illumination.
@@ -123,7 +124,13 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const vertices: number[] = [];
 
     for (const line of this.#lines) {
-      const [x1, y1, x2, y2, r, g, b, thickness] = line;
+      const [x1raw, y1raw, x2raw, y2raw, r, g, b, thicknessRaw] = line;
+      // Scale CSS coordinates to internal resolution
+      const x1 = x1raw * RESOLUTION_SCALE;
+      const y1 = y1raw * RESOLUTION_SCALE;
+      const x2 = x2raw * RESOLUTION_SCALE;
+      const y2 = y2raw * RESOLUTION_SCALE;
+      const thickness = thicknessRaw * RESOLUTION_SCALE;
 
       // Calculate perpendicular direction for line thickness
       const dx = x2 - x1;
@@ -187,8 +194,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#device = await adapter.requestDevice();
 
     this.#canvas = document.createElement('canvas');
-    this.#canvas.width = this.clientWidth || 800;
-    this.#canvas.height = this.clientHeight || 600;
+    this.#canvas.width = (this.clientWidth || 800) * RESOLUTION_SCALE;
+    this.#canvas.height = (this.clientHeight || 600) * RESOLUTION_SCALE;
     this.#canvas.style.position = 'absolute';
     this.#canvas.style.top = '0';
     this.#canvas.style.left = '0';
@@ -372,10 +379,11 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const elements = Array.from(this.sourceElements);
 
     this.sourceRects.forEach((rect, index) => {
-      const x0 = (rect.left / this.#canvas.width) * 2 - 1;
-      const y0 = 1 - (rect.top / this.#canvas.height) * 2;
-      const x1 = (rect.right / this.#canvas.width) * 2 - 1;
-      const y1 = 1 - (rect.bottom / this.#canvas.height) * 2;
+      // Convert CSS coordinates to clip space
+      const x0 = (rect.left / (this.#canvas.width / RESOLUTION_SCALE)) * 2 - 1;
+      const y0 = 1 - (rect.top / (this.#canvas.height / RESOLUTION_SCALE)) * 2;
+      const x1 = (rect.right / (this.#canvas.width / RESOLUTION_SCALE)) * 2 - 1;
+      const y1 = 1 - (rect.bottom / (this.#canvas.height / RESOLUTION_SCALE)) * 2;
 
       // Get color from data-color attribute, or use index-based hue
       const element = elements[index];
@@ -648,8 +656,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   #handleResize = async () => {
-    const newWidth = this.clientWidth || 800;
-    const newHeight = this.clientHeight || 600;
+    const newWidth = (this.clientWidth || 800) * RESOLUTION_SCALE;
+    const newHeight = (this.clientHeight || 600) * RESOLUTION_SCALE;
 
     // Skip if dimensions haven't actually changed
     if (this.#canvas.width === newWidth && this.#canvas.height === newHeight) {
@@ -675,8 +683,9 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
   #handleMouseMove = (e: MouseEvent) => {
     const rect = this.getBoundingClientRect();
-    this.#mousePosition.x = (e.clientX - rect.left) * (this.#canvas.width / rect.width);
-    this.#mousePosition.y = (e.clientY - rect.top) * (this.#canvas.height / rect.height);
+    // Convert to internal (scaled) coordinates
+    this.#mousePosition.x = (e.clientX - rect.left) * RESOLUTION_SCALE;
+    this.#mousePosition.y = (e.clientY - rect.top) * RESOLUTION_SCALE;
   };
 
   #cleanupResources() {
@@ -746,8 +755,8 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
-  // Shapes emit their color (brighter) and are opaque
-  return vec4f(in.color * 2.0, 1.0);
+  // Shapes emit their color and are opaque
+  return vec4f(in.color, 1.0);
 }
 `;
 
@@ -1004,8 +1013,8 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
   // world.a = 1 means opaque emitter, world.rgb is emissive color
   if (world.a > 0.5) {
     // Blend emissive color with fluence for a nice glow effect
-    return vec4f(world.rgb * 0.5 + fluence.rgb, 1.0);
+    return vec4f(world.rgb * 0.3 + fluence.rgb * 0.8, 1.0);
   }
-  return fluence;
+  return vec4f(fluence.rgb * 0.8, 1.0);
 }
 `;
