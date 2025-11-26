@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { execSync } from 'child_process';
 import { run as mitataRun } from 'mitata';
 
