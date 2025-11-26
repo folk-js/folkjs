@@ -610,6 +610,10 @@ fn isCollision(p: vec2i) -> bool {
   return collision[getIndexI(p, params.width)] > 0u;
 }
 
+fn swap(a: ptr<function, Particle>, b: ptr<function, Particle>) {
+  let tmp = *a; *a = *b; *b = tmp;
+}
+
 fn writeIfInBounds(p: vec2i, val: Particle) {
   if (inBounds(p, params.width, params.height)) {
     output[getIndexI(p, params.width)] = val;
@@ -654,61 +658,61 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     
     // SMOKE
     if (t00.ptype == SMOKE) {
-      if (t01.ptype < SMOKE && r.y < 0.25) { let tmp = t00; t00 = t01; t01 = tmp; }
+      if (t01.ptype < SMOKE && r.y < 0.25) { swap(&t00, &t01); }
       else if (r.z < 0.003) { t00 = newParticle(AIR, p, params.frame); }
     }
     if (t10.ptype == SMOKE) {
-      if (t11.ptype < SMOKE && r.y < 0.25) { let tmp = t10; t10 = t11; t11 = tmp; }
+      if (t11.ptype < SMOKE && r.y < 0.25) { swap(&t10, &t11); }
       else if (r.z < 0.003) { t10 = newParticle(AIR, p + vec2i(1, 0), params.frame); }
     }
     if ((t01.ptype == SMOKE && t11.ptype < SMOKE) || (t01.ptype < SMOKE && t11.ptype == SMOKE)) {
-      if (r.x < 0.25) { let tmp = t01; t01 = t11; t11 = tmp; }
+      if (r.x < 0.25) { swap(&t01, &t11); }
     }
     
     // SAND
     if (((t01.ptype == SAND && t11.ptype < SAND) || (t01.ptype < SAND && t11.ptype == SAND)) && t00.ptype < SAND && t10.ptype < SAND && r.x < 0.4) {
-      let tmp = t01; t01 = t11; t11 = tmp;
+      swap(&t01, &t11);
     }
     if (t01.ptype == SAND || t01.ptype == STONE) {
-      if (t00.ptype < SAND && t00.ptype != WATER && t00.ptype != LAVA && r.y < 0.9) { let tmp = t01; t01 = t00; t00 = tmp; }
-      else if (t00.ptype == WATER && r.y < 0.3) { let tmp = t01; t01 = t00; t00 = tmp; }
-      else if (t00.ptype == LAVA && r.y < 0.15) { let tmp = t01; t01 = t00; t00 = tmp; }
-      else if (t11.ptype < SAND && t10.ptype < SAND) { let tmp = t01; t01 = t10; t10 = tmp; }
+      if (t00.ptype < SAND && t00.ptype != WATER && t00.ptype != LAVA && r.y < 0.9) { swap(&t01, &t00); }
+      else if (t00.ptype == WATER && r.y < 0.3) { swap(&t01, &t00); }
+      else if (t00.ptype == LAVA && r.y < 0.15) { swap(&t01, &t00); }
+      else if (t11.ptype < SAND && t10.ptype < SAND) { swap(&t01, &t10); }
     }
     if (t11.ptype == SAND || t11.ptype == STONE) {
-      if (t10.ptype < SAND && t10.ptype != WATER && t10.ptype != LAVA && r.y < 0.9) { let tmp = t11; t11 = t10; t10 = tmp; }
-      else if (t10.ptype == WATER && r.y < 0.3) { let tmp = t11; t11 = t10; t10 = tmp; }
-      else if (t10.ptype == LAVA && r.y < 0.15) { let tmp = t11; t11 = t10; t10 = tmp; }
-      else if (t01.ptype < SAND && t00.ptype < SAND) { let tmp = t11; t11 = t00; t00 = tmp; }
+      if (t10.ptype < SAND && t10.ptype != WATER && t10.ptype != LAVA && r.y < 0.9) { swap(&t11, &t10); }
+      else if (t10.ptype == WATER && r.y < 0.3) { swap(&t11, &t10); }
+      else if (t10.ptype == LAVA && r.y < 0.15) { swap(&t11, &t10); }
+      else if (t01.ptype < SAND && t00.ptype < SAND) { swap(&t11, &t00); }
     }
     
     // WATER
     var drop = false;
     if (t01.ptype == WATER) {
-      if (t00.ptype < WATER && r.y < 0.95) { let tmp = t01; t01 = t00; t00 = tmp; drop = true; }
-      else if (t11.ptype < WATER && t10.ptype < WATER && r.z < 0.3) { let tmp = t01; t01 = t10; t10 = tmp; drop = true; }
+      if (t00.ptype < WATER && r.y < 0.95) { swap(&t01, &t00); drop = true; }
+      else if (t11.ptype < WATER && t10.ptype < WATER && r.z < 0.3) { swap(&t01, &t10); drop = true; }
     }
     if (t11.ptype == WATER) {
-      if (t10.ptype < WATER && r.y < 0.95) { let tmp = t11; t11 = t10; t10 = tmp; drop = true; }
-      else if (t01.ptype < WATER && t00.ptype < WATER && r.z < 0.3) { let tmp = t11; t11 = t00; t00 = tmp; drop = true; }
+      if (t10.ptype < WATER && r.y < 0.95) { swap(&t11, &t10); drop = true; }
+      else if (t01.ptype < WATER && t00.ptype < WATER && r.z < 0.3) { swap(&t11, &t00); drop = true; }
     }
     if (!drop) {
       if ((t01.ptype == WATER && t11.ptype < WATER) || (t01.ptype < WATER && t11.ptype == WATER)) {
-        if ((t00.ptype >= WATER && t10.ptype >= WATER) || r.w < 0.8) { let tmp = t01; t01 = t11; t11 = tmp; }
+        if ((t00.ptype >= WATER && t10.ptype >= WATER) || r.w < 0.8) { swap(&t01, &t11); }
       }
       if ((t00.ptype == WATER && t10.ptype < WATER) || (t00.ptype < WATER && t10.ptype == WATER)) {
-        if ((tn00.ptype >= WATER && tn10.ptype >= WATER) || r.w < 0.8) { let tmp = t00; t00 = t10; t10 = tmp; }
+        if ((tn00.ptype >= WATER && tn10.ptype >= WATER) || r.w < 0.8) { swap(&t00, &t10); }
       }
     }
     
     // LAVA
     if (t01.ptype == LAVA) {
-      if (t00.ptype < LAVA && r.y < 0.8) { let tmp = t01; t01 = t00; t00 = tmp; }
-      else if (t11.ptype < LAVA && t10.ptype < LAVA && r.z < 0.2) { let tmp = t01; t01 = t10; t10 = tmp; }
+      if (t00.ptype < LAVA && r.y < 0.8) { swap(&t01, &t00); }
+      else if (t11.ptype < LAVA && t10.ptype < LAVA && r.z < 0.2) { swap(&t01, &t10); }
     }
     if (t11.ptype == LAVA) {
-      if (t10.ptype < LAVA && r.y < 0.8) { let tmp = t11; t11 = t10; t10 = tmp; }
-      else if (t01.ptype < LAVA && t00.ptype < LAVA && r.z < 0.2) { let tmp = t11; t11 = t00; t00 = tmp; }
+      if (t10.ptype < LAVA && r.y < 0.8) { swap(&t11, &t10); }
+      else if (t01.ptype < LAVA && t00.ptype < LAVA && r.z < 0.2) { swap(&t11, &t00); }
     }
     
     // Lava + Water reactions
@@ -721,7 +725,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       else if (t00.ptype == WATER) { t10 = newParticle(STONE, p + vec2i(1, 0), params.frame); t00 = newParticle(SMOKE, p, params.frame); }
     }
     if ((t01.ptype == LAVA && t11.ptype < LAVA) || (t01.ptype < LAVA && t11.ptype == LAVA)) {
-      if (r.x < 0.6) { let tmp = t01; t01 = t11; t11 = tmp; }
+      if (r.x < 0.6) { swap(&t01, &t11); }
     }
   }
   
@@ -731,7 +735,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (t01.ptype == COLLISION && !isCollision(p + vec2i(0, 1))) { t01 = newParticle(AIR, p + vec2i(0, 1), params.frame); }
   if (t11.ptype == COLLISION && !isCollision(p + vec2i(1, 1))) { t11 = newParticle(AIR, p + vec2i(1, 1), params.frame); }
   
-  // Write only in-bounds cells
+  // Write block
   writeIfInBounds(p, t00);
   writeIfInBounds(p + vec2i(1, 0), t10);
   writeIfInBounds(p + vec2i(0, 1), t01);
