@@ -1,9 +1,6 @@
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseSet } from './folk-base-set';
 
-const WORKGROUP_SIZE = 16;
-
-// Configuration for radiance cascades
 const PROBE_SPACING_POWER = 2; // 2^2 = 4 probe spacing at level 0
 const RAY_COUNT_POWER = 3; // 2^3 = 8 rays per probe at level 0
 const BRANCHING_FACTOR = 2; // 2^2 = 4 rays merge per level
@@ -260,10 +257,24 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#updateShapeData();
   }
 
+  static readonly #colors = [
+    [0, 0, 0], // 0: Blocker ( black)
+    [1, 0.2, 0.1], // 1: Red
+    [1, 0.5, 0.1], // 2: Orange
+    [1, 1, 0.2], // 3: Yellow
+    [0.2, 1, 0.3], // 4: Green
+    [0.2, 0.9, 1], // 5: Cyan
+    [0.2, 0.4, 1], // 6: Blue
+    [0.6, 0.2, 1], // 7: Purple
+    [1, 0.3, 0.7], // 8: Pink
+    [1, 1, 1], // 9: White
+  ];
+
   #updateShapeData() {
     // Build shape vertex data for rendering to world texture
     // Each shape becomes 2 triangles (6 vertices)
     const vertices: number[] = [];
+    const elements = Array.from(this.sourceElements);
 
     this.sourceRects.forEach((rect, index) => {
       const x0 = (rect.left / this.#canvas.width) * 2 - 1;
@@ -271,11 +282,22 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const x1 = (rect.right / this.#canvas.width) * 2 - 1;
       const y1 = 1 - (rect.bottom / this.#canvas.height) * 2;
 
-      // Color based on shape index (hue rotation)
-      const hue = index * 0.618;
-      const r = 0.5 + 0.5 * Math.sin(hue * Math.PI * 2);
-      const g = 0.5 + 0.5 * Math.sin((hue + 0.333) * Math.PI * 2);
-      const b = 0.5 + 0.5 * Math.sin((hue + 0.666) * Math.PI * 2);
+      // Get color from data-color attribute, or use index-based hue
+      const element = elements[index];
+      const colorAttr = element?.getAttribute('data-color');
+      let r: number, g: number, b: number;
+
+      if (colorAttr !== null) {
+        const colorIndex = parseInt(colorAttr) || 0;
+        const color = FolkRadianceCascade.#colors[colorIndex] || FolkRadianceCascade.#colors[0];
+        [r, g, b] = color;
+      } else {
+        // Default: use index-based hue rotation
+        const hue = index * 0.618;
+        r = 0.5 + 0.5 * Math.sin(hue * Math.PI * 2);
+        g = 0.5 + 0.5 * Math.sin((hue + 0.333) * Math.PI * 2);
+        b = 0.5 + 0.5 * Math.sin((hue + 0.666) * Math.PI * 2);
+      }
 
       // Two triangles per quad
       // x, y, r, g, b, isEdge (1=edge glow, 0=solid)
@@ -525,9 +547,20 @@ export class FolkRadianceCascade extends FolkBaseSet {
     }
   }
 
-  #handleResize = () => {
-    this.#canvas.width = this.clientWidth || 800;
-    this.#canvas.height = this.clientHeight || 600;
+  #handleResize = async () => {
+    const newWidth = this.clientWidth || 800;
+    const newHeight = this.clientHeight || 600;
+
+    // Skip if dimensions haven't actually changed
+    if (this.#canvas.width === newWidth && this.#canvas.height === newHeight) {
+      return;
+    }
+
+    this.#canvas.width = newWidth;
+    this.#canvas.height = newHeight;
+
+    // Wait for any in-flight GPU work to complete before destroying resources
+    await this.#device.queue.onSubmittedWorkDone();
 
     this.#context.configure({
       device: this.#device,
@@ -552,6 +585,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#worldTexture?.destroy();
     this.#fluenceTexture?.destroy();
     this.#shapeDataBuffer?.destroy();
+    // Clear references to prevent use-after-destroy
+    this.#shapeDataBuffer = undefined;
   }
 }
 

@@ -14,39 +14,192 @@
         position: relative;
         margin: 0;
         overscroll-behavior: none;
+        background: #111;
       }
 
       folk-shape {
-        background: transparent;
         position: absolute;
-        background-color: rgba(255, 255, 255, 0.1);
+        background-color: transparent;
         border-radius: 2px;
-        border: 2px solid rgba(0, 0, 0, 0.5);
+        border: 1px solid rgba(128, 128, 128, 0.3);
       }
 
       h1,
       p {
         width: fit-content;
-        border: 2px solid rgba(0, 0, 0, 0.5);
+        border: 1px solid rgba(128, 128, 128, 0.3);
+        color: rgba(255, 255, 255, 0.8);
+        background: transparent;
+        margin: 8px;
+        padding: 4px 8px;
+      }
+
+      #color-indicator {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        padding: 8px 16px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 14px;
+        color: white;
+        z-index: 1000;
+        pointer-events: none;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+      }
+
+      #help-text {
+        position: fixed;
+        bottom: 10px;
+        left: 10px;
+        font-family: monospace;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.5);
+        pointer-events: none;
+      }
+
+      .brush-cursor {
+        position: fixed;
+        border: 2px solid rgba(255, 255, 255, 0.5);
+        border-radius: 50%;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+        z-index: 999;
       }
     </style>
   </head>
   <body>
-    <folk-radiance-cascade>
-      <p>Hello</p>
-      <p>World</p>
+    <div id="color-indicator">Color: 1</div>
+    <div id="help-text">Click+drag to paint • Keys 0-9 for colors (0=blocker) • +/- brush size • Delete to remove selected</div>
+    <div id="brush-cursor" class="brush-cursor"></div>
+
+    <folk-radiance-cascade id="cascade">
       <folk-shape x="100" y="100" width="50" height="50"></folk-shape>
       <folk-shape x="100" y="200" width="50" height="50"></folk-shape>
       <folk-shape x="100" y="300" width="50" height="50"></folk-shape>
       <folk-shape x="300" y="150" width="80" height="40"></folk-shape>
       <folk-shape x="400" y="250" width="60" height="90"></folk-shape>
       <folk-shape x="200" y="400" width="100" height="100"></folk-shape>
-      <folk-shape x="500" y="100" width="30" height="70"></folk-shape>
+      <folk-shape x="500" y="100" width="30" height="70" data-color="0"></folk-shape>
     </folk-radiance-cascade>
 
     <script type="module">
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-radiance-cascade';
+
+      // Color palette: 0 = black/blocker, 1-9 = various colors
+      const colors = [
+        { name: 'Blocker (black)', rgb: [0, 0, 0], css: '#000' },
+        { name: 'Red', rgb: [1, 0.2, 0.1], css: '#ff3322' },
+        { name: 'Orange', rgb: [1, 0.5, 0.1], css: '#ff8822' },
+        { name: 'Yellow', rgb: [1, 1, 0.2], css: '#ffff33' },
+        { name: 'Green', rgb: [0.2, 1, 0.3], css: '#33ff55' },
+        { name: 'Cyan', rgb: [0.2, 0.9, 1], css: '#33eeff' },
+        { name: 'Blue', rgb: [0.2, 0.4, 1], css: '#3366ff' },
+        { name: 'Purple', rgb: [0.6, 0.2, 1], css: '#9933ff' },
+        { name: 'Pink', rgb: [1, 0.3, 0.7], css: '#ff55bb' },
+        { name: 'White', rgb: [1, 1, 1], css: '#ffffff' },
+      ];
+
+      let currentColor = 1;
+      const indicator = document.getElementById('color-indicator');
+      const cascade = document.getElementById('cascade');
+
+      function updateIndicator() {
+        const color = colors[currentColor];
+        indicator.textContent = `${currentColor}: ${color.name}`;
+        indicator.style.backgroundColor = color.css;
+        indicator.style.color = currentColor === 3 || currentColor === 9 ? '#000' : '#fff';
+      }
+      updateIndicator();
+
+      // Number key handling
+      document.addEventListener('keydown', (e) => {
+        const num = parseInt(e.key);
+        if (!isNaN(num) && num >= 0 && num <= 9) {
+          currentColor = num;
+          updateIndicator();
+        }
+        // Delete selected shape
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          const selected = cascade.querySelector('folk-shape[aria-selected="true"]');
+          if (selected) {
+            selected.remove();
+          }
+        }
+      });
+
+      // Drawing functionality
+      let isDrawing = false;
+      let startX, startY;
+      let drawingShape = null;
+
+      document.addEventListener('pointerdown', (e) => {
+        // Don't draw if clicking on a shape or UI elements
+        const target = e.target;
+        if (target.tagName === 'FOLK-SHAPE' || target.id === 'color-indicator' || target.id === 'help-text') {
+          return;
+        }
+
+        // Check if click is within the cascade bounds
+        const rect = cascade.getBoundingClientRect();
+        if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+          return;
+        }
+
+        isDrawing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+
+        drawingShape = document.createElement('div');
+        drawingShape.className = 'drawing-shape';
+        drawingShape.style.left = startX + 'px';
+        drawingShape.style.top = startY + 'px';
+        drawingShape.style.borderColor = colors[currentColor].css;
+        document.body.appendChild(drawingShape);
+
+        e.preventDefault();
+      });
+
+      document.addEventListener('pointermove', (e) => {
+        if (!isDrawing || !drawingShape) return;
+
+        const x = Math.min(startX, e.clientX);
+        const y = Math.min(startY, e.clientY);
+        const w = Math.abs(e.clientX - startX);
+        const h = Math.abs(e.clientY - startY);
+
+        drawingShape.style.left = x + 'px';
+        drawingShape.style.top = y + 'px';
+        drawingShape.style.width = w + 'px';
+        drawingShape.style.height = h + 'px';
+      });
+
+      document.addEventListener('pointerup', (e) => {
+        if (!isDrawing) return;
+        isDrawing = false;
+
+        if (drawingShape) {
+          const x = Math.min(startX, e.clientX);
+          const y = Math.min(startY, e.clientY);
+          const w = Math.abs(e.clientX - startX);
+          const h = Math.abs(e.clientY - startY);
+
+          // Only create shape if it's big enough
+          if (w > 10 && h > 10) {
+            const shape = document.createElement('folk-shape');
+            shape.setAttribute('x', x);
+            shape.setAttribute('y', y);
+            shape.setAttribute('width', w);
+            shape.setAttribute('height', h);
+            shape.setAttribute('data-color', currentColor);
+            cascade.appendChild(shape);
+          }
+
+          drawingShape.remove();
+          drawingShape = null;
+        }
+      });
     </script>
   </body>
 </html>
