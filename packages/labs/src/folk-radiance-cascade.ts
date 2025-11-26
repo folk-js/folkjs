@@ -39,6 +39,11 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #shapeDataBuffer?: GPUBuffer;
   #shapeCount = 0;
 
+  // Line segments: [x1, y1, x2, y2, r, g, b, thickness]
+  #lines: number[][] = [];
+  #lineBuffer?: GPUBuffer;
+  #lineRenderPipeline!: GPURenderPipeline;
+
   // Samplers
   #linearSampler!: GPUSampler;
 
@@ -78,6 +83,95 @@ export class FolkRadianceCascade extends FolkBaseSet {
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
     this.#cleanupResources();
+  }
+
+  // Public API for line drawing
+  addLine(x1: number, y1: number, x2: number, y2: number, colorIndex: number, thickness = 8) {
+    const color = FolkRadianceCascade.#colors[colorIndex] || FolkRadianceCascade.#colors[1];
+    this.#lines.push([x1, y1, x2, y2, color[0], color[1], color[2], thickness]);
+    this.#updateLineBuffer();
+  }
+
+  clearLines() {
+    this.#lines = [];
+    this.#updateLineBuffer();
+  }
+
+  eraseAt(x: number, y: number, radius: number) {
+    // Remove lines that pass within radius of the point
+    this.#lines = this.#lines.filter((line) => {
+      const [x1, y1, x2, y2] = line;
+      // Distance from point to line segment
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len2 = dx * dx + dy * dy;
+      if (len2 === 0) return Math.hypot(x - x1, y - y1) > radius;
+
+      let t = Math.max(0, Math.min(1, ((x - x1) * dx + (y - y1) * dy) / len2));
+      const nearX = x1 + t * dx;
+      const nearY = y1 + t * dy;
+      return Math.hypot(x - nearX, y - nearY) > radius;
+    });
+    this.#updateLineBuffer();
+  }
+
+  #updateLineBuffer() {
+    if (!this.#device || this.#lines.length === 0) return;
+
+    // Each line becomes a quad (2 triangles, 6 vertices)
+    // Vertex format: x, y, r, g, b, _ (6 floats, 24 bytes)
+    const vertices: number[] = [];
+
+    for (const line of this.#lines) {
+      const [x1, y1, x2, y2, r, g, b, thickness] = line;
+
+      // Calculate perpendicular direction for line thickness
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len === 0) continue;
+
+      const nx = (-dy / len) * (thickness / 2);
+      const ny = (dx / len) * (thickness / 2);
+
+      // Convert to clip space
+      const toClipX = (x: number) => (x / this.#canvas.width) * 2 - 1;
+      const toClipY = (y: number) => 1 - (y / this.#canvas.height) * 2;
+
+      // Four corners of the line quad
+      const p1x = toClipX(x1 - nx),
+        p1y = toClipY(y1 - ny);
+      const p2x = toClipX(x1 + nx),
+        p2y = toClipY(y1 + ny);
+      const p3x = toClipX(x2 - nx),
+        p3y = toClipY(y2 - ny);
+      const p4x = toClipX(x2 + nx),
+        p4y = toClipY(y2 + ny);
+
+      // Triangle 1
+      vertices.push(p1x, p1y, r, g, b, 0);
+      vertices.push(p2x, p2y, r, g, b, 0);
+      vertices.push(p3x, p3y, r, g, b, 0);
+      // Triangle 2
+      vertices.push(p2x, p2y, r, g, b, 0);
+      vertices.push(p4x, p4y, r, g, b, 0);
+      vertices.push(p3x, p3y, r, g, b, 0);
+    }
+
+    if (vertices.length === 0) return;
+
+    const data = new Float32Array(vertices);
+    const requiredSize = data.byteLength;
+
+    if (!this.#lineBuffer || this.#lineBuffer.size < requiredSize) {
+      this.#lineBuffer?.destroy();
+      this.#lineBuffer = this.#device.createBuffer({
+        size: requiredSize,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+    }
+
+    this.#device.queue.writeBuffer(this.#lineBuffer, 0, data);
   }
 
   async #initWebGPU() {
@@ -257,17 +351,18 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#updateShapeData();
   }
 
+  // Color palette - normalized for similar perceived brightness
   static readonly #colors = [
-    [0, 0, 0], // 0: Blocker ( black)
-    [1, 0.2, 0.1], // 1: Red
-    [1, 0.5, 0.1], // 2: Orange
-    [1, 1, 0.2], // 3: Yellow
-    [0.2, 1, 0.3], // 4: Green
-    [0.2, 0.9, 1], // 5: Cyan
-    [0.2, 0.4, 1], // 6: Blue
-    [0.6, 0.2, 1], // 7: Purple
-    [1, 0.3, 0.7], // 8: Pink
-    [1, 1, 1], // 9: White
+    [0, 0, 0], // 0: Eraser (handled specially)
+    [0.05, 0.05, 0.05], // 1: Black (blocks light)
+    [1, 0.25, 0.25], // 2: Red
+    [1, 0.5, 0.2], // 3: Orange
+    [0.75, 0.75, 0.2], // 4: Yellow (reduced)
+    [0.25, 0.8, 0.35], // 5: Green
+    [0.25, 0.75, 0.75], // 6: Cyan (reduced)
+    [0.3, 0.4, 1], // 7: Blue
+    [0.65, 0.3, 1], // 8: Purple
+    [0.8, 0.8, 0.8], // 9: White (reduced)
   ];
 
   #updateShapeData() {
@@ -365,13 +460,17 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
       renderPass.setPipeline(this.#worldRenderPipeline);
 
+      // Draw shapes
       if (this.#shapeDataBuffer && this.#shapeCount > 0) {
         renderPass.setVertexBuffer(0, this.#shapeDataBuffer);
         renderPass.draw(this.#shapeCount * 6);
       }
 
-      // Draw mouse light as a point (using instance or separate draw)
-      // For simplicity, we'll add it in the raymarch shader
+      // Draw lines (uses same pipeline since vertex format matches)
+      if (this.#lineBuffer && this.#lines.length > 0) {
+        renderPass.setVertexBuffer(0, this.#lineBuffer);
+        renderPass.draw(this.#lines.length * 6);
+      }
 
       renderPass.end();
     }
@@ -474,6 +573,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
         entries: [
           { binding: 0, resource: this.#fluenceTexture.createView() },
           { binding: 1, resource: this.#linearSampler },
+          { binding: 2, resource: this.#worldTextureView },
         ],
       });
 
@@ -585,8 +685,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#worldTexture?.destroy();
     this.#fluenceTexture?.destroy();
     this.#shapeDataBuffer?.destroy();
+    this.#lineBuffer?.destroy();
     // Clear references to prevent use-after-destroy
     this.#shapeDataBuffer = undefined;
+    this.#lineBuffer = undefined;
   }
 }
 
@@ -868,7 +970,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 }
 `;
 
-// Render shader
+// Render shader - composites fluence with emissive surfaces
 const renderShader = /*wgsl*/ `
 struct VertexOutput {
   @builtin(position) position: vec4f,
@@ -891,9 +993,19 @@ fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 
 @group(0) @binding(0) var fluenceTexture: texture_2d<f32>;
 @group(0) @binding(1) var fluenceSampler: sampler;
+@group(0) @binding(2) var worldTexture: texture_2d<f32>;
 
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
-  return textureSample(fluenceTexture, fluenceSampler, in.uv);
+  let fluence = textureSample(fluenceTexture, fluenceSampler, in.uv);
+  let world = textureSample(worldTexture, fluenceSampler, in.uv);
+  
+  // If this pixel has emissive content, show it; otherwise show fluence
+  // world.a = 1 means opaque emitter, world.rgb is emissive color
+  if (world.a > 0.5) {
+    // Blend emissive color with fluence for a nice glow effect
+    return vec4f(world.rgb * 0.5 + fluence.rgb, 1.0);
+  }
+  return fluence;
 }
 `;

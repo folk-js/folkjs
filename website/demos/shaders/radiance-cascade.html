@@ -20,32 +20,23 @@
       folk-shape {
         position: absolute;
         background-color: transparent;
-        border-radius: 2px;
-        border: 1px solid rgba(128, 128, 128, 0.3);
-      }
-
-      h1,
-      p {
-        width: fit-content;
-        border: 1px solid rgba(128, 128, 128, 0.3);
-        color: rgba(255, 255, 255, 0.8);
-        background: transparent;
-        margin: 8px;
-        padding: 4px 8px;
       }
 
       #color-indicator {
         position: fixed;
         top: 10px;
         right: 10px;
-        padding: 8px 16px;
-        border-radius: 4px;
-        font-family: monospace;
-        font-size: 14px;
-        color: white;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.5);
         z-index: 1000;
         pointer-events: none;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+
+      #color-indicator.eraser {
+        background: repeating-conic-gradient(#666 0% 25%, #999 0% 50%) 50% / 8px 8px;
       }
 
       #help-text {
@@ -57,21 +48,11 @@
         color: rgba(255, 255, 255, 0.5);
         pointer-events: none;
       }
-
-      .brush-cursor {
-        position: fixed;
-        border: 2px solid rgba(255, 255, 255, 0.5);
-        border-radius: 50%;
-        pointer-events: none;
-        transform: translate(-50%, -50%);
-        z-index: 999;
-      }
     </style>
   </head>
   <body>
-    <div id="color-indicator">Color: 1</div>
-    <div id="help-text">Click+drag to paint • Keys 0-9 for colors (0=blocker) • +/- brush size • Delete to remove selected</div>
-    <div id="brush-cursor" class="brush-cursor"></div>
+    <div id="color-indicator"></div>
+    <div id="help-text">Draw • 0=erase • 1=black • 2-8=colors • 9=white • +/- size • C=clear</div>
 
     <folk-radiance-cascade id="cascade">
       <folk-shape x="100" y="100" width="50" height="50"></folk-shape>
@@ -87,38 +68,55 @@
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-radiance-cascade';
 
-      // Color palette: 0 = black/blocker, 1-9 = various colors
+      // Color palette: 0 = eraser, 1 = black, 2-8 = colors, 9 = white
       const colors = [
-        { name: 'Blocker (black)', rgb: [0, 0, 0], css: '#000' },
-        { name: 'Red', rgb: [1, 0.2, 0.1], css: '#ff3322' },
-        { name: 'Orange', rgb: [1, 0.5, 0.1], css: '#ff8822' },
-        { name: 'Yellow', rgb: [1, 1, 0.2], css: '#ffff33' },
-        { name: 'Green', rgb: [0.2, 1, 0.3], css: '#33ff55' },
-        { name: 'Cyan', rgb: [0.2, 0.9, 1], css: '#33eeff' },
-        { name: 'Blue', rgb: [0.2, 0.4, 1], css: '#3366ff' },
-        { name: 'Purple', rgb: [0.6, 0.2, 1], css: '#9933ff' },
-        { name: 'Pink', rgb: [1, 0.3, 0.7], css: '#ff55bb' },
-        { name: 'White', rgb: [1, 1, 1], css: '#ffffff' },
+        { name: 'Eraser', css: null, isEraser: true },
+        { name: 'Black', css: '#111' },
+        { name: 'Red', css: '#ff4444' },
+        { name: 'Orange', css: '#ff8833' },
+        { name: 'Yellow', css: '#dddd33' },
+        { name: 'Green', css: '#44dd55' },
+        { name: 'Cyan', css: '#44dddd' },
+        { name: 'Blue', css: '#4466ff' },
+        { name: 'Purple', css: '#aa44ff' },
+        { name: 'White', css: '#ffffff' },
       ];
 
-      let currentColor = 1;
+      let currentColor = 2; // Start with red
+      let lineThickness = 8;
       const indicator = document.getElementById('color-indicator');
       const cascade = document.getElementById('cascade');
 
       function updateIndicator() {
         const color = colors[currentColor];
-        indicator.textContent = `${currentColor}: ${color.name}`;
-        indicator.style.backgroundColor = color.css;
-        indicator.style.color = currentColor === 3 || currentColor === 9 ? '#000' : '#fff';
+        if (color.isEraser) {
+          indicator.style.backgroundColor = '';
+          indicator.classList.add('eraser');
+        } else {
+          indicator.classList.remove('eraser');
+          indicator.style.backgroundColor = color.css;
+        }
       }
       updateIndicator();
 
-      // Number key handling
+      // Key handling
       document.addEventListener('keydown', (e) => {
         const num = parseInt(e.key);
         if (!isNaN(num) && num >= 0 && num <= 9) {
           currentColor = num;
           updateIndicator();
+        }
+        // Thickness controls
+        if (e.key === '=' || e.key === '+') {
+          lineThickness = Math.min(50, lineThickness + 2);
+          updateIndicator();
+        } else if (e.key === '-' || e.key === '_') {
+          lineThickness = Math.max(2, lineThickness - 2);
+          updateIndicator();
+        }
+        // Clear lines
+        if (e.key === 'c' || e.key === 'C') {
+          cascade.clearLines();
         }
         // Delete selected shape
         if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -129,10 +127,11 @@
         }
       });
 
-      // Drawing functionality
+      // Freehand drawing - creates line segments as you draw
       let isDrawing = false;
-      let startX, startY;
-      let drawingShape = null;
+      let lastX = 0,
+        lastY = 0;
+      const minSegmentLength = 4; // Minimum distance before creating a new segment
 
       document.addEventListener('pointerdown', (e) => {
         // Don't draw if clicking on a shape or UI elements
@@ -148,57 +147,44 @@
         }
 
         isDrawing = true;
-        startX = e.clientX;
-        startY = e.clientY;
-
-        drawingShape = document.createElement('div');
-        drawingShape.className = 'drawing-shape';
-        drawingShape.style.left = startX + 'px';
-        drawingShape.style.top = startY + 'px';
-        drawingShape.style.borderColor = colors[currentColor].css;
-        document.body.appendChild(drawingShape);
-
+        lastX = e.clientX;
+        lastY = e.clientY;
         e.preventDefault();
       });
 
       document.addEventListener('pointermove', (e) => {
-        if (!isDrawing || !drawingShape) return;
+        if (!isDrawing) return;
 
-        const x = Math.min(startX, e.clientX);
-        const y = Math.min(startY, e.clientY);
-        const w = Math.abs(e.clientX - startX);
-        const h = Math.abs(e.clientY - startY);
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
 
-        drawingShape.style.left = x + 'px';
-        drawingShape.style.top = y + 'px';
-        drawingShape.style.width = w + 'px';
-        drawingShape.style.height = h + 'px';
+        if (dist >= minSegmentLength) {
+          if (currentColor === 0) {
+            // Eraser mode - remove nearby lines
+            cascade.eraseAt(e.clientX, e.clientY, lineThickness);
+          } else {
+            cascade.addLine(lastX, lastY, e.clientX, e.clientY, currentColor, lineThickness);
+          }
+          lastX = e.clientX;
+          lastY = e.clientY;
+        }
       });
 
       document.addEventListener('pointerup', (e) => {
         if (!isDrawing) return;
-        isDrawing = false;
 
-        if (drawingShape) {
-          const x = Math.min(startX, e.clientX);
-          const y = Math.min(startY, e.clientY);
-          const w = Math.abs(e.clientX - startX);
-          const h = Math.abs(e.clientY - startY);
-
-          // Only create shape if it's big enough
-          if (w > 10 && h > 10) {
-            const shape = document.createElement('folk-shape');
-            shape.setAttribute('x', x);
-            shape.setAttribute('y', y);
-            shape.setAttribute('width', w);
-            shape.setAttribute('height', h);
-            shape.setAttribute('data-color', currentColor);
-            cascade.appendChild(shape);
+        if (currentColor === 0) {
+          cascade.eraseAt(e.clientX, e.clientY, lineThickness);
+        } else {
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+            cascade.addLine(lastX, lastY, e.clientX, e.clientY, currentColor, lineThickness);
           }
-
-          drawingShape.remove();
-          drawingShape = null;
         }
+
+        isDrawing = false;
       });
     </script>
   </body>
