@@ -3,12 +3,12 @@ import { FolkBaseSet } from './folk-base-set';
 
 const WORKGROUP_SIZE = 256;
 
-// Configuration for radiance cascades - matching the reference demo settings
-const PROBE_SPACING_POWER = 1; // 2^1 = 2 probe spacing at level 0
-const RAY_COUNT_POWER = 2; // 2^2 = 4 rays per probe at level 0
+// Configuration for radiance cascades
+const PROBE_SPACING_POWER = 2; // 2^2 = 4 probe spacing at level 0 (larger = smoother)
+const RAY_COUNT_POWER = 3; // 2^3 = 8 rays per probe at level 0
 const BRANCHING_FACTOR = 2; // 2^2 = 4 rays merge per level
-const INTERVAL_RADIUS = 6.76; // Base interval radius
-const MAX_CASCADE_LEVELS = 5;
+const INTERVAL_RADIUS = 4; // Base interval radius (smaller values = more iterations)
+const MAX_CASCADE_LEVELS = 6;
 
 /**
  * WebGPU-based Radiance Cascades for 2D global illumination.
@@ -60,7 +60,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
     await this.#initPipelines();
 
     window.addEventListener('resize', this.#handleResize);
-    this.#canvas.addEventListener('mousemove', this.#handleMouseMove);
+    // Listen on window since both canvas and host have pointer-events: none
+    window.addEventListener('mousemove', this.#handleMouseMove);
 
     this.#startTime = performance.now();
     this.#isRunning = true;
@@ -76,7 +77,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       cancelAnimationFrame(this.#animationFrame);
     }
     window.removeEventListener('resize', this.#handleResize);
-    this.#canvas.removeEventListener('mousemove', this.#handleMouseMove);
+    window.removeEventListener('mousemove', this.#handleMouseMove);
     this.#cleanupResources();
   }
 
@@ -137,7 +138,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#maxLevel0Rays = cascadeWidth0 * cascadeHeight0 * probeRayCount0;
 
     // Calculate number of cascade levels
-    this.#numCascadeLevels = Math.min(MAX_CASCADE_LEVELS, Math.floor(Math.log2(Math.min(width, height) / probeDiameter0)));
+    this.#numCascadeLevels = Math.min(
+      MAX_CASCADE_LEVELS,
+      Math.floor(Math.log2(Math.min(width, height) / probeDiameter0)),
+    );
 
     // Probe buffer: vec4f per ray, doubled for ping-pong
     // Each vec4f stores: rgb (radiance) + a (transmittance)
@@ -189,15 +193,19 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#fluenceBindGroupLayout = device.createBindGroupLayout({
       label: 'Fluence-BindGroupLayout',
       entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, storageTexture: { format: 'rgba8unorm', access: 'write-only' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        {
+          binding: 0,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: { format: 'rgba8unorm', access: 'write-only' },
+        },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
       ],
     });
 
     this.#fluencePipeline = device.createComputePipeline({
       label: 'Fluence-Pipeline',
-      compute: { module: fluenceModule, entryPoint: 'main' },
+      compute: { module: fluenceModule, entryPoint: 'ComputeMain' },
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.#fluenceBindGroupLayout] }),
     });
 
@@ -295,7 +303,9 @@ export class FolkRadianceCascade extends FolkBaseSet {
     });
 
     // Process each cascade level from highest to lowest
-    for (let level = this.#numCascadeLevels - 1; level >= 0; level--) {
+    // Match reference: loop from levelCount to 0 inclusive
+    const levelCount = this.#numCascadeLevels;
+    for (let level = levelCount; level >= 0; level--) {
       const probeDiameter = probeDiameter0 << level;
       const probeRadius = probeDiameter >> 1;
       const probeRayCount = probeRayCount0 << (BRANCHING_FACTOR * level);
@@ -304,32 +314,32 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const cascadeHeight = Math.floor(height / probeDiameter);
       const totalRays = cascadeWidth * cascadeHeight * probeRayCount;
 
-      // Interval calculation - matching reference implementation
-      const intervalStart = level === 0 ? 0 : INTERVAL_RADIUS * Math.pow(2, BRANCHING_FACTOR * (level - 1));
-      const intervalEnd = INTERVAL_RADIUS * Math.pow(2, BRANCHING_FACTOR * level);
+      // Interval calculation - use integer shifts like reference (JS << truncates to int32)
+      const intervalRadius = Math.floor(INTERVAL_RADIUS);
+      const intervalStart = level === 0 ? 0 : intervalRadius << (BRANCHING_FACTOR * (level - 1));
+      const intervalEnd = intervalRadius << (BRANCHING_FACTOR * level);
 
-      // Update UBO for this level
-      const uboData = new ArrayBuffer(64);
-      const u32 = new Uint32Array(uboData);
-      const f32 = new Float32Array(uboData);
-
-      u32[0] = totalRays;
-      u32[1] = probeRadius;
-      u32[2] = probeRayCount;
-      u32[3] = level;
-      u32[4] = this.#numCascadeLevels;
-      u32[5] = width;
-      u32[6] = height;
-      u32[7] = this.#maxLevel0Rays;
-      f32[8] = intervalStart;
-      f32[9] = intervalEnd;
-      u32[10] = BRANCHING_FACTOR;
-      u32[11] = this.#shapeCount;
+      // Update UBO for this level - use Int32Array like reference
+      const uboData = new Int32Array(16);
+      uboData[0] = totalRays;
+      uboData[1] = probeRadius;
+      uboData[2] = probeRayCount;
+      uboData[3] = level;
+      uboData[4] = levelCount;
+      uboData[5] = width;
+      uboData[6] = height;
+      uboData[7] = this.#maxLevel0Rays;
+      uboData[8] = intervalStart;
+      uboData[9] = intervalEnd;
+      uboData[10] = BRANCHING_FACTOR;
+      uboData[11] = this.#shapeCount;
+      // Time and mouse as float view
+      const f32 = new Float32Array(uboData.buffer);
       f32[12] = time;
       f32[13] = this.#mousePosition.x;
       f32[14] = this.#mousePosition.y;
 
-      this.#device.queue.writeBuffer(this.#uboBuffer, level * 256, new Uint8Array(uboData));
+      this.#device.queue.writeBuffer(this.#uboBuffer, level * 256, new Uint8Array(uboData.buffer));
 
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.#raymarchPipeline);
@@ -342,22 +352,26 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     // Build fluence texture from level 0 probes
     {
-      const cascadeWidth = Math.floor(width / probeDiameter0);
+      const probeDiameter = probeDiameter0;
+      const cascadeWidth = Math.floor(width / probeDiameter);
+      const cascadeHeight = Math.floor(height / probeDiameter);
 
-      const uboData = new Uint32Array([
+      // UBO layout: probeRayCount, cascadeWidth, cascadeHeight, width, height, probeRadius
+      const uboData = new Int32Array([
         probeRayCount0,
         cascadeWidth,
+        cascadeHeight,
         width,
         height,
-        probeDiameter0 >> 1, // probeRadius
+        probeDiameter >> 1, // probeRadius
       ]);
 
       const fluenceUBO = this.#device.createBuffer({
-        size: 32,
+        size: 32, // 6 i32 values = 24 bytes, aligned to 32
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         mappedAtCreation: true,
       });
-      new Uint32Array(fluenceUBO.getMappedRange()).set(uboData);
+      new Int32Array(fluenceUBO.getMappedRange()).set(uboData);
       fluenceUBO.unmap();
 
       const bindGroup = this.#device.createBindGroup({
@@ -424,7 +438,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
   };
 
   #handleMouseMove = (e: MouseEvent) => {
-    const rect = this.#canvas.getBoundingClientRect();
+    const rect = this.getBoundingClientRect();
     this.#mousePosition.x = (e.clientX - rect.left) * (this.#canvas.width / rect.width);
     this.#mousePosition.y = (e.clientY - rect.top) * (this.#canvas.height / rect.height);
   };
@@ -437,23 +451,22 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 }
 
-// Raymarch shader - traces rays for each probe
+// Raymarch shader - traces rays for each probe (matching reference types)
 const raymarchShader = /*wgsl*/ `
 const PI: f32 = 3.141592653589793;
 const TAU: f32 = PI * 2.0;
-const BRANCHING_FACTOR: u32 = ${BRANCHING_FACTOR}u;
 
 struct UBO {
   totalRays: u32,
-  probeRadius: u32,
-  probeRayCount: u32,
-  level: u32,
-  levelCount: u32,
-  width: u32,
-  height: u32,
-  maxLevel0Rays: u32,
-  intervalStart: f32,
-  intervalEnd: f32,
+  probeRadius: i32,
+  probeRayCount: i32,
+  level: i32,
+  levelCount: i32,
+  width: i32,
+  height: i32,
+  maxLevel0Rays: i32,
+  intervalStartRadius: i32,
+  intervalEndRadius: i32,
   branchingFactor: u32,
   shapeCount: u32,
   time: f32,
@@ -477,88 +490,93 @@ fn sampleScene(pos: vec2f) -> vec4f {
   var emissive = vec3f(0.0);
   var opacity = 0.0;
   
-  // Check shapes for occlusion
+  // Check shapes for occlusion first
   for (var i = 0u; i < ubo.shapeCount; i++) {
     let shape = shapes[i];
     if (pos.x >= shape.minX && pos.x <= shape.maxX &&
         pos.y >= shape.minY && pos.y <= shape.maxY) {
-      // Inside shape = fully opaque, no emission
+      // Inside shape = fully opaque blocker
       return vec4f(0.0, 0.0, 0.0, 1.0);
     }
-    
-    // Check for glow ring around shape
+  }
+  
+  // Only check light sources if not inside a blocker
+  // Mouse light - bright emitter that follows cursor
+  let mousePos = vec2f(ubo.mouseX, ubo.mouseY);
+  let distMouse = length(pos - mousePos);
+  let mouseRadius = 20.0;
+  if (distMouse < mouseRadius) {
+    let pulse = 0.7 + 0.3 * sin(ubo.time * 2.0);
+    let falloff = 1.0 - distMouse / mouseRadius;
+    // Bright warm point light
+    emissive = vec3f(3.0 * pulse, 2.0 * pulse, 0.8) * falloff * falloff;
+  }
+  
+  // Shape glow - thin rings around shapes
+  for (var i = 0u; i < ubo.shapeCount; i++) {
+    let shape = shapes[i];
     let center = vec2f((shape.minX + shape.maxX) * 0.5, (shape.minY + shape.maxY) * 0.5);
     let halfSize = vec2f((shape.maxX - shape.minX) * 0.5, (shape.maxY - shape.minY) * 0.5);
     
-    // Signed distance to box edge
+    // SDF to box
     let d = abs(pos - center) - halfSize;
     let dist = length(max(d, vec2f(0.0))) + min(max(d.x, d.y), 0.0);
     
-    // Thin emissive ring just outside shape
-    let glowStart = 1.0;
-    let glowEnd = 8.0;
-    if (dist > glowStart && dist < glowEnd) {
+    // Very thin emissive ring at shape edge
+    let glowWidth = 3.0;
+    if (dist > 0.0 && dist < glowWidth) {
       let hue = f32(i) * 0.618;
       let r = 0.5 + 0.5 * sin(hue * TAU);
       let g = 0.5 + 0.5 * sin((hue + 0.333) * TAU);
       let b = 0.5 + 0.5 * sin((hue + 0.666) * TAU);
-      let falloff = 1.0 - (dist - glowStart) / (glowEnd - glowStart);
-      emissive += vec3f(r, g, b) * falloff * falloff * 0.5;
+      let falloff = 1.0 - dist / glowWidth;
+      emissive += vec3f(r, g, b) * falloff * 0.8;
     }
-  }
-  
-  // Mouse light - point-like emitter
-  let mousePos = vec2f(ubo.mouseX, ubo.mouseY);
-  let distMouse = length(pos - mousePos);
-  let mouseRadius = 15.0;
-  if (distMouse < mouseRadius) {
-    let pulse = 0.5 + 0.5 * sin(ubo.time * 3.0);
-    let falloff = 1.0 - distMouse / mouseRadius;
-    emissive += vec3f(1.0 + pulse * 0.5, 0.6, 0.2) * falloff * falloff * 2.0;
   }
   
   return vec4f(emissive, opacity);
 }
 
-fn sampleUpperProbe(rawPos: vec2i, raysPerProbe: i32, bufferStartIndex: i32, cascadeWidth: i32) -> vec4f {
-  // Clamp to valid probe positions
-  let pos = clamp(rawPos, vec2i(0), vec2i(cascadeWidth - 1));
+fn SampleUpperProbe(rawPos: vec2i, raysPerProbe: i32, bufferStartIndex: i32, cascadeWidth: i32, cascadeHeight: i32) -> vec4f {
+  // Clamp to valid probe positions for non-square canvases
+  let pos = clamp(rawPos, vec2i(0), vec2i(cascadeWidth - 1, cascadeHeight - 1));
   let index = raysPerProbe * pos.x + pos.y * cascadeWidth * raysPerProbe;
   
-  let rayCount = 1 << BRANCHING_FACTOR;
-  var acc = vec4f(0.0);
+  let rayCount = 1 << ubo.branchingFactor;
+  var accColor = vec4f(0.0);
   for (var offset = 0; offset < rayCount; offset++) {
-    acc += probes[bufferStartIndex + index + offset];
+    accColor += probes[bufferStartIndex + index + offset];
   }
-  return acc / f32(rayCount);
+  return accColor / f32(rayCount);
 }
 
-fn sampleUpperProbes(probeCenter: vec2f, rayIndex: i32) -> vec4f {
-  let upperLevel = ubo.level + 1u;
+fn SampleUpperProbes(lowerProbeCenter: vec2f, rayIndex: i32) -> vec4f {
+  let UpperLevel = ubo.level + 1;
   
-  if (upperLevel >= ubo.levelCount) {
+  if (UpperLevel >= ubo.levelCount) {
     // Sky/environment - return transparent (no ambient)
     return vec4f(0.0, 0.0, 0.0, 1.0);
   }
   
-  let upperRaysPerProbe = i32(ubo.probeRayCount << BRANCHING_FACTOR);
-  let upperRayIndex = rayIndex << BRANCHING_FACTOR;
-  let upperBufferOffset = i32(ubo.maxLevel0Rays * (upperLevel % 2u));
-  let upperProbeDiameter = i32(ubo.probeRadius) * 4;
-  let upperCascadeWidth = i32(ubo.width) / upperProbeDiameter;
+  let UpperRaysPerProbe = ubo.probeRayCount << ubo.branchingFactor;
+  let UpperLevelRayIndex = rayIndex << ubo.branchingFactor;
+  let UpperLevelBufferOffset = ubo.maxLevel0Rays * (UpperLevel % 2);
+  let UpperProbeDiameter = 2 * (ubo.probeRadius << 1);
+  let UpperCascadeWidth = ubo.width / UpperProbeDiameter;
+  let UpperCascadeHeight = ubo.height / UpperProbeDiameter;
   
-  let idx = probeCenter / f32(upperProbeDiameter) - 0.5;
-  let basePos = vec2i(floor(idx));
+  let index = lowerProbeCenter / f32(UpperProbeDiameter) - 0.5;
+  let basePos = vec2i(floor(index));
   
-  let bufferStart = upperBufferOffset + upperRayIndex;
+  let bufferStartIndex = UpperLevelBufferOffset + UpperLevelRayIndex;
   let samples = array(
-    sampleUpperProbe(basePos, upperRaysPerProbe, bufferStart, upperCascadeWidth),
-    sampleUpperProbe(basePos + vec2i(1, 0), upperRaysPerProbe, bufferStart, upperCascadeWidth),
-    sampleUpperProbe(basePos + vec2i(0, 1), upperRaysPerProbe, bufferStart, upperCascadeWidth),
-    sampleUpperProbe(basePos + vec2i(1, 1), upperRaysPerProbe, bufferStart, upperCascadeWidth),
+    SampleUpperProbe(basePos, UpperRaysPerProbe, bufferStartIndex, UpperCascadeWidth, UpperCascadeHeight),
+    SampleUpperProbe(basePos + vec2i(1, 0), UpperRaysPerProbe, bufferStartIndex, UpperCascadeWidth, UpperCascadeHeight),
+    SampleUpperProbe(basePos + vec2i(0, 1), UpperRaysPerProbe, bufferStartIndex, UpperCascadeWidth, UpperCascadeHeight),
+    SampleUpperProbe(basePos + vec2i(1, 1), UpperRaysPerProbe, bufferStartIndex, UpperCascadeWidth, UpperCascadeHeight),
   );
   
-  let factor = fract(idx);
+  let factor = fract(index);
   let invFactor = 1.0 - factor;
   
   // Bilinear interpolation
@@ -568,124 +586,131 @@ fn sampleUpperProbes(probeCenter: vec2f, rayIndex: i32) -> vec4f {
 }
 
 @compute @workgroup_size(${WORKGROUP_SIZE}, 1, 1)
-fn main(@builtin(global_invocation_id) id: vec3u) {
-  let rayIndex = i32(id.x);
-  if (rayIndex >= i32(ubo.totalRays)) {
+fn main(@builtin(global_invocation_id) GlobalInvocationID: vec3u) {
+  let RayIndex = i32(GlobalInvocationID.x);
+  if (RayIndex >= i32(ubo.totalRays)) {
     return;
   }
 
-  let probeIndex = rayIndex / i32(ubo.probeRayCount);
-  let probeRayIndex = rayIndex % i32(ubo.probeRayCount);
+  let ProbeIndex = RayIndex / ubo.probeRayCount;
+  let ProbeRayIndex = RayIndex % ubo.probeRayCount;
   
-  let probeRadius = f32(ubo.probeRadius);
-  let probeDiameter = probeRadius * 2.0;
-  let cascadeWidth = i32(f32(ubo.width) / probeDiameter);
+  let ProbeRadius = f32(ubo.probeRadius);
+  let IntervalRadius = f32(ubo.intervalEndRadius);
+  let LowerIntervalRadius = f32(ubo.intervalStartRadius);
+  let ProbeDiameter = ProbeRadius * 2.0;
+  let CascadeWidth = ubo.width / i32(ProbeDiameter);
   
-  let col = probeIndex % cascadeWidth;
-  let row = probeIndex / cascadeWidth;
+  let col = ProbeIndex % CascadeWidth;
+  let row = ProbeIndex / CascadeWidth;
   
-  // Ray angle with half-pixel offset for better coverage
-  let rayAngle = TAU * (f32(probeRayIndex) + 0.5) / f32(ubo.probeRayCount);
-  let rayDir = vec2f(cos(rayAngle), sin(rayAngle));
+  // Ray angle with half-pixel offset
+  let RayAngle = TAU * (f32(ProbeRayIndex) + 0.5) / f32(ubo.probeRayCount);
+  let RayDirection = vec2f(cos(RayAngle), sin(RayAngle));
   
   // Probe center position
-  let rayOrigin = vec2f(
-    f32(col) * probeDiameter + probeRadius,
-    f32(row) * probeDiameter + probeRadius,
+  let RayOrigin = vec2f(
+    f32(col) * ProbeDiameter + ProbeRadius,
+    f32(row) * ProbeDiameter + ProbeRadius,
   );
   
-  // Raymarch through the interval using DDA-style stepping
-  var acc = vec4f(0.0, 0.0, 0.0, 1.0);
-  var t = ubo.intervalStart;
-  let maxDist = ubo.intervalEnd;
+  let OutputIndex = ubo.maxLevel0Rays * (ubo.level % 2) + RayIndex;
   
-  while (t < maxDist) {
-    let pos = rayOrigin + rayDir * t;
+  // Raymarch through interval (fixed size stepping like reference)
+  var acc = vec4f(0.0, 0.0, 0.0, 1.0);
+  let dims = vec2f(f32(ubo.width), f32(ubo.height));
+  var t = 0.0;
+  let stepSize = 1.0;
+  
+  while (true) {
+    let pos = RayOrigin + RayDirection * (LowerIntervalRadius + t);
     
-    // Bounds check
-    if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= f32(ubo.width) || pos.y >= f32(ubo.height)) {
+    // Distance check
+    if (distance(pos, RayOrigin) > IntervalRadius) {
       break;
     }
     
-    // Sample scene: returns (emissive RGB, opacity)
+    // Bounds check
+    if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
+      break;
+    }
+    
+    // Sample scene
     let sample = sampleScene(pos);
     
-    // Accumulate: add emissive light, reduce transmittance by opacity
+    // Accumulate
     let transparency = 1.0 - sample.a;
     acc = vec4f(
       acc.rgb + acc.a * sample.rgb,
       acc.a * transparency
     );
     
-    // Early out if fully occluded
-    if (acc.a < 0.001) {
-      break;
-    }
-    
-    t += 1.0;
+    t += stepSize;
   }
   
   // Sample upper cascade and merge
-  let upperSample = sampleUpperProbes(rayOrigin, probeRayIndex);
+  let UpperResult = SampleUpperProbes(RayOrigin, ProbeRayIndex);
   
-  // Write to buffer with ping-pong indexing
-  let outputIndex = i32(ubo.maxLevel0Rays * (ubo.level % 2u)) + rayIndex;
-  probes[outputIndex] = vec4f(
-    acc.rgb + acc.a * upperSample.rgb,
-    acc.a * upperSample.a
+  probes[OutputIndex] = vec4f(
+    acc.rgb + acc.a * UpperResult.rgb,
+    acc.a * UpperResult.a
   );
 }
 `;
 
-// Fluence shader - averages all rays per probe for final display
+// Fluence shader - averages all rays per probe for final display with bilinear interpolation
 const fluenceShader = /*wgsl*/ `
 struct UBO {
-  probeRayCount: u32,
-  cascadeWidth: u32,
-  width: u32,
-  height: u32,
-  probeRadius: u32,
+  probeRayCount: i32,
+  cascadeWidth: i32,
+  cascadeHeight: i32,
+  width: i32,
+  height: i32,
+  probeRadius: i32,
 }
 
 @group(0) @binding(0) var fluenceTexture: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(1) var<storage, read> probes: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> probes: array<vec4f>;
 @group(0) @binding(2) var<uniform> ubo: UBO;
 
+fn sampleProbe(probeX: i32, probeY: i32) -> vec4f {
+  let cx = clamp(probeX, 0, ubo.cascadeWidth - 1);
+  let cy = clamp(probeY, 0, ubo.cascadeHeight - 1);
+  let startIndex = cx * ubo.probeRayCount + cy * ubo.probeRayCount * ubo.cascadeWidth;
+  
+  var acc = vec4f(0.0);
+  for (var rayIndex = 0; rayIndex < ubo.probeRayCount; rayIndex++) {
+    acc += probes[startIndex + rayIndex];
+  }
+  return acc / f32(ubo.probeRayCount);
+}
+
 @compute @workgroup_size(16, 16, 1)
-fn main(@builtin(global_invocation_id) id: vec3u) {
-  if (id.x >= ubo.width || id.y >= ubo.height) {
+fn ComputeMain(@builtin(global_invocation_id) id: vec3u) {
+  if (i32(id.x) >= ubo.width || i32(id.y) >= ubo.height) {
     return;
   }
   
-  let probeDiameter = f32(ubo.probeRadius) * 2.0;
   let pixelCenter = vec2f(id.xy) + 0.5;
+  let probeDiameter = f32(ubo.probeRadius) * 2.0;
   
-  // Find which probe this pixel belongs to
-  let probeIdx = vec2i(pixelCenter / probeDiameter);
-  let clampedIdx = clamp(probeIdx, vec2i(0), vec2i(i32(ubo.cascadeWidth) - 1));
+  // Calculate probe coordinates (in floating point for interpolation)
+  let probeCoord = pixelCenter / probeDiameter - 0.5;
+  let baseProbe = vec2i(floor(probeCoord));
+  let frac = fract(probeCoord);
   
-  // Calculate index into probe buffer (level 0 starts at offset 0)
-  let startIndex = clampedIdx.x * i32(ubo.probeRayCount) + clampedIdx.y * i32(ubo.probeRayCount * ubo.cascadeWidth);
+  // Sample 4 neighboring probes
+  let s00 = sampleProbe(baseProbe.x, baseProbe.y);
+  let s10 = sampleProbe(baseProbe.x + 1, baseProbe.y);
+  let s01 = sampleProbe(baseProbe.x, baseProbe.y + 1);
+  let s11 = sampleProbe(baseProbe.x + 1, baseProbe.y + 1);
   
-  // Average all rays from this probe
-  var acc = vec4f(0.0);
-  for (var i = 0u; i < ubo.probeRayCount; i++) {
-    acc += probes[startIndex + i32(i)];
-  }
-  acc /= f32(ubo.probeRayCount);
+  // Bilinear interpolation
+  let r0 = mix(s00, s10, frac.x);
+  let r1 = mix(s01, s11, frac.x);
+  let result = mix(r0, r1, frac.y);
   
-  // ACES-like tone mapping for better contrast
-  let a = 2.51;
-  let b = 0.03;
-  let c = 2.43;
-  let d = 0.59;
-  let e = 0.14;
-  let color = saturate((acc.rgb * (a * acc.rgb + b)) / (acc.rgb * (c * acc.rgb + d) + e));
-  
-  // Gamma correction
-  let gamma = pow(color, vec3f(1.0 / 2.2));
-  
-  textureStore(fluenceTexture, id.xy, vec4f(gamma, 1.0));
+  textureStore(fluenceTexture, id.xy, result);
 }
 `;
 
