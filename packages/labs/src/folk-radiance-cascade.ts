@@ -1,18 +1,18 @@
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseSet } from './folk-base-set';
 
-const WORKGROUP_SIZE = 256;
+const WORKGROUP_SIZE = 16;
 
 // Configuration for radiance cascades
-const PROBE_SPACING_POWER = 2; // 2^2 = 4 probe spacing at level 0 (larger = smoother)
+const PROBE_SPACING_POWER = 2; // 2^2 = 4 probe spacing at level 0
 const RAY_COUNT_POWER = 3; // 2^3 = 8 rays per probe at level 0
 const BRANCHING_FACTOR = 2; // 2^2 = 4 rays merge per level
-const INTERVAL_RADIUS = 4; // Base interval radius (smaller values = more iterations)
+const INTERVAL_RADIUS = 2; // Base interval radius
 const MAX_CASCADE_LEVELS = 6;
 
 /**
  * WebGPU-based Radiance Cascades for 2D global illumination.
- * Uses a buffer-based approach inspired by tmpvar's implementation.
+ * Uses a world texture approach for efficient scene sampling.
  */
 export class FolkRadianceCascade extends FolkBaseSet {
   static override tagName = 'folk-radiance-cascade';
@@ -22,24 +22,28 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #context!: GPUCanvasContext;
   #presentationFormat!: GPUTextureFormat;
 
+  // World texture - stores scene (emissive RGB, opacity)
+  #worldTexture!: GPUTexture;
+  #worldTextureView!: GPUTextureView;
+
   // Pipelines
+  #worldRenderPipeline!: GPURenderPipeline;
+  #mipmapPipeline!: GPUComputePipeline;
   #raymarchPipeline!: GPUComputePipeline;
   #fluencePipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
-
-  // Bind group layouts
-  #raymarchBindGroupLayout!: GPUBindGroupLayout;
-  #fluenceBindGroupLayout!: GPUBindGroupLayout;
-  #renderBindGroupLayout!: GPUBindGroupLayout;
 
   // Buffers and textures
   #probeBuffer!: GPUBuffer;
   #uboBuffer!: GPUBuffer;
   #fluenceTexture!: GPUTexture;
 
-  // Shape data for density sampling
+  // Shape data for rendering to world texture
   #shapeDataBuffer?: GPUBuffer;
   #shapeCount = 0;
+
+  // Samplers
+  #linearSampler!: GPUSampler;
 
   // Animation state
   #animationFrame = 0;
@@ -50,7 +54,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   // Computed values
   #maxLevel0Rays = 0;
   #numCascadeLevels = 0;
-  #sampler!: GPUSampler;
 
   override async connectedCallback() {
     super.connectedCallback();
@@ -60,7 +63,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     await this.#initPipelines();
 
     window.addEventListener('resize', this.#handleResize);
-    // Listen on window since both canvas and host have pointer-events: none
     window.addEventListener('mousemove', this.#handleMouseMove);
 
     this.#startTime = performance.now();
@@ -118,48 +120,60 @@ export class FolkRadianceCascade extends FolkBaseSet {
       alphaMode: 'premultiplied',
     });
 
-    this.#sampler = this.#device.createSampler({
+    this.#linearSampler = this.#device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
-      mipmapFilter: 'nearest',
+      mipmapFilter: 'linear',
     });
   }
 
   #initBuffers() {
     const { width, height } = this.#canvas;
 
-    // Calculate probe counts at level 0 (smallest probes)
+    // Calculate probe counts at level 0
     const probeDiameter0 = Math.pow(2, PROBE_SPACING_POWER);
     const probeRayCount0 = Math.pow(2, RAY_COUNT_POWER);
 
-    // Calculate the maximum number of rays at level 0 (which has the most probes)
     const cascadeWidth0 = Math.floor(width / probeDiameter0);
     const cascadeHeight0 = Math.floor(height / probeDiameter0);
     this.#maxLevel0Rays = cascadeWidth0 * cascadeHeight0 * probeRayCount0;
 
-    // Calculate number of cascade levels
     this.#numCascadeLevels = Math.min(
       MAX_CASCADE_LEVELS,
       Math.floor(Math.log2(Math.min(width, height) / probeDiameter0)),
     );
 
-    // Probe buffer: vec4f per ray, doubled for ping-pong
-    // Each vec4f stores: rgb (radiance) + a (transmittance)
-    const probeBufferSize = this.#maxLevel0Rays * 16 * 2; // 16 bytes per vec4f, x2 for ping-pong
+    // Probe buffer for ping-pong
+    const probeBufferSize = this.#maxLevel0Rays * 16 * 2;
     this.#probeBuffer = this.#device.createBuffer({
       label: 'ProbeBuffer',
       size: probeBufferSize,
       usage: GPUBufferUsage.STORAGE,
     });
 
-    // UBO for per-level parameters (256-byte aligned per level)
+    // UBO for per-level parameters
     this.#uboBuffer = this.#device.createBuffer({
       label: 'UBO',
       size: 256 * (MAX_CASCADE_LEVELS + 1),
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // Fluence texture (final output before render)
+    // World texture with mipmaps
+    const mipLevelCount = Math.floor(Math.log2(Math.max(width, height))) + 1;
+    this.#worldTexture = this.#device.createTexture({
+      label: 'WorldTexture',
+      size: { width, height },
+      format: 'rgba16float',
+      mipLevelCount,
+      usage:
+        GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.STORAGE_BINDING |
+        GPUTextureUsage.COPY_DST,
+    });
+    this.#worldTextureView = this.#worldTexture.createView();
+
+    // Fluence texture
     this.#fluenceTexture = this.#device.createTexture({
       label: 'FluenceTexture',
       size: { width, height },
@@ -171,45 +185,58 @@ export class FolkRadianceCascade extends FolkBaseSet {
   async #initPipelines() {
     const device = this.#device;
 
-    // Raymarch pipeline
-    const raymarchModule = device.createShaderModule({ code: raymarchShader });
-    this.#raymarchBindGroupLayout = device.createBindGroupLayout({
-      label: 'Raymarch-BindGroupLayout',
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true } },
-        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      ],
+    // World render pipeline - renders shapes to world texture
+    const worldRenderModule = device.createShaderModule({ code: worldRenderShader });
+    this.#worldRenderPipeline = device.createRenderPipeline({
+      label: 'WorldRender-Pipeline',
+      layout: 'auto',
+      vertex: {
+        module: worldRenderModule,
+        entryPoint: 'vertex_main',
+        buffers: [
+          {
+            arrayStride: 24, // 6 floats * 4 bytes
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x2' }, // position
+              { shaderLocation: 1, offset: 8, format: 'float32x3' }, // color
+              { shaderLocation: 2, offset: 20, format: 'float32' }, // isEdge
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: worldRenderModule,
+        entryPoint: 'fragment_main',
+        targets: [{ format: 'rgba16float' }],
+      },
+      primitive: { topology: 'triangle-list' },
     });
 
+    // Mipmap pipeline
+    const mipmapModule = device.createShaderModule({ code: mipmapShader });
+    this.#mipmapPipeline = device.createComputePipeline({
+      label: 'Mipmap-Pipeline',
+      compute: { module: mipmapModule, entryPoint: 'main' },
+      layout: 'auto',
+    });
+
+    // Raymarch pipeline
+    const raymarchModule = device.createShaderModule({ code: raymarchShader });
     this.#raymarchPipeline = device.createComputePipeline({
       label: 'Raymarch-Pipeline',
       compute: { module: raymarchModule, entryPoint: 'main' },
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.#raymarchBindGroupLayout] }),
+      layout: 'auto',
     });
 
     // Fluence pipeline
     const fluenceModule = device.createShaderModule({ code: fluenceShader });
-    this.#fluenceBindGroupLayout = device.createBindGroupLayout({
-      label: 'Fluence-BindGroupLayout',
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.COMPUTE,
-          storageTexture: { format: 'rgba8unorm', access: 'write-only' },
-        },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-      ],
-    });
-
     this.#fluencePipeline = device.createComputePipeline({
       label: 'Fluence-Pipeline',
-      compute: { module: fluenceModule, entryPoint: 'ComputeMain' },
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.#fluenceBindGroupLayout] }),
+      compute: { module: fluenceModule, entryPoint: 'main' },
+      layout: 'auto',
     });
 
-    // Render pipeline
+    // Final render pipeline
     const renderModule = device.createShaderModule({ code: renderShader });
     this.#renderPipeline = device.createRenderPipeline({
       label: 'Render-Pipeline',
@@ -222,8 +249,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       },
       primitive: { topology: 'triangle-strip' },
     });
-
-    this.#renderBindGroupLayout = this.#renderPipeline.getBindGroupLayout(0);
   }
 
   override update(changedProperties: PropertyValues<this>) {
@@ -236,36 +261,51 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   #updateShapeData() {
-    const shapeData: number[] = [];
+    // Build shape vertex data for rendering to world texture
+    // Each shape becomes 2 triangles (6 vertices)
+    const vertices: number[] = [];
 
-    this.sourceRects.forEach((rect) => {
-      shapeData.push(rect.left, rect.top, rect.right, rect.bottom);
+    this.sourceRects.forEach((rect, index) => {
+      const x0 = (rect.left / this.#canvas.width) * 2 - 1;
+      const y0 = 1 - (rect.top / this.#canvas.height) * 2;
+      const x1 = (rect.right / this.#canvas.width) * 2 - 1;
+      const y1 = 1 - (rect.bottom / this.#canvas.height) * 2;
+
+      // Color based on shape index (hue rotation)
+      const hue = index * 0.618;
+      const r = 0.5 + 0.5 * Math.sin(hue * Math.PI * 2);
+      const g = 0.5 + 0.5 * Math.sin((hue + 0.333) * Math.PI * 2);
+      const b = 0.5 + 0.5 * Math.sin((hue + 0.666) * Math.PI * 2);
+
+      // Two triangles per quad
+      // x, y, r, g, b, isEdge (1=edge glow, 0=solid)
+      // Triangle 1
+      vertices.push(x0, y0, r, g, b, 0);
+      vertices.push(x1, y0, r, g, b, 0);
+      vertices.push(x0, y1, r, g, b, 0);
+      // Triangle 2
+      vertices.push(x1, y0, r, g, b, 0);
+      vertices.push(x1, y1, r, g, b, 0);
+      vertices.push(x0, y1, r, g, b, 0);
     });
 
     this.#shapeCount = this.sourceRects.length;
 
-    if (shapeData.length === 0) {
-      if (!this.#shapeDataBuffer) {
-        this.#shapeDataBuffer = this.#device.createBuffer({
-          size: 16,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        });
-        this.#device.queue.writeBuffer(this.#shapeDataBuffer, 0, new Float32Array([0, 0, 0, 0]));
-      }
+    if (vertices.length === 0) {
       return;
     }
 
-    const requiredSize = shapeData.length * 4;
+    const requiredSize = vertices.length * 4;
 
     if (!this.#shapeDataBuffer || this.#shapeDataBuffer.size < requiredSize) {
       this.#shapeDataBuffer?.destroy();
       this.#shapeDataBuffer = this.#device.createBuffer({
         size: requiredSize,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
     }
 
-    this.#device.queue.writeBuffer(this.#shapeDataBuffer, 0, new Float32Array(shapeData));
+    this.#device.queue.writeBuffer(this.#shapeDataBuffer, 0, new Float32Array(vertices));
   }
 
   #startAnimationLoop() {
@@ -280,10 +320,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   #runRadianceCascades() {
-    if (!this.#shapeDataBuffer) {
-      this.#updateShapeData();
-    }
-
     const { width, height } = this.#canvas;
     const time = (performance.now() - this.#startTime) / 1000;
 
@@ -292,18 +328,36 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     const encoder = this.#device.createCommandEncoder();
 
-    // Create raymarch bind group (shared across levels)
-    const raymarchBindGroup = this.#device.createBindGroup({
-      layout: this.#raymarchBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.#probeBuffer } },
-        { binding: 1, resource: { buffer: this.#uboBuffer, size: 256 } },
-        { binding: 2, resource: { buffer: this.#shapeDataBuffer! } },
-      ],
-    });
+    // Step 1: Clear and render world texture
+    {
+      const renderPass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: this.#worldTexture.createView({ baseMipLevel: 0, mipLevelCount: 1 }),
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
+      });
 
-    // Process each cascade level from highest to lowest
-    // Match reference: loop from levelCount to 0 inclusive
+      renderPass.setPipeline(this.#worldRenderPipeline);
+
+      if (this.#shapeDataBuffer && this.#shapeCount > 0) {
+        renderPass.setVertexBuffer(0, this.#shapeDataBuffer);
+        renderPass.draw(this.#shapeCount * 6);
+      }
+
+      // Draw mouse light as a point (using instance or separate draw)
+      // For simplicity, we'll add it in the raymarch shader
+
+      renderPass.end();
+    }
+
+    // Step 2: Generate mipmaps for world texture
+    this.#generateMipmaps(encoder, this.#worldTexture);
+
+    // Step 3: Raymarch each cascade level
     const levelCount = this.#numCascadeLevels;
     for (let level = levelCount; level >= 0; level--) {
       const probeDiameter = probeDiameter0 << level;
@@ -314,60 +368,59 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const cascadeHeight = Math.floor(height / probeDiameter);
       const totalRays = cascadeWidth * cascadeHeight * probeRayCount;
 
-      // Interval calculation - use integer shifts like reference (JS << truncates to int32)
       const intervalRadius = Math.floor(INTERVAL_RADIUS);
       const intervalStart = level === 0 ? 0 : intervalRadius << (BRANCHING_FACTOR * (level - 1));
       const intervalEnd = intervalRadius << (BRANCHING_FACTOR * level);
 
-      // Update UBO for this level - use Int32Array like reference
-      const uboData = new Int32Array(16);
-      uboData[0] = totalRays;
-      uboData[1] = probeRadius;
-      uboData[2] = probeRayCount;
-      uboData[3] = level;
-      uboData[4] = levelCount;
-      uboData[5] = width;
-      uboData[6] = height;
-      uboData[7] = this.#maxLevel0Rays;
-      uboData[8] = intervalStart;
-      uboData[9] = intervalEnd;
-      uboData[10] = BRANCHING_FACTOR;
-      uboData[11] = this.#shapeCount;
-      // Time and mouse as float view
-      const f32 = new Float32Array(uboData.buffer);
-      f32[12] = time;
-      f32[13] = this.#mousePosition.x;
-      f32[14] = this.#mousePosition.y;
+      // Update UBO
+      const uboData = new ArrayBuffer(64);
+      const i32View = new Int32Array(uboData);
+      const f32View = new Float32Array(uboData);
 
-      this.#device.queue.writeBuffer(this.#uboBuffer, level * 256, new Uint8Array(uboData.buffer));
+      i32View[0] = totalRays;
+      i32View[1] = probeRadius;
+      i32View[2] = probeRayCount;
+      i32View[3] = level;
+      i32View[4] = levelCount;
+      i32View[5] = width;
+      i32View[6] = height;
+      i32View[7] = this.#maxLevel0Rays;
+      i32View[8] = intervalStart;
+      i32View[9] = intervalEnd;
+      i32View[10] = BRANCHING_FACTOR;
+      i32View[11] = level; // mipLevel for texture sampling
+      f32View[12] = time;
+      f32View[13] = this.#mousePosition.x;
+      f32View[14] = this.#mousePosition.y;
+
+      this.#device.queue.writeBuffer(this.#uboBuffer, level * 256, new Uint8Array(uboData));
+
+      const bindGroup = this.#device.createBindGroup({
+        layout: this.#raymarchPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: this.#probeBuffer } },
+          { binding: 1, resource: { buffer: this.#uboBuffer, offset: level * 256, size: 64 } },
+          { binding: 2, resource: this.#worldTextureView },
+          { binding: 3, resource: this.#linearSampler },
+        ],
+      });
 
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.#raymarchPipeline);
-      computePass.setBindGroup(0, raymarchBindGroup, [level * 256]);
-
-      const workgroups = Math.ceil(totalRays / WORKGROUP_SIZE);
-      computePass.dispatchWorkgroups(workgroups, 1, 1);
+      computePass.setBindGroup(0, bindGroup);
+      computePass.dispatchWorkgroups(Math.ceil(totalRays / 256), 1, 1);
       computePass.end();
     }
 
-    // Build fluence texture from level 0 probes
+    // Step 4: Build fluence texture
     {
-      const probeDiameter = probeDiameter0;
-      const cascadeWidth = Math.floor(width / probeDiameter);
-      const cascadeHeight = Math.floor(height / probeDiameter);
+      const cascadeWidth = Math.floor(width / probeDiameter0);
+      const cascadeHeight = Math.floor(height / probeDiameter0);
 
-      // UBO layout: probeRayCount, cascadeWidth, cascadeHeight, width, height, probeRadius
-      const uboData = new Int32Array([
-        probeRayCount0,
-        cascadeWidth,
-        cascadeHeight,
-        width,
-        height,
-        probeDiameter >> 1, // probeRadius
-      ]);
+      const uboData = new Int32Array([probeRayCount0, cascadeWidth, cascadeHeight, width, height, probeDiameter0 >> 1]);
 
       const fluenceUBO = this.#device.createBuffer({
-        size: 32, // 6 i32 values = 24 bytes, aligned to 32
+        size: 32,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         mappedAtCreation: true,
       });
@@ -375,7 +428,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       fluenceUBO.unmap();
 
       const bindGroup = this.#device.createBindGroup({
-        layout: this.#fluenceBindGroupLayout,
+        layout: this.#fluencePipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: this.#fluenceTexture.createView() },
           { binding: 1, resource: { buffer: this.#probeBuffer } },
@@ -389,37 +442,87 @@ export class FolkRadianceCascade extends FolkBaseSet {
       computePass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16), 1);
       computePass.end();
 
-      // Schedule buffer destruction after submission
       this.#device.queue.onSubmittedWorkDone().then(() => fluenceUBO.destroy());
     }
 
-    // Render to screen
-    const renderBindGroup = this.#device.createBindGroup({
-      layout: this.#renderBindGroupLayout,
-      entries: [
-        { binding: 0, resource: this.#fluenceTexture.createView() },
-        { binding: 1, resource: this.#sampler },
-      ],
-    });
+    // Step 5: Final render
+    {
+      const bindGroup = this.#device.createBindGroup({
+        layout: this.#renderPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this.#fluenceTexture.createView() },
+          { binding: 1, resource: this.#linearSampler },
+        ],
+      });
 
-    const renderPass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.#context.getCurrentTexture().createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
-    });
+      const renderPass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: this.#context.getCurrentTexture().createView(),
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
+      });
 
-    renderPass.setPipeline(this.#renderPipeline);
-    renderPass.setBindGroup(0, renderBindGroup);
-    renderPass.setViewport(0, 0, width, height, 0, 1);
-    renderPass.draw(4);
-    renderPass.end();
+      renderPass.setPipeline(this.#renderPipeline);
+      renderPass.setBindGroup(0, bindGroup);
+      renderPass.setViewport(0, 0, width, height, 0, 1);
+      renderPass.draw(4);
+      renderPass.end();
+    }
 
     this.#device.queue.submit([encoder.finish()]);
+  }
+
+  #generateMipmaps(encoder: GPUCommandEncoder, texture: GPUTexture) {
+    const mipLevelCount = texture.mipLevelCount;
+
+    for (let level = 1; level < mipLevelCount; level++) {
+      const dstWidth = Math.max(1, texture.width >> level);
+      const dstHeight = Math.max(1, texture.height >> level);
+
+      if (dstWidth === 0 || dstHeight === 0) break;
+
+      // Create views for source and destination mip levels
+      const srcView = texture.createView({
+        baseMipLevel: level - 1,
+        mipLevelCount: 1,
+      });
+      const dstView = texture.createView({
+        baseMipLevel: level,
+        mipLevelCount: 1,
+      });
+
+      // Create UBO with dimensions
+      const uboData = new Uint32Array([dstWidth, dstHeight]);
+      const ubo = this.#device.createBuffer({
+        size: 8,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Uint32Array(ubo.getMappedRange()).set(uboData);
+      ubo.unmap();
+
+      const bindGroup = this.#device.createBindGroup({
+        layout: this.#mipmapPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: srcView },
+          { binding: 1, resource: dstView },
+          { binding: 2, resource: { buffer: ubo } },
+        ],
+      });
+
+      const computePass = encoder.beginComputePass();
+      computePass.setPipeline(this.#mipmapPipeline);
+      computePass.setBindGroup(0, bindGroup);
+      computePass.dispatchWorkgroups(Math.ceil(dstWidth / 8), Math.ceil(dstHeight / 8), 1);
+      computePass.end();
+
+      // Schedule cleanup
+      this.#device.queue.onSubmittedWorkDone().then(() => ubo.destroy());
+    }
   }
 
   #handleResize = () => {
@@ -446,12 +549,72 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #cleanupResources() {
     this.#probeBuffer?.destroy();
     this.#uboBuffer?.destroy();
+    this.#worldTexture?.destroy();
     this.#fluenceTexture?.destroy();
     this.#shapeDataBuffer?.destroy();
   }
 }
 
-// Raymarch shader - traces rays for each probe (matching reference types)
+// Mipmap generation shader - box filter downsampling
+const mipmapShader = /*wgsl*/ `
+struct UBO {
+  width: u32,
+  height: u32,
+}
+
+@group(0) @binding(0) var srcTexture: texture_2d<f32>;
+@group(0) @binding(1) var dstTexture: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var<uniform> ubo: UBO;
+
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  if (id.x >= ubo.width || id.y >= ubo.height) {
+    return;
+  }
+  
+  // Sample 4 texels from source and average them
+  let srcCoord = vec2i(id.xy) * 2;
+  let s00 = textureLoad(srcTexture, srcCoord, 0);
+  let s10 = textureLoad(srcTexture, srcCoord + vec2i(1, 0), 0);
+  let s01 = textureLoad(srcTexture, srcCoord + vec2i(0, 1), 0);
+  let s11 = textureLoad(srcTexture, srcCoord + vec2i(1, 1), 0);
+  
+  let avg = (s00 + s10 + s01 + s11) * 0.25;
+  textureStore(dstTexture, id.xy, avg);
+}
+`;
+
+// World render shader - renders shapes to world texture
+const worldRenderShader = /*wgsl*/ `
+struct VertexInput {
+  @location(0) position: vec2f,
+  @location(1) color: vec3f,
+  @location(2) isEdge: f32,
+}
+
+struct VertexOutput {
+  @builtin(position) position: vec4f,
+  @location(0) color: vec3f,
+  @location(1) isEdge: f32,
+}
+
+@vertex
+fn vertex_main(input: VertexInput) -> VertexOutput {
+  var out: VertexOutput;
+  out.position = vec4f(input.position, 0.0, 1.0);
+  out.color = input.color;
+  out.isEdge = input.isEdge;
+  return out;
+}
+
+@fragment
+fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
+  // Shapes emit their color (brighter) and are opaque
+  return vec4f(in.color * 2.0, 1.0);
+}
+`;
+
+// Raymarch shader - traces rays sampling from world texture
 const raymarchShader = /*wgsl*/ `
 const PI: f32 = 3.141592653589793;
 const TAU: f32 = PI * 2.0;
@@ -468,77 +631,31 @@ struct UBO {
   intervalStartRadius: i32,
   intervalEndRadius: i32,
   branchingFactor: u32,
-  shapeCount: u32,
+  mipLevel: i32,
   time: f32,
   mouseX: f32,
   mouseY: f32,
 }
 
-struct Shape {
-  minX: f32,
-  minY: f32,
-  maxX: f32,
-  maxY: f32,
-}
-
 @group(0) @binding(0) var<storage, read_write> probes: array<vec4f>;
 @group(0) @binding(1) var<uniform> ubo: UBO;
-@group(0) @binding(2) var<storage, read> shapes: array<Shape>;
+@group(0) @binding(2) var worldTexture: texture_2d<f32>;
+@group(0) @binding(3) var worldSampler: sampler;
 
-// Sample scene at position - returns vec4(emissive RGB, opacity)
-fn sampleScene(pos: vec2f) -> vec4f {
-  var emissive = vec3f(0.0);
-  var opacity = 0.0;
+fn sampleWorld(pos: vec2f, mipLevel: f32) -> vec4f {
+  let dims = vec2f(f32(ubo.width), f32(ubo.height));
+  let uv = pos / dims;
   
-  // Check shapes for occlusion first
-  for (var i = 0u; i < ubo.shapeCount; i++) {
-    let shape = shapes[i];
-    if (pos.x >= shape.minX && pos.x <= shape.maxX &&
-        pos.y >= shape.minY && pos.y <= shape.maxY) {
-      // Inside shape = fully opaque blocker
-      return vec4f(0.0, 0.0, 0.0, 1.0);
-    }
+  // Check bounds
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
+    return vec4f(0.0, 0.0, 0.0, 0.0);
   }
   
-  // Only check light sources if not inside a blocker
-  // Mouse light - bright emitter that follows cursor
-  let mousePos = vec2f(ubo.mouseX, ubo.mouseY);
-  let distMouse = length(pos - mousePos);
-  let mouseRadius = 20.0;
-  if (distMouse < mouseRadius) {
-    let pulse = 0.7 + 0.3 * sin(ubo.time * 2.0);
-    let falloff = 1.0 - distMouse / mouseRadius;
-    // Bright warm point light
-    emissive = vec3f(3.0 * pulse, 2.0 * pulse, 0.8) * falloff * falloff;
-  }
-  
-  // Shape glow - thin rings around shapes
-  for (var i = 0u; i < ubo.shapeCount; i++) {
-    let shape = shapes[i];
-    let center = vec2f((shape.minX + shape.maxX) * 0.5, (shape.minY + shape.maxY) * 0.5);
-    let halfSize = vec2f((shape.maxX - shape.minX) * 0.5, (shape.maxY - shape.minY) * 0.5);
-    
-    // SDF to box
-    let d = abs(pos - center) - halfSize;
-    let dist = length(max(d, vec2f(0.0))) + min(max(d.x, d.y), 0.0);
-    
-    // Very thin emissive ring at shape edge
-    let glowWidth = 3.0;
-    if (dist > 0.0 && dist < glowWidth) {
-      let hue = f32(i) * 0.618;
-      let r = 0.5 + 0.5 * sin(hue * TAU);
-      let g = 0.5 + 0.5 * sin((hue + 0.333) * TAU);
-      let b = 0.5 + 0.5 * sin((hue + 0.666) * TAU);
-      let falloff = 1.0 - dist / glowWidth;
-      emissive += vec3f(r, g, b) * falloff * 0.8;
-    }
-  }
-  
-  return vec4f(emissive, opacity);
+  // Sample at the appropriate mip level for this cascade
+  return textureSampleLevel(worldTexture, worldSampler, uv, mipLevel);
 }
 
 fn SampleUpperProbe(rawPos: vec2i, raysPerProbe: i32, bufferStartIndex: i32, cascadeWidth: i32, cascadeHeight: i32) -> vec4f {
-  // Clamp to valid probe positions for non-square canvases
   let pos = clamp(rawPos, vec2i(0), vec2i(cascadeWidth - 1, cascadeHeight - 1));
   let index = raysPerProbe * pos.x + pos.y * cascadeWidth * raysPerProbe;
   
@@ -554,7 +671,6 @@ fn SampleUpperProbes(lowerProbeCenter: vec2f, rayIndex: i32) -> vec4f {
   let UpperLevel = ubo.level + 1;
   
   if (UpperLevel >= ubo.levelCount) {
-    // Sky/environment - return transparent (no ambient)
     return vec4f(0.0, 0.0, 0.0, 1.0);
   }
   
@@ -579,13 +695,12 @@ fn SampleUpperProbes(lowerProbeCenter: vec2f, rayIndex: i32) -> vec4f {
   let factor = fract(index);
   let invFactor = 1.0 - factor;
   
-  // Bilinear interpolation
   let r1 = samples[0] * invFactor.x + samples[1] * factor.x;
   let r2 = samples[2] * invFactor.x + samples[3] * factor.x;
   return r1 * invFactor.y + r2 * factor.y;
 }
 
-@compute @workgroup_size(${WORKGROUP_SIZE}, 1, 1)
+@compute @workgroup_size(256, 1, 1)
 fn main(@builtin(global_invocation_id) GlobalInvocationID: vec3u) {
   let RayIndex = i32(GlobalInvocationID.x);
   if (RayIndex >= i32(ubo.totalRays)) {
@@ -604,11 +719,9 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID: vec3u) {
   let col = ProbeIndex % CascadeWidth;
   let row = ProbeIndex / CascadeWidth;
   
-  // Ray angle with half-pixel offset
   let RayAngle = TAU * (f32(ProbeRayIndex) + 0.5) / f32(ubo.probeRayCount);
   let RayDirection = vec2f(cos(RayAngle), sin(RayAngle));
   
-  // Probe center position
   let RayOrigin = vec2f(
     f32(col) * ProbeDiameter + ProbeRadius,
     f32(row) * ProbeDiameter + ProbeRadius,
@@ -616,39 +729,48 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID: vec3u) {
   
   let OutputIndex = ubo.maxLevel0Rays * (ubo.level % 2) + RayIndex;
   
-  // Raymarch through interval (fixed size stepping like reference)
+  // Raymarch through interval
   var acc = vec4f(0.0, 0.0, 0.0, 1.0);
-  let dims = vec2f(f32(ubo.width), f32(ubo.height));
+  let mipLevel = f32(ubo.mipLevel);
   var t = 0.0;
-  let stepSize = 1.0;
+  let stepSize = max(1.0, pow(2.0, mipLevel));
+  
+  // Add mouse light contribution
+  let mousePos = vec2f(ubo.mouseX, ubo.mouseY);
+  let mouseToOrigin = RayOrigin - mousePos;
+  let mouseDist = length(mouseToOrigin);
+  let mouseRadius = 20.0;
+  if (mouseDist < mouseRadius) {
+    let falloff = 1.0 - mouseDist / mouseRadius;
+    let pulse = 0.9 + 0.1 * sin(ubo.time * 2.0);
+    acc.r += falloff * falloff * pulse * 0.8;
+    acc.g += falloff * falloff * pulse * 0.6;
+    acc.b += falloff * falloff * pulse * 0.3;
+  }
   
   while (true) {
     let pos = RayOrigin + RayDirection * (LowerIntervalRadius + t);
     
-    // Distance check
-    if (distance(pos, RayOrigin) > IntervalRadius) {
+    if (t > IntervalRadius - LowerIntervalRadius) {
       break;
     }
     
-    // Bounds check
-    if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
-      break;
-    }
+    let sample = sampleWorld(pos, mipLevel);
     
-    // Sample scene
-    let sample = sampleScene(pos);
-    
-    // Accumulate
     let transparency = 1.0 - sample.a;
     acc = vec4f(
       acc.rgb + acc.a * sample.rgb,
       acc.a * transparency
     );
     
+    // Early termination if fully occluded
+    if (acc.a < 0.01) {
+      break;
+    }
+    
     t += stepSize;
   }
   
-  // Sample upper cascade and merge
   let UpperResult = SampleUpperProbes(RayOrigin, ProbeRayIndex);
   
   probes[OutputIndex] = vec4f(
@@ -658,7 +780,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID: vec3u) {
 }
 `;
 
-// Fluence shader - averages all rays per probe for final display with bilinear interpolation
+// Fluence shader with bilinear interpolation
 const fluenceShader = /*wgsl*/ `
 struct UBO {
   probeRayCount: i32,
@@ -686,7 +808,7 @@ fn sampleProbe(probeX: i32, probeY: i32) -> vec4f {
 }
 
 @compute @workgroup_size(16, 16, 1)
-fn ComputeMain(@builtin(global_invocation_id) id: vec3u) {
+fn main(@builtin(global_invocation_id) id: vec3u) {
   if (i32(id.x) >= ubo.width || i32(id.y) >= ubo.height) {
     return;
   }
@@ -694,18 +816,15 @@ fn ComputeMain(@builtin(global_invocation_id) id: vec3u) {
   let pixelCenter = vec2f(id.xy) + 0.5;
   let probeDiameter = f32(ubo.probeRadius) * 2.0;
   
-  // Calculate probe coordinates (in floating point for interpolation)
   let probeCoord = pixelCenter / probeDiameter - 0.5;
   let baseProbe = vec2i(floor(probeCoord));
   let frac = fract(probeCoord);
   
-  // Sample 4 neighboring probes
   let s00 = sampleProbe(baseProbe.x, baseProbe.y);
   let s10 = sampleProbe(baseProbe.x + 1, baseProbe.y);
   let s01 = sampleProbe(baseProbe.x, baseProbe.y + 1);
   let s11 = sampleProbe(baseProbe.x + 1, baseProbe.y + 1);
   
-  // Bilinear interpolation
   let r0 = mix(s00, s10, frac.x);
   let r1 = mix(s01, s11, frac.x);
   let result = mix(r0, r1, frac.y);
@@ -714,7 +833,7 @@ fn ComputeMain(@builtin(global_invocation_id) id: vec3u) {
 }
 `;
 
-// Render shader - displays final texture with proper sampling
+// Render shader
 const renderShader = /*wgsl*/ `
 struct VertexOutput {
   @builtin(position) position: vec4f,
@@ -723,7 +842,6 @@ struct VertexOutput {
 
 @vertex
 fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
-  // Full-screen triangle strip
   let pos = array(
     vec2f(-1.0, -1.0),
     vec2f( 1.0, -1.0),
