@@ -49,14 +49,10 @@ const RD_CONFIG = {
  */
 const COMPOSITE_CONFIG = {
   // Toggle effects on/off
-  enableBulgeDistortion: true,
   enableEmboss: true,
   enableSpecular: true,
   enableIridescence: true,
   enableVignette: true,
-
-  // Bulge distortion
-  bulgeStrength: -0.15, // Negative = bulge out, positive = bulge in
 
   // Color palette (Iq cosine palette parameters)
   // Base color: a + b * cos(2π * (c * t + d))
@@ -64,21 +60,21 @@ const COMPOSITE_CONFIG = {
   colorB: [0.5, 0.5, 0.5], // Color amplitude
   colorC: [1.0, 1.0, 1.0], // Color frequency
   colorD: [0.05, 0.1, 0.2], // Color phase offset
-  colorBrightness: 1.5, // Overall brightness multiplier
+  colorBrightness: 2, // Overall brightness multiplier
 
   // Emboss effect
   embossScale: 0.5, // Size of emboss sampling
-  embossStrength: 0.3, // Intensity of emboss
+  embossStrength: 0.9, // Intensity of emboss
 
   // Specular highlight
   specularStrength: 0.5, // Intensity of specular
 
   // Iridescence
-  iridescenceStrength: 0.07, // Intensity of iridescence
+  iridescenceStrength: 0.1, // Intensity of iridescence
   iridescenceColorD: [0.0, 0.33, 0.67], // Iridescence color phase
 
   // Vignette
-  vignetteStrength: 0.075, // Darkness at edges
+  vignetteStrength: 0.1, // Darkness at edges
 };
 
 /**
@@ -613,14 +609,14 @@ export class FolkReactionDiffusion extends FolkBaseSet {
   #writeCompositeConfig() {
     const data = new Float32Array([
       // Toggles (as floats: 0.0 or 1.0)
-      COMPOSITE_CONFIG.enableBulgeDistortion ? 1.0 : 0.0,
       COMPOSITE_CONFIG.enableEmboss ? 1.0 : 0.0,
       COMPOSITE_CONFIG.enableSpecular ? 1.0 : 0.0,
       COMPOSITE_CONFIG.enableIridescence ? 1.0 : 0.0,
       COMPOSITE_CONFIG.enableVignette ? 1.0 : 0.0,
-      COMPOSITE_CONFIG.bulgeStrength,
       COMPOSITE_CONFIG.embossScale,
       COMPOSITE_CONFIG.embossStrength,
+      0, // padding
+      0, // padding
       // Color A (vec3 + padding)
       ...COMPOSITE_CONFIG.colorA,
       COMPOSITE_CONFIG.specularStrength,
@@ -872,14 +868,14 @@ struct AnimationUniforms {
 }
 
 struct CompositeConfig {
-  enableBulge: f32,
   enableEmboss: f32,
   enableSpecular: f32,
   enableIridescence: f32,
   enableVignette: f32,
-  bulgeStrength: f32,
   embossScale: f32,
   embossStrength: f32,
+  _pad1: f32,
+  _pad2: f32,
   colorA: vec3f,
   specularStrength: f32,
   colorB: vec3f,
@@ -889,7 +885,7 @@ struct CompositeConfig {
   colorD: vec3f,
   colorBrightness: f32,
   iridescenceColorD: vec3f,
-  _pad: f32,
+  _pad3: f32,
 }
 
 @group(0) @binding(0) var<uniform> anim: AnimationUniforms;
@@ -922,11 +918,6 @@ fn pal(t: f32, a: vec3f, b: vec3f, c: vec3f, d: vec3f) -> vec3f {
   return a + b * cos(6.28318 * (c * t + d));
 }
 
-// Bulge distortion
-fn distort(r: vec2f, alpha: f32) -> vec2f {
-  return r + r * -alpha * (1.0 - dot(r, r) * 1.25);
-}
-
 // Emboss effect
 fn emboss(
   p: vec2f,
@@ -948,18 +939,10 @@ fn emboss(
 
 @fragment
 fn frag_main(@location(0) uv: vec2f) -> @location(0) vec4f {
-  // Apply bulge distortion (conditional)
-  var p: vec2f;
-  if (cfg.enableBulge > 0.5) {
-    p = distort(uv * 2.0 - 1.0, cfg.bulgeStrength) * 0.5 + 0.5;
-  } else {
-    p = uv;
-  }
-  
   // Get input data
   let inputTexSize: vec2f = vec2f(textureDimensions(inputTex));
   let inputTexelSize = 1.0 / inputTexSize;
-  let input: vec4f = textureSample(inputTex, inputTexSampler, p);
+  let input: vec4f = textureSample(inputTex, inputTexSampler, uv);
   
   // Use chemical B distribution as base color value
   let value = smoothstep(0.225, 0.8, input.g);
@@ -974,7 +957,7 @@ fn frag_main(@location(0) uv: vec2f) -> @location(0) vec4f {
   var embossValue: f32 = 0.0;
   var emboss1: vec4f = vec4f(0.0);
   if (cfg.enableEmboss > 0.5) {
-    emboss1 = emboss(p, vec4f(1.0, 0.0, 0.0, 0.0), input, inputTex, inputTexSampler, inputTexelSize, cfg.embossScale, 0.4 + dist * 0.3);
+    emboss1 = emboss(uv, vec4f(1.0, 0.0, 0.0, 0.0), input, inputTex, inputTexSampler, inputTexelSize, cfg.embossScale, 0.4 + dist * 0.3);
     embossValue = emboss1.w * cfg.embossStrength * (anim.pulse * 0.2 + 0.8);
   }
   
@@ -987,7 +970,7 @@ fn frag_main(@location(0) uv: vec2f) -> @location(0) vec4f {
   // Outer emboss for iridescence (conditional)
   var iridescence: vec3f = vec3f(0.0);
   if (cfg.enableIridescence > 0.5) {
-    let emboss2: vec4f = emboss(p, vec4f(0.0, 1.0, 0.0, 0.0), input, inputTex, inputTexSampler, inputTexelSize, 0.8, 0.1);
+    let emboss2: vec4f = emboss(uv, vec4f(0.0, 1.0, 0.0, 0.0), input, inputTex, inputTexSampler, inputTexelSize, 0.8, 0.1);
     iridescence = pal(input.r * 5.0 + 0.2, cfg.colorA, cfg.colorB, cfg.colorC, cfg.iridescenceColorD);
     iridescence = mix(iridescence, vec3f(0.0), smoothstep(0.0, 0.4, max(input.g, emboss2.w)));
     iridescence *= cfg.iridescenceStrength * ((1.0 - anim.pulse) * 0.2 + 0.8);
