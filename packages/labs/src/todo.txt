@@ -1,0 +1,18 @@
+on my list of things to try:
+variable poisson disk SDF
+metaball goo ✅
+force directed graph letter
+letter made of itself
+letter made of its own rendering code ??? ✅
+fluid sim
+Diffusion-limited aggregation
+Boids ✅
+Reaction-diffusion
+L-system branching
+SAND ✅
+letter made of letter fractals
+Moiré patterns
+warbles shader ✅
+
+someone else did already:
+Space-filling curves

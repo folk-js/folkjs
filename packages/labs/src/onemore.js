@@ -1,0 +1,18 @@
+text("just one more",-1,-1,0.1)
+text("letter",-0,-1,0.2)
+text("bro",0.9,-1,0.1)
+text("I promise bro just one more",-1,-0.8,0.1)
+text("letter",-1,-0.6,0.2)
+text("bro.",-0.1,-0.6,0.1)
+
+text("It will fix",-0.8,-0.45,0.1)
+text("everything bro i ",-0.7,-0.35,0.1)
+text("swear just one more",-0.5,-0.24,0.1)
+
+text("letter",-0.4,-0.05,0.2)
+text("bro c'mon just gimmme one more",-1,0.16,0.1)
+text("letter",-1,0.3,0.2)
+text("this is the last",-0.1,0.34,0.1)
+text("one i SWEAR bro COME ON BRO",-1,0.5,0.1)
+text("just ONE MORE",-1,0.65,0.1)
+text("LETTER!",0.05,0.7,0.22)
