@@ -1,19 +1,102 @@
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { FolkBaseSet } from './folk-base-set';
 
-// Reaction-diffusion compute shader constants
-// Based on: https://tympanus.net/codrops/2024/05/01/reaction-diffusion-compute-shader-in-webgpu/
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+/**
+ * Reaction-Diffusion Parameters (Gray-Scott model)
+ * Try different combinations for various patterns:
+ * - Mitosis: feed=0.0367, kill=0.0649
+ * - Coral: feed=0.0545, kill=0.062
+ * - Maze: feed=0.029, kill=0.057
+ * - Holes: feed=0.039, kill=0.058
+ * - Spots: feed=0.025, kill=0.06
+ * - Waves: feed=0.014, kill=0.045
+ */
+const RD_CONFIG = {
+  // Base diffusion rates
+  diffusionA: 1.0, // Diffusion rate for chemical A (typically 1.0)
+  diffusionB: 0.25, // Diffusion rate for chemical B (0.25-0.5, lower = sharper patterns)
+
+  // Reaction parameters
+  feed: 0.065, // Feed rate - how fast A is added (0.01 - 0.1)
+  kill: 0.06, // Kill rate - how fast B is removed (0.045 - 0.07)
+
+  // Spatial variation (how parameters change from center to edges)
+  feedVariation: 0.0, // How much feed varies with distance from center
+  killVariation: 0.0, // How much kill varies with distance from center
+  diffusionVariation: 0.15, // How much diffusion varies with distance
+
+  // Seed influence (DOM elements)
+  seedKillBoost: 0.05, // How much seed areas boost kill rate
+  seedPulseInfluence: 0.3, // How much pulse affects seed influence
+
+  // Animation
+  pulseSpeed: 0.5, // Speed of pulse animation
+  pulseStrength: 0.1, // How much pulse affects diffusion
+  centerMotion: 0.01, // Strength of center push motion
+
+  // Pointer interaction
+  pointerRadius: 0.4, // Size of pointer influence area (0-1)
+  pointerStrength: 80.0, // How much pointer moves the simulation
+  pointerDiffusionEffect: 0.15, // How much pointer affects diffusion rate
+};
+
+/**
+ * Composite/Visual Effect Settings
+ */
+const COMPOSITE_CONFIG = {
+  // Toggle effects on/off
+  enableBulgeDistortion: true,
+  enableEmboss: true,
+  enableSpecular: true,
+  enableIridescence: true,
+  enableVignette: true,
+
+  // Bulge distortion
+  bulgeStrength: -0.15, // Negative = bulge out, positive = bulge in
+
+  // Color palette (Iq cosine palette parameters)
+  // Base color: a + b * cos(2π * (c * t + d))
+  colorA: [0.5, 0.5, 0.5], // Base brightness
+  colorB: [0.5, 0.5, 0.5], // Color amplitude
+  colorC: [1.0, 1.0, 1.0], // Color frequency
+  colorD: [0.05, 0.1, 0.2], // Color phase offset
+  colorBrightness: 1.5, // Overall brightness multiplier
+
+  // Emboss effect
+  embossScale: 0.5, // Size of emboss sampling
+  embossStrength: 0.3, // Intensity of emboss
+
+  // Specular highlight
+  specularStrength: 0.5, // Intensity of specular
+
+  // Iridescence
+  iridescenceStrength: 0.07, // Intensity of iridescence
+  iridescenceColorD: [0.0, 0.33, 0.67], // Iridescence color phase
+
+  // Vignette
+  vignetteStrength: 0.075, // Darkness at edges
+};
+
+/**
+ * Performance Settings
+ */
+const PERFORMANCE_CONFIG = {
+  simulationScale: 0.5, // Resolution scale (0.25 = quarter res, 1.0 = full res)
+  iterationsPerFrame: 8, // RD iterations per animation frame
+};
+
+// ============================================================================
+// SHADER CONSTANTS (don't modify unless you know what you're doing)
+// ============================================================================
 const KERNEL_SIZE = 3;
 const WORKGROUP_SIZE = [8, 8];
 const TILE_SIZE = [2, 2];
 const CACHE_SIZE = [TILE_SIZE[0] * WORKGROUP_SIZE[0], TILE_SIZE[1] * WORKGROUP_SIZE[1]]; // [16, 16]
 const DISPATCH_SIZE = [CACHE_SIZE[0] - (KERNEL_SIZE - 1), CACHE_SIZE[1] - (KERNEL_SIZE - 1)]; // [14, 14]
-
-// Resolution scale for the simulation (fraction of canvas size)
-const SIMULATION_SCALE = 0.5;
-
-// Number of RD iterations per frame
-const ITERATIONS_PER_FRAME = 8;
 
 /**
  * WebGPU-based reaction-diffusion simulation.
@@ -54,6 +137,8 @@ export class FolkReactionDiffusion extends FolkBaseSet {
   // Uniforms
   #animationUniformBuffer!: GPUBuffer;
   #paramsUniformBuffer!: GPUBuffer;
+  #rdConfigBuffer!: GPUBuffer;
+  #compositeConfigBuffer!: GPUBuffer;
 
   // Sampler for composite pass
   #sampler!: GPUSampler;
@@ -186,8 +271,8 @@ export class FolkReactionDiffusion extends FolkBaseSet {
 
   #initResources() {
     // Calculate simulation dimensions
-    this.#simWidth = Math.floor((this.#canvas.width || 800) * SIMULATION_SCALE);
-    this.#simHeight = Math.floor((this.#canvas.height || 600) * SIMULATION_SCALE);
+    this.#simWidth = Math.floor((this.#canvas.width || 800) * PERFORMANCE_CONFIG.simulationScale);
+    this.#simHeight = Math.floor((this.#canvas.height || 600) * PERFORMANCE_CONFIG.simulationScale);
 
     // Update seed canvas size
     this.#seedCanvas.width = this.#simWidth;
@@ -232,8 +317,28 @@ export class FolkReactionDiffusion extends FolkBaseSet {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
+    // RD config buffer (12 floats = 48 bytes, align to 64)
+    this.#rdConfigBuffer = this.#device.createBuffer({
+      label: 'RD Config',
+      size: 64,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // Composite config buffer (24 floats = 96 bytes, align to 128)
+    this.#compositeConfigBuffer = this.#device.createBuffer({
+      label: 'Composite Config',
+      size: 128,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
     // Write initial params
     this.#device.queue.writeBuffer(this.#paramsUniformBuffer, 0, new Uint32Array([this.#simWidth, this.#simHeight]));
+
+    // Write RD config
+    this.#writeRDConfig();
+
+    // Write composite config
+    this.#writeCompositeConfig();
 
     // Initialize RD textures with chemical A = 1, chemical B = 0
     this.#initializeSimulation();
@@ -354,7 +459,7 @@ export class FolkReactionDiffusion extends FolkBaseSet {
 
       // Update pulse (sinusoidal animation)
       const elapsed = (performance.now() - this.#startTime) / 1000;
-      this.#pulse = Math.sin(elapsed * 0.5) * 0.5 + 0.5;
+      this.#pulse = Math.sin(elapsed * RD_CONFIG.pulseSpeed) * 0.5 + 0.5;
 
       // Update pointer velocity with smoothing
       const velX = (this.#pointerPos.x - this.#lastPointerPos.x) * 0.5;
@@ -384,7 +489,7 @@ export class FolkReactionDiffusion extends FolkBaseSet {
     const encoder = this.#device.createCommandEncoder();
 
     // Run multiple RD iterations
-    for (let i = 0; i < ITERATIONS_PER_FRAME; i++) {
+    for (let i = 0; i < PERFORMANCE_CONFIG.iterationsPerFrame; i++) {
       const inputTexture = this.#rdTextures[this.#currentTextureIndex];
       const outputTexture = this.#rdTextures[1 - this.#currentTextureIndex];
 
@@ -397,6 +502,7 @@ export class FolkReactionDiffusion extends FolkBaseSet {
           { binding: 1, resource: outputTexture.createView() },
           { binding: 2, resource: this.#seedTexture.createView() },
           { binding: 3, resource: { buffer: this.#animationUniformBuffer } },
+          { binding: 4, resource: { buffer: this.#rdConfigBuffer } },
         ],
       });
 
@@ -421,6 +527,7 @@ export class FolkReactionDiffusion extends FolkBaseSet {
         { binding: 0, resource: { buffer: this.#animationUniformBuffer } },
         { binding: 1, resource: this.#sampler },
         { binding: 2, resource: this.#rdTextures[this.#currentTextureIndex].createView() },
+        { binding: 3, resource: { buffer: this.#compositeConfigBuffer } },
       ],
     });
 
@@ -477,6 +584,60 @@ export class FolkReactionDiffusion extends FolkBaseSet {
     this.#seedTexture?.destroy();
     this.#animationUniformBuffer?.destroy();
     this.#paramsUniformBuffer?.destroy();
+    this.#rdConfigBuffer?.destroy();
+    this.#compositeConfigBuffer?.destroy();
+  }
+
+  #writeRDConfig() {
+    const data = new Float32Array([
+      RD_CONFIG.diffusionA,
+      RD_CONFIG.diffusionB,
+      RD_CONFIG.feed,
+      RD_CONFIG.kill,
+      RD_CONFIG.feedVariation,
+      RD_CONFIG.killVariation,
+      RD_CONFIG.diffusionVariation,
+      RD_CONFIG.seedKillBoost,
+      RD_CONFIG.seedPulseInfluence,
+      RD_CONFIG.pulseStrength,
+      RD_CONFIG.centerMotion,
+      RD_CONFIG.pointerRadius,
+      RD_CONFIG.pointerStrength,
+      RD_CONFIG.pointerDiffusionEffect,
+      0, // padding
+      0, // padding
+    ]);
+    this.#device.queue.writeBuffer(this.#rdConfigBuffer, 0, data);
+  }
+
+  #writeCompositeConfig() {
+    const data = new Float32Array([
+      // Toggles (as floats: 0.0 or 1.0)
+      COMPOSITE_CONFIG.enableBulgeDistortion ? 1.0 : 0.0,
+      COMPOSITE_CONFIG.enableEmboss ? 1.0 : 0.0,
+      COMPOSITE_CONFIG.enableSpecular ? 1.0 : 0.0,
+      COMPOSITE_CONFIG.enableIridescence ? 1.0 : 0.0,
+      COMPOSITE_CONFIG.enableVignette ? 1.0 : 0.0,
+      COMPOSITE_CONFIG.bulgeStrength,
+      COMPOSITE_CONFIG.embossScale,
+      COMPOSITE_CONFIG.embossStrength,
+      // Color A (vec3 + padding)
+      ...COMPOSITE_CONFIG.colorA,
+      COMPOSITE_CONFIG.specularStrength,
+      // Color B (vec3 + padding)
+      ...COMPOSITE_CONFIG.colorB,
+      COMPOSITE_CONFIG.iridescenceStrength,
+      // Color C (vec3 + padding)
+      ...COMPOSITE_CONFIG.colorC,
+      COMPOSITE_CONFIG.vignetteStrength,
+      // Color D (vec3 + padding)
+      ...COMPOSITE_CONFIG.colorD,
+      COMPOSITE_CONFIG.colorBrightness,
+      // Iridescence color D (vec3 + padding)
+      ...COMPOSITE_CONFIG.iridescenceColorD,
+      0, // padding
+    ]);
+    this.#device.queue.writeBuffer(this.#compositeConfigBuffer, 0, data);
   }
 }
 
@@ -537,10 +698,30 @@ struct AnimationUniforms {
   pointerPos: vec2f,
 }
 
+struct RDConfig {
+  diffusionA: f32,
+  diffusionB: f32,
+  feed: f32,
+  kill: f32,
+  feedVariation: f32,
+  killVariation: f32,
+  diffusionVariation: f32,
+  seedKillBoost: f32,
+  seedPulseInfluence: f32,
+  pulseStrength: f32,
+  centerMotion: f32,
+  pointerRadius: f32,
+  pointerStrength: f32,
+  pointerDiffusionEffect: f32,
+  _pad1: f32,
+  _pad2: f32,
+}
+
 @group(0) @binding(0) var inputTex: texture_2d<f32>;
 @group(0) @binding(1) var outputTex: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(2) var seedTex: texture_2d<f32>;
-@group(0) @binding(3) var<uniform> animationUniforms: AnimationUniforms;
+@group(0) @binding(3) var<uniform> anim: AnimationUniforms;
+@group(0) @binding(4) var<uniform> cfg: RDConfig;
 
 // Manual bilinear sampling for fractional coordinates
 fn texture2D_bilinear(t: texture_2d<f32>, coord: vec2f, dims: vec2u) -> vec4f {
@@ -588,13 +769,14 @@ fn compute_main(
       var sampleUv: vec2f = sampleCoordF / dimsF;
       
       // Center pulse motion - push outward from center
-      sampleCoordF -= (sampleUv * 2.0 - 1.0) * 0.01 * (2.0 * animationUniforms.pulse + 2.0 + 1.5);
+      sampleCoordF -= (sampleUv * 2.0 - 1.0) * cfg.centerMotion * (2.0 * anim.pulse + 2.0 + 1.5);
       
       // Pointer influence - move pixels based on pointer velocity
       let st = ((sampleUv * 2.0 - 1.0) * aspectFactor) * 0.5 + 0.5;
-      let pointerPos = (animationUniforms.pointerPos * aspectFactor) * 0.5 + 0.5;
-      var pointerMask = smoothstep(0.6, 1.0, 1.0 - min(1.0, distance(st, pointerPos)));
-      sampleCoordF -= animationUniforms.pointerVelocity * 80.0 * pointerMask;
+      let pointerPos = (anim.pointerPos * aspectFactor) * 0.5 + 0.5;
+      let pointerDist = distance(st, pointerPos) / cfg.pointerRadius;
+      var pointerMask = smoothstep(1.0, 0.0, min(1.0, pointerDist));
+      sampleCoordF -= anim.pointerVelocity * cfg.pointerStrength * pointerMask;
       
       // Sample with bilinear interpolation
       let input: vec4f = texture2D_bilinear(inputTex, sampleCoordF, dims);
@@ -634,25 +816,26 @@ fn compute_main(
         
         // Pointer influence on diffusion rate
         let st = (uv * aspectFactor) * 0.5 + 0.5;
-        let pointerPos = (animationUniforms.pointerPos * aspectFactor) * 0.5 + 0.5;
-        var pointerMask = smoothstep(0.6, 1.0, 1.0 - min(1.0, distance(st, pointerPos)));
-        pointerMask = pointerMask * length(animationUniforms.pointerVelocity) * 30.0;
+        let pointerPos = (anim.pointerPos * aspectFactor) * 0.5 + 0.5;
+        let pointerDist = distance(st, pointerPos) / cfg.pointerRadius;
+        var pointerMask = smoothstep(1.0, 0.0, min(1.0, pointerDist));
+        pointerMask = pointerMask * length(anim.pointerVelocity) * 30.0;
         
         // Distance from center affects parameters
         let dist = mix(dot(uv.xx, uv.xx), dot(uv.yy, uv.yy), step(1.4, f32(dims.x) / f32(dims.y)));
         
-        // Reaction-diffusion parameters
+        // Reaction-diffusion parameters from config
         let cacheValue: vec4f = cache[local.y][local.x];
-        let dA = 1.0 - dist * 0.15;
-        var dB = 0.25 + dist * 0.1;
-        dB = dB + 0.1 * (animationUniforms.pulse * 0.5 + 0.5);
-        dB = dB - min(0.15, 0.2 * pointerMask);
+        let dA = cfg.diffusionA - dist * cfg.diffusionVariation;
+        var dB = cfg.diffusionB + dist * cfg.diffusionVariation * 0.5;
+        dB = dB + cfg.pulseStrength * (anim.pulse * 0.5 + 0.5);
+        dB = dB - min(cfg.pointerDiffusionEffect, cfg.pointerDiffusionEffect * 1.5 * pointerMask);
         dB = max(0.1, dB);
         
-        let feed = 0.065;
-        var kill = 0.06;
+        var feed = cfg.feed + dist * cfg.feedVariation;
+        var kill = cfg.kill + dist * cfg.killVariation;
         // Seed areas affect kill rate
-        kill = kill + cacheValue.b * 0.05 * (animationUniforms.pulse * 0.3 + 0.7);
+        kill = kill + cacheValue.b * cfg.seedKillBoost * (anim.pulse * cfg.seedPulseInfluence + (1.0 - cfg.seedPulseInfluence));
         
         // Gray-Scott reaction-diffusion
         let A = cacheValue.x;
@@ -688,9 +871,31 @@ struct AnimationUniforms {
   pointerPos: vec2f,
 }
 
-@group(0) @binding(0) var<uniform> animationUniforms: AnimationUniforms;
+struct CompositeConfig {
+  enableBulge: f32,
+  enableEmboss: f32,
+  enableSpecular: f32,
+  enableIridescence: f32,
+  enableVignette: f32,
+  bulgeStrength: f32,
+  embossScale: f32,
+  embossStrength: f32,
+  colorA: vec3f,
+  specularStrength: f32,
+  colorB: vec3f,
+  iridescenceStrength: f32,
+  colorC: vec3f,
+  vignetteStrength: f32,
+  colorD: vec3f,
+  colorBrightness: f32,
+  iridescenceColorD: vec3f,
+  _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> anim: AnimationUniforms;
 @group(0) @binding(1) var inputTexSampler: sampler;
 @group(0) @binding(2) var inputTex: texture_2d<f32>;
+@group(0) @binding(3) var<uniform> cfg: CompositeConfig;
 
 @vertex
 fn vertex_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
@@ -743,8 +948,13 @@ fn emboss(
 
 @fragment
 fn frag_main(@location(0) uv: vec2f) -> @location(0) vec4f {
-  // Apply bulge distortion
-  let p = distort(uv * 2.0 - 1.0, -0.15) * 0.5 + 0.5;
+  // Apply bulge distortion (conditional)
+  var p: vec2f;
+  if (cfg.enableBulge > 0.5) {
+    p = distort(uv * 2.0 - 1.0, cfg.bulgeStrength) * 0.5 + 0.5;
+  } else {
+    p = uv;
+  }
   
   // Get input data
   let inputTexSize: vec2f = vec2f(textureDimensions(inputTex));
@@ -753,30 +963,43 @@ fn frag_main(@location(0) uv: vec2f) -> @location(0) vec4f {
   
   // Use chemical B distribution as base color value
   let value = smoothstep(0.225, 0.8, input.g);
-  var base: vec3f = pal(value * 0.4 + 0.4, vec3f(0.5), vec3f(0.5), vec3f(1.0), vec3f(0.05, 0.1, 0.2));
-  base *= 1.5 * (animationUniforms.pulse * 0.15 + 0.85);
+  var base: vec3f = pal(value * 0.4 + 0.4, cfg.colorA, cfg.colorB, cfg.colorC, cfg.colorD);
+  base *= cfg.colorBrightness * (anim.pulse * 0.15 + 0.85);
   
   // Centered UV and distance
   let st = uv * 2.0 - 1.0;
   let dist = length(st);
   
-  // Inner emboss effect
-  var emboss1: vec4f = emboss(p, vec4f(1.0, 0.0, 0.0, 0.0), input, inputTex, inputTexSampler, inputTexelSize, 0.5, 0.4 + dist * 0.3);
-  emboss1.w = emboss1.w * 0.3 * (animationUniforms.pulse * 0.2 + 0.8);
+  // Inner emboss effect (conditional)
+  var embossValue: f32 = 0.0;
+  var emboss1: vec4f = vec4f(0.0);
+  if (cfg.enableEmboss > 0.5) {
+    emboss1 = emboss(p, vec4f(1.0, 0.0, 0.0, 0.0), input, inputTex, inputTexSampler, inputTexelSize, cfg.embossScale, 0.4 + dist * 0.3);
+    embossValue = emboss1.w * cfg.embossStrength * (anim.pulse * 0.2 + 0.8);
+  }
   
-  // Inner specular
-  let specular = smoothstep(0.2, 0.3, 2.0 * emboss1.x - emboss1.y - emboss1.z) * 0.5 * (1.0 - dist) * ((1.0 - animationUniforms.pulse) * 0.15 + 0.85);
+  // Inner specular (conditional)
+  var specular: f32 = 0.0;
+  if (cfg.enableSpecular > 0.5 && cfg.enableEmboss > 0.5) {
+    specular = smoothstep(0.2, 0.3, 2.0 * emboss1.x - emboss1.y - emboss1.z) * cfg.specularStrength * (1.0 - dist) * ((1.0 - anim.pulse) * 0.15 + 0.85);
+  }
   
-  // Outer emboss for iridescence
-  var emboss2: vec4f = emboss(p, vec4f(0.0, 1.0, 0.0, 0.0), input, inputTex, inputTexSampler, inputTexelSize, 0.8, 0.1);
-  var iridescence = pal(input.r * 5.0 + 0.2, vec3f(0.5), vec3f(0.5), vec3f(1.0), vec3f(0.0, 0.33, 0.67));
-  iridescence = mix(iridescence, vec3f(0.0), smoothstep(0.0, 0.4, max(input.g, emboss2.w)));
-  iridescence *= 0.07 * ((1.0 - animationUniforms.pulse) * 0.2 + 0.8);
+  // Outer emboss for iridescence (conditional)
+  var iridescence: vec3f = vec3f(0.0);
+  if (cfg.enableIridescence > 0.5) {
+    let emboss2: vec4f = emboss(p, vec4f(0.0, 1.0, 0.0, 0.0), input, inputTex, inputTexSampler, inputTexelSize, 0.8, 0.1);
+    iridescence = pal(input.r * 5.0 + 0.2, cfg.colorA, cfg.colorB, cfg.colorC, cfg.iridescenceColorD);
+    iridescence = mix(iridescence, vec3f(0.0), smoothstep(0.0, 0.4, max(input.g, emboss2.w)));
+    iridescence *= cfg.iridescenceStrength * ((1.0 - anim.pulse) * 0.2 + 0.8);
+  }
   
-  // Vignette
-  let vignette = dist * 0.075;
+  // Vignette (conditional)
+  var vignette: f32 = 0.0;
+  if (cfg.enableVignette > 0.5) {
+    vignette = dist * cfg.vignetteStrength;
+  }
   
-  var color: vec4f = vec4f(base + vec3f(emboss1.w) + specular + iridescence - vignette, 1.0);
+  var color: vec4f = vec4f(base + vec3f(embossValue) + specular + iridescence - vignette, 1.0);
   
   return color;
 }
