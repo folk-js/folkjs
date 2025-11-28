@@ -47,13 +47,14 @@ const pulse = 0.5 - 0.5 * cos(2 * PI * period("H13", params.t, 2))
 const centerMotion = CENTER_MOTION_MIN + pulse * (CENTER_MOTION_MAX - CENTER_MOTION_MIN)
 
 // Color palettes (x sweeps through, y shifts hue)
+const neutral = [0.5,0.5,0.5]
 const palettes = [
-  { a: [0.5,0.5,0.5], b: [0.5,0.5,0.5], c: [1.0,0.7,0.4], d: [0.10,0.20,0.25] },
-  { a: [0.5,0.5,0.5], b: [0.5,0.5,0.5], c: [1.0,0.7,0.4], d: [0.00,0.15,0.20] },
-  { a: [0.5,0.5,0.5], b: [0.5,0.5,0.5], c: [1.0,1.0,1.0], d: [0.00,0.15,0.25] },
-  { a: [0.5,0.5,0.5], b: [0.5,0.5,0.5], c: [1.0,1.0,1.0], d: [0.00,0.10,0.20] },
-  { a: [0.5,0.5,0.5], b: [0.5,0.5,0.5], c: [1.0,1.0,0.5], d: [0.25,0.20,0.20] },
-  { a: [0.5,0.5,0.5], b: [0.5,0.5,0.5], c: [1.0,1.0,0.5], d: [0.30,0.20,0.20] },
+  { a: neutral, b: neutral, c: [1.0,0.7,0.4], d: [0.10,0.20,0.25] },
+  { a: neutral, b: neutral, c: [1.0,0.7,0.4], d: [0.00,0.15,0.20] },
+  { a: neutral, b: neutral, c: [1.0,1.0,1.0], d: [0.00,0.15,0.25] },
+  { a: neutral, b: neutral, c: [1.0,1.0,1.0], d: [0.00,0.10,0.20] },
+  { a: neutral, b: neutral, c: [1.0,1.0,0.5], d: [0.25,0.20,0.20] },
+  { a: neutral, b: neutral, c: [1.0,1.0,0.5], d: [0.30,0.20,0.20] },
 ]
 
 const xNorm = norm(params.x)
