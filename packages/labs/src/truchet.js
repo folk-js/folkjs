@@ -1,9 +1,15 @@
 // SMITH TILES S16
 // - Orion Reed
 
-// Use params.q to control scale from 1 to 6
+// Use waffle left/right to control scale
+// waffle up/down to explore some additional viz
+// x/y to change letter
+
 const SCALE = floor(denorm((params.q + 1) / 2, 1, 6))
-const PERIMETER = false
+
+// this shows you a little more on how the borders are figured out
+const PERIMETER = params.r<-0.5
+const BOXES = params.r>0.5
 
 // 9 letter patterns in a 3x3 grid controlled by x/y
 const letterPatterns = [
@@ -77,9 +83,22 @@ const letterPatterns = [
 
 // Select pattern based on params.x and params.y
 // x,y range from -1 to 1, map to 3x3 grid
+// Select pattern based on params.x and params.y with non-linear mapping
+// x,y range from -1 to 1, we want x=0,y=0 to map to index 3 (S)
+// Layout: I N K / S W I / T C H
 const BORDER = 1
-const patternX = min(floor((params.x + 1) / 2 * 3), 2)
-const patternY = min(floor((params.y + 1) / 2 * 3), 2)
+
+// Bias function: shifts center but preserves edges
+// bias is the offset at center, tapers to 0 at edges
+function biasMap(value, bias) {
+  const tapering = 1 - abs(value) // 1 at center, 0 at edges
+  return value + bias * tapering
+}
+
+// Apply bias to x to shift S to center (x=0)
+const biasedX = biasMap(params.x, -0.35)
+const patternX = min(max(floor((biasedX + 1) / 2 * 3), 0), 2)
+const patternY = min(max(floor((params.y + 1) / 2 * 3), 0), 2)
 const patternIdx = patternY * 3 + patternX
 const letterPattern = letterPatterns[patternIdx]
 const letterH = letterPattern.length
@@ -317,7 +336,7 @@ const gridPhaseEnd = 0.2
 const perimPhaseStart = PERIMETER ? 0.25 : 1
 const perimPhaseEnd = PERIMETER ? 0.5 : 1
 
-const borderPhaseStart = PERIMETER ? 0.35 : 0.2
+const borderPhaseStart = PERIMETER? 0.35 : 0.2
 const borderPhaseEnd = 0.8
 
 // Helper: clamp a value between 0 and 1
@@ -353,6 +372,7 @@ const borderPhase = cnorm(phase, borderPhaseStart, borderPhaseEnd)
 // Calculate how many cells to show
 const numPerimCells = floor(perimPhase * perimeterCells.length)
 const numBorderCells = floor(borderPhase * borderCells.length)
+const numBoxes = floor(borderPhase * perimeterCells.length)
 
 // Calculate what fraction of perimeter should be replaced by border
 // When border is fully revealed (borderPhase=1), all perimeter should be replaced
@@ -361,7 +381,6 @@ const replaceRatio = borderPhase
 // Show perimeter cells (these will be replaced by border)
 for (let i = 0; i < numPerimCells; i++) {
   const c = perimeterCells[i]
-  
   // Fade out perimeter based on how much of it should be replaced
   // If we're at position i out of numPerimCells, and border has progressed replaceRatio,
   // we should hide this cell if i/numPerimCells < replaceRatio
@@ -373,6 +392,13 @@ for (let i = 0; i < numPerimCells; i++) {
     if (c.corner) dir(c.x, c.y, null)
     else dir(c.x, c.y, c.direction)
   }
+}
+
+if (BOXES) {
+  for (let i = 0; i < numBoxes; i++) {
+  const c = perimeterCells[i]
+  box(c.x, c.y)
+}
 }
 
 // Show border cells (these replace perimeter)
