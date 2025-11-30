@@ -10,9 +10,9 @@
 // If you manage to get the loop budget down to its default of 10K
 // with the waffle.x at 50% then I'll buy you a coffee/beer :)
 
-__loopBudget = 70000
+__loopBudget = 100000
 
-const numBoids = floor(denorm((params.q + 1) / 2, 80, 300))
+const numBoids = 200
 const visualRange = denorm((params.r + 1) / 2, 0.12, 0.3)
 const separationWeight = 0.01
 const alignmentWeight = 0.01
@@ -24,6 +24,7 @@ const fleeRadius = 0.5
 const boidSize = 0.02
 const homeWeight = 0.001
 const wandererRatio = 0.3
+const timeScale = 0.5
 
 // Precomputed bits
 const separationDist = visualRange * 0.35
@@ -108,17 +109,16 @@ function randomPointInShape() {
 
 // @tenfold crew... maybe a lil sprinking of input
 // is something we want for real?
-if (!window.n04PointerSetup) {
-  window.n04PointerDown = false
-  window.addEventListener('pointerdown', () => { window.n04PointerDown = true })
-  window.addEventListener('pointerup', () => { window.n04PointerDown = false })
-  window.addEventListener('pointercancel', () => { window.n04PointerDown = false })
-  window.addEventListener('pointerleave', () => { window.n04PointerDown = false })
-  window.n04PointerSetup = true
+if (!params.s.pointerSetup) {
+  params.s.pointerDown = false
+  window.addEventListener('pointerdown', () => { params.s.pointerDown = true })
+  window.addEventListener('pointerup', () => { params.s.pointerDown = false })
+  window.addEventListener('pointercancel', () => { params.s.pointerDown = false })
+  window.addEventListener('pointerleave', () => { params.s.pointerDown = false })
+  params.s.pointerSetup = true
 }
 
-let state = window.n04
-if (!state || state.numBoids !== numBoids || params.t <= 0.01) {
+if (!params.s.boids || params.s.numBoids !== numBoids) {
   const boids = []
   for (let i = 0; i < numBoids; i++) {
     const home = randomPointInShape()
@@ -133,13 +133,13 @@ if (!state || state.numBoids !== numBoids || params.t <= 0.01) {
       wanderAngle: rand(0, TAU)
     })
   }
-  state = { boids, numBoids }
-  window.n04 = state
+  params.s.boids = boids
+  params.s.numBoids = numBoids
 }
 
-const boids = state.boids
+const boids = params.s.boids
 const n = boids.length
-const pointerDown = window.n04PointerDown
+const pointerDown = params.s.pointerDown
 const mouse = pointerDown ? {x: params.x, y: params.y} : null
 
 for (let i = 0; i < n; i++) {
@@ -157,7 +157,6 @@ for (let i = 0; i < n; i++) {
     if (dSq === 0 || dSq > visualRangeSq) continue
 
     // behaviour: alignment
-    const d = sqrt(dSq)
     neighbors++
     alignment.x += other.vx
     alignment.y += other.vy
@@ -165,7 +164,7 @@ for (let i = 0; i < n; i++) {
     cohesion.y += other.y
     if (dSq < separationDistSq) {
       const diff = sub(boid, other)
-      const factor = 1 - (d / separationDist)
+      const factor = 1 - (sqrt(dSq) / separationDist)
       separation = add(separation, mulS(normalize(diff), factor))
     }
   }
@@ -212,11 +211,10 @@ for (let i = 0; i < n; i++) {
   if (mouse) {
     const mouseDistSq = distSq(boid, mouse)
     if (mouseDistSq < fleeRadiusSq && mouseDistSq > 0) {
-      const mouseDist = sqrt(mouseDistSq)
       const dir = sub(boid, mouse)
       flee = mulS(
         normalize(dir),
-        fleeWeight * (1 - mouseDist / fleeRadius)
+        fleeWeight * (1 - sqrt(mouseDistSq) / fleeRadius)
       )
     }
   }
@@ -227,12 +225,13 @@ for (let i = 0; i < n; i++) {
   const maxSpeed = boid.isWanderer ? speedLimit * 1.3 : speedLimit
   const speed = len({x: boid.vx, y: boid.vy})
   if (speed > maxSpeed) {
-    boid.vx = (boid.vx / speed) * maxSpeed
-    boid.vy = (boid.vy / speed) * maxSpeed
+    const scale = maxSpeed / speed
+    boid.vx *= scale
+    boid.vy *= scale
   }
   
-  boid.x += boid.vx
-  boid.y += boid.vy
+  boid.x += boid.vx * timeScale
+  boid.y += boid.vy * timeScale
 }
 
 for (const boid of boids) {
@@ -251,4 +250,3 @@ for (const boid of boids) {
 // begin()
 // for (const pt of shape) line(pt.x, pt.y)
 // line(shape[0].x, shape[0].y)
-
