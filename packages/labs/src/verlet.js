@@ -1,6 +1,171 @@
 // VERLET-W14 (work-in-progress)
 // — Orion Reed
 
+const ANCHORS = [
+  { x: -0.9, y: -0.8 },  // left
+  { x: 0, y: -0.2 },        // middle
+  { x: 0.9, y: -0.8 }    // right
+]
+
+const GRAVITY = 1.5
+const DAMPING = 0.99
+// Number of simulation cycles to run when rope first spawns
+const PRESIM = 20
+
+// Rope length variation
+const ROPE_LENGTH_MIN = 1.2
+const ROPE_LENGTH_MAX = 1.6
+
+// Timing (in seconds)
+const SPAWN_INTERVAL_MIN = 0.5
+const SPAWN_INTERVAL_MAX = 1.0
+const CUT_DELAY_MIN = 2.0
+const CUT_DELAY_MAX = 4.0
+const UNFIX_DELAY_MIN = 3.0
+const UNFIX_DELAY_MAX = 5.0
+const CUT_POS_MIN = 0.2
+const CUT_POS_MAX = 0.8
+
+// Use mouse position to control gravity direction
+const gravityX = params.x * 2
+const gravityY = GRAVITY + params.y * 2
+
+// ==== STATE INITIALIZATION ====
+if (params.s.absoluteTime === undefined) {
+  params.s.absoluteTime = 0
+  params.s.lastFrameTime = Date.now() / 1000
+  params.s.nextSpawnTime = 0
+  params.s.ropes = []
+  params.s.nextSegment = 0
+}
+
+// Track real delta time
+const now = Date.now() / 1000
+const dt = now - params.s.lastFrameTime
+params.s.lastFrameTime = now
+params.s.absoluteTime += dt
+
+// Utility: absolute time + random
+const arand = (min, max) => params.s.absoluteTime + rand(min, max)
+
+// ==== ROPE SPAWNING ====
+if (params.s.absoluteTime >= params.s.nextSpawnTime) {
+  const segmentIndex = params.s.nextSegment
+  params.s.nextSegment = 1 - segmentIndex
+  
+  const lengthVariation = denorm(rand(), ROPE_LENGTH_MIN, ROPE_LENGTH_MAX)
+  const [startAnchor, endAnchor] = segmentIndex === 0 ? [ANCHORS[0], ANCHORS[1]] : [ANCHORS[1], ANCHORS[2]]
+  
+  const rope = createRope(
+    startAnchor.x, startAnchor.y,
+    endAnchor.x, endAnchor.y,
+    { restDist: 0.03 * lengthVariation }
+  )
+  
+  // Presimulate rope to let it settle
+  for (let i = 0; i < PRESIM; i++) {
+    simulateRope(rope, gravityX, gravityY, DAMPING)
+  }
+  
+  params.s.ropes.push({
+    rope,
+    anchorIndices: segmentIndex === 0 ? [0, 1] : [1, 2],
+    cutTime: arand(CUT_DELAY_MIN, CUT_DELAY_MAX),
+    cutPosition: rand(CUT_POS_MIN, CUT_POS_MAX),
+    unfixStartTime: arand(UNFIX_DELAY_MIN, UNFIX_DELAY_MAX),
+    unfixEndTime: arand(UNFIX_DELAY_MIN, UNFIX_DELAY_MAX),
+    hasCut: false,
+    hasUnfixedStart: false,
+    hasUnfixedEnd: false
+  })
+  
+  params.s.nextSpawnTime = arand(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_MAX)
+}
+
+// ==== ROPE PROCESSING LOOP ====
+const { absoluteTime, ropes } = params.s
+
+for (let i = ropes.length - 1; i >= 0; i--) {
+  const ropeData = ropes[i]
+  const { rope, anchorIndices, hasCut, cutTime, cutPosition } = ropeData
+
+  // 1. LIFECYCLE: Cut rope
+  if (!hasCut && absoluteTime >= cutTime) {
+    const result = cutRope(rope, cutPosition)
+    if (result) {
+      const [rope1, rope2] = result
+      const [startIdx, endIdx] = anchorIndices
+      
+      // Make middle anchor detach 3x faster
+      // so it looks more like a "W"
+      const rope1UnfixStartTime = startIdx === 1 
+        ? absoluteTime + (ropeData.unfixStartTime - absoluteTime) / 3
+        : ropeData.unfixStartTime
+      
+      const rope2UnfixEndTime = endIdx === 1
+        ? absoluteTime + (ropeData.unfixEndTime - absoluteTime) / 3
+        : ropeData.unfixEndTime
+
+      ropes.splice(i, 1,
+        {
+          ...ropeData,
+          rope: rope1,
+          unfixStartTime: rope1UnfixStartTime,
+          unfixEndTime: Infinity,
+          hasUnfixedEnd: false,
+          hasCut: true
+        },
+        {
+          ...ropeData,
+          rope: rope2,
+          unfixStartTime: Infinity,
+          unfixEndTime: rope2UnfixEndTime,
+          hasUnfixedStart: false,
+          hasCut: true
+        }
+      )
+      continue
+    }
+  }
+
+  // 2. LIFECYCLE: Unfix anchors
+  if (!ropeData.hasUnfixedStart && absoluteTime >= ropeData.unfixStartTime) {
+    unfixAnchor(rope, true)
+    ropeData.hasUnfixedStart = true
+  }
+  if (!ropeData.hasUnfixedEnd && absoluteTime >= ropeData.unfixEndTime) {
+    unfixAnchor(rope, false)
+    ropeData.hasUnfixedEnd = true
+  }
+
+  // 3. CLEANUP: AABB culling
+  const clippedRopes = cutAABB(rope, -1, -1, 1, 1)
+  if (!clippedRopes) {
+    ropes.splice(i, 1)
+    continue
+  }
+  
+  if (clippedRopes.length > 1) {
+    ropes.splice(i, 1, ...clippedRopes.map(r => ({ ...ropeData, rope: r, hasCut: true })))
+    continue
+  }
+  
+  if (clippedRopes[0].points.length < rope.points.length) {
+    ropeData.rope = clippedRopes[0]
+  }
+
+  // 4. UPDATE: Simulate physics
+  simulateRope(ropeData.rope, gravityX, gravityY, DAMPING)
+
+  // 5. RENDER: Draw rope
+  drawRope(ropeData.rope)
+}
+
+for (let anchor of ANCHORS) {
+  begin(true)
+  circle(anchor.x, anchor.y, 0.02)
+}
+
 // ==== ROPE SIM MICRO-LIB (reuse encouraged!) ====
 
 function createRope(startX, startY, endX, endY, options = {}) {
@@ -100,18 +265,7 @@ function unfixAnchor(rope, isStart = true) {
   }
 }
 
-function updateRopeAnchors(rope, startPos, endPos) {
-  if (rope.points[0].fixed) {
-    rope.points[0].x = startPos.x
-    rope.points[0].y = startPos.y
-  }
-  if (rope.points[rope.points.length - 1].fixed) {
-    rope.points[rope.points.length - 1].x = endPos.x
-    rope.points[rope.points.length - 1].y = endPos.y
-  }
-}
-
-function simulateRope(rope, gravity, damping, steps = 2) {
+function simulateRope(rope, gravityX, gravityY, damping, steps = 2) {
   for (let step = 0; step < steps; step++) {
     const dt = 0.016
 
@@ -124,8 +278,8 @@ function simulateRope(rope, gravity, damping, steps = 2) {
         p.oldX = p.x
         p.oldY = p.y
 
-        p.x += vx
-        p.y += vy + gravity * dt * dt
+        p.x += vx + gravityX * dt * dt
+        p.y += vy + gravityY * dt * dt
       }
     }
 
@@ -165,195 +319,4 @@ function drawRope(rope) {
   }
 }
 
-function applyForce(rope, mouseX, mouseY, influence = 0.25, force = 0.08) {
-  for (let p of rope.points) {
-    if (!p.fixed) {
-      const dx = mouseX - p.x
-      const dy = mouseY - p.y
-      const d = sqrt(dx * dx + dy * dy)
-
-      if (d < influence) {
-        const f = (1 - d / influence) * force
-        p.x += dx * f
-        p.y += dy * f
-      }
-    }
-  }
-}
-
 // ======== END OF MICRO-LIB :) ======== //
-
-// ==== CONFIGURATION ====
-const ANCHORS = [
-  { x: -0.8, y: -0.6 },  // left
-  { x: 0, y: 0 },        // middle
-  { x: 0.8, y: -0.6 }    // right
-]
-
-const NUM_ROPES_PER_SEGMENT = 4
-const ROPE_SPREAD = 0.02
-const GRAVITY = 1.5
-const DAMPING = 0.985
-
-// anchors
-const WOBBLE_AMOUNT = 0.1
-const BREAK_START = 0.5
-const BREAK_END = 1
-
-// ==== STATE INITIALIZATION ====
-if (!params.s.lastT || params.t < params.s.lastT) {
-  params.s.ropes = []
-}
-params.s.lastT = params.t
-
-// ==== ROPE LIFECYCLE ====
-const totalRopes = NUM_ROPES_PER_SEGMENT * 2
-
-// Add ropes during first half of loop (t < 0.5)
-if (params.t < 0.5) {
-  const targetCount = floor((params.t / 0.5) * totalRopes)
-
-  while (params.s.ropes.length < targetCount) {
-    const ropeIndex = params.s.ropes.length
-    const segmentIndex = floor(ropeIndex / NUM_ROPES_PER_SEGMENT)
-    const ropeInSegment = ropeIndex % NUM_ROPES_PER_SEGMENT
-
-    const offset = (ropeInSegment - (NUM_ROPES_PER_SEGMENT - 1) / 2) * ROPE_SPREAD
-    const lengthVariation = 1 + (rand() - 0.5) * 0.3
-
-    let rope, anchorIndices
-    if (segmentIndex === 0) {
-      rope = createRope(
-        ANCHORS[0].x + offset, ANCHORS[0].y,
-        ANCHORS[1].x + offset, ANCHORS[1].y,
-        { restDist: 0.03 * lengthVariation }
-      )
-      anchorIndices = [0, 1]
-    } else {
-      rope = createRope(
-        ANCHORS[1].x + offset, ANCHORS[1].y,
-        ANCHORS[2].x + offset, ANCHORS[2].y,
-        { restDist: 0.03 * lengthVariation }
-      )
-      anchorIndices = [1, 2]
-    }
-
-    params.s.ropes.push({
-      rope,
-      anchorIndices,
-      cutTime: rand(BREAK_START, BREAK_END),
-      cutPosition: rand(0.2, 0.8),
-      unfixStartTime: rand(BREAK_START, BREAK_END),
-      unfixEndTime: rand(BREAK_START, BREAK_END),
-      hasCut: false,
-      hasUnfixedStart: false,
-      hasUnfixedEnd: false
-    })
-  }
-}
-
-// Process cuts and unfixing
-for (let i = params.s.ropes.length - 1; i >= 0; i--) {
-  const ropeData = params.s.ropes[i]
-
-  // Cut rope
-  if (!ropeData.hasCut && params.t >= ropeData.cutTime) {
-    const result = cutRope(ropeData.rope, ropeData.cutPosition)
-    if (result) {
-      const [rope1, rope2] = result
-
-      // Replace this rope with the two new pieces
-      params.s.ropes.splice(i, 1,
-        {
-          rope: rope1,
-          anchorIndices: ropeData.anchorIndices,
-          unfixStartTime: ropeData.unfixStartTime,
-          unfixEndTime: Infinity,
-          hasUnfixedStart: ropeData.hasUnfixedStart,
-          hasUnfixedEnd: false
-        },
-        {
-          rope: rope2,
-          anchorIndices: ropeData.anchorIndices,
-          unfixStartTime: Infinity,
-          unfixEndTime: ropeData.unfixEndTime,
-          hasUnfixedStart: false,
-          hasUnfixedEnd: ropeData.hasUnfixedEnd
-        }
-      )
-    }
-  }
-
-  // Unfix start anchor
-  if (!ropeData.hasUnfixedStart && params.t >= ropeData.unfixStartTime) {
-    unfixAnchor(ropeData.rope, true)
-    ropeData.hasUnfixedStart = true
-  }
-
-  // Unfix end anchor
-  if (!ropeData.hasUnfixedEnd && params.t >= ropeData.unfixEndTime) {
-    unfixAnchor(ropeData.rope, false)
-    ropeData.hasUnfixedEnd = true
-  }
-}
-
-// Cull ropes using AABB
-for (let i = params.s.ropes.length - 1; i >= 0; i--) {
-  const ropeData = params.s.ropes[i]
-  const clippedRopes = cutAABB(ropeData.rope, -1, -1, 1, 1)
-
-  if (!clippedRopes) {
-    // Completely out of bounds - remove
-    params.s.ropes.splice(i, 1)
-  } else if (clippedRopes.length > 1) {
-    // Rope split into multiple sections - replace with new sections
-    const newRopeData = clippedRopes.map(rope => ({
-      rope,
-      anchorIndices: ropeData.anchorIndices,
-      unfixStartTime: Infinity,
-      unfixEndTime: Infinity,
-      hasUnfixedStart: true,
-      hasUnfixedEnd: true
-    }))
-    params.s.ropes.splice(i, 1, ...newRopeData)
-  } else if (clippedRopes[0].points.length < ropeData.rope.points.length) {
-    // Rope was trimmed - update with clipped version
-    ropeData.rope = clippedRopes[0]
-  }
-}
-
-// ==== CALCULATE WOBBLING ANCHORS ====
-const wobblePhase = params.t * TAU
-const wobbledAnchors = ANCHORS.map((anchor, i) => ({
-  x: anchor.x + sin(wobblePhase + i * 2) * WOBBLE_AMOUNT,
-  y: anchor.y + cos(wobblePhase + i * 2) * WOBBLE_AMOUNT * 0.5
-}))
-
-// ==== UPDATE ====
-const gravity = GRAVITY + params.r * 2
-
-for (let ropeData of params.s.ropes) {
-  const { rope, anchorIndices } = ropeData
-
-  // Update anchor positions
-  const [startIdx, endIdx] = anchorIndices
-  updateRopeAnchors(rope, wobbledAnchors[startIdx], wobbledAnchors[endIdx])
-
-  // Simulate physics
-  simulateRope(rope, gravity, DAMPING)
-
-  // Mouse interaction
-  if (params.x !== 0 || params.y !== 0) {
-    applyForce(rope, params.x, params.y)
-  }
-}
-
-// ==== RENDER ====
-for (let ropeData of params.s.ropes) {
-  drawRope(ropeData.rope)
-}
-
-for (let anchor of wobbledAnchors) {
-  begin(true)
-  circle(anchor.x, anchor.y, 0.02)
-}
