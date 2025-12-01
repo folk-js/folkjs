@@ -123,16 +123,16 @@ const splitAmount = keyframe(phase, {
 const showSplit = phase > SPLIT_START
 
 // === WAFFLE EFFECTS ===
-const depth = denorm(r, 0.18, 0.35)
+const depth = denorm(r, 0.2, 0.4)
 const splitVariation = denorm(q, 0, 1)  // q controls split gap and rotation
 
 // === T GEOMETRY ===
 const barW = 1.3, barH = 0.26
-const stemW = 0.26, stemH = 0.85
+const stemW = 0.26, stemH = 1.2
 const halfBarW = barW / 2
 
 // Junction point
-const junctionY = -0.15
+const junctionY = -0.4
 const barHomeY = junctionY - barH / 2
 const stemHomeY = junctionY + stemH / 2
 
@@ -229,10 +229,10 @@ if (assembly > 0.7) {
   const vis = fade * collapseFade
   
   // Guide box: taller and grows when scattered
-  const guideMargin = 0.4 + (1 - assembly) * 0.35
+  const guideMargin = 0.6 + (1 - assembly) * 0.35
   const guideW = (barW + guideMargin) * scaleX
   const guideH = ((barHomeY - barH / 2 + (stemHomeY + stemH / 2)) + guideMargin * 3.3) * scaleY  // taller
-  const guideD = (depth + guideMargin * 2) * scaleZ
+  const guideD = (depth + guideMargin) * scaleZ
   
   const guideCenterY = ((barHomeY - barH / 2 + stemHomeY + stemH / 2) / 2) * scaleY
   
