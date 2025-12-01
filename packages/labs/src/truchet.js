@@ -1,17 +1,14 @@
 // SMITH TILES S16
 // - Orion Reed
+// waffle left/right: scale, x/y: change letter
 
-// Use waffle left/right to control scale
-// waffle up/down to explore some additional viz
-// x/y to change letter
-
+// === CONSTANTS ===
 const SCALE = floor(denorm((params.q + 1) / 2, 1, 6))
 
-// this shows you a little more on how the borders are figured out
-const PERIMETER = params.r<-0.5
-const BOXES = params.r>0.5
 
-// 9 letter patterns in a 3x3 grid controlled by x/y
+
+// Select pattern: x,y map to 3x3 grid, biased so S is at center
+// Layout: I N K / S W I / T C H
 const letterPatterns = [
   // Row 0 (top)
   [ // 0: I
@@ -81,12 +78,23 @@ const letterPatterns = [
   ]
 ]
 
-// Select pattern based on params.x and params.y
-// x,y range from -1 to 1, map to 3x3 grid
-// Select pattern based on params.x and params.y with non-linear mapping
-// x,y range from -1 to 1, we want x=0,y=0 to map to index 3 (S)
-// Layout: I N K / S W I / T C H
-const BORDER = 1
+// Edge i: TOP=0, RIGHT=1, BOTTOM=2, LEFT=3
+// Corner c connects edges c and (c+1)%4
+// Corner 0=TR(a1), 1=BR(b2), 2=BL(a2), 3=TL(b1)
+const edgeDx = [0, 1, 0, -1]
+const edgeDy = [-1, 0, 1, 0]
+const cornerCx = [1, 1, -1, -1]
+const cornerCy = [-1, 1, 1, -1]
+
+// Helper functions for the geometry
+const opposite = e => (e + 2) % 4
+const turnRight = e => (e + 1) % 4
+const turnLeft = e => (e + 3) % 4
+const cornerStart = c => turnRight(c) * 0.25  // arc start angle
+const borderCorner = (dir, useClosed) => useClosed ? turnRight(dir) : dir
+
+
+
 
 // Bias function: shifts center but preserves edges
 // bias is the offset at center, tapers to 0 at edges
@@ -104,27 +112,22 @@ const letterPattern = letterPatterns[patternIdx]
 const letterH = letterPattern.length
 const letterW = letterPattern[0].length
 const maxDim = max(letterH, letterW)
-const n = letterH * SCALE + BORDER * 2
-const nMax = maxDim * SCALE + BORDER * 2
-const cSize = 2 / nMax
-const cRad = cSize / 2
+const n = letterH * SCALE + 2
+const nMax = maxDim * SCALE + 2
+const cRad = 1 / nMax
 
-const offsetX = ((maxDim - letterW) * SCALE * cSize) / 2
-const offsetY = ((maxDim - letterH) * SCALE * cSize) / 2
+const offsetX = (maxDim - letterW) * SCALE * cRad
+const offsetY = (maxDim - letterH) * SCALE * cRad
 
 
-// Loop detection - change seed each cycle
+// Loop detection - change seed each cycle for variety
 if (!params.s.loopState) {
   params.s.loopState = { lastT: params.t, loopCount: 0 }
 }
-
-// Detect if t has looped (went from high to low)
 if (params.t < params.s.loopState.lastT) {
   params.s.loopState.loopCount++
 }
 params.s.loopState.lastT = params.t
-
-// rng - seed changes with each loop
 let seed = 232 + params.s.loopState.loopCount * 12345
 
 // rng
@@ -135,65 +138,9 @@ function random() {
 
 // cell geometry helper
 function cellCenter(x, y) {
-  return [-1 + x * cSize + cRad + offsetX, -1 + y * cSize + cRad + offsetY]
+  return [-1 + (2 * x + 1) * cRad + offsetX, -1 + (2 * y + 1) * cRad + offsetY]
 }
 
-function box(x, y) {
-  const [cx, cy] = cellCenter(x, y)
-  begin()
-  rect(cx - cRad, cy - cRad, cRad * 2, cRad * 2)
-}
-
-function dir(x, y, dir = null) {
-  const [cx, cy] = cellCenter(x, y)
-  begin()
-  rect(cx - cRad, cy - cRad, cRad * 2, cRad * 2)
-
-  switch (dir) {
-    case null:
-      circle(cx, cy, 0.01)
-      break
-    case "UP":
-      line(cx, cy)
-      line(cx, cy - cRad)
-      break
-    case "RIGHT":
-      line(cx, cy)
-      line(cx + cRad, cy)
-      break
-    case "DOWN":
-      line(cx, cy)
-      line(cx, cy + cRad)
-      break
-    case "LEFT":
-      line(cx, cy)
-      line(cx - cRad, cy)
-      break
-  }
-}
-
-function a1(x, y) {
-  const [cx, cy] = cellCenter(x, y)
-  begin(); arc(cx + cRad, cy - cRad, cRad, 0.25, 0.5)
-}
-
-function a2(x, y) {
-  const [cx, cy] = cellCenter(x, y)
-  begin(); arc(cx - cRad, cy + cRad, cRad, 0.75, 1.0)
-}
-
-function b1(x, y) {
-  const [cx, cy] = cellCenter(x, y)
-  begin(); arc(cx - cRad, cy - cRad, cRad, 0.0, 0.25)
-}
-
-function b2(x, y) {
-  const [cx, cy] = cellCenter(x, y)
-  begin(); arc(cx + cRad, cy + cRad, cRad, 0.5, 0.75)
-}
-
-function a(x, y) { a1(x, y); a2(x, y) }
-function b(x, y) { b1(x, y); b2(x, y) }
 
 // build 0/1 grid with scaling + 1-cell empty border
 const grid = Array.from({ length: n }, () => Array(n).fill(0))
@@ -201,215 +148,205 @@ const grid = Array.from({ length: n }, () => Array(n).fill(0))
 for (let r = 0; r < letterH; r++) {
   for (let c = 0; c < letterW; c++) {
     if (letterPattern[r][c] !== 1) continue
-
-    const rowStart = BORDER + r * SCALE
-    const colStart = BORDER + c * SCALE
-
     for (let i = 0; i < SCALE; i++) {
-      grid[rowStart + i].fill(1, colStart, colStart + SCALE)
+      grid[1 + r * SCALE + i].fill(1, 1 + c * SCALE, 1 + c * SCALE + SCALE)
     }
   }
 }
-
-// Direction vectors: UP, RIGHT, DOWN, LEFT
-const dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]]
-const dirNames = ["UP", "RIGHT", "DOWN", "LEFT"]
 
 function isFilled(x, y) {
   return y >= 0 && y < n && x >= 0 && x < n && grid[y][x] === 1
 }
 
-function findRandomStartCell() {
-  const candidates = []
+// === BUILD TILE MAP ===
+
+// Interior cells get random tile type, border cells get specific corners via perimeter walk
+function buildTileMap() {
+  const tileMap = new Map() // key: "x,y" -> corners[] (0-3)
+  
+  // Interior cells: type 0 uses corners [0,2], type 1 uses corners [1,3]
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
-      if (!isFilled(x, y) && (isFilled(x+1, y) || isFilled(x-1, y) || isFilled(x, y+1) || isFilled(x, y-1))) {
-        candidates.push([x, y])
+      if (grid[y][x] === 1) {
+        const t = random() < 0.5 ? 0 : 1
+        tileMap.set(`${x},${y}`, [t, t + 2])
       }
     }
   }
-  return candidates[Math.floor(random() * candidates.length)] || [0, 0]
-}
-
-const startCell = findRandomStartCell()
-
-function walkPerimeter(startX, startY) {
-  const perimeter = []
-  let x = startX, y = startY, dir = 0
+  
+  // Find any border cell to start perimeter walk
+  let startX = 0, startY = 0
+  outer: for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      if (!isFilled(x, y) && (isFilled(x+1, y) || isFilled(x-1, y) || isFilled(x, y+1) || isFilled(x, y-1))) {
+        startX = x; startY = y
+        break outer
+      }
+    }
+  }
+  
+  // Walk perimeter and add border corners directly to tileMap
+  let x = startX, y = startY, dir = 0, isOpen = false
   
   // Find initial direction (filled cell on right)
   for (let d = 0; d < 4; d++) {
-    const [rdx, rdy] = dirs[(d + 1) % 4]
-    if (isFilled(x + rdx, y + rdy)) { dir = d; break }
+    const r = turnRight(d)
+    if (isFilled(x + edgeDx[r], y + edgeDy[r])) { dir = d; break }
   }
+  const startDir = dir
   
   const visited = new Set()
-  let first = true
+  let first = true, safety = 0
   
   do {
-    // Check if we can turn right (outer corner)
-    const [rdx, rdy] = dirs[(dir + 1) % 4]
-    const isCorner = !isFilled(x + rdx, y + rdy)
+    const rightDir = turnRight(dir)
+    const atCorner = !isFilled(x + edgeDx[rightDir], y + edgeDy[rightDir])
     
-    perimeter.push({
-      x, y, 
-      filledCell: [x + rdx, y + rdy],
-      direction: dirNames[dir],
-      corner: isCorner
-    })
+    // Add border corner directly to tileMap
+
+    let corner = null
+    if (atCorner && isOpen) {
+      corner = borderCorner(dir, true)  // closed
+    } else if (!atCorner) {
+      corner = borderCorner(dir, isOpen)  // closed if isOpen
+      isOpen = !isOpen
+    }
     
-    const key = `${x},${y},${dir}`
-    if (visited.has(key) && !first) break
-    visited.add(key)
+    if (corner !== null) {
+      const key = `${x},${y}`
+      if (!tileMap.has(key)) tileMap.set(key, [])
+      const corners = tileMap.get(key)
+      if (!corners.includes(corner)) corners.push(corner)
+    }
+    
+    const visitKey = `${x},${y},${dir}`
+    if (visited.has(visitKey) && !first) break
+    visited.add(visitKey)
     first = false
     
     // Move or turn
-    if (isCorner) {
-      dir = (dir + 1) % 4  // Turn right
-      ;[x, y] = [x + rdx, y + rdy]
+    if (atCorner) {
+      dir = rightDir
+      ;[x, y] = [x + edgeDx[rightDir], y + edgeDy[rightDir]]
+    } else if (!isFilled(x + edgeDx[dir], y + edgeDy[dir])) {
+      ;[x, y] = [x + edgeDx[dir], y + edgeDy[dir]]
     } else {
-      const [dx, dy] = dirs[dir]
-      if (!isFilled(x + dx, y + dy)) {
-        ;[x, y] = [x + dx, y + dy]  // Go straight
-      } else {
-        dir = (dir + 3) % 4  // Turn left
-      }
+      dir = turnLeft(dir)
     }
-    
-    if (perimeter.length > n * n * 4) break
-  } while (x !== startX || y !== startY || dir !== 0)
+  } while ((x !== startX || y !== startY || dir !== startDir) && ++safety < n * n * 4)
   
-  return perimeter
+  return tileMap
 }
 
-function buildBorderCells(perimeter) {
-  const tiles = {
-    closed: { UP: "b2", RIGHT: "a2", DOWN: "b1", LEFT: "a1" },
-    open:   { UP: "a1", RIGHT: "b2", DOWN: "a2", LEFT: "b1" }
-  }
-  
-  const borderCells = []
-  let isOpen = false
-  
-  // Skip last cell if same as first
-  const len = perimeter.length
-  const lastIdx = (len > 1 && perimeter[0].x === perimeter[len-1].x && perimeter[0].y === perimeter[len-1].y) ? len - 1 : len
-  
-  for (let i = 0; i < lastIdx; i++) {
-    const c = perimeter[i]
-    
-    if (c.corner && isOpen) {
-      borderCells.push({ x: c.x, y: c.y, type: tiles.closed[c.direction], closed: true })
-    } else if (!c.corner) {
-      const closed = isOpen
-      borderCells.push({ 
-        x: c.x, y: c.y, 
-        type: tiles[closed ? 'closed' : 'open'][c.direction], 
-        closed 
-      })
-      isOpen = !isOpen
-    }
-  }
-  
-  return borderCells
+const tileMap = buildTileMap()
+
+// Corner c connects edges c and (c+1)%4
+// Given entry edge, find exit edge for a corner
+const getExitEdge = (corner, entryEdge) => entryEdge === corner ? turnRight(corner) : corner
+
+// Find which corner in list connects to entry edge
+const findConnectingCorner = (corners, entryEdge) => {
+  if (!corners) return null
+  // Corner c connects to edges c and (c+1)%4, i.e., c and turnRight(c)
+  // So corners touching edge e are: e itself, and turnLeft(e)
+  return corners.find(c => c === entryEdge || c === turnLeft(entryEdge)) ?? null
 }
 
-const perimeterCells = walkPerimeter(startCell[0], startCell[1])
-const borderCells = buildBorderCells(perimeterCells)
+// Trace all closed curves
+const curves = []
+const visited = new Set()
+
+for (const [key, corners] of tileMap) {
+  const [tileX, tileY] = key.split(',').map(Number)
+  
+  for (const corner of corners) {
+    if (visited.has(`${key},${corner}`)) continue
+    
+    const curve = []
+    let x = tileX, y = tileY, c = corner
+    let entryEdge = c  // arbitrary: enter from first edge of corner
+    
+    for (let safety = 0; safety < n * n * 4; safety++) {
+      const visitKey = `${x},${y},${c}`
+      if (visited.has(visitKey)) break
+      
+      visited.add(visitKey)
+      curve.push({ x, y, corner: c, entryEdge })
+      
+      // Move to next cell
+      const exitEdge = getExitEdge(c, entryEdge)
+      const nextX = x + edgeDx[exitEdge], nextY = y + edgeDy[exitEdge]
+      const nextCorners = tileMap.get(`${nextX},${nextY}`)
+      const nextCorner = findConnectingCorner(nextCorners, opposite(exitEdge))
+      if (nextCorner === null) break
+      
+      x = nextX; y = nextY
+      c = nextCorner
+      entryEdge = opposite(exitEdge)
+    }
+    
+    if (curve.length > 0) curves.push(curve)
+  }
+}
+
+// Sort curves by length (longest first) for nicer animations
+curves.sort((a, b) => b.length - a.length)
 
 
 
+/// ---- final drawing ----
 
 
-/// ---- final drawing bits, will animate.. ----
-
+const smoothstep = p => p * p * (3 - 2 * p)
 const t = params.t
+const unbuilding = t >= 0.6
+const curvePhase = t < 0.4 ? smoothstep(t / 0.4)
+                 : t < 0.6 ? 1
+                 : 1 - smoothstep((t - 0.6) / 0.4)
 
-// === PHASES ===
-const phase = (1 - cos(t * TAU)) / 2
-
-// Phase 1: 0/1 grid cells come in randomly (phase 0 → 0.2)
-const gridPhaseStart = 0.0
-const gridPhaseEnd = 0.2
-
-// Phase 2: perimeter cells (phase 0.2 → 0.8)
-const perimPhaseStart = PERIMETER ? 0.25 : 1
-const perimPhaseEnd = PERIMETER ? 0.5 : 1
-
-const borderPhaseStart = PERIMETER? 0.35 : 0.2
-const borderPhaseEnd = 0.8
-
-// Helper: clamp a value between 0 and 1
-function cnorm(value, start, end) {
-  return max(0, min(1, (value - start) / (end - start)))
-}
-
-// === PHASE 1: 0/1 GRID with random reveals ===
-const gridPhase = cnorm(phase, gridPhaseStart, gridPhaseEnd)
-
-// Generate random reveal order for grid cells (stable)
-const gridCells = []
-for (let y = 0; y < n; y++) {
-  for (let x = 0; x < n; x++) {
-    if (grid[y][x] === 1) {
-      gridCells.push({ x, y, order: random() })
-    }
-  }
-}
-gridCells.sort((a, b) => a.order - b.order)
-
-// Draw grid cells that have been revealed
-const numGridCells = floor(gridPhase * gridCells.length)
-for (let i = 0; i < numGridCells; i++) {
-  const cell = gridCells[i]
-  ;(random() < 0.5 ? a : b)(cell.x, cell.y)
-}
-
-// === PHASE 2 & 3: PERIMETER → BORDER TRANSITION ===
-const perimPhase = cnorm(phase, perimPhaseStart, perimPhaseEnd)
-const borderPhase = cnorm(phase, borderPhaseStart, borderPhaseEnd)
-
-// Calculate how many cells to show
-const numPerimCells = floor(perimPhase * perimeterCells.length)
-const numBorderCells = floor(borderPhase * borderCells.length)
-const numBoxes = floor(borderPhase * perimeterCells.length)
-
-// Calculate what fraction of perimeter should be replaced by border
-// When border is fully revealed (borderPhase=1), all perimeter should be replaced
-const replaceRatio = borderPhase
-
-// Show perimeter cells (these will be replaced by border)
-for (let i = 0; i < numPerimCells; i++) {
-  const c = perimeterCells[i]
-  // Fade out perimeter based on how much of it should be replaced
-  // If we're at position i out of numPerimCells, and border has progressed replaceRatio,
-  // we should hide this cell if i/numPerimCells < replaceRatio
-  const cellRatio = i / perimeterCells.length
-  const shouldFade = cellRatio < replaceRatio
+// Draw corner arc with progress (0-1), direction based on entry edge
+function drawCorner(corner, x, y, progress, entryEdge, reverseAnim = false) {
+  const [cellX, cellY] = cellCenter(x, y)
+  const p = max(0, min(1, progress))
+  const cx = cornerCx[corner] * cRad
+  const cy = cornerCy[corner] * cRad
+  const start = cornerStart(corner)
+  const reverse = entryEdge === corner  // reverse if entering from first edge
   
-  if (!shouldFade) {
-    box(c.x, c.y)
-    if (c.corner) dir(c.x, c.y, null)
-    else dir(c.x, c.y, c.direction)
+  begin()
+  if (reverse !== reverseAnim) {
+    arc(cellX + cx, cellY + cy, cRad, start + 0.25 - 0.25 * p, start + 0.25)
+  } else {
+    arc(cellX + cx, cellY + cy, cRad, start, start + 0.25 * p)
   }
 }
 
-if (BOXES) {
-  for (let i = 0; i < numBoxes; i++) {
-  const c = perimeterCells[i]
-  box(c.x, c.y)
-}
-}
+// === ANIMATION ===
+// Flatten curves into single arc list for simpler indexing
+const allArcs = curves.flat()
+const totalArcs = allArcs.length
+const arcIndex = curvePhase * totalArcs
 
-// Show border cells (these replace perimeter)
-for (let i = 0; i < numBorderCells; i++) {
-  const c = borderCells[i]
-  switch (c.type) {
-    case "a1": a1(c.x, c.y); break
-    case "a2": a2(c.x, c.y); break
-    case "b1": b1(c.x, c.y); break
-    case "b2": b2(c.x, c.y); break
+if (unbuilding) {
+  // Unbuild: skip arcs from start, animate current arc in reverse
+  const skip = floor(totalArcs - arcIndex)
+  const partial = 1 - ((totalArcs - arcIndex) % 1)
+  
+  if (skip < totalArcs && partial > 0) {
+    const step = allArcs[skip]
+    drawCorner(step.corner, step.x, step.y, partial, step.entryEdge, true)
+  }
+  for (let i = skip + 1; i < totalArcs; i++) {
+    drawCorner(allArcs[i].corner, allArcs[i].x, allArcs[i].y, 1, allArcs[i].entryEdge)
+  }
+} else {
+  // Build: draw arcs from start
+  const completed = floor(arcIndex)
+  for (let i = 0; i < completed; i++) {
+    drawCorner(allArcs[i].corner, allArcs[i].x, allArcs[i].y, 1, allArcs[i].entryEdge)
+  }
+  if (completed < totalArcs) {
+    const step = allArcs[completed]
+    drawCorner(step.corner, step.x, step.y, arcIndex - completed, step.entryEdge)
   }
 }
-
-
