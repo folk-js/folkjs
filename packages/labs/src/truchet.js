@@ -2,12 +2,6 @@
 // - Orion Reed
 // waffle left/right: scale, x/y: change letter
 
-// === CONSTANTS ===
-const SCALE = floor(denorm((params.q + 1) / 2, 1, 6))
-
-
-
-// Select pattern: x,y map to 3x3 grid, biased so S is at center
 // Layout: I N K / S W I / T C H
 const letterPatterns = [
   // Row 0 (top)
@@ -78,6 +72,8 @@ const letterPatterns = [
   ]
 ]
 
+const SCALE = floor(denorm((params.q + 1) / 2, 1, 6))
+
 // Edge i: TOP=0, RIGHT=1, BOTTOM=2, LEFT=3
 // Corner c connects edges c and (c+1)%4
 // Corner 0=TR(a1), 1=BR(b2), 2=BL(a2), 3=TL(b1)
@@ -93,18 +89,9 @@ const turnLeft = e => (e + 3) % 4
 const cornerStart = c => turnRight(c) * 0.25  // arc start angle
 const borderCorner = (dir, useClosed) => useClosed ? turnRight(dir) : dir
 
-
-
-
-// Bias function: shifts center but preserves edges
-// bias is the offset at center, tapers to 0 at edges
-function biasMap(value, bias) {
-  const tapering = 1 - abs(value) // 1 at center, 0 at edges
-  return value + bias * tapering
-}
-
-// Apply bias to x to shift S to center (x=0)
-const biasedX = biasMap(params.x, -0.35)
+// Apply bias to x to shift S so it overlaps with center (x=0)
+// Bias shifts center but preserves edges: tapering = 1 at center, 0 at edges
+const biasedX = params.x + (-0.35) * (1 - abs(params.x))
 const patternX = min(max(floor((biasedX + 1) / 2 * 3), 0), 2)
 const patternY = min(max(floor((params.y + 1) / 2 * 3), 0), 2)
 const patternIdx = patternY * 3 + patternX
@@ -118,7 +105,6 @@ const cRad = 1 / nMax
 
 const offsetX = (maxDim - letterW) * SCALE * cRad
 const offsetY = (maxDim - letterH) * SCALE * cRad
-
 
 // Loop detection - change seed each cycle for variety
 if (!params.s.loopState) {
@@ -185,6 +171,14 @@ function buildTileMap() {
     }
   }
   
+  // Helper to add corner to tileMap
+  const addCorner = (x, y, corner) => {
+    const key = `${x},${y}`
+    if (!tileMap.has(key)) tileMap.set(key, [])
+    const corners = tileMap.get(key)
+    if (!corners.includes(corner)) corners.push(corner)
+  }
+  
   // Walk perimeter and add border corners directly to tileMap
   let x = startX, y = startY, dir = 0, isOpen = false
   
@@ -202,22 +196,11 @@ function buildTileMap() {
     const rightDir = turnRight(dir)
     const atCorner = !isFilled(x + edgeDx[rightDir], y + edgeDy[rightDir])
     
-    // Add border corner directly to tileMap
-
-    let corner = null
-    if (atCorner && isOpen) {
-      corner = borderCorner(dir, true)  // closed
-    } else if (!atCorner) {
-      corner = borderCorner(dir, isOpen)  // closed if isOpen
-      isOpen = !isOpen
+    // Add border corner: skip only when at corner and not open
+    if (!atCorner || isOpen) {
+      addCorner(x, y, borderCorner(dir, isOpen))
     }
-    
-    if (corner !== null) {
-      const key = `${x},${y}`
-      if (!tileMap.has(key)) tileMap.set(key, [])
-      const corners = tileMap.get(key)
-      if (!corners.includes(corner)) corners.push(corner)
-    }
+    if (!atCorner) isOpen = !isOpen
     
     const visitKey = `${x},${y},${dir}`
     if (visited.has(visitKey) && !first) break
@@ -293,10 +276,7 @@ for (const [key, corners] of tileMap) {
 curves.sort((a, b) => b.length - a.length)
 
 
-
 /// ---- final drawing ----
-
-
 const smoothstep = p => p * p * (3 - 2 * p)
 const t = params.t
 const unbuilding = t >= 0.6
@@ -327,26 +307,20 @@ const allArcs = curves.flat()
 const totalArcs = allArcs.length
 const arcIndex = curvePhase * totalArcs
 
-if (unbuilding) {
-  // Unbuild: skip arcs from start, animate current arc in reverse
-  const skip = floor(totalArcs - arcIndex)
-  const partial = 1 - ((totalArcs - arcIndex) % 1)
-  
-  if (skip < totalArcs && partial > 0) {
-    const step = allArcs[skip]
-    drawCorner(step.corner, step.x, step.y, partial, step.entryEdge, true)
-  }
-  for (let i = skip + 1; i < totalArcs; i++) {
-    drawCorner(allArcs[i].corner, allArcs[i].x, allArcs[i].y, 1, allArcs[i].entryEdge)
-  }
-} else {
-  // Build: draw arcs from start
-  const completed = floor(arcIndex)
-  for (let i = 0; i < completed; i++) {
-    drawCorner(allArcs[i].corner, allArcs[i].x, allArcs[i].y, 1, allArcs[i].entryEdge)
-  }
-  if (completed < totalArcs) {
-    const step = allArcs[completed]
-    drawCorner(step.corner, step.x, step.y, arcIndex - completed, step.entryEdge)
-  }
+// Unified build/unbuild: compute ranges and partial arc info
+const fullStart = unbuilding ? floor(totalArcs - arcIndex) + 1 : 0
+const fullEnd = unbuilding ? totalArcs : floor(arcIndex)
+const partialIdx = unbuilding ? floor(totalArcs - arcIndex) : floor(arcIndex)
+const partialProgress = unbuilding ? 1 - ((totalArcs - arcIndex) % 1) : arcIndex % 1
+
+// Draw completed arcs
+for (let i = fullStart; i < fullEnd; i++) {
+  const step = allArcs[i]
+  drawCorner(step.corner, step.x, step.y, 1, step.entryEdge)
+}
+
+// Draw partial arc (currently animating)
+if (partialIdx < totalArcs && partialProgress > 0) {
+  const step = allArcs[partialIdx]
+  drawCorner(step.corner, step.x, step.y, partialProgress, step.entryEdge, unbuilding)
 }

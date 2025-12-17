@@ -1,4 +1,4 @@
-// VERLET-W14 (work-in-progress)
+// VERLET-W14
 // — Orion Reed
 
 const ANCHORS = [

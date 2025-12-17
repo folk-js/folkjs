@@ -1,260 +1,225 @@
-// (HYPER)TEXT T20 
+// i line
 // — Orion Reed
+const t = params.t  // time: 0→1 looping
 
-__loopBudget = 30000 // it shouldnt need this
+// === TWEAKABLES ===
+const numSegments = 5         // number of stem segments (not counting dot)
+const dotSeparation = 0.3    // how far dot floats above
+const segmentSpread = 0.1    // base spread per segment when split
+const rotationStrength = 1.2  // how much segments tumble
+const bounceHeight = 0.35     // how high the bounce goes
+const bounceDecay = 2.5       // how quickly bounce dampens
+const alignStagger = 0.02     // time offset between each segment aligning (cascade effect)
 
-const t = params.t                      // time: 0→1 looping
-const q = params.q                      // waffle H: split variation
-const r = params.r                      // waffle V: thickness
+// === TIMELINE ===
+// 0.00 → 0.12: solid line rotating
+// 0.12 → 0.20: dot pops off top
+// 0.20 → 0.42: segments cascade off bottom (with rotation!)
+// 0.42 → 0.50: BEAT - everything holds, fully exploded
+// 0.50 → 0.68: segments rotate back into alignment (staggered, bottom first)
+// 0.68 → 0.85: everything slams back together
+// 0.85 → 1.00: elastic bounce from impact
+
+const T_DOT_START = 0.12
+const T_DOT_END = 0.20
+const T_SEG_START = 0.20
+const T_SEG_END = 0.42
+const T_BEAT_END = 0.50      // hold/pause before alignment
+const T_ALIGN_START = 0.50
+const T_ALIGN_END = 0.68
+const T_RETURN_START = 0.68
+const T_RETURN_END = 0.85
+const T_BOUNCE_START = 0.85
+const T_BOUNCE_END = 1.0
+
+// === HELPERS ===
+const easeOut = x => 1 - pow(1 - x, 3)
+const easeIn = x => x * x * x * x * x  // quintic - much faster acceleration!
+const easeInOut = x => x < 0.5 ? 4 * x * x * x : 1 - pow(-2 * x + 2, 3) / 2
+function mix(a, b, t) { return a + (b - a) * t }
+function clamp(x, lo, hi) { return x < lo ? lo : x > hi ? hi : x }
+function remap(x, a, b) { return clamp((x - a) / (b - a), 0, 1) }
+
+// Elastic bounce: quick up, settles back down
+function elasticBounce(x) {
+  // Damped sine wave that starts at peak and settles to 0
+  return sin(x * PI) * exp(-x * bounceDecay)
+}
 
 // Reset random state when time loops back to 0
 if (t < (params.s.lastT || 0)) {
-  params.s.barRotRand = (random() - 0.5) * 2   // -1 to 1
-  params.s.stemRotRand = (random() - 0.5) * 2
-  params.s.barOffsetX = (random() - 0.5) * 0.3
-  params.s.stemOffsetY = (random() - 0.5) * 0.4
+  params.s.segments = []
+  for (let i = 0; i < numSegments; i++) {
+    params.s.segments.push({
+      rot: vec3((random() - 0.5) * 2, (random() - 0.5) * 2, (random() - 0.5) * 2)
+    })
+  }
 }
 params.s.lastT = t
 
-// Get random values (stable within loop)
-const barRotRand = params.s.barRotRand || 0
-const stemRotRand = params.s.stemRotRand || 0
-const barOffsetX = params.s.barOffsetX || 0
-const stemOffsetY = params.s.stemOffsetY || 0
-
-// === HELPERS ===
-const ease = x => x < 0.5 ? 2 * x * x : 1 - pow(-2 * x + 2, 2) / 2
-const easeOut = x => 1 - pow(1 - x, 2)  // starts fast, slows down
-function mix(a, b, t) { return a + (b - a) * t }
-
-// Keyframe interpolation helper
-function keyframe(phase, points, easeFn = ease) {
-  const keys = Object.keys(points).map(Number).sort((a, b) => a - b)
-  
-  // Before first key
-  if (phase <= keys[0]) return points[keys[0]]
-  
-  // After last key
-  if (phase >= keys[keys.length - 1]) return points[keys[keys.length - 1]]
-  
-  // Find surrounding keys and interpolate
-  for (let i = 0; i < keys.length - 1; i++) {
-    const k0 = keys[i]
-    const k1 = keys[i + 1]
-    if (phase >= k0 && phase <= k1) {
-      const t = (phase - k0) / (k1 - k0)
-      return mix(points[k0], points[k1], easeFn(t))
-    }
-  }
-  
-  return points[keys[keys.length - 1]]
-}
-
-// Create a box at a LOCAL offset, rotate around ORIGIN, then translate to refPos
-function boxRelative(refPos, refRot, localOffset, size) {
-  const localBox = box(localOffset, size)
-  const rotated = rotate(localBox, refRot, false)
-  return translate(rotated, refPos)
-}
-
-// === ANIMATION ===
-// Everything is symmetric, with t=0 and t=1 at collapsed state (phase=0)
-// and t=0.5 at exploded state (phase=10)
-
-// Phase constants (timeline milestones)
-const COLLAPSED = 0
-const PAUSE_END = 0.5
-const EXPAND_Y_END = 3
-const EXPAND_Z_END = 5
-const EXPLODE_START = 6
-const SPLIT_START = 8
-const MAX_PHASE = 10
-
-// Triangle wave: 0→10→0 as t goes 0→0.5→1
-const phase = t < 0.5 ? t * 20 : (1 - t) * 20
+const segmentData = params.s.segments || []
 
 // === CAMERA ===
-// x=0, y=0 shows a normal front-facing T; drag to rotate
-const baseRotY = -params.x * PI * 0.5
-const baseRotX = params.y * PI * 0.4
+const spin = t * PI * 2 + 0.4  // continuous rotation (perfect loop!)
+const elev = 0.45
+const zoom = 0.85
 
-// Auto-rotate when depth expands to showcase it
-const autoRot = keyframe(phase, {
-  [COLLAPSED]: 0,
-  [EXPAND_Y_END]: 0,
-  [EXPAND_Z_END]: 0.3,  // more rotation
-  [MAX_PHASE]: 0.35
-})
+// === GEOMETRY ===
+const segW = 0.28
+const segD = 0.28
+const totalH = 1.4  // total height of the full line (including dot segment)
+const segH = totalH / (numSegments + 1)  // +1 for dot segment
 
-const spin = baseRotY + autoRot
-const elev = baseRotX + autoRot
-const zoom = 0.7
+// === ANIMATION STATE ===
 
-// === ANIMATION CONTINUED ===
+// Dot separation phase
+const dotPhase = easeOut(remap(t, T_DOT_START, T_DOT_END))
 
-// Assembly: how close pieces are (1=together, 0=scattered)
-const assembly = keyframe(phase, {
-  [COLLAPSED]: 1,
-  [EXPLODE_START]: 1,
-  [MAX_PHASE]: 0
-})
+// Segment cascade phase (each segment has staggered timing)
+const segCascadeDuration = T_SEG_END - T_SEG_START
+const segStagger = segCascadeDuration / (numSegments + 1)
 
-// Scale animations
-const scaleX = 1
-const scaleY = keyframe(phase, {
-  [COLLAPSED]: 0.001,
-  [PAUSE_END]: 0.001,
-  [EXPAND_Y_END]: 1,
-  [MAX_PHASE]: 1
-})
-const scaleZ = keyframe(phase, {
-  [COLLAPSED]: 0.05,
-  [PAUSE_END]: 0.05,
-  [EXPAND_Y_END]: 0.05,
-  [EXPAND_Z_END]: 1,
-  [MAX_PHASE]: 1
-})
+// Alignment phase - segments rotate back into alignment with stagger (bottom first)
+const alignPhase = remap(t, T_ALIGN_START, T_ALIGN_END)
 
-// Split happens late in explosion (ease-out: starts fast, slows down)
-const splitAmount = keyframe(phase, {
-  [SPLIT_START]: 0,
-  [MAX_PHASE]: 0.5
-}, easeOut)
-const showSplit = phase > SPLIT_START
+// Return phase (everything slams back - accelerates like gravity)
+const returnPhase = easeIn(remap(t, T_RETURN_START, T_RETURN_END))
 
-// === WAFFLE EFFECTS ===
-const depth = denorm(r, 0.2, 0.4)
-const splitVariation = denorm(q, 0, 1)  // q controls split gap and rotation
+// Bounce phase (elastic rebound after impact)
+const bouncePhase = remap(t, T_BOUNCE_START, T_BOUNCE_END)
+const bounceOffset = bouncePhase > 0 ? elasticBounce(bouncePhase) * bounceHeight : 0
 
-// === T GEOMETRY ===
-const barW = 1.3, barH = 0.26
-const stemW = 0.26, stemH = 1.2
-const halfBarW = barW / 2
-
-// Junction point
-const junctionY = -0.4
-const barHomeY = junctionY - barH / 2
-const stemHomeY = junctionY + stemH / 2
-
-// Scattered positions & rotations
-const barScatter = { x: 0, y: -0.5, z: 0.6 }
-const barScatterRot = { x: 3, y: 0.5, z: 0.2 }
-const stemScatter = { x: 0, y: 0.5, z: -0.5 }
-const stemScatterRot = { x: -0.7, y: -3.7, z: 0.3 }
-
-// Bar position & rotation (with random variation when exploded)
-const explosionFade = phase > EXPLODE_START ? (phase - EXPLODE_START) / (MAX_PHASE - EXPLODE_START) : 0
-const barPos = {
-  x: mix(barScatter.x, 0, assembly) * scaleX + barOffsetX * explosionFade,
-  y: mix(barScatter.y + barHomeY, barHomeY, assembly) * scaleY,
-  z: mix(barScatter.z, 0, assembly) * scaleZ
+// Helper: get rotation alignment for a segment (staggered, bottom first)
+// Returns 0 during explosion, then 0→1 as segment aligns
+function getRotationAlign(segIndex) {
+  // Before alignment phase starts, rotation is full (return 0)
+  if (alignPhase <= 0) return 0
+  
+  // Bottom segments (high index) align first
+  const alignOrder = numSegments - 1 - segIndex
+  const totalStaggerTime = (numSegments - 1) * alignStagger
+  const alignDuration = max(0.05, 1 - totalStaggerTime)  // ensure positive duration
+  const segStartNorm = alignOrder * alignStagger  // when this segment starts (0-1 in align phase)
+  
+  const localProgress = clamp((alignPhase - segStartNorm) / alignDuration, 0, 1)
+  return easeInOut(localProgress)
 }
-const barRot = {
-  x: mix(barScatterRot.x, 0, assembly) + barRotRand * 0.6 * explosionFade,
-  y: mix(barScatterRot.y, 0, assembly) + barRotRand * 0.5 * explosionFade,
-  z: mix(barScatterRot.z, 0, assembly)
-}
-
-// Split-specific rotations (unique for each half)
-const leftSplitRot = {
-  x: 1.9 * splitAmount,
-  y: -0.2 * splitAmount,
-  z: 0.15 * splitAmount
-}
-const rightSplitRot = {
-  x: 2.25 * splitAmount,
-  y: -1.45 * splitAmount,
-  z: -0.6 * splitAmount
-}
-
-// Stem position & rotation (with random variation when exploded)
-const stemPos = {
-  x: mix(stemScatter.x, 0, assembly) * scaleX,
-  y: mix(stemScatter.y + stemHomeY, stemHomeY, assembly) * scaleY + stemOffsetY * explosionFade,
-  z: mix(stemScatter.z, 0, assembly) * scaleZ
-}
-const stemRot = {
-  x: mix(stemScatterRot.x, 0, assembly) + stemRotRand * 0.5 * explosionFade,
-  y: mix(stemScatterRot.y, 0, assembly) + stemRotRand * 0.6 * explosionFade,
-  z: mix(stemScatterRot.z, 0, assembly)
-}
-
-// Size with scale applied
-const barSize = { x: barW * scaleX, y: barH * scaleY, z: depth * scaleZ }
-const stemSize = { x: stemW * scaleX, y: stemH * scaleY, z: depth * scaleZ }
 
 // === BUILD SHAPES ===
 const shapes = []
 
-// TOP BAR
-if (showSplit) {
-  // Waffle q controls split gap and twist
-  const splitGap = splitAmount * 0.3 * (1 + splitVariation * 0.5)
-  
-  // Unique rotations for each half
-  const leftRot = { 
-    x: barRot.x + leftSplitRot.x, 
-    y: barRot.y + leftSplitRot.y, 
-    z: barRot.z + leftSplitRot.z 
-  }
-  shapes.push(boxRelative(
-    barPos, leftRot,
-    { x: (-halfBarW / 2 - splitGap) * scaleX, y: 0, z: 0 },
-    { x: halfBarW * scaleX, y: barH * scaleY, z: depth * scaleZ }
-  ))
-  
-  const rightRot = { 
-    x: barRot.x + rightSplitRot.x, 
-    y: barRot.y + rightSplitRot.y, 
-    z: barRot.z + rightSplitRot.z 
-  }
-  shapes.push(boxRelative(
-    barPos, rightRot,
-    { x: (halfBarW / 2 + splitGap) * scaleX, y: 0, z: 0 },
-    { x: halfBarW * scaleX, y: barH * scaleY, z: depth * scaleZ }
-  ))
-} else {
-  shapes.push(rotate(box(barPos, barSize), barRot))
+// Determine which pieces have split off
+// A piece is "split" when its raw splitProgress > 0 (before return phase)
+
+// Dot split state
+const dotRawSplit = remap(t, T_DOT_START, T_DOT_END)
+const dotHasSplit = dotRawSplit > 0.001
+
+// Segment split states (from bottom up)
+const segmentHasSplit = []
+for (let i = 0; i < numSegments; i++) {
+  const splitOrder = numSegments - 1 - i  // bottom splits first
+  const segStart = T_SEG_START + splitOrder * segStagger
+  const rawSplit = remap(t, segStart, T_SEG_END)
+  segmentHasSplit[i] = rawSplit > 0.001
 }
 
-// STEM
-shapes.push(rotate(box(stemPos, stemSize), stemRot))
-
-// === GEOMETRIC CONSTRUCTION: GUIDE BOX WITH CORNER MARKERS ===
-if (assembly > 0.7) {
-  const fade = (assembly - 0.7) * 3.33
-  
-  // Fade out when very close to collapsed
-  const collapseFade = phase < 0.5 ? 0 : 1
-  const vis = fade * collapseFade
-  
-  // Guide box: taller and grows when scattered
-  const guideMargin = 0.6 + (1 - assembly) * 0.35
-  const guideW = (barW + guideMargin) * scaleX
-  const guideH = ((barHomeY - barH / 2 + (stemHomeY + stemH / 2)) + guideMargin * 3.3) * scaleY  // taller
-  const guideD = (depth + guideMargin) * scaleZ
-  
-  const guideCenterY = ((barHomeY - barH / 2 + stemHomeY + stemH / 2) / 2) * scaleY
-  
-  // 8 corners
-  const hw = guideW / 2, hh = guideH / 2, hd = guideD / 2
-  const corners = [
-    { x: -hw, y: guideCenterY - hh, z: -hd },
-    { x:  hw, y: guideCenterY - hh, z: -hd },
-    { x: -hw, y: guideCenterY + hh, z: -hd },
-    { x:  hw, y: guideCenterY + hh, z: -hd },
-    { x: -hw, y: guideCenterY - hh, z:  hd },
-    { x:  hw, y: guideCenterY - hh, z:  hd },
-    { x: -hw, y: guideCenterY + hh, z:  hd },
-    { x:  hw, y: guideCenterY + hh, z:  hd },
-  ]
-  
-  const markerSize = 0.04 * vis * scaleY //min(scaleY, scaleZ)
-  for (const corner of corners) {
-    shapes.push(cube(corner, markerSize))
+// Find the first unsplit segment (from top, i.e. lowest index)
+let firstUnsplitSeg = -1
+for (let i = 0; i < numSegments; i++) {
+  if (!segmentHasSplit[i]) {
+    firstUnsplitSeg = i
+    break
   }
 }
 
+// Count unsplit segments
+const unsplitCount = firstUnsplitSeg >= 0 ? numSegments - firstUnsplitSeg : 0
+// But wait - segments split from BOTTOM, so unsplit ones are at TOP
+// Let me recalculate: if bottom splits first, then unsplit segments are consecutive from index 0
+
+// Actually let's be more careful:
+// segmentHasSplit[i] where i=0 is top segment, i=numSegments-1 is bottom
+// Bottom (high i) splits first due to splitOrder = numSegments - 1 - i
+// So unsplit segments are the ones with lower indices (top ones)
+
+let unsplitFromTop = 0
+for (let i = 0; i < numSegments; i++) {
+  if (!segmentHasSplit[i]) unsplitFromTop++
+  else break  // once we hit a split one, the rest below are also split
+}
+
+const fullyMerged = returnPhase >= 1
+
+// === RENDER DOT ===
+if (dotHasSplit && !fullyMerged) {
+  // Dot has split off - render it individually
+  const dotEffectiveSplit = easeOut(dotRawSplit) * (1 - returnPhase)
+  const dotBaseY = -totalH / 2 + segH / 2
+  const dotFinalY = dotBaseY - dotEffectiveSplit * dotSeparation - bounceOffset
+  shapes.push(box({ x: 0, y: dotFinalY, z: 0 }, { x: segW, y: segH, z: segD }))
+}
+
+// === RENDER SPLIT SEGMENTS ===
+if (!fullyMerged) {
+  for (let i = 0; i < numSegments; i++) {
+    if (segmentHasSplit[i]) {
+      // This segment has split - render individually
+      const splitOrder = numSegments - 1 - i
+      const segStart = T_SEG_START + splitOrder * segStagger
+      const segEnd = segStart + segStagger * 1.5
+      const rawSplit = easeOut(remap(t, segStart, min(segEnd, T_SEG_END)))
+      const effectiveSplit = rawSplit * (1 - returnPhase)
+      
+      // Base position (i+1 because dot is index 0)
+      const baseY = -totalH / 2 + segH / 2 + (i + 1) * segH
+      const spreadAmount = effectiveSplit * segmentSpread * (i + 1) * 1.5
+      const finalY = baseY + spreadAmount - bounceOffset
+      
+      // Rotation: uses staggered alignment phase (bottom aligns first, then cascade up)
+      const data = segmentData[i] || { rot: vec3(0, 0, 0) }
+      const rotAlign = getRotationAlign(i)  // 0 = full rotation, 1 = aligned
+      const effectiveRotation = rawSplit * (1 - rotAlign)
+      const rotAmount = effectiveRotation * rotationStrength
+      const rot = {
+        x: data.rot.x * rotAmount,
+        y: data.rot.y * rotAmount * 0.3,
+        z: data.rot.z * rotAmount
+      }
+      
+      const piece = box({ x: 0, y: finalY, z: 0 }, { x: segW, y: segH, z: segD })
+      if (rot.x !== 0 || rot.y !== 0 || rot.z !== 0) {
+        shapes.push(rotate(piece, rot))
+      } else {
+        shapes.push(piece)
+      }
+    }
+  }
+}
+
+// === RENDER UNSPLIT PORTION AS ONE SHAPE ===
+if (fullyMerged) {
+  // Everything merged - render as single line
+  shapes.length = 0
+  shapes.push(box({ x: 0, y: -bounceOffset, z: 0 }, { x: segW, y: totalH, z: segD }))
+} else if (!dotHasSplit) {
+  // Nothing has split yet - render as single line
+  shapes.push(box({ x: 0, y: -bounceOffset, z: 0 }, { x: segW, y: totalH, z: segD }))
+} else if (unsplitFromTop > 0) {
+  // Dot has split, but some top segments remain unsplit
+  // Render ONLY the unsplit segments (NOT the dot's space - dot is rendered separately)
+  const unsplitH = segH * unsplitFromTop
+  // Unsplit segments start right after the dot's original position
+  // Dot was at index 0, segments start at index 1
+  // First unsplit segment is at index 1 in the original full bar
+  const unsplitTopY = -totalH / 2 + segH  // skip the dot's space
+  const unsplitCenterY = unsplitTopY + unsplitH / 2 - bounceOffset
+  shapes.push(box({ x: 0, y: unsplitCenterY, z: 0 }, { x: segW, y: unsplitH, z: segD }))
+} else if (dotHasSplit && unsplitFromTop === 0) {
+  // Dot split, all segments split - nothing unsplit, no unified shape needed
+}
+
+// === RENDER ===
 render(shapes)
 
 
@@ -273,6 +238,16 @@ render(shapes)
 // Constraints: Non-intersecting convex polyhedra only, sorry :)
 // All geometry functions return { verts: [{x,y,z}...], faces: [[indices...]...] }
 // Faces use CCW winding when viewed from outside
+
+// Vector utilities
+function vec3(x, y, z) { return { x, y, z } }
+function vadd(a, b) { return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z } }
+function vscale(v, s) { return { x: v.x * s, y: v.y * s, z: v.z * s } }
+function vlength(v) { return hypot(v.x, v.y, v.z) }
+function vnormalize(v) {
+  const len = vlength(v)
+  return len < 1e-10 ? vec3(0, 0, 0) : vscale(v, 1 / len)
+}
 
 // --- Transform functions ---
 
@@ -582,8 +557,16 @@ function planeZAt(x, y, v0, v1, v2) {
 
 // === MAIN HIDDEN LINE REMOVAL ===
 
-function computeVisible(objects, spin, elev, zoom) {
+// Hidden line modes:
+// - 'none': full line removal, only show visible edges (classic wireframe)
+// - 'xray': show lines occluded by OTHER objects as dotted (X-ray vision)
+// - 'backface': show back-face edges of shapes as dotted (see-through)
+// - 'all': combine xray + backface (full transparency)
+
+function computeVisible(objects, spin, elev, zoom, hiddenMode = 'none') {
   const viewDir = { x: 0, y: 0, z: -1 }
+  const showXray = hiddenMode === 'xray' || hiddenMode === 'all'
+  const showBackface = hiddenMode === 'backface' || hiddenMode === 'all'
 
   // Transform all objects to view space and compute face data
   const allFaces = []
@@ -616,12 +599,18 @@ function computeVisible(objects, spin, elev, zoom) {
     }
   })
 
-  // Collect candidate edges: those with at least one front-facing adjacent face
+  // Collect candidate edges
   const candidateEdges = []
   for (const e of edgeMap.values()) {
-    if (e.faceIndices.some(fi => allFaces[fi].isFront)) {
+    const hasFrontFace = e.faceIndices.some(fi => allFaces[fi].isFront)
       const obj = viewObjects[e.objIdx]
-      candidateEdges.push({ objIdx: e.objIdx, p0: obj.verts[e.i0], p1: obj.verts[e.i1] })
+    
+    if (hasFrontFace) {
+      // Edge has at least one front-facing face — starts visible
+      candidateEdges.push({ objIdx: e.objIdx, p0: obj.verts[e.i0], p1: obj.verts[e.i1], isBackface: false })
+    } else if (showBackface) {
+      // Edge is entirely on back faces — starts hidden (if we're showing backfaces)
+      candidateEdges.push({ objIdx: e.objIdx, p0: obj.verts[e.i0], p1: obj.verts[e.i1], isBackface: true })
     }
   }
 
@@ -630,18 +619,24 @@ function computeVisible(objects, spin, elev, zoom) {
 
   // Clip each candidate edge against front faces of OTHER objects
   const visibleSegments = []
+  const hiddenSegments = []
 
   for (const edge of candidateEdges) {
     const { x: x0, y: y0, z: z0 } = edge.p0
     const { x: x1, y: y1, z: z1 } = edge.p1
-    let segments = [{ t0: 0, t1: 1 }]
+    // Back-face edges start as hidden; front-face edges start visible
+    let segments = [{ t0: 0, t1: 1, hidden: edge.isBackface }]
 
     for (const face of frontFaces) {
-      // Skip self-occlusion (handled by face culling)
-      if (face.objIdx === edge.objIdx) continue 
+      // Skip self-occlusion for front-face edges (handled by face culling)
+      // But DO apply self-occlusion for back-face edges (they can be hidden by front faces of same object)
+      if (face.objIdx === edge.objIdx && !edge.isBackface) continue 
 
       const newSegments = []
       for (const seg of segments) {
+        // Already hidden segments stay hidden, no further processing needed
+        if (seg.hidden) { newSegments.push(seg); continue }
+
         // Segment endpoints in this sub-segment
         const sx0 = x0 + seg.t0 * (x1 - x0), sy0 = y0 + seg.t0 * (y1 - y0), sz0 = z0 + seg.t0 * (z1 - z0)
         const sx1 = x0 + seg.t1 * (x1 - x0), sy1 = y0 + seg.t1 * (y1 - y0), sz1 = z0 + seg.t1 * (z1 - z0)
@@ -658,7 +653,7 @@ function computeVisible(objects, spin, elev, zoom) {
         const faceZ = planeZAt(mx, my, face.verts3D[0], face.verts3D[1], face.verts3D[2])
 
         if (faceZ === null || mz <= faceZ + 1e-6) {
-          // Segment in front of face, keep it
+          // Segment in front of face, keep it as-is
           newSegments.push(seg)
           continue
         }
@@ -666,31 +661,65 @@ function computeVisible(objects, spin, elev, zoom) {
         // Segment is behind face — split around occluded region
         const gEnter = seg.t0 + tEnter * (seg.t1 - seg.t0)
         const gLeave = seg.t0 + tLeave * (seg.t1 - seg.t0)
-        if (gEnter > seg.t0 + 1e-6) newSegments.push({ t0: seg.t0, t1: gEnter })
-        if (gLeave < seg.t1 - 1e-6) newSegments.push({ t0: gLeave, t1: seg.t1 })
+        if (gEnter > seg.t0 + 1e-6) newSegments.push({ t0: seg.t0, t1: gEnter, hidden: false })
+        if (gLeave - gEnter > 1e-6) newSegments.push({ t0: gEnter, t1: gLeave, hidden: true })
+        if (gLeave < seg.t1 - 1e-6) newSegments.push({ t0: gLeave, t1: seg.t1, hidden: false })
       }
       segments = newSegments
-      if (segments.length === 0) break
     }
 
-    // Output visible portions
+    // Output visible and hidden portions
     for (const seg of segments) {
-      visibleSegments.push({
+      const result = {
         x0: x0 + seg.t0 * (x1 - x0), y0: y0 + seg.t0 * (y1 - y0),
         x1: x0 + seg.t1 * (x1 - x0), y1: y0 + seg.t1 * (y1 - y0),
-      })
+      }
+      // Only include hidden segments if we're in a mode that shows them
+      if (seg.hidden) {
+        if (showXray || showBackface) hiddenSegments.push(result)
+      } else {
+        visibleSegments.push(result)
+      }
     }
   }
 
-  return visibleSegments
+  return { visible: visibleSegments, hidden: hiddenSegments }
 }
 
 
-function render(shapes) {
-  const segments = computeVisible(shapes, spin, elev, zoom)
+// Draw a dotted line from (x0,y0) to (x1,y1)
+function dottedLine(x0, y0, x1, y1, dotLen = 0.02, gapLen = 0.02) {
+  const dx = x1 - x0, dy = y1 - y0
+  const len = hypot(dx, dy)
+  if (len < 1e-6) return
+  const ux = dx / len, uy = dy / len
+  const step = dotLen + gapLen
+  let t = 0
+  while (t < len) {
+    const tEnd = min(t + dotLen, len)
+    move(x0 + t * ux, y0 + t * uy)
+    line(x0 + tEnd * ux, y0 + tEnd * uy)
+    t += step
+  }
+}
+
+// Hidden line modes:
+// - 'none': full line removal, only show visible edges (classic wireframe)
+// - 'xray': show lines occluded by OTHER objects as dotted (X-ray vision)
+// - 'backface': show back-face edges of shapes as dotted (see-through)
+// - 'all': combine xray + backface (full transparency)
+function render(shapes, hiddenMode = 'none') {
+  const { visible, hidden } = computeVisible(shapes, spin, elev, zoom, hiddenMode)
   begin()
-  for (const s of segments) {
+  
+  // Draw visible lines (solid)
+  for (const s of visible) {
     move(s.x0, s.y0)
     line(s.x1, s.y1)
+  }
+  
+  // Draw hidden lines (dotted)
+  for (const s of hidden) {
+    dottedLine(s.x0, s.y0, s.x1, s.y1)
   }
 }
