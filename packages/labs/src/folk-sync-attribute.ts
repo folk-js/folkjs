@@ -69,6 +69,13 @@ declare global {
 // FolkSyncAttribute
 // ─────────────────────────────────────────────────────────────────────────────
 
+const OBSERVER_OPTIONS: MutationObserverInit = {
+  attributes: true,
+  characterData: true,
+  childList: true,
+  subtree: true,
+};
+
 export class FolkSyncAttribute extends CustomAttribute {
   static override attributeName = 'folk-sync';
 
@@ -145,6 +152,21 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
+  /** Get parent element from both Automerge doc and DOM for a childNodes patch */
+  #getParentElements(patch: Patch, doc: Doc<DOMJElement>): { amParent: DOMJElement; domParent: Element } | null {
+    const parentPath = getParentPath(patch.path);
+    const amParent = getNodeAtPath(doc, parentPath) as DOMJElement | undefined;
+    if (!amParent || amParent.nodeType !== Node.ELEMENT_NODE) return null;
+
+    const parentId = getObjectId(amParent);
+    if (!parentId) return null;
+
+    const domParent = this.#idToDom.get(parentId);
+    if (!domParent || domParent.nodeType !== Node.ELEMENT_NODE) return null;
+
+    return { amParent, domParent: domParent as Element };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // DOM ↔ Automerge Serialization
   // ─────────────────────────────────────────────────────────────────────────────
@@ -205,19 +227,11 @@ export class FolkSyncAttribute extends CustomAttribute {
    */
   #applyRemotePatches(patches: Patch[], doc: Doc<DOMJElement>): void {
     this.#observer?.disconnect();
-
     try {
-      for (const patch of patches) {
-        this.#applyRemotePatch(patch, doc);
-      }
+      for (const patch of patches) this.#applyRemotePatch(patch, doc);
     } finally {
-      this.#observer?.takeRecords(); // Discard any pending mutations
-      this.#observer?.observe(this.ownerElement, {
-        attributes: true,
-        characterData: true,
-        childList: true,
-        subtree: true,
-      });
+      this.#observer?.takeRecords();
+      this.#observer?.observe(this.ownerElement, OBSERVER_OPTIONS);
     }
   }
 
@@ -241,57 +255,42 @@ export class FolkSyncAttribute extends CustomAttribute {
   #reconcileChildren(patch: Patch, doc: Doc<DOMJElement>): void {
     if (!patch.path.includes('childNodes')) return;
 
-    const parentPath = getParentPath(patch.path);
-    const parentAmNode = getNodeAtPath(doc, parentPath) as DOMJElement | undefined;
-    if (!parentAmNode || parentAmNode.nodeType !== Node.ELEMENT_NODE) return;
-
-    const parentId = getObjectId(parentAmNode);
-    if (!parentId) return;
-
-    const parentDom = this.#idToDom.get(parentId);
-    if (!parentDom || parentDom.nodeType !== Node.ELEMENT_NODE) return;
-
-    const parentElement = parentDom as Element;
+    const parents = this.#getParentElements(patch, doc);
+    if (!parents) return;
+    const { amParent, domParent } = parents;
 
     // Build set of current Automerge child IDs
-    const amChildIds = new Set<ObjID>();
-    for (const amChild of parentAmNode.childNodes) {
-      const id = getObjectId(amChild);
-      if (id) amChildIds.add(id);
-    }
+    const amChildIds = new Set(amParent.childNodes.map((c) => getObjectId(c)).filter((id): id is ObjID => id !== null));
 
     // Remove DOM children that no longer exist in Automerge
-    for (const domChild of Array.from(parentElement.childNodes)) {
+    for (const domChild of Array.from(domParent.childNodes)) {
       const domChildId = this.#domToId.get(domChild);
       if (domChildId && !amChildIds.has(domChildId)) {
-        parentElement.removeChild(domChild);
+        domParent.removeChild(domChild);
         this.#removeMappingsRecursively(domChild);
       }
     }
 
     // Insert Automerge children that don't exist in DOM
-    for (let i = 0; i < parentAmNode.childNodes.length; i++) {
-      const amChild = parentAmNode.childNodes[i];
+    for (let i = 0; i < amParent.childNodes.length; i++) {
+      const amChild = amParent.childNodes[i];
       const amChildId = getObjectId(amChild);
       if (!amChildId || this.#idToDom.has(amChildId)) continue;
 
-      // Create DOM node
       const newDom = this.#hydrate(amChild);
 
       // Find insertion point: first following sibling that exists in DOM
       let refNode: Node | null = null;
-      for (let j = i + 1; j < parentAmNode.childNodes.length; j++) {
-        const nextId = getObjectId(parentAmNode.childNodes[j]);
-        if (nextId) {
-          const nextDom = this.#idToDom.get(nextId);
-          if (nextDom?.parentNode === parentElement) {
-            refNode = nextDom;
-            break;
-          }
+      for (let j = i + 1; j < amParent.childNodes.length; j++) {
+        const nextId = getObjectId(amParent.childNodes[j]);
+        const nextDom = nextId ? this.#idToDom.get(nextId) : undefined;
+        if (nextDom?.parentNode === domParent) {
+          refNode = nextDom;
+          break;
         }
       }
 
-      parentElement.insertBefore(newDom, refNode);
+      domParent.insertBefore(newDom, refNode);
       this.#createMappingsRecursively(newDom, amChild);
     }
   }
@@ -299,29 +298,25 @@ export class FolkSyncAttribute extends CustomAttribute {
   #applyRemotePut(patch: Patch & { action: 'put' }, doc: Doc<DOMJElement>): void {
     const nodePath = getNodePath(patch.path);
     const amNode = getNodeAtPath(doc, nodePath) as DOMJNode | undefined;
-    if (!amNode) return;
-
-    const nodeId = getObjectId(amNode);
-    if (!nodeId) return;
-
-    const domNode = this.#idToDom.get(nodeId);
-    if (!domNode) return;
+    const nodeId = amNode ? getObjectId(amNode) : null;
+    const domNode = nodeId ? this.#idToDom.get(nodeId) : undefined;
+    if (!amNode || !domNode) return;
 
     const propPath = patch.path.slice(nodePath.length);
 
     if (amNode.nodeType === Node.ELEMENT_NODE && propPath[0] === 'attributes') {
       const attrName = propPath[1] as string;
-      const element = domNode as Element;
       const attrValue = amNode.attributes[attrName];
       if (attrValue) {
-        element.setAttribute(attrName, attrValue.val);
+        (domNode as Element).setAttribute(attrName, attrValue.val);
       } else {
-        element.removeAttribute(attrName);
+        (domNode as Element).removeAttribute(attrName);
       }
-    } else if (amNode.nodeType === Node.TEXT_NODE || amNode.nodeType === Node.COMMENT_NODE) {
-      if (propPath[0] === 'textContent') {
-        domNode.textContent = amNode.textContent;
-      }
+    } else if (
+      (amNode.nodeType === Node.TEXT_NODE || amNode.nodeType === Node.COMMENT_NODE) &&
+      propPath[0] === 'textContent'
+    ) {
+      domNode.textContent = amNode.textContent;
     }
   }
 
@@ -330,18 +325,8 @@ export class FolkSyncAttribute extends CustomAttribute {
   // ─────────────────────────────────────────────────────────────────────────────
 
   #startObserving(): void {
-    this.#observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        this.#handleMutation(mutation);
-      }
-    });
-
-    this.#observer.observe(this.ownerElement, {
-      attributes: true,
-      characterData: true,
-      childList: true,
-      subtree: true,
-    });
+    this.#observer = new MutationObserver((mutations) => mutations.forEach((m) => this.#handleMutation(m)));
+    this.#observer.observe(this.ownerElement, OBSERVER_OPTIONS);
   }
 
   #stopObserving(): void {
@@ -400,8 +385,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   #handleChildListMutation(mutation: MutationRecord): void {
     const parentId = this.#domToId.get(mutation.target);
-    if (!parentId) return;
-    if (mutation.addedNodes.length === 0 && mutation.removedNodes.length === 0) return;
+    if (!parentId || (mutation.addedNodes.length === 0 && mutation.removedNodes.length === 0)) return;
 
     const parentElement = mutation.target as Element;
     const addedNodes = Array.from(mutation.addedNodes);
@@ -427,29 +411,24 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
 
       // Add nodes to Automerge
+      const domChildren = Array.from(parentElement.childNodes);
       for (const added of addedNodes) {
         const serialized = this.#serialize(added);
         if (!serialized) continue;
 
         // Calculate insertion index: count siblings before this node that are
         // either already mapped (existing) or in the current batch (being added)
-        const domChildren = Array.from(parentElement.childNodes);
         const domIndex = domChildren.indexOf(added as ChildNode);
         let amIndex = 0;
         for (let i = 0; i < domIndex; i++) {
-          if (this.#domToId.has(domChildren[i]) || addedSet.has(domChildren[i])) {
-            amIndex++;
-          }
+          if (this.#domToId.has(domChildren[i]) || addedSet.has(domChildren[i])) amIndex++;
         }
-
         parentNode.childNodes.splice(amIndex, 0, serialized);
       }
     });
 
     // Clean up mappings AFTER Automerge change (we needed IDs during the change)
-    for (const removed of mutation.removedNodes) {
-      this.#removeMappingsRecursively(removed);
-    }
+    for (const removed of mutation.removedNodes) this.#removeMappingsRecursively(removed);
   }
 
   /**
@@ -476,28 +455,18 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   /** Create mappings for nodes that were just inserted locally */
   #createMappingsForInsertedNodes(patch: Patch & { action: 'insert' }, doc: Doc<DOMJElement>): void {
-    const parentPath = getParentPath(patch.path);
-    const parentAmNode = getNodeAtPath(doc, parentPath) as DOMJElement | undefined;
-    if (!parentAmNode || parentAmNode.nodeType !== Node.ELEMENT_NODE) return;
-
-    const parentId = getObjectId(parentAmNode);
-    if (!parentId) return;
-
-    const parentDom = this.#idToDom.get(parentId);
-    if (!parentDom || parentDom.nodeType !== Node.ELEMENT_NODE) return;
-
-    const parentElement = parentDom as Element;
+    const parents = this.#getParentElements(patch, doc);
+    if (!parents) return;
+    const { amParent, domParent } = parents;
 
     // Find unmapped Automerge children and map them to their DOM counterparts by position
-    for (let i = 0; i < parentAmNode.childNodes.length; i++) {
-      const amChild = parentAmNode.childNodes[i];
+    for (let i = 0; i < amParent.childNodes.length; i++) {
+      const amChild = amParent.childNodes[i];
       const amChildId = getObjectId(amChild);
       if (!amChildId || this.#idToDom.has(amChildId)) continue;
 
-      const domChild = parentElement.childNodes[i];
-      if (domChild) {
-        this.#createMappingsRecursively(domChild, amChild);
-      }
+      const domChild = domParent.childNodes[i];
+      if (domChild) this.#createMappingsRecursively(domChild, amChild);
     }
   }
 
@@ -561,10 +530,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   #initializeWithDocument(doc: DOMJElement, isNew: boolean): void {
-    if (isNew) {
-      // New document: map existing DOM to Automerge IDs
-      this.#createMappingsRecursively(this.ownerElement, doc);
-    } else {
+    if (!isNew) {
       // Existing document: rebuild DOM from Automerge
       this.ownerElement.replaceChildren();
       for (const child of doc.childNodes) {
@@ -572,8 +538,11 @@ export class FolkSyncAttribute extends CustomAttribute {
         this.ownerElement.appendChild(domNode);
         this.#createMappingsRecursively(domNode, child);
       }
-      this.#storeMapping(this.ownerElement, doc);
     }
+
+    // Map root element and its children (for new docs, children are already in DOM)
+    this.#storeMapping(this.ownerElement, doc);
+    if (isNew) this.#createMappingsRecursively(this.ownerElement, doc);
 
     // Listen for remote changes
     this.#handle.on('change', ({ doc: updatedDoc, patches }) => {
