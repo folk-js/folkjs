@@ -24,19 +24,6 @@ function getNodeAtPath<T>(doc: Doc<T>, path: Prop[]): unknown {
   return path.reduce((current: any, key) => current?.[key], doc);
 }
 
-/**
- * Extract the path to the containing DOM node from a patch path.
- * E.g., ["childNodes", 1, "attributes", "style"] -> ["childNodes", 1]
- */
-function getNodePath(path: Prop[]): Prop[] {
-  for (let i = path.length - 1; i >= 0; i--) {
-    if (path[i] === 'childNodes' && i + 1 < path.length && typeof path[i + 1] === 'number') {
-      return path.slice(0, i + 2);
-    }
-  }
-  return [];
-}
-
 /** Extract the parent path from a childNodes patch path */
 function getParentPath(path: Prop[]): Prop[] {
   const idx = path.lastIndexOf('childNodes');
@@ -135,7 +122,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   #createMappingsRecursively(domNode: Node, amNode: DOMJNode): void {
     this.#storeMapping(domNode, amNode);
     if (domNode.nodeType === Node.ELEMENT_NODE && amNode.nodeType === Node.ELEMENT_NODE) {
-      const domChildren = Array.from((domNode as Element).childNodes);
+      const domChildren = (domNode as Element).childNodes;
       for (let i = 0; i < domChildren.length && i < amNode.childNodes.length; i++) {
         this.#createMappingsRecursively(domChildren[i], amNode.childNodes[i]);
       }
@@ -238,8 +225,10 @@ export class FolkSyncAttribute extends CustomAttribute {
   #applyRemotePatch(patch: Patch, doc: Doc<DOMJElement>): void {
     switch (patch.action) {
       case 'insert':
+        this.#applyRemoteInsert(patch, doc);
+        break;
       case 'del':
-        this.#reconcileChildren(patch, doc);
+        this.#applyRemoteDel(patch);
         break;
       case 'put':
         this.#applyRemotePut(patch, doc);
@@ -247,76 +236,88 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
-  /**
-   * Reconcile DOM children to match Automerge children.
-   * For inserts: find Automerge children without DOM mappings, create and insert them.
-   * For deletes: find DOM children without Automerge counterparts, remove them.
-   */
-  #reconcileChildren(patch: Patch, doc: Doc<DOMJElement>): void {
+  /** Insert nodes at exact index from patch */
+  #applyRemoteInsert(patch: Patch & { action: 'insert' }, doc: Doc<DOMJElement>): void {
     if (!patch.path.includes('childNodes')) return;
 
     const parents = this.#getParentElements(patch, doc);
     if (!parents) return;
     const { amParent, domParent } = parents;
 
-    // Build set of current Automerge child IDs
-    const amChildIds = new Set(amParent.childNodes.map((c) => getObjectId(c)).filter((id): id is ObjID => id !== null));
+    // Get the insertion index from the path (last element after 'childNodes')
+    const idx = patch.path[patch.path.length - 1] as number;
+    const count = patch.values.length;
 
-    // Remove DOM children that no longer exist in Automerge
-    for (const domChild of Array.from(domParent.childNodes)) {
-      const domChildId = this.#domToId.get(domChild);
-      if (domChildId && !amChildIds.has(domChildId)) {
-        domParent.removeChild(domChild);
-        this.#removeMappingsRecursively(domChild);
-      }
-    }
+    // Reference node is the current node at idx (before insertion)
+    const refNode = domParent.childNodes[idx] || null;
 
-    // Insert Automerge children that don't exist in DOM
-    for (let i = 0; i < amParent.childNodes.length; i++) {
-      const amChild = amParent.childNodes[i];
+    // Insert each new node from the Automerge document
+    for (let i = 0; i < count; i++) {
+      const amChild = amParent.childNodes[idx + i];
+      if (!amChild) continue;
+
+      // Skip if already mapped (e.g., local change that we're seeing as a patch)
       const amChildId = getObjectId(amChild);
-      if (!amChildId || this.#idToDom.has(amChildId)) continue;
+      if (amChildId && this.#idToDom.has(amChildId)) continue;
 
       const newDom = this.#hydrate(amChild);
-
-      // Find insertion point: first following sibling that exists in DOM
-      let refNode: Node | null = null;
-      for (let j = i + 1; j < amParent.childNodes.length; j++) {
-        const nextId = getObjectId(amParent.childNodes[j]);
-        const nextDom = nextId ? this.#idToDom.get(nextId) : undefined;
-        if (nextDom?.parentNode === domParent) {
-          refNode = nextDom;
-          break;
-        }
-      }
-
       domParent.insertBefore(newDom, refNode);
       this.#createMappingsRecursively(newDom, amChild);
     }
   }
 
-  #applyRemotePut(patch: Patch & { action: 'put' }, doc: Doc<DOMJElement>): void {
-    const nodePath = getNodePath(patch.path);
-    const amNode = getNodeAtPath(doc, nodePath) as DOMJNode | undefined;
-    const nodeId = amNode ? getObjectId(amNode) : null;
-    const domNode = nodeId ? this.#idToDom.get(nodeId) : undefined;
-    if (!amNode || !domNode) return;
+  /** Delete nodes at exact index from patch */
+  #applyRemoteDel(patch: Patch & { action: 'del'; length?: number }): void {
+    if (!patch.path.includes('childNodes')) return;
 
-    const propPath = patch.path.slice(nodePath.length);
+    // Navigate DOM using path indices to find parent
+    let domParent: Node = this.ownerElement;
+    const parentPath = getParentPath(patch.path);
+    for (let i = 0; i < parentPath.length; i += 2) {
+      if (parentPath[i] !== 'childNodes') return;
+      const child = (domParent as Element).childNodes[parentPath[i + 1] as number];
+      if (!child) return;
+      domParent = child;
+    }
 
-    if (amNode.nodeType === Node.ELEMENT_NODE && propPath[0] === 'attributes') {
-      const attrName = propPath[1] as string;
-      const attrValue = amNode.attributes[attrName];
-      if (attrValue) {
-        (domNode as Element).setAttribute(attrName, attrValue.val);
-      } else {
-        (domNode as Element).removeAttribute(attrName);
+    const idx = patch.path[patch.path.length - 1] as number;
+    const count = patch.length ?? 1;
+
+    // Remove nodes at the specified index
+    for (let i = 0; i < count; i++) {
+      const child = (domParent as Element).childNodes[idx];
+      if (child) {
+        this.#removeMappingsRecursively(child);
+        domParent.removeChild(child);
       }
-    } else if (
-      (amNode.nodeType === Node.TEXT_NODE || amNode.nodeType === Node.COMMENT_NODE) &&
-      propPath[0] === 'textContent'
-    ) {
-      domNode.textContent = amNode.textContent;
+    }
+  }
+
+  #applyRemotePut(patch: Patch & { action: 'put' }, doc: Doc<DOMJElement>): void {
+    const path = patch.path;
+
+    // Handle attribute changes: path ends with ["attributes", attrName]
+    const attrIdx = path.lastIndexOf('attributes');
+    if (attrIdx !== -1 && attrIdx === path.length - 2) {
+      const nodePath = path.slice(0, attrIdx);
+      const attrName = path[attrIdx + 1] as string;
+      const amNode = getNodeAtPath(doc, nodePath) as DOMJElement | undefined;
+      if (!amNode) return;
+      const domNode = this.#idToDom.get(getObjectId(amNode)!) as Element | undefined;
+      if (!domNode) return;
+
+      const attrValue = amNode.attributes[attrName];
+      attrValue ? domNode.setAttribute(attrName, attrValue.val) : domNode.removeAttribute(attrName);
+      return;
+    }
+
+    // Handle textContent changes: path ends with "textContent"
+    if (path[path.length - 1] === 'textContent') {
+      const nodePath = path.slice(0, -1);
+      const amNode = getNodeAtPath(doc, nodePath) as DOMJNode | undefined;
+      if (!amNode) return;
+      const domNode = this.#idToDom.get(getObjectId(amNode)!);
+      if (domNode) domNode.textContent = (amNode as { textContent: string }).textContent;
     }
   }
 
@@ -388,8 +389,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     if (!parentId || (mutation.addedNodes.length === 0 && mutation.removedNodes.length === 0)) return;
 
     const parentElement = mutation.target as Element;
-    const addedNodes = Array.from(mutation.addedNodes);
-    const addedSet = new Set(addedNodes);
+    const addedSet = new Set(mutation.addedNodes);
 
     // Collect IDs of removed nodes BEFORE clearing mappings (needed to find them in Automerge)
     const removedIds = new Map<Node, ObjID>();
@@ -411,14 +411,14 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
 
       // Add nodes to Automerge
-      const domChildren = Array.from(parentElement.childNodes);
-      for (const added of addedNodes) {
+      const domChildren = parentElement.childNodes;
+      for (const added of mutation.addedNodes) {
         const serialized = this.#serialize(added);
         if (!serialized) continue;
 
         // Calculate insertion index: count siblings before this node that are
         // either already mapped (existing) or in the current batch (being added)
-        const domIndex = domChildren.indexOf(added as ChildNode);
+        const domIndex = Array.prototype.indexOf.call(domChildren, added);
         let amIndex = 0;
         for (let i = 0; i < domIndex; i++) {
           if (this.#domToId.has(domChildren[i]) || addedSet.has(domChildren[i])) amIndex++;
@@ -492,39 +492,29 @@ export class FolkSyncAttribute extends CustomAttribute {
   async #initializeDocument(): Promise<void> {
     const docId = this.value;
 
-    if (!docId || !isValidAutomergeUrl(docId)) {
-      await this.#createNewDocument();
-      return;
-    }
-
-    this.#handle = await this.#repo.find<DOMJElement>(docId);
-
-    try {
-      const doc = this.#handle.doc();
-      if (doc) {
-        this.#initializeWithDocument(doc, false);
-      } else {
-        await this.#createNewDocument();
+    // Try to find existing document
+    if (docId && isValidAutomergeUrl(docId)) {
+      this.#handle = await this.#repo.find<DOMJElement>(docId);
+      try {
+        const doc = this.#handle.doc();
+        if (doc) {
+          this.#initializeWithDocument(doc, false);
+          return;
+        }
+      } catch {
+        // Fall through to create new document
       }
-    } catch {
-      await this.#createNewDocument();
     }
-  }
 
-  async #createNewDocument(): Promise<void> {
+    // Create new document from current DOM state
     const initialDoc = this.#serialize(this.ownerElement) as DOMJElement;
     this.#handle = this.#repo.create<DOMJElement>(initialDoc);
-
     await this.#handle.whenReady();
 
-    if (!this.value) {
-      this.value = this.#handle.url;
-    }
+    if (!this.value) this.value = this.#handle.url;
 
     const doc = this.#handle.doc();
-    if (doc) {
-      this.#initializeWithDocument(doc, true);
-    }
+    if (doc) this.#initializeWithDocument(doc, true);
 
     this.ownerElement.dispatchEvent(new DocChangeEvent(this.value));
   }
