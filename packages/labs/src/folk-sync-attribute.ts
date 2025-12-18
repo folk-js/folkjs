@@ -86,8 +86,8 @@ export class FolkSyncAttribute extends CustomAttribute {
   #domToId = new Map<Node, ObjID>();
   #idToDom = new Map<ObjID, Node>();
 
-  // Prevents the DocHandle 'change' event from processing our own local changes.
-  // This flag must span the entire handle.change() call because the event fires AFTER it returns.
+  // Prevents processing our own local changes as remote patches.
+  // Needed because the 'change' event fires synchronously during handle.change().
   #isLocalChange = false;
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -228,7 +228,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         this.#applyRemoteInsert(patch, doc);
         break;
       case 'del':
-        this.#applyRemoteDel(patch);
+        this.#applyRemoteDel(patch, doc);
         break;
       case 'put':
         this.#applyRemotePut(patch, doc);
@@ -267,28 +267,20 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   /** Delete nodes at exact index from patch */
-  #applyRemoteDel(patch: Patch & { action: 'del'; length?: number }): void {
+  #applyRemoteDel(patch: Patch & { action: 'del'; length?: number }, doc: Doc<DOMJElement>): void {
     if (!patch.path.includes('childNodes')) return;
 
-    // Navigate DOM using path indices to find parent
-    let domParent: Node = this.ownerElement;
-    const parentPath = getParentPath(patch.path);
-    for (let i = 0; i < parentPath.length; i += 2) {
-      if (parentPath[i] !== 'childNodes') return;
-      const child = (domParent as Element).childNodes[parentPath[i + 1] as number];
-      if (!child) return;
-      domParent = child;
-    }
+    const parents = this.#getParentElements(patch, doc);
+    if (!parents) return;
 
     const idx = patch.path[patch.path.length - 1] as number;
     const count = patch.length ?? 1;
 
-    // Remove nodes at the specified index
     for (let i = 0; i < count; i++) {
-      const child = (domParent as Element).childNodes[idx];
+      const child = parents.domParent.childNodes[idx];
       if (child) {
         this.#removeMappingsRecursively(child);
-        domParent.removeChild(child);
+        parents.domParent.removeChild(child);
       }
     }
   }
