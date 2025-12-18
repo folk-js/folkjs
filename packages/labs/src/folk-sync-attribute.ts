@@ -10,15 +10,18 @@ import {
   WebSocketClientAdapter,
 } from '@automerge/vanillajs';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
-import type { Comment, Element, Text } from 'hast';
+import type * as HAST from 'hast';
 import { BiMap } from './BiMap';
 
+// DOM node union when we need to handle all node types
+type DOMNode = Element | Text | Comment;
+
 // HAST-based (HTML AST) types with Automerge ImmutableString for CRDT attribute values
-interface SyncElement extends Omit<Element, 'properties' | 'children'> {
+interface SyncElement extends Omit<HAST.Element, 'properties' | 'children'> {
   properties: { [key: string]: ImmutableString };
   children: SyncNode[];
 }
-type SyncNode = SyncElement | Text | Comment;
+type SyncNode = SyncElement | HAST.Text | HAST.Comment;
 
 /** Navigate to a node in the document using a path */
 function getNodeAtPath<T>(doc: Doc<T>, path: Prop[]): unknown {
@@ -65,46 +68,34 @@ export class FolkSyncAttribute extends CustomAttribute {
   #changeHandler: ((payload: DocHandleChangePayload<SyncElement>) => void) | null = null;
 
   // Bidirectional mapping between DOM nodes and Automerge object IDs
-  #nodeMapping = new BiMap<Node, ObjID>();
+  #nodeMapping = new BiMap<DOMNode, ObjID>();
 
   // Prevents processing our own local changes as remote patches.
   // Needed because automerge-repo doesn't yet pass through proper source info
   // (see TODO in DocHandle.ts line 252)
   #isLocalChange = false;
 
-  #storeMapping(domNode: Node, amNode: SyncNode): void {
+  #storeMapping(domNode: DOMNode, amNode: SyncNode): void {
     const id = getObjectId(amNode);
     if (id) {
       this.#nodeMapping.set(domNode, id);
     }
   }
 
-  #removeMappingsRecursively(domNode: Node): void {
+  #removeMappingsRecursively(domNode: DOMNode): void {
     this.#nodeMapping.deleteByA(domNode);
-    switch (domNode.nodeType) {
-      case Node.ELEMENT_NODE:
-        for (const child of (domNode as globalThis.Element).childNodes) {
-          this.#removeMappingsRecursively(child);
-        }
-        break;
-      case Node.TEXT_NODE:
-      case Node.CDATA_SECTION_NODE:
-      case Node.PROCESSING_INSTRUCTION_NODE:
-      case Node.COMMENT_NODE:
-      case Node.DOCUMENT_NODE:
-      case Node.DOCUMENT_TYPE_NODE:
-      case Node.DOCUMENT_FRAGMENT_NODE:
-      default:
-        break;
+    if (domNode.nodeType === Node.ELEMENT_NODE) {
+      for (const child of domNode.childNodes) {
+        this.#removeMappingsRecursively(child as DOMNode);
+      }
     }
   }
 
-  #createMappingsRecursively(domNode: Node, amNode: SyncNode): void {
+  #createMappingsRecursively(domNode: DOMNode, amNode: SyncNode): void {
     this.#storeMapping(domNode, amNode);
-    if (domNode.nodeType === Node.ELEMENT_NODE && amNode.type === 'element') {
-      const domChildren = (domNode as globalThis.Element).childNodes;
-      for (let i = 0; i < domChildren.length && i < amNode.children.length; i++) {
-        this.#createMappingsRecursively(domChildren[i], amNode.children[i]);
+    if (amNode.type === 'element' && domNode.nodeType === Node.ELEMENT_NODE) {
+      for (let i = 0; i < domNode.childNodes.length && i < amNode.children.length; i++) {
+        this.#createMappingsRecursively(domNode.childNodes[i] as DOMNode, amNode.children[i]);
       }
     }
   }
@@ -114,18 +105,18 @@ export class FolkSyncAttribute extends CustomAttribute {
     path: Prop[],
     doc: Doc<SyncElement>,
   ):
-    | { kind: 'property'; domNode: globalThis.Element; amNode: SyncElement; propName: string }
-    | { kind: 'value'; domNode: Node; amNode: Text | Comment }
-    | { kind: 'children'; domParent: globalThis.Element; amParent: SyncElement; idx: number }
+    | { kind: 'property'; domNode: Element; amNode: SyncElement; propName: string }
+    | { kind: 'value'; domNode: Text | Comment; amNode: HAST.Text | HAST.Comment }
+    | { kind: 'children'; domParent: Element; amParent: SyncElement; idx: number }
     | null {
     const last = path[path.length - 1];
     const secondLast = path.length >= 2 ? path[path.length - 2] : undefined;
 
     // value: path ends with 'value'
     if (last === 'value') {
-      const amNode = getNodeAtPath(doc, path.slice(0, -1)) as Text | Comment | undefined;
+      const amNode = getNodeAtPath(doc, path.slice(0, -1)) as HAST.Text | HAST.Comment | undefined;
       if (!amNode) return null;
-      const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!);
+      const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!) as Text | Comment | undefined;
       if (!domNode) return null;
       return { kind: 'value', domNode, amNode };
     }
@@ -134,7 +125,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     if (secondLast === 'properties' && typeof last === 'string') {
       const amNode = getNodeAtPath(doc, path.slice(0, -2)) as SyncElement | undefined;
       if (!amNode) return null;
-      const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!) as globalThis.Element | undefined;
+      const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!) as Element | undefined;
       if (!domNode) return null;
       return { kind: 'property', domNode, amNode, propName: last };
     }
@@ -143,7 +134,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     if (secondLast === 'children' && typeof last === 'number') {
       const amParent = getNodeAtPath(doc, path.slice(0, -2)) as SyncElement | undefined;
       if (!amParent || amParent.type !== 'element') return null;
-      const domParent = this.#nodeMapping.getByB(getObjectId(amParent)!) as globalThis.Element | undefined;
+      const domParent = this.#nodeMapping.getByB(getObjectId(amParent)!) as Element | undefined;
       if (!domParent) return null;
       return { kind: 'children', domParent, amParent, idx: last };
     }
@@ -157,19 +148,8 @@ export class FolkSyncAttribute extends CustomAttribute {
         return { type: 'text', value: node.textContent || '' };
       case Node.COMMENT_NODE:
         return { type: 'comment', value: node.textContent || '' };
-      case Node.ELEMENT_NODE: {
-        const el = node as globalThis.Element;
-        const properties: Record<string, ImmutableString> = {};
-        for (const attr of el.attributes) {
-          properties[attr.name] = new ImmutableString(attr.value);
-        }
-        const children: SyncNode[] = [];
-        for (const child of el.childNodes) {
-          const serialized = this.#serialize(child);
-          if (serialized) children.push(serialized);
-        }
-        return { type: 'element', tagName: el.tagName.toLowerCase(), properties, children };
-      }
+      case Node.ELEMENT_NODE:
+        return this.#serializeElement(node as Element);
       case Node.CDATA_SECTION_NODE:
       case Node.PROCESSING_INSTRUCTION_NODE:
       case Node.DOCUMENT_NODE:
@@ -180,9 +160,22 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
+  #serializeElement(element: Element): SyncElement {
+    const properties: Record<string, ImmutableString> = {};
+    for (const attr of element.attributes) {
+      properties[attr.name] = new ImmutableString(attr.value);
+    }
+    const children: SyncNode[] = [];
+    for (const child of element.childNodes) {
+      const serialized = this.#serialize(child);
+      if (serialized) children.push(serialized);
+    }
+    return { type: 'element', tagName: element.tagName.toLowerCase(), properties, children };
+  }
+
   /** Create DOM from Automerge node, mapping as we go */
-  #hydrate(amNode: SyncNode): Node {
-    let dom: Node;
+  #hydrate(amNode: SyncNode): DOMNode {
+    let dom: DOMNode;
     switch (amNode.type) {
       case 'element': {
         const el = document.createElement(amNode.tagName);
@@ -266,7 +259,7 @@ export class FolkSyncAttribute extends CustomAttribute {
           for (let i = 0; i < count; i++) {
             const child = domParent.childNodes[idx];
             if (child) {
-              this.#removeMappingsRecursively(child);
+              this.#removeMappingsRecursively(child as DOMNode);
               domParent.removeChild(child);
             }
           }
@@ -289,10 +282,12 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   #handleAttributeMutation(mutation: MutationRecord): void {
-    const targetId = this.#nodeMapping.getByA(mutation.target);
+    // Attribute mutations always have Element targets - cast once at entry
+    if (mutation.target.nodeType !== Node.ELEMENT_NODE) return;
+    const element = mutation.target as Element;
+    const targetId = this.#nodeMapping.getByA(element);
     if (!targetId || !mutation.attributeName) return;
 
-    const element = mutation.target as globalThis.Element;
     const attrName = mutation.attributeName;
     const newValue = element.getAttribute(attrName);
 
@@ -309,10 +304,11 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   #handleCharacterDataMutation(mutation: MutationRecord): void {
-    const targetId = this.#nodeMapping.getByA(mutation.target);
+    const target = mutation.target as DOMNode;
+    const targetId = this.#nodeMapping.getByA(target);
     if (!targetId) return;
 
-    const newContent = mutation.target.textContent || '';
+    const newContent = target.textContent || '';
 
     this.#applyLocalChange((doc) => {
       const node = getNodeById(doc, targetId);
@@ -331,16 +327,17 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   #handleChildListMutation(mutation: MutationRecord): void {
-    const parentId = this.#nodeMapping.getByA(mutation.target);
+    // ChildList mutations always have Element targets - cast once at entry
+    const parentElement = mutation.target as Element;
+    const parentId = this.#nodeMapping.getByA(parentElement);
     if (!parentId || (mutation.addedNodes.length === 0 && mutation.removedNodes.length === 0)) return;
-
-    const parentElement = mutation.target as globalThis.Element;
     const addedSet = new Set(mutation.addedNodes);
 
     // Collect IDs of removed nodes BEFORE clearing mappings (needed to find them in Automerge)
     const removedIds = new Map<Node, ObjID>();
     for (const removed of mutation.removedNodes) {
-      const id = this.#nodeMapping.getByA(removed);
+      const removedNode = removed as DOMNode;
+      const id = this.#nodeMapping.getByA(removedNode);
       if (id) removedIds.set(removed, id);
     }
 
@@ -350,7 +347,8 @@ export class FolkSyncAttribute extends CustomAttribute {
     const domNodeToAmIndex = new Map<Node, number>();
     let amIdx = 0;
     for (const child of domChildren) {
-      if (this.#nodeMapping.hasA(child) || addedSet.has(child)) {
+      const childNode = child as DOMNode;
+      if (this.#nodeMapping.hasA(childNode) || addedSet.has(child)) {
         domNodeToAmIndex.set(child, amIdx++);
       }
     }
@@ -385,7 +383,9 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
 
     // Clean up mappings AFTER Automerge change (we needed IDs during the change)
-    for (const removed of mutation.removedNodes) this.#removeMappingsRecursively(removed);
+    for (const removed of mutation.removedNodes) {
+      this.#removeMappingsRecursively(removed as DOMNode);
+    }
   }
 
   override connectedCallback(): void {
@@ -423,7 +423,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Create new document if needed
     if (!doc) {
       try {
-        this.#handle = this.#repo.create<SyncElement>(this.#serialize(this.ownerElement) as SyncElement);
+        this.#handle = this.#repo.create<SyncElement>(this.#serializeElement(this.ownerElement));
         await this.#handle.whenReady();
         this.value = this.#handle.url;
         doc = this.#handle.doc();
