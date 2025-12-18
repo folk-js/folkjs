@@ -10,8 +10,15 @@ import {
   WebSocketClientAdapter,
 } from '@automerge/vanillajs';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
-import type { DOMJComment, DOMJElement, DOMJNode, DOMJText } from '@folkjs/labs/dom-json';
+import type { Comment, Element, Text } from 'hast';
 import { BiMap } from './BiMap';
+
+// HAST-based (HTML AST) types with Automerge ImmutableString for CRDT attribute values
+interface SyncElement extends Omit<Element, 'properties' | 'children'> {
+  properties: { [key: string]: ImmutableString };
+  children: SyncNode[];
+}
+type SyncNode = SyncElement | Text | Comment;
 
 /** Navigate to a node in the document using a path */
 function getNodeAtPath<T>(doc: Doc<T>, path: Prop[]): unknown {
@@ -19,9 +26,9 @@ function getNodeAtPath<T>(doc: Doc<T>, path: Prop[]): unknown {
 }
 
 /** Get an Automerge node by its object ID */
-function getNodeById(doc: Doc<DOMJElement>, id: ObjID): DOMJNode | null {
+function getNodeById(doc: Doc<SyncElement>, id: ObjID): SyncNode | null {
   const info = getBackend(doc).objInfo(id);
-  return info?.path ? (getNodeAtPath(doc, info.path) as DOMJNode) : null;
+  return info?.path ? (getNodeAtPath(doc, info.path) as SyncNode) : null;
 }
 
 export class DocChangeEvent extends Event {
@@ -53,9 +60,9 @@ export class FolkSyncAttribute extends CustomAttribute {
   static override attributeName = 'folk-sync';
 
   #repo!: Repo;
-  #handle: DocHandle<DOMJElement> | null = null;
+  #handle: DocHandle<SyncElement> | null = null;
   #observer: MutationObserver | null = null;
-  #changeHandler: ((payload: DocHandleChangePayload<DOMJElement>) => void) | null = null;
+  #changeHandler: ((payload: DocHandleChangePayload<SyncElement>) => void) | null = null;
 
   // Bidirectional mapping between DOM nodes and Automerge object IDs
   #nodeMapping = new BiMap<Node, ObjID>();
@@ -65,7 +72,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   // (see TODO in DocHandle.ts line 252)
   #isLocalChange = false;
 
-  #storeMapping(domNode: Node, amNode: DOMJNode): void {
+  #storeMapping(domNode: Node, amNode: SyncNode): void {
     const id = getObjectId(amNode);
     if (id) {
       this.#nodeMapping.set(domNode, id);
@@ -74,19 +81,30 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   #removeMappingsRecursively(domNode: Node): void {
     this.#nodeMapping.deleteByA(domNode);
-    if (domNode.nodeType === Node.ELEMENT_NODE) {
-      for (const child of (domNode as Element).childNodes) {
-        this.#removeMappingsRecursively(child);
-      }
+    switch (domNode.nodeType) {
+      case Node.ELEMENT_NODE:
+        for (const child of (domNode as globalThis.Element).childNodes) {
+          this.#removeMappingsRecursively(child);
+        }
+        break;
+      case Node.TEXT_NODE:
+      case Node.CDATA_SECTION_NODE:
+      case Node.PROCESSING_INSTRUCTION_NODE:
+      case Node.COMMENT_NODE:
+      case Node.DOCUMENT_NODE:
+      case Node.DOCUMENT_TYPE_NODE:
+      case Node.DOCUMENT_FRAGMENT_NODE:
+      default:
+        break;
     }
   }
 
-  #createMappingsRecursively(domNode: Node, amNode: DOMJNode): void {
+  #createMappingsRecursively(domNode: Node, amNode: SyncNode): void {
     this.#storeMapping(domNode, amNode);
-    if (domNode.nodeType === Node.ELEMENT_NODE && amNode.nodeType === Node.ELEMENT_NODE) {
-      const domChildren = (domNode as Element).childNodes;
-      for (let i = 0; i < domChildren.length && i < amNode.childNodes.length; i++) {
-        this.#createMappingsRecursively(domChildren[i], amNode.childNodes[i]);
+    if (domNode.nodeType === Node.ELEMENT_NODE && amNode.type === 'element') {
+      const domChildren = (domNode as globalThis.Element).childNodes;
+      for (let i = 0; i < domChildren.length && i < amNode.children.length; i++) {
+        this.#createMappingsRecursively(domChildren[i], amNode.children[i]);
       }
     }
   }
@@ -94,101 +112,107 @@ export class FolkSyncAttribute extends CustomAttribute {
   /** Resolve a patch path to get the target node(s) and classify the change type */
   #resolvePatch(
     path: Prop[],
-    doc: Doc<DOMJElement>,
+    doc: Doc<SyncElement>,
   ):
-    | { kind: 'attribute'; domNode: Element; amNode: DOMJElement; attrName: string }
-    | { kind: 'textContent'; domNode: Node; amNode: DOMJText | DOMJComment }
-    | { kind: 'childNodes'; domParent: Element; amParent: DOMJElement; idx: number }
+    | { kind: 'property'; domNode: globalThis.Element; amNode: SyncElement; propName: string }
+    | { kind: 'value'; domNode: Node; amNode: Text | Comment }
+    | { kind: 'children'; domParent: globalThis.Element; amParent: SyncElement; idx: number }
     | null {
     const last = path[path.length - 1];
     const secondLast = path.length >= 2 ? path[path.length - 2] : undefined;
 
-    // textContent: path ends with 'textContent'
-    if (last === 'textContent') {
-      const amNode = getNodeAtPath(doc, path.slice(0, -1)) as DOMJText | DOMJComment | undefined;
+    // value: path ends with 'value'
+    if (last === 'value') {
+      const amNode = getNodeAtPath(doc, path.slice(0, -1)) as Text | Comment | undefined;
       if (!amNode) return null;
       const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!);
       if (!domNode) return null;
-      return { kind: 'textContent', domNode, amNode };
+      return { kind: 'value', domNode, amNode };
     }
 
-    // attribute: path ends with ['attributes', attrName]
-    if (secondLast === 'attributes' && typeof last === 'string') {
-      const amNode = getNodeAtPath(doc, path.slice(0, -2)) as DOMJElement | undefined;
+    // property: path ends with ['properties', propName]
+    if (secondLast === 'properties' && typeof last === 'string') {
+      const amNode = getNodeAtPath(doc, path.slice(0, -2)) as SyncElement | undefined;
       if (!amNode) return null;
-      const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!) as Element | undefined;
+      const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!) as globalThis.Element | undefined;
       if (!domNode) return null;
-      return { kind: 'attribute', domNode, amNode, attrName: last };
+      return { kind: 'property', domNode, amNode, propName: last };
     }
 
-    // childNodes: path ends with ['childNodes', index]
-    if (secondLast === 'childNodes' && typeof last === 'number') {
-      const amParent = getNodeAtPath(doc, path.slice(0, -2)) as DOMJElement | undefined;
-      if (!amParent || amParent.nodeType !== Node.ELEMENT_NODE) return null;
-      const domParent = this.#nodeMapping.getByB(getObjectId(amParent)!) as Element | undefined;
+    // children: path ends with ['children', index]
+    if (secondLast === 'children' && typeof last === 'number') {
+      const amParent = getNodeAtPath(doc, path.slice(0, -2)) as SyncElement | undefined;
+      if (!amParent || amParent.type !== 'element') return null;
+      const domParent = this.#nodeMapping.getByB(getObjectId(amParent)!) as globalThis.Element | undefined;
       if (!domParent) return null;
-      return { kind: 'childNodes', domParent, amParent, idx: last };
+      return { kind: 'children', domParent, amParent, idx: last };
     }
 
     return null;
   }
 
-  #serialize(node: Node): DOMJNode | null {
+  #serialize(node: Node): SyncNode | null {
     switch (node.nodeType) {
       case Node.TEXT_NODE:
-        return { nodeType: Node.TEXT_NODE, textContent: node.textContent || '' };
+        return { type: 'text', value: node.textContent || '' };
       case Node.COMMENT_NODE:
-        return { nodeType: Node.COMMENT_NODE, textContent: node.textContent || '' };
+        return { type: 'comment', value: node.textContent || '' };
       case Node.ELEMENT_NODE: {
-        const el = node as Element;
-        const attributes: Record<string, ImmutableString> = {};
+        const el = node as globalThis.Element;
+        const properties: Record<string, ImmutableString> = {};
         for (const attr of el.attributes) {
-          attributes[attr.name] = new ImmutableString(attr.value);
+          properties[attr.name] = new ImmutableString(attr.value);
         }
-        const childNodes: DOMJNode[] = [];
+        const children: SyncNode[] = [];
         for (const child of el.childNodes) {
           const serialized = this.#serialize(child);
-          if (serialized) childNodes.push(serialized);
+          if (serialized) children.push(serialized);
         }
-        return { nodeType: Node.ELEMENT_NODE, tagName: el.tagName.toLowerCase(), attributes, childNodes };
+        return { type: 'element', tagName: el.tagName.toLowerCase(), properties, children };
       }
+      case Node.CDATA_SECTION_NODE:
+      case Node.PROCESSING_INSTRUCTION_NODE:
+      case Node.DOCUMENT_NODE:
+      case Node.DOCUMENT_TYPE_NODE:
+      case Node.DOCUMENT_FRAGMENT_NODE:
       default:
         return null;
     }
   }
 
   /** Create DOM from Automerge node, mapping as we go */
-  #hydrate(amNode: DOMJNode): Node {
+  #hydrate(amNode: SyncNode): Node {
     let dom: Node;
-    switch (amNode.nodeType) {
-      case Node.ELEMENT_NODE: {
+    switch (amNode.type) {
+      case 'element': {
         const el = document.createElement(amNode.tagName);
-        for (const [name, value] of Object.entries(amNode.attributes)) {
+        for (const [name, value] of Object.entries(amNode.properties)) {
           el.setAttribute(name, value.val);
         }
-        for (const child of amNode.childNodes) {
+        for (const child of amNode.children) {
           el.appendChild(this.#hydrate(child));
         }
         dom = el;
         break;
       }
-      case Node.TEXT_NODE: {
-        dom = document.createTextNode(amNode.textContent);
+      case 'text': {
+        dom = document.createTextNode(amNode.value);
         break;
       }
-      case Node.COMMENT_NODE: {
-        dom = document.createComment(amNode.textContent);
+      case 'comment': {
+        dom = document.createComment(amNode.value);
         break;
       }
       default:
-        throw new Error(`Unknown node type: ${(amNode as any).nodeType}`);
+        amNode satisfies never;
+        throw new Error(`Unknown node type: ${(amNode as any).type}`);
     }
     this.#storeMapping(dom, amNode);
     return dom;
   }
 
   /** Apply a local DOM change to Automerge, preventing the change event from re-applying patches */
-  #applyLocalChange(changeFn: (doc: DOMJElement) => void): void {
+  #applyLocalChange(changeFn: (doc: SyncElement) => void): void {
     this.#isLocalChange = true;
     try {
       this.#handle?.change(changeFn);
@@ -202,7 +226,7 @@ export class FolkSyncAttribute extends CustomAttribute {
    * We disconnect the observer during this operation because MutationObserver
    * callbacks are async (microtasks), so a flag-based approach doesn't work.
    */
-  #applyRemotePatches(patches: Patch[], doc: Doc<DOMJElement>): void {
+  #applyRemotePatches(patches: Patch[], doc: Doc<SyncElement>): void {
     this.#observer?.disconnect();
     try {
       for (const patch of patches) this.#applyRemotePatch(patch, doc);
@@ -212,26 +236,26 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
-  #applyRemotePatch(patch: Patch, doc: Doc<DOMJElement>): void {
+  #applyRemotePatch(patch: Patch, doc: Doc<SyncElement>): void {
     const target = this.#resolvePatch(patch.path, doc);
     if (!target) return;
 
     switch (target.kind) {
-      case 'attribute': {
-        const value = target.amNode.attributes[target.attrName];
-        if (value) target.domNode.setAttribute(target.attrName, value.val);
-        else target.domNode.removeAttribute(target.attrName);
-        return;
+      case 'property': {
+        const value = target.amNode.properties[target.propName];
+        if (value) target.domNode.setAttribute(target.propName, value.val);
+        else target.domNode.removeAttribute(target.propName);
+        break;
       }
-      case 'textContent':
-        target.domNode.textContent = target.amNode.textContent;
-        return;
-      case 'childNodes': {
+      case 'value':
+        target.domNode.textContent = target.amNode.value;
+        break;
+      case 'children': {
         const { domParent, amParent, idx } = target;
         if (patch.action === 'insert') {
           const refNode = domParent.childNodes[idx] || null;
           for (let i = 0; i < patch.values.length; i++) {
-            const amChild = amParent.childNodes[idx + i];
+            const amChild = amParent.children[idx + i];
             if (!amChild) continue;
             const amChildId = getObjectId(amChild);
             if (amChildId && this.#nodeMapping.hasB(amChildId)) continue;
@@ -247,8 +271,10 @@ export class FolkSyncAttribute extends CustomAttribute {
             }
           }
         }
-        return;
+        break;
       }
+      default:
+        target satisfies never;
     }
   }
 
@@ -266,18 +292,18 @@ export class FolkSyncAttribute extends CustomAttribute {
     const targetId = this.#nodeMapping.getByA(mutation.target);
     if (!targetId || !mutation.attributeName) return;
 
-    const element = mutation.target as Element;
+    const element = mutation.target as globalThis.Element;
     const attrName = mutation.attributeName;
     const newValue = element.getAttribute(attrName);
 
     this.#applyLocalChange((doc) => {
       const node = getNodeById(doc, targetId);
-      if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+      if (!node || node.type !== 'element') return;
 
       if (newValue === null) {
-        delete node.attributes[attrName];
+        delete node.properties[attrName];
       } else {
-        node.attributes[attrName] = new ImmutableString(newValue);
+        node.properties[attrName] = new ImmutableString(newValue);
       }
     });
   }
@@ -290,8 +316,17 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     this.#applyLocalChange((doc) => {
       const node = getNodeById(doc, targetId);
-      if (!node || (node.nodeType !== Node.TEXT_NODE && node.nodeType !== Node.COMMENT_NODE)) return;
-      node.textContent = newContent;
+      if (!node) return;
+      switch (node.type) {
+        case 'text':
+        case 'comment':
+          node.value = newContent;
+          break;
+        case 'element':
+          break;
+        default:
+          node satisfies never;
+      }
     });
   }
 
@@ -299,7 +334,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     const parentId = this.#nodeMapping.getByA(mutation.target);
     if (!parentId || (mutation.addedNodes.length === 0 && mutation.removedNodes.length === 0)) return;
 
-    const parentElement = mutation.target as Element;
+    const parentElement = mutation.target as globalThis.Element;
     const addedSet = new Set(mutation.addedNodes);
 
     // Collect IDs of removed nodes BEFORE clearing mappings (needed to find them in Automerge)
@@ -322,14 +357,14 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     this.#applyLocalChange((doc) => {
       const parentNode = getNodeById(doc, parentId);
-      if (!parentNode || parentNode.nodeType !== Node.ELEMENT_NODE) return;
+      if (!parentNode || parentNode.type !== 'element') return;
 
       // Remove nodes from Automerge
       for (const removed of mutation.removedNodes) {
         const removedId = removedIds.get(removed);
         if (!removedId) continue;
-        const idx = parentNode.childNodes.findIndex((c) => getObjectId(c) === removedId);
-        if (idx !== -1) parentNode.childNodes.splice(idx, 1);
+        const idx = parentNode.children.findIndex((c) => getObjectId(c) === removedId);
+        if (idx !== -1) parentNode.children.splice(idx, 1);
       }
 
       // Add nodes to Automerge using pre-computed indices
@@ -337,7 +372,7 @@ export class FolkSyncAttribute extends CustomAttribute {
         const serialized = this.#serialize(added);
         if (!serialized) continue;
         const insertIdx = domNodeToAmIndex.get(added) ?? 0;
-        parentNode.childNodes.splice(insertIdx, 0, serialized);
+        parentNode.children.splice(insertIdx, 0, serialized);
       }
     });
 
@@ -367,16 +402,16 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   async #initializeDocument(): Promise<void> {
-    let doc: DOMJElement | undefined;
+    let doc: SyncElement | undefined;
 
     // Try to find existing document
     if (this.value && isValidAutomergeUrl(this.value)) {
       try {
-        this.#handle = await this.#repo.find<DOMJElement>(this.value);
+        this.#handle = await this.#repo.find<SyncElement>(this.value);
         doc = this.#handle.doc();
         if (doc) {
           this.ownerElement.replaceChildren();
-          for (const child of doc.childNodes) {
+          for (const child of doc.children) {
             this.ownerElement.appendChild(this.#hydrate(child));
           }
         }
@@ -388,7 +423,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Create new document if needed
     if (!doc) {
       try {
-        this.#handle = this.#repo.create<DOMJElement>(this.#serialize(this.ownerElement) as DOMJElement);
+        this.#handle = this.#repo.create<SyncElement>(this.#serialize(this.ownerElement) as SyncElement);
         await this.#handle.whenReady();
         this.value = this.#handle.url;
         doc = this.#handle.doc();
@@ -420,6 +455,8 @@ export class FolkSyncAttribute extends CustomAttribute {
           case 'childList':
             this.#handleChildListMutation(m);
             break;
+          default:
+            m.type satisfies never;
         }
       }
     });
