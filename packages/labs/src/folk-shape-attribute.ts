@@ -1,5 +1,5 @@
 import { IPointTransform, TransformStack } from '@folkjs/canvas';
-import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
+import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import { ResizeManager } from '@folkjs/dom/ResizeManger';
 import { css } from '@folkjs/dom/tags';
 import * as M from '@folkjs/geometry/Matrix2D';
@@ -11,11 +11,15 @@ import { ShapeConnectedEvent, ShapeDisconnectedEvent, TransformEvent, type Shape
 
 declare global {
   interface Element {
-    shape: FolkShapeAttribute | undefined;
+    folkShape: FolkShapeAttribute | undefined;
   }
 }
 
 const resizeManager = new ResizeManager();
+
+// Define FolkShapeOverlay before FolkShapeAttribute class initialization
+// since FolkShapeAttribute.#overlay uses document.createElement('folk-shape-overlay')
+FolkShapeOverlay.define();
 
 // TODO: if an auto position/size is defined as a style then we should probably save it and set it back
 export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject, IPointTransform {

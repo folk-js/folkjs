@@ -43,7 +43,7 @@ export function dragToCreateElement<T extends Element = Element>(
     let el: T | null = null;
 
     function onPointerDown(event: PointerEvent) {
-      const point = container.space!.mapPointFromParent({ x: event.pageX, y: event.pageY });
+      const point = container.folkSpace!.mapPointFromParent({ x: event.pageX, y: event.pageY });
       el = createElement(point);
       container.addEventListener('pointermove', onPointerMove, { capture: true });
       container.addEventListener('pointerup', onPointerUp, { capture: true });
@@ -53,13 +53,13 @@ export function dragToCreateElement<T extends Element = Element>(
 
     function onPointerMove(event: PointerEvent) {
       if (el === null) return;
-      const point = container.space!.mapPointFromParent({ x: event.pageX, y: event.pageY });
+      const point = container.folkSpace!.mapPointFromParent({ x: event.pageX, y: event.pageY });
       updateElement(el, point);
     }
 
     function onPointerUp(event: PointerEvent) {
       if (el === null) return;
-      const point = container.space!.mapPointFromParent({ x: event.pageX, y: event.pageY });
+      const point = container.folkSpace!.mapPointFromParent({ x: event.pageX, y: event.pageY });
       updateElement(el, point);
       cleanUp();
       resolve(el);
@@ -97,7 +97,7 @@ export async function dragToCreateShape<T extends Element = Element>(
       return element;
     },
     (el, point) => {
-      const shape = el.shape;
+      const shape = el.folkShape;
 
       if (shape === undefined) return;
 

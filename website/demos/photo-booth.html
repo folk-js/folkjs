@@ -41,7 +41,7 @@
         if (e.code !== 'Space') return;
 
         const image = videoFrameToImage(video);
-        image.setAttribute('folk-shape', `x: ${lastShape.shape.x}; y: ${lastShape.shape.bottom + GAP}`);
+        image.setAttribute('folk-shape', `x: ${lastShape.folkShape.x}; y: ${lastShape.folkShape.bottom + GAP}`);
         document.body.appendChild(image);
         lastShape = image;
       });

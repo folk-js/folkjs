@@ -1,5 +1,5 @@
 document.addEventListener('copy', (e) => {
-  if (!(e.target instanceof HTMLElement) || e.target.shape === undefined) return;
+  if (!(e.target instanceof HTMLElement) || e.target.folkShape === undefined) return;
 
   e.preventDefault();
 

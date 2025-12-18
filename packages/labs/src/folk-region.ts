@@ -42,19 +42,19 @@ export class FolkRegion extends ReactiveElement {
   #onTransform = (event: TransformEvent) => {
     const el = event.target as Element;
 
-    if (this === el || this.shape === undefined || el.shape === undefined) return;
+    if (this === el || this.folkShape === undefined || el.folkShape === undefined) return;
 
-    const overlap = R.overlap(getAbsoluteRectangle(this.shape), getAbsoluteRectangle(el.shape));
+    const overlap = R.overlap(getAbsoluteRectangle(this.folkShape), getAbsoluteRectangle(el.folkShape));
     if (this.contains(el) && overlap < 0.49) {
       this.parentElement!.moveBefore!(el, null);
 
-      el.shape!.x += this.shape!.x;
-      el.shape!.y += this.shape!.y;
+      el.folkShape!.x += this.folkShape!.x;
+      el.folkShape!.y += this.folkShape!.y;
     } else if (!this.contains(el) && overlap > 0.51) {
       this.moveBefore!(el, null);
 
-      el.shape!.x -= this.shape!.x;
-      el.shape!.y -= this.shape!.y;
+      el.folkShape!.x -= this.folkShape!.x;
+      el.folkShape!.y -= this.folkShape!.y;
     }
   };
 }

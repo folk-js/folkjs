@@ -1,4 +1,4 @@
-import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
+import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import { css, html } from '@folkjs/dom/tags';
 import {
   CompletionRequest,
@@ -18,6 +18,12 @@ import { RefID } from './utils/ref-id';
 // Valid LSP languages
 export const VALID_LSP_LANGUAGES = ['js', 'ts', 'json', 'css'] as const;
 export type LSPLanguage = (typeof VALID_LSP_LANGUAGES)[number];
+
+declare global {
+  interface Element {
+    folkLsp: FolkLSPAttribute | undefined;
+  }
+}
 
 // TODOs
 // incremental updates

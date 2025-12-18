@@ -16,7 +16,7 @@ export class FolkInstrument extends ReactiveElement {
       'erase',
       async (container, cancellationSignal) => {
         await brushToDeleteElements(container, cancellationSignal, (el) =>
-          el.shape !== undefined && el.parentElement === container ? el : null,
+          el.folkShape !== undefined && el.parentElement === container ? el : null,
         );
       },
     ],

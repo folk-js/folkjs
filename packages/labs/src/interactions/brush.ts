@@ -6,7 +6,7 @@ import type { FolkInk, StrokePoint } from 'src/folk-ink';
 
 export function brushInkShape(container: HTMLElement, cancellationSignal: AbortSignal) {
   return new Promise<FolkInk | null>((resolve) => {
-    const transformStack = new TransformStack(container.space ? [container.space] : []);
+    const transformStack = new TransformStack(container.folkSpace ? [container.folkSpace] : []);
     const ink = document.createElement('folk-ink');
     const points: StrokePoint[] = [];
 
@@ -19,14 +19,14 @@ export function brushInkShape(container: HTMLElement, cancellationSignal: AbortS
         pressure: point.pressure,
       });
 
-      if (ink.shape === undefined) return;
+      if (ink.folkShape === undefined) return;
 
       const bounds = R.expand(V.bounds.apply(null, points), ink.size);
 
-      ink.shape.x = bounds.x;
-      ink.shape.y = bounds.y;
-      ink.shape.width = bounds.width;
-      ink.shape.height = bounds.height;
+      ink.folkShape.x = bounds.x;
+      ink.folkShape.y = bounds.y;
+      ink.folkShape.width = bounds.width;
+      ink.folkShape.height = bounds.height;
 
       ink.points = points.map((p) => ({ ...V.toRelativePoint(bounds, p), pressure: p.pressure }));
     }

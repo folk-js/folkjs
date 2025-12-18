@@ -258,9 +258,9 @@ export class FolkShapeOverlay extends ReactiveElement {
           if (this.#shape === null) {
             const el = document.querySelector('[folk-shape]');
 
-            if (el?.shape === undefined) return;
+            if (el?.folkShape === undefined) return;
 
-            this.open(el.shape, el as HTMLElement);
+            this.open(el.folkShape, el as HTMLElement);
           }
 
           this.focus();
@@ -330,7 +330,7 @@ export class FolkShapeOverlay extends ReactiveElement {
     }
 
     if (event instanceof FocusEvent) {
-      if (event.relatedTarget !== this.shape?.ownerElement) {
+      if (event.relatedTarget !== this.#ownerElement) {
         this.#spatialTabMode = false;
         this.close();
       }
