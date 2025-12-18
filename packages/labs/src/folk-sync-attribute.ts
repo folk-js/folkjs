@@ -155,6 +155,10 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   #serialize(node: Node): DOMJNode | null {
     switch (node.nodeType) {
+      case Node.TEXT_NODE:
+        return { nodeType: Node.TEXT_NODE, textContent: node.textContent || '' };
+      case Node.COMMENT_NODE:
+        return { nodeType: Node.COMMENT_NODE, textContent: node.textContent || '' };
       case Node.ELEMENT_NODE: {
         const el = node as Element;
         const attributes: Record<string, ImmutableString> = {};
@@ -168,10 +172,6 @@ export class FolkSyncAttribute extends CustomAttribute {
         }
         return { nodeType: Node.ELEMENT_NODE, tagName: el.tagName.toLowerCase(), attributes, childNodes };
       }
-      case Node.TEXT_NODE:
-        return { nodeType: Node.TEXT_NODE, textContent: node.textContent || '' };
-      case Node.COMMENT_NODE:
-        return { nodeType: Node.COMMENT_NODE, textContent: node.textContent || '' };
       default:
         return null;
     }
@@ -229,18 +229,17 @@ export class FolkSyncAttribute extends CustomAttribute {
     switch (target.kind) {
       case 'attribute': {
         const value = target.amNode.attributes[target.attrName];
-        value
-          ? target.domNode.setAttribute(target.attrName, value.val)
-          : target.domNode.removeAttribute(target.attrName);
-        break;
+        if (value) target.domNode.setAttribute(target.attrName, value.val);
+        else target.domNode.removeAttribute(target.attrName);
+        return;
       }
       case 'textContent':
         target.domNode.textContent = (target.amNode as { textContent: string }).textContent;
-        break;
+        return;
       case 'childNodes':
         if (patch.action === 'insert') this.#applyRemoteInsert(patch as Patch & { action: 'insert' }, target);
         else if (patch.action === 'del') this.#applyRemoteDel(patch as Patch & { action: 'del' }, target);
-        break;
+        return;
     }
   }
 
@@ -418,56 +417,37 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   async #initializeDocument(): Promise<void> {
-    const docId = this.value;
+    let doc: DOMJElement | undefined;
 
     // Try to find existing document
-    if (docId && isValidAutomergeUrl(docId)) {
-      this.#handle = await this.#repo.find<DOMJElement>(docId);
-      try {
-        const doc = this.#handle.doc();
-        if (doc) {
-          this.#initializeWithDocument(doc, false);
-          return;
+    if (this.value && isValidAutomergeUrl(this.value)) {
+      this.#handle = await this.#repo.find<DOMJElement>(this.value);
+      doc = this.#handle.doc();
+      if (doc) {
+        this.ownerElement.replaceChildren();
+        for (const child of doc.childNodes) {
+          this.ownerElement.appendChild(this.#hydrate(child));
         }
-      } catch {
-        // Fall through to create new document
       }
     }
 
-    // Create new document from current DOM state
-    const initialDoc = this.#serialize(this.ownerElement) as DOMJElement;
-    this.#handle = this.#repo.create<DOMJElement>(initialDoc);
-    await this.#handle.whenReady();
-
-    if (!this.value) this.value = this.#handle.url;
-
-    const doc = this.#handle.doc();
-    if (doc) this.#initializeWithDocument(doc, true);
-
-    this.ownerElement.dispatchEvent(new DocChangeEvent(this.value));
-  }
-
-  #initializeWithDocument(doc: DOMJElement, isNew: boolean): void {
-    if (isNew) {
-      // New document: DOM already exists, map entire tree from root
-      this.#createMappingsRecursively(this.ownerElement, doc);
-    } else {
-      // Existing document: rebuild DOM from Automerge (hydrate self-maps children)
-      this.ownerElement.replaceChildren();
-      for (const child of doc.childNodes) {
-        this.ownerElement.appendChild(this.#hydrate(child));
-      }
-      // Map root element (children already mapped by hydrate)
-      this.#storeMapping(this.ownerElement, doc);
+    // Create new document if needed
+    if (!doc) {
+      this.#handle = this.#repo.create<DOMJElement>(this.#serialize(this.ownerElement) as DOMJElement);
+      await this.#handle.whenReady();
+      if (!this.value) this.value = this.#handle.url;
+      doc = this.#handle.doc();
+      this.ownerElement.dispatchEvent(new DocChangeEvent(this.value));
     }
 
-    // Listen for remote changes
+    if (!doc) return;
+
+    this.#createMappingsRecursively(this.ownerElement, doc);
     this.#handle.on('change', ({ doc: updatedDoc, patches }) => {
       if (updatedDoc && !this.#isLocalChange) {
         this.#applyRemotePatches(patches || [], updatedDoc);
       }
     });
-
     this.#startObserving();
   }
 }
