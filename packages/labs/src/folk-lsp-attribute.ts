@@ -1,4 +1,4 @@
-import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
+import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import { css, html } from '@folkjs/dom/tags';
 import {
   CompletionRequest,
@@ -18,6 +18,12 @@ import { RefID } from './utils/ref-id';
 // Valid LSP languages
 export const VALID_LSP_LANGUAGES = ['js', 'ts', 'json', 'css'] as const;
 export type LSPLanguage = (typeof VALID_LSP_LANGUAGES)[number];
+
+declare global {
+  interface Element {
+    folkLsp: FolkLSPAttribute | undefined;
+  }
+}
 
 // TODOs
 // incremental updates
@@ -68,18 +74,6 @@ class LanguageServerPool {
 
 export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
   static override attributeName = 'folk-lsp';
-
-  static override define() {
-    if (!customAttributes.isDefined(this.attributeName)) {
-      Object.defineProperty(Element.prototype, 'lsp', {
-        get() {
-          return customAttributes.get(this, FolkLSPAttribute.attributeName) as FolkLSPAttribute | undefined;
-        },
-      });
-    }
-
-    super.define();
-  }
 
   static #highlightRegistry = {
     'folk-lsp-error': new Highlight(),

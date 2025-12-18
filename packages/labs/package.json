@@ -116,6 +116,7 @@
     "webcola": "^3.4.0"
   },
   "devDependencies": {
+    "@types/hast": "^3.0.4",
     "@types/wicg-file-system-access": "^2023.10.7",
     "expect": "^29.7.0",
     "mitata": "^1.0.34",

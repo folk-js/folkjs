@@ -5,15 +5,15 @@ export async function mergeShapesByClick(
   container: HTMLElement,
 ): Promise<HTMLElement | null> {
   const el1 = await selectElement(cancellationSignal, document.documentElement, (el) =>
-    el.shape === undefined ? null : el,
+    el.folkShape === undefined ? null : el,
   );
   const el2 = await selectElement(cancellationSignal, document.documentElement, (el) =>
-    el.shape === undefined || el === el1 ? null : el,
+    el.folkShape === undefined || el === el1 ? null : el,
   );
 
   if (el1 === null || el2 === null) return null;
 
-  const shape = el1.shape!;
+  const shape = el1.folkShape!;
   const section = document.createElement('section');
   section.setAttribute('folk-shape', `x: ${shape.x}; y: ${shape.y}`);
   // TODO: there is a bug where removing the attributes after appending them to the section fails

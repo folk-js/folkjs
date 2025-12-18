@@ -182,9 +182,9 @@ export class FolkObserver {
       if (target instanceof FolkShape) {
         target.addEventListener('transform', this.#onTransform);
         callback({ target, contentRect: target.getTransformDOMRect() });
-      } else if (target.shape !== undefined) {
+      } else if (target.folkShape !== undefined) {
         target.addEventListener('transform', this.#onTransform);
-        callback({ target, contentRect: target.shape as unknown as DOMRectReadOnly });
+        callback({ target, contentRect: target.folkShape as unknown as DOMRectReadOnly });
       } else {
         this.#vo.observe(target);
       }
@@ -192,8 +192,8 @@ export class FolkObserver {
       const contentRect =
         target instanceof FolkShape
           ? target.getTransformDOMRect()
-          : target.shape !== undefined
-            ? (target.shape as unknown as DOMRectReadOnly)
+          : target.folkShape !== undefined
+            ? (target.folkShape as unknown as DOMRectReadOnly)
             : target.getBoundingClientRect();
       callback({ target, contentRect });
     }
@@ -223,7 +223,7 @@ export class FolkObserver {
     callbacks.delete(callback);
 
     if (callbacks.size === 0) {
-      if (target instanceof FolkShape || target.shape !== undefined) {
+      if (target instanceof FolkShape || target.folkShape !== undefined) {
         target.removeEventListener('transform', this.#onTransform);
       } else {
         this.#vo.unobserve(target);

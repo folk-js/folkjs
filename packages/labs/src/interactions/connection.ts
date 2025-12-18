@@ -30,8 +30,8 @@ export async function clickToCreateConnection<T extends FolkBaseConnection = Fol
   function onPointerMove(event: PointerEvent) {
     let pointerPosition = { x: event.pageX, y: event.pageY };
 
-    if (container.space) {
-      pointerPosition = container.space?.mapPointFromParent(pointerPosition);
+    if (container.folkSpace) {
+      pointerPosition = container.folkSpace?.mapPointFromParent(pointerPosition);
     }
 
     connection.target = pointerPosition;

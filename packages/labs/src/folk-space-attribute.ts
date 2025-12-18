@@ -1,5 +1,5 @@
 import { IPointTransform } from '@folkjs/canvas';
-import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
+import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import { css } from '@folkjs/dom/tags';
 import * as BVH from '@folkjs/geometry/BoundingVolumeHierarchy';
 import * as M from '@folkjs/geometry/Matrix2D';
@@ -10,7 +10,7 @@ import { ShapeConnectedEvent, ShapeDisconnectedEvent, type Shape2DObject } from 
 
 declare global {
   interface Element {
-    space: FolkSpaceAttribute | undefined;
+    folkSpace: FolkSpaceAttribute | undefined;
   }
 }
 
@@ -39,18 +39,6 @@ declare global {
 
 export class FolkSpaceAttribute extends CustomAttribute implements IPointTransform {
   static override attributeName = 'folk-space';
-
-  static override define() {
-    if (!customAttributes.isDefined(this.attributeName)) {
-      Object.defineProperty(Element.prototype, 'space', {
-        get() {
-          return customAttributes.get(this, FolkSpaceAttribute.attributeName) as FolkSpaceAttribute | undefined;
-        },
-      });
-    }
-
-    super.define();
-  }
 
   static styles = css`
     :host([folk-space]) {

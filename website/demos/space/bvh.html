@@ -44,10 +44,10 @@
 
       function loop() {
         requestAnimationFrame(loop);
-        const zoom = document.body.space.bvh;
+        const zoom = document.body.folkSpace.bvh;
         Gizmos.clear();
 
-        breathFirstTraverse(document.body.space.bvh, (node) => {
+        breathFirstTraverse(document.body.folkSpace.bvh, (node) => {
           if (!node.isLeaf) {
             Gizmos.rect(node.aabb, { color: '#aca0a077' });
           }
