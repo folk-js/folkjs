@@ -40,18 +40,6 @@ declare global {
 export class FolkSpaceAttribute extends CustomAttribute implements IPointTransform {
   static override attributeName = 'folk-space';
 
-  static override define() {
-    if (!customAttributes.isDefined(this.attributeName)) {
-      Object.defineProperty(Element.prototype, 'space', {
-        get() {
-          return customAttributes.get(this, FolkSpaceAttribute.attributeName) as FolkSpaceAttribute | undefined;
-        },
-      });
-    }
-
-    super.define();
-  }
-
   static styles = css`
     :host([folk-space]) {
       display: block;

@@ -21,20 +21,6 @@ const resizeManager = new ResizeManager();
 export class FolkShapeAttribute extends CustomAttribute implements Shape2DObject, IPointTransform {
   static override attributeName = 'folk-shape';
 
-  static override define() {
-    if (!customAttributes.isDefined(this.attributeName)) {
-      FolkShapeOverlay.define();
-
-      Object.defineProperty(Element.prototype, 'shape', {
-        get() {
-          return customAttributes.get(this, FolkShapeAttribute.attributeName) as FolkShapeAttribute | undefined;
-        },
-      });
-    }
-
-    super.define();
-  }
-
   static #overlay = document.createElement('folk-shape-overlay');
 
   static styles = css`

@@ -69,18 +69,6 @@ class LanguageServerPool {
 export class FolkLSPAttribute extends CustomAttribute<HTMLElement> {
   static override attributeName = 'folk-lsp';
 
-  static override define() {
-    if (!customAttributes.isDefined(this.attributeName)) {
-      Object.defineProperty(Element.prototype, 'lsp', {
-        get() {
-          return customAttributes.get(this, FolkLSPAttribute.attributeName) as FolkLSPAttribute | undefined;
-        },
-      });
-    }
-
-    super.define();
-  }
-
   static #highlightRegistry = {
     'folk-lsp-error': new Highlight(),
     'folk-lsp-warning': new Highlight(),
