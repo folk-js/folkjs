@@ -52,8 +52,9 @@ export class FolkSyncAttribute extends CustomAttribute {
   static override attributeName = 'folk-sync';
 
   #repo!: Repo;
-  #handle!: DocHandle<DOMJElement>;
+  #handle: DocHandle<DOMJElement> | null = null;
   #observer: MutationObserver | null = null;
+  #changeHandler: ((event: { doc: Doc<DOMJElement>; patches: Patch[] }) => void) | null = null;
 
   // Bidirectional mapping between DOM nodes and Automerge object IDs
   #nodeMapping = new BiMap<Node, ObjID>();
@@ -186,6 +187,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   /** Apply a local change to Automerge, preventing the change event from triggering remote patch handling */
   #applyLocalChange(changeFn: (doc: DOMJElement) => void): void {
+    if (!this.#handle) return;
     this.#isLocalChange = true;
     try {
       this.#handle.change(changeFn);
@@ -252,6 +254,10 @@ export class FolkSyncAttribute extends CustomAttribute {
   #stopObserving(): void {
     this.#observer?.disconnect();
     this.#observer = null;
+    if (this.#handle && this.#changeHandler) {
+      this.#handle.off('change', this.#changeHandler);
+      this.#changeHandler = null;
+    }
     this.#nodeMapping.clear();
   }
 
@@ -337,7 +343,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Create mappings for added nodes (after change, AM IDs are assigned)
     // Re-syncing from parent is safe since #createMappingsRecursively is idempotent
     if (mutation.addedNodes.length > 0) {
-      const doc = this.#handle.doc();
+      const doc = this.#handle?.doc();
       const parentNode = doc && getNodeById(doc, parentId);
       if (parentNode) this.#createMappingsRecursively(parentElement, parentNode);
     }
@@ -364,33 +370,43 @@ export class FolkSyncAttribute extends CustomAttribute {
 
     // Try to find existing document
     if (this.value && isValidAutomergeUrl(this.value)) {
-      this.#handle = await this.#repo.find<DOMJElement>(this.value);
-      doc = this.#handle.doc();
-      if (doc) {
-        this.ownerElement.replaceChildren();
-        for (const child of doc.childNodes) {
-          this.ownerElement.appendChild(this.#hydrate(child));
+      try {
+        this.#handle = await this.#repo.find<DOMJElement>(this.value);
+        doc = this.#handle.doc();
+        if (doc) {
+          this.ownerElement.replaceChildren();
+          for (const child of doc.childNodes) {
+            this.ownerElement.appendChild(this.#hydrate(child));
+          }
         }
+      } catch (error) {
+        console.error('[folk-sync] Failed to find document:', error);
       }
     }
 
     // Create new document if needed
     if (!doc) {
-      this.#handle = this.#repo.create<DOMJElement>(this.#serialize(this.ownerElement) as DOMJElement);
-      await this.#handle.whenReady();
-      if (!this.value) this.value = this.#handle.url;
-      doc = this.#handle.doc();
-      this.ownerElement.dispatchEvent(new DocChangeEvent(this.value));
+      try {
+        this.#handle = this.#repo.create<DOMJElement>(this.#serialize(this.ownerElement) as DOMJElement);
+        await this.#handle.whenReady();
+        this.value = this.#handle.url;
+        doc = this.#handle.doc();
+        this.ownerElement.dispatchEvent(new DocChangeEvent(this.value));
+      } catch (error) {
+        console.error('[folk-sync] Failed to create document:', error);
+        return;
+      }
     }
 
-    if (!doc) return;
+    if (!doc || !this.#handle) return;
 
     this.#createMappingsRecursively(this.ownerElement, doc);
-    this.#handle.on('change', ({ doc: updatedDoc, patches }) => {
+    this.#changeHandler = ({ doc: updatedDoc, patches }) => {
       if (updatedDoc && !this.#isLocalChange) {
         this.#applyRemotePatches(patches || [], updatedDoc);
       }
-    });
+    };
+    this.#handle.on('change', this.#changeHandler);
     this.#observer = new MutationObserver((mutations) => {
       for (const m of mutations) {
         switch (m.type) {
