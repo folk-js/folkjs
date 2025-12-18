@@ -14,6 +14,7 @@ import {
 } from '@folkjs/collab/automerge';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import type { DOMJComment, DOMJElement, DOMJNode, DOMJText } from '@folkjs/labs/dom-json';
+import { BiMap } from './BiMap';
 
 /** Navigate to a node in the document using a path */
 function getNodeAtPath<T>(doc: Doc<T>, path: Prop[]): unknown {
@@ -58,9 +59,8 @@ export class FolkSyncAttribute extends CustomAttribute {
   #handle!: DocHandle<DOMJElement>;
   #observer: MutationObserver | null = null;
 
-  // Bidirectional ID mappings between DOM nodes and Automerge object IDs
-  #domToId = new Map<Node, ObjID>();
-  #idToDom = new Map<ObjID, Node>();
+  // Bidirectional mapping between DOM nodes and Automerge object IDs
+  #nodeMapping = new BiMap<Node, ObjID>();
 
   // Prevents processing our own local changes as remote patches.
   // Needed because the 'change' event fires synchronously during handle.change().
@@ -69,17 +69,12 @@ export class FolkSyncAttribute extends CustomAttribute {
   #storeMapping(domNode: Node, amNode: DOMJNode): void {
     const id = getObjectId(amNode);
     if (id) {
-      this.#domToId.set(domNode, id);
-      this.#idToDom.set(id, domNode);
+      this.#nodeMapping.set(domNode, id);
     }
   }
 
   #removeMappingsRecursively(domNode: Node): void {
-    const id = this.#domToId.get(domNode);
-    if (id) {
-      this.#domToId.delete(domNode);
-      this.#idToDom.delete(id);
-    }
+    this.#nodeMapping.deleteByA(domNode);
     if (domNode.nodeType === Node.ELEMENT_NODE) {
       for (const child of (domNode as Element).childNodes) {
         this.#removeMappingsRecursively(child);
@@ -106,33 +101,34 @@ export class FolkSyncAttribute extends CustomAttribute {
     | { kind: 'textContent'; domNode: Node; amNode: DOMJText | DOMJComment }
     | { kind: 'childNodes'; domParent: Element; amParent: DOMJElement; idx: number }
     | null {
+    const last = path[path.length - 1];
+    const secondLast = path.length >= 2 ? path[path.length - 2] : undefined;
+
     // textContent: path ends with 'textContent'
-    if (path[path.length - 1] === 'textContent') {
+    if (last === 'textContent') {
       const amNode = getNodeAtPath(doc, path.slice(0, -1)) as DOMJText | DOMJComment | undefined;
       if (!amNode) return null;
-      const domNode = this.#idToDom.get(getObjectId(amNode)!);
+      const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!);
       if (!domNode) return null;
       return { kind: 'textContent', domNode, amNode };
     }
 
     // attribute: path ends with ['attributes', attrName]
-    const attrIdx = path.lastIndexOf('attributes');
-    if (attrIdx !== -1 && attrIdx === path.length - 2) {
-      const amNode = getNodeAtPath(doc, path.slice(0, attrIdx)) as DOMJElement | undefined;
+    if (secondLast === 'attributes' && typeof last === 'string') {
+      const amNode = getNodeAtPath(doc, path.slice(0, -2)) as DOMJElement | undefined;
       if (!amNode) return null;
-      const domNode = this.#idToDom.get(getObjectId(amNode)!) as Element | undefined;
+      const domNode = this.#nodeMapping.getByB(getObjectId(amNode)!) as Element | undefined;
       if (!domNode) return null;
-      return { kind: 'attribute', domNode, amNode, attrName: path[attrIdx + 1] as string };
+      return { kind: 'attribute', domNode, amNode, attrName: last };
     }
 
-    // childNodes: path contains 'childNodes', last element is index
-    const childIdx = path.lastIndexOf('childNodes');
-    if (childIdx !== -1 && typeof path[path.length - 1] === 'number') {
-      const amParent = getNodeAtPath(doc, path.slice(0, childIdx)) as DOMJElement | undefined;
+    // childNodes: path ends with ['childNodes', index]
+    if (secondLast === 'childNodes' && typeof last === 'number') {
+      const amParent = getNodeAtPath(doc, path.slice(0, -2)) as DOMJElement | undefined;
       if (!amParent || amParent.nodeType !== Node.ELEMENT_NODE) return null;
-      const domParent = this.#idToDom.get(getObjectId(amParent)!) as Element | undefined;
+      const domParent = this.#nodeMapping.getByB(getObjectId(amParent)!) as Element | undefined;
       if (!domParent) return null;
-      return { kind: 'childNodes', domParent, amParent, idx: path[path.length - 1] as number };
+      return { kind: 'childNodes', domParent, amParent, idx: last };
     }
 
     return null;
@@ -239,7 +235,7 @@ export class FolkSyncAttribute extends CustomAttribute {
             const amChild = amParent.childNodes[idx + i];
             if (!amChild) continue;
             const amChildId = getObjectId(amChild);
-            if (amChildId && this.#idToDom.has(amChildId)) continue;
+            if (amChildId && this.#nodeMapping.hasB(amChildId)) continue;
             domParent.insertBefore(this.#hydrate(amChild), refNode);
           }
         } else if (patch.action === 'del') {
@@ -260,12 +256,11 @@ export class FolkSyncAttribute extends CustomAttribute {
   #stopObserving(): void {
     this.#observer?.disconnect();
     this.#observer = null;
-    this.#domToId.clear();
-    this.#idToDom.clear();
+    this.#nodeMapping.clear();
   }
 
   #handleAttributeMutation(mutation: MutationRecord): void {
-    const targetId = this.#domToId.get(mutation.target);
+    const targetId = this.#nodeMapping.getByA(mutation.target);
     if (!targetId || !mutation.attributeName) return;
 
     const element = mutation.target as Element;
@@ -285,7 +280,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   #handleCharacterDataMutation(mutation: MutationRecord): void {
-    const targetId = this.#domToId.get(mutation.target);
+    const targetId = this.#nodeMapping.getByA(mutation.target);
     if (!targetId) return;
 
     const newContent = mutation.target.textContent || '';
@@ -298,7 +293,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   #handleChildListMutation(mutation: MutationRecord): void {
-    const parentId = this.#domToId.get(mutation.target);
+    const parentId = this.#nodeMapping.getByA(mutation.target);
     if (!parentId || (mutation.addedNodes.length === 0 && mutation.removedNodes.length === 0)) return;
 
     const parentElement = mutation.target as Element;
@@ -307,8 +302,19 @@ export class FolkSyncAttribute extends CustomAttribute {
     // Collect IDs of removed nodes BEFORE clearing mappings (needed to find them in Automerge)
     const removedIds = new Map<Node, ObjID>();
     for (const removed of mutation.removedNodes) {
-      const id = this.#domToId.get(removed);
+      const id = this.#nodeMapping.getByA(removed);
       if (id) removedIds.set(removed, id);
+    }
+
+    // Pre-compute DOM-to-Automerge index mapping in O(n) for all children
+    // This avoids O(n²) when inserting multiple nodes
+    const domChildren = parentElement.childNodes;
+    const domNodeToAmIndex = new Map<Node, number>();
+    let amIdx = 0;
+    for (const child of domChildren) {
+      if (this.#nodeMapping.hasA(child) || addedSet.has(child)) {
+        domNodeToAmIndex.set(child, amIdx++);
+      }
     }
 
     this.#applyLocalChange((doc) => {
@@ -323,20 +329,12 @@ export class FolkSyncAttribute extends CustomAttribute {
         if (idx !== -1) parentNode.childNodes.splice(idx, 1);
       }
 
-      // Add nodes to Automerge
-      const domChildren = parentElement.childNodes;
+      // Add nodes to Automerge using pre-computed indices
       for (const added of mutation.addedNodes) {
         const serialized = this.#serialize(added);
         if (!serialized) continue;
-
-        // Calculate insertion index: count siblings before this node that are
-        // either already mapped (existing) or in the current batch (being added)
-        const domIndex = Array.prototype.indexOf.call(domChildren, added);
-        let amIndex = 0;
-        for (let i = 0; i < domIndex; i++) {
-          if (this.#domToId.has(domChildren[i]) || addedSet.has(domChildren[i])) amIndex++;
-        }
-        parentNode.childNodes.splice(amIndex, 0, serialized);
+        const insertIdx = domNodeToAmIndex.get(added) ?? 0;
+        parentNode.childNodes.splice(insertIdx, 0, serialized);
       }
     });
 
