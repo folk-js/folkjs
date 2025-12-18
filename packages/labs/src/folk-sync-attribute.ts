@@ -15,18 +15,10 @@ import {
 import { CustomAttribute, customAttributes } from '@folkjs/dom/CustomAttribute';
 import type { DOMJElement, DOMJNode } from '@folkjs/labs/dom-json';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 /** Navigate to a node in the document using a path */
 function getNodeAtPath<T>(doc: Doc<T>, path: Prop[]): unknown {
   return path.reduce((current: any, key) => current?.[key], doc);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Events
-// ─────────────────────────────────────────────────────────────────────────────
 
 export class DocChangeEvent extends Event {
   readonly docId: string;
@@ -45,10 +37,6 @@ declare global {
     folkSync: FolkSyncAttribute | undefined;
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FolkSyncAttribute
-// ─────────────────────────────────────────────────────────────────────────────
 
 const OBSERVER_OPTIONS: MutationObserverInit = {
   attributes: true,
@@ -82,10 +70,6 @@ export class FolkSyncAttribute extends CustomAttribute {
   // Prevents processing our own local changes as remote patches.
   // Needed because the 'change' event fires synchronously during handle.change().
   #isLocalChange = false;
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // ID Mapping
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #storeMapping(domNode: Node, amNode: DOMJNode): void {
     const id = getObjectId(amNode);
@@ -132,24 +116,46 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
-  /** Get parent element from both Automerge doc and DOM for a childNodes patch */
-  #getParentElements(patch: Patch, doc: Doc<DOMJElement>): { amParent: DOMJElement; domParent: Element } | null {
-    const idx = patch.path.lastIndexOf('childNodes');
-    const amParent = getNodeAtPath(doc, idx >= 0 ? patch.path.slice(0, idx) : []) as DOMJElement | undefined;
-    if (!amParent || amParent.nodeType !== Node.ELEMENT_NODE) return null;
+  /** Resolve a patch path to get the target node(s) and classify the change type */
+  #resolvePatch(
+    path: Prop[],
+    doc: Doc<DOMJElement>,
+  ):
+    | { kind: 'attribute'; domNode: Element; amNode: DOMJElement; attrName: string }
+    | { kind: 'textContent'; domNode: Node; amNode: DOMJNode }
+    | { kind: 'childNodes'; domParent: Element; amParent: DOMJElement; idx: number }
+    | null {
+    // textContent: path ends with 'textContent'
+    if (path[path.length - 1] === 'textContent') {
+      const amNode = getNodeAtPath(doc, path.slice(0, -1)) as DOMJNode | undefined;
+      if (!amNode) return null;
+      const domNode = this.#idToDom.get(getObjectId(amNode)!);
+      if (!domNode) return null;
+      return { kind: 'textContent', domNode, amNode };
+    }
 
-    const parentId = getObjectId(amParent);
-    if (!parentId) return null;
+    // attribute: path ends with ['attributes', attrName]
+    const attrIdx = path.lastIndexOf('attributes');
+    if (attrIdx !== -1 && attrIdx === path.length - 2) {
+      const amNode = getNodeAtPath(doc, path.slice(0, attrIdx)) as DOMJElement | undefined;
+      if (!amNode) return null;
+      const domNode = this.#idToDom.get(getObjectId(amNode)!) as Element | undefined;
+      if (!domNode) return null;
+      return { kind: 'attribute', domNode, amNode, attrName: path[attrIdx + 1] as string };
+    }
 
-    const domParent = this.#idToDom.get(parentId);
-    if (!domParent || domParent.nodeType !== Node.ELEMENT_NODE) return null;
+    // childNodes: path contains 'childNodes', last element is index
+    const childIdx = path.lastIndexOf('childNodes');
+    if (childIdx !== -1 && typeof path[path.length - 1] === 'number') {
+      const amParent = getNodeAtPath(doc, path.slice(0, childIdx)) as DOMJElement | undefined;
+      if (!amParent || amParent.nodeType !== Node.ELEMENT_NODE) return null;
+      const domParent = this.#idToDom.get(getObjectId(amParent)!) as Element | undefined;
+      if (!domParent) return null;
+      return { kind: 'childNodes', domParent, amParent, idx: path[path.length - 1] as number };
+    }
 
-    return { amParent, domParent: domParent as Element };
+    return null;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // DOM ↔ Automerge Serialization
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #serialize(node: Node): DOMJNode | null {
     switch (node.nodeType) {
@@ -196,10 +202,6 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Remote Change Handling (Automerge → DOM)
-  // ─────────────────────────────────────────────────────────────────────────────
-
   /**
    * Apply remote patches by reconciling DOM to match Automerge state.
    * We disconnect the observer during this operation because MutationObserver
@@ -216,36 +218,36 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   #applyRemotePatch(patch: Patch, doc: Doc<DOMJElement>): void {
-    switch (patch.action) {
-      case 'insert':
-        this.#applyRemoteInsert(patch, doc);
+    const target = this.#resolvePatch(patch.path, doc);
+    if (!target) return;
+
+    switch (target.kind) {
+      case 'attribute': {
+        const value = target.amNode.attributes[target.attrName];
+        value
+          ? target.domNode.setAttribute(target.attrName, value.val)
+          : target.domNode.removeAttribute(target.attrName);
         break;
-      case 'del':
-        this.#applyRemoteDel(patch, doc);
+      }
+      case 'textContent':
+        target.domNode.textContent = (target.amNode as { textContent: string }).textContent;
         break;
-      case 'put':
-        this.#applyRemotePut(patch, doc);
+      case 'childNodes':
+        if (patch.action === 'insert') this.#applyRemoteInsert(patch as Patch & { action: 'insert' }, target);
+        else if (patch.action === 'del') this.#applyRemoteDel(patch as Patch & { action: 'del' }, target);
         break;
     }
   }
 
-  /** Insert nodes at exact index from patch */
-  #applyRemoteInsert(patch: Patch & { action: 'insert' }, doc: Doc<DOMJElement>): void {
-    if (!patch.path.includes('childNodes')) return;
-
-    const parents = this.#getParentElements(patch, doc);
-    if (!parents) return;
-    const { amParent, domParent } = parents;
-
-    // Get the insertion index from the path (last element after 'childNodes')
-    const idx = patch.path[patch.path.length - 1] as number;
-    const count = patch.values.length;
-
-    // Reference node is the current node at idx (before insertion)
+  /** Insert nodes at exact index */
+  #applyRemoteInsert(
+    patch: Patch & { action: 'insert' },
+    target: { domParent: Element; amParent: DOMJElement; idx: number },
+  ): void {
+    const { amParent, domParent, idx } = target;
     const refNode = domParent.childNodes[idx] || null;
 
-    // Insert each new node from the Automerge document
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < patch.values.length; i++) {
       const amChild = amParent.childNodes[idx + i];
       if (!amChild) continue;
 
@@ -259,56 +261,20 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
-  /** Delete nodes at exact index from patch */
-  #applyRemoteDel(patch: Patch & { action: 'del'; length?: number }, doc: Doc<DOMJElement>): void {
-    if (!patch.path.includes('childNodes')) return;
-
-    const parents = this.#getParentElements(patch, doc);
-    if (!parents) return;
-
-    const idx = patch.path[patch.path.length - 1] as number;
+  /** Delete nodes at exact index */
+  #applyRemoteDel(
+    patch: Patch & { action: 'del'; length?: number },
+    target: { domParent: Element; idx: number },
+  ): void {
     const count = patch.length ?? 1;
-
     for (let i = 0; i < count; i++) {
-      const child = parents.domParent.childNodes[idx];
+      const child = target.domParent.childNodes[target.idx];
       if (child) {
         this.#removeMappingsRecursively(child);
-        parents.domParent.removeChild(child);
+        target.domParent.removeChild(child);
       }
     }
   }
-
-  #applyRemotePut(patch: Patch & { action: 'put' }, doc: Doc<DOMJElement>): void {
-    const path = patch.path;
-
-    // Handle attribute changes: path ends with ["attributes", attrName]
-    const attrIdx = path.lastIndexOf('attributes');
-    if (attrIdx !== -1 && attrIdx === path.length - 2) {
-      const nodePath = path.slice(0, attrIdx);
-      const attrName = path[attrIdx + 1] as string;
-      const amNode = getNodeAtPath(doc, nodePath) as DOMJElement | undefined;
-      if (!amNode) return;
-      const domNode = this.#idToDom.get(getObjectId(amNode)!) as Element | undefined;
-      if (!domNode) return;
-
-      const attrValue = amNode.attributes[attrName];
-      attrValue ? domNode.setAttribute(attrName, attrValue.val) : domNode.removeAttribute(attrName);
-      return;
-    }
-
-    // Handle textContent changes: path ends with "textContent"
-    if (path[path.length - 1] === 'textContent') {
-      const nodePath = path.slice(0, -1);
-      const amNode = getNodeAtPath(doc, nodePath) as DOMJNode | undefined;
-      if (!amNode) return;
-      const domNode = this.#idToDom.get(getObjectId(amNode)!);
-      if (domNode) domNode.textContent = (amNode as { textContent: string }).textContent;
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Local Change Handling (DOM → Automerge)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #startObserving(): void {
     this.#observer = new MutationObserver((mutations) => mutations.forEach((m) => this.#handleMutation(m)));
@@ -413,21 +379,11 @@ export class FolkSyncAttribute extends CustomAttribute {
     });
 
     // Create mappings for added nodes (after change, AM IDs are assigned)
+    // Re-syncing from parent is safe since #createMappingsRecursively is idempotent
     if (mutation.addedNodes.length > 0) {
       const doc = this.#handle.doc();
-      if (doc) {
-        const parentNode = this.#getNodeById(doc, parentId);
-        if (parentNode?.nodeType === Node.ELEMENT_NODE) {
-          const domChildren = parentElement.childNodes;
-          for (let i = 0; i < parentNode.childNodes.length; i++) {
-            const amChild = parentNode.childNodes[i];
-            const amChildId = getObjectId(amChild);
-            if (!amChildId || this.#idToDom.has(amChildId)) continue;
-            const domChild = domChildren[i];
-            if (domChild) this.#createMappingsRecursively(domChild, amChild);
-          }
-        }
-      }
+      const parentNode = doc && this.#getNodeById(doc, parentId);
+      if (parentNode) this.#createMappingsRecursively(parentElement, parentNode);
     }
 
     // Clean up mappings AFTER Automerge change (we needed IDs during the change)
@@ -443,10 +399,6 @@ export class FolkSyncAttribute extends CustomAttribute {
       this.#isLocalChange = false;
     }
   }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Initialization
-  // ─────────────────────────────────────────────────────────────────────────────
 
   override connectedCallback(): void {
     const peerId = `peer-${Math.floor(Math.random() * 1_000_000)}` as PeerId;
