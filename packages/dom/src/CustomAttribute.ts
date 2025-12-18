@@ -4,7 +4,16 @@ export class CustomAttribute<E extends Element = Element> {
   static define() {
     if (customAttributes.isDefined(this.attributeName)) return;
 
-    customAttributes.define(this.attributeName, this);
+    // Auto-generate accessor on Element.prototype: folk-sync → folkSync
+    const attrName = this.attributeName;
+    const propName = attrName.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    Object.defineProperty(Element.prototype, propName, {
+      get() {
+        return customAttributes.get(this, attrName);
+      },
+    });
+
+    customAttributes.define(attrName, this);
   }
 
   readonly #ownerElement: E;
