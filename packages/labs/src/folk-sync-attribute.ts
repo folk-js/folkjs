@@ -1,5 +1,6 @@
 import type { Doc, ObjID, Patch, Prop } from '@automerge/automerge';
 import { getBackend } from '@automerge/automerge';
+import type { DocHandleChangePayload } from '@automerge/automerge-repo';
 import {
   DocHandle,
   getObjectId,
@@ -54,13 +55,14 @@ export class FolkSyncAttribute extends CustomAttribute {
   #repo!: Repo;
   #handle: DocHandle<DOMJElement> | null = null;
   #observer: MutationObserver | null = null;
-  #changeHandler: ((event: { doc: Doc<DOMJElement>; patches: Patch[] }) => void) | null = null;
+  #changeHandler: ((payload: DocHandleChangePayload<DOMJElement>) => void) | null = null;
 
   // Bidirectional mapping between DOM nodes and Automerge object IDs
   #nodeMapping = new BiMap<Node, ObjID>();
 
   // Prevents processing our own local changes as remote patches.
-  // Needed because the 'change' event fires synchronously during handle.change().
+  // Needed because automerge-repo doesn't yet pass through proper source info
+  // (see TODO in DocHandle.ts line 252)
   #isLocalChange = false;
 
   #storeMapping(domNode: Node, amNode: DOMJNode): void {
@@ -185,12 +187,11 @@ export class FolkSyncAttribute extends CustomAttribute {
     return dom;
   }
 
-  /** Apply a local change to Automerge, preventing the change event from triggering remote patch handling */
+  /** Apply a local DOM change to Automerge, preventing the change event from re-applying patches */
   #applyLocalChange(changeFn: (doc: DOMJElement) => void): void {
-    if (!this.#handle) return;
     this.#isLocalChange = true;
     try {
-      this.#handle.change(changeFn);
+      this.#handle?.change(changeFn);
     } finally {
       this.#isLocalChange = false;
     }
@@ -403,7 +404,7 @@ export class FolkSyncAttribute extends CustomAttribute {
     this.#createMappingsRecursively(this.ownerElement, doc);
     this.#changeHandler = ({ doc: updatedDoc, patches }) => {
       if (updatedDoc && !this.#isLocalChange) {
-        this.#applyRemotePatches(patches || [], updatedDoc);
+        this.#applyRemotePatches(patches, updatedDoc);
       }
     };
     this.#handle.on('change', this.#changeHandler);
