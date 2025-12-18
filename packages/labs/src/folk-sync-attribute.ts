@@ -79,16 +79,12 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
-  #removeMapping(domNode: Node): void {
+  #removeMappingsRecursively(domNode: Node): void {
     const id = this.#domToId.get(domNode);
     if (id) {
       this.#domToId.delete(domNode);
       this.#idToDom.delete(id);
     }
-  }
-
-  #removeMappingsRecursively(domNode: Node): void {
-    this.#removeMapping(domNode);
     if (domNode.nodeType === Node.ELEMENT_NODE) {
       for (const child of (domNode as Element).childNodes) {
         this.#removeMappingsRecursively(child);
@@ -181,7 +177,9 @@ export class FolkSyncAttribute extends CustomAttribute {
     }
   }
 
+  /** Create DOM from Automerge node, mapping as we go */
   #hydrate(amNode: DOMJNode): Node {
+    let dom: Node;
     switch (amNode.nodeType) {
       case Node.ELEMENT_NODE: {
         const el = document.createElement(amNode.tagName);
@@ -191,15 +189,22 @@ export class FolkSyncAttribute extends CustomAttribute {
         for (const child of amNode.childNodes) {
           el.appendChild(this.#hydrate(child));
         }
-        return el;
+        dom = el;
+        break;
       }
-      case Node.TEXT_NODE:
-        return document.createTextNode(amNode.textContent);
-      case Node.COMMENT_NODE:
-        return document.createComment(amNode.textContent);
+      case Node.TEXT_NODE: {
+        dom = document.createTextNode(amNode.textContent);
+        break;
+      }
+      case Node.COMMENT_NODE: {
+        dom = document.createComment(amNode.textContent);
+        break;
+      }
       default:
         throw new Error(`Unknown node type: ${(amNode as any).nodeType}`);
     }
+    this.#storeMapping(dom, amNode);
+    return dom;
   }
 
   /**
@@ -255,9 +260,7 @@ export class FolkSyncAttribute extends CustomAttribute {
       const amChildId = getObjectId(amChild);
       if (amChildId && this.#idToDom.has(amChildId)) continue;
 
-      const newDom = this.#hydrate(amChild);
-      domParent.insertBefore(newDom, refNode);
-      this.#createMappingsRecursively(newDom, amChild);
+      domParent.insertBefore(this.#hydrate(amChild), refNode);
     }
   }
 
@@ -445,16 +448,18 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   #initializeWithDocument(doc: DOMJElement, isNew: boolean): void {
-    if (!isNew) {
-      // Existing document: rebuild DOM from Automerge
+    if (isNew) {
+      // New document: DOM already exists, map entire tree from root
+      this.#createMappingsRecursively(this.ownerElement, doc);
+    } else {
+      // Existing document: rebuild DOM from Automerge (hydrate self-maps children)
       this.ownerElement.replaceChildren();
       for (const child of doc.childNodes) {
         this.ownerElement.appendChild(this.#hydrate(child));
       }
+      // Map root element (children already mapped by hydrate)
+      this.#storeMapping(this.ownerElement, doc);
     }
-
-    // Map entire tree from root (works for both new and existing docs)
-    this.#createMappingsRecursively(this.ownerElement, doc);
 
     // Listen for remote changes
     this.#handle.on('change', ({ doc: updatedDoc, patches }) => {
