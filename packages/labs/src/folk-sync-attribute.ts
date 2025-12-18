@@ -1,17 +1,13 @@
+import type { Doc, ObjID, Patch, Prop } from '@automerge/automerge';
+import { getBackend } from '@automerge/automerge';
 import {
   DocHandle,
-  getBackend,
   getObjectId,
   ImmutableString,
   isValidAutomergeUrl,
   Repo,
   WebSocketClientAdapter,
-  type Doc,
-  type ObjID,
-  type Patch,
-  type PeerId,
-  type Prop,
-} from '@folkjs/collab/automerge';
+} from '@automerge/vanillajs';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import type { DOMJComment, DOMJElement, DOMJNode, DOMJText } from '@folkjs/labs/dom-json';
 import { BiMap } from './BiMap';
@@ -351,8 +347,7 @@ export class FolkSyncAttribute extends CustomAttribute {
   }
 
   override connectedCallback(): void {
-    const peerId = `peer-${Math.floor(Math.random() * 1_000_000)}` as PeerId;
-    this.#repo = new Repo({ peerId, network: [new WebSocketClientAdapter('wss://sync.automerge.org')] });
+    this.#repo = new Repo({ network: [new WebSocketClientAdapter('wss://sync.automerge.org')] });
   }
 
   override changedCallback(): void {

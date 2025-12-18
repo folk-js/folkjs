@@ -202,10 +202,18 @@ export class FolkShape extends ReactiveElement {
 
   static override styles = styles;
 
+  // Observe shape attributes so external changes (e.g. from sync) update internal state
+  static override get observedAttributes() {
+    return [...(super.observedAttributes ?? []), 'x', 'y', 'width', 'height', 'rotation'];
+  }
+
   #internals = this.attachInternals();
 
   #attrWidth: Dimension = 'auto';
   #attrHeight: Dimension = 'auto';
+
+  // Flag to prevent feedback loop when reflecting properties to attributes
+  #isReflecting = false;
 
   #rect = new DOMRectTransform();
   #previousRect = new DOMRectTransform();
@@ -362,6 +370,62 @@ export class FolkShape extends ReactiveElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+  }
+
+  override attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null): void {
+    super.attributeChangedCallback(name, oldValue, newValue);
+
+    // Skip if we're reflecting our own changes back to attributes
+    if (this.#isReflecting) return;
+
+    // Skip if no actual change or if this is the initial attribute (handled by createRenderRoot)
+    if (oldValue === newValue || oldValue === null) return;
+
+    // Handle shape attribute changes from external sources (e.g. Automerge sync)
+    const numValue = Number(newValue);
+    if (Number.isNaN(numValue)) return;
+
+    switch (name) {
+      case 'x':
+        if (this.#rect.x !== numValue) {
+          this.#previousRect.x = this.#rect.x;
+          this.#rect.x = numValue;
+          this.requestUpdate('x');
+        }
+        break;
+      case 'y':
+        if (this.#rect.y !== numValue) {
+          this.#previousRect.y = this.#rect.y;
+          this.#rect.y = numValue;
+          this.requestUpdate('y');
+        }
+        break;
+      case 'width':
+        if (this.#rect.width !== numValue) {
+          this.#previousRect.width = this.#rect.width;
+          this.#rect.width = numValue;
+          this.#attrWidth = numValue;
+          this.requestUpdate('width');
+        }
+        break;
+      case 'height':
+        if (this.#rect.height !== numValue) {
+          this.#previousRect.height = this.#rect.height;
+          this.#rect.height = numValue;
+          this.#attrHeight = numValue;
+          this.requestUpdate('height');
+        }
+        break;
+      case 'rotation':
+        // External rotation attribute is in degrees, convert to radians
+        const radValue = numValue * (Math.PI / 180);
+        if (this.#rect.rotation !== radValue) {
+          this.#previousRect.rotation = this.#rect.rotation;
+          this.#rect.rotation = radValue;
+          this.requestUpdate('rotation');
+        }
+        break;
+    }
   }
 
   refreshTransformStack() {
@@ -583,6 +647,24 @@ export class FolkShape extends ReactiveElement {
     this.style.setProperty('--folk-width', toDOMPrecision(this.#rect.width).toString());
     this.style.setProperty('--folk-height', toDOMPrecision(this.#rect.height).toString());
     this.style.setProperty('--folk-rotation', toDOMPrecision(this.#rect.rotation).toString());
+
+    // Reflect properties to attributes so external systems (e.g. Automerge sync) can observe changes
+    this.#isReflecting = true;
+    this.setAttribute('x', toDOMPrecision(this.#rect.x).toString());
+    this.setAttribute('y', toDOMPrecision(this.#rect.y).toString());
+    if (this.#attrWidth !== 'auto') {
+      this.setAttribute('width', toDOMPrecision(this.#rect.width).toString());
+    }
+    if (this.#attrHeight !== 'auto') {
+      this.setAttribute('height', toDOMPrecision(this.#rect.height).toString());
+    }
+    if (this.#rect.rotation !== 0) {
+      // Reflect rotation in degrees (same format as input)
+      this.setAttribute('rotation', toDOMPrecision(this.#rect.rotation * (180 / Math.PI)).toString());
+    } else {
+      this.removeAttribute('rotation');
+    }
+    this.#isReflecting = false;
 
     this.#readonlyRect = new DOMRectTransformReadonly(this.#rect);
   }
