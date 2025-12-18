@@ -24,12 +24,6 @@ function getNodeAtPath<T>(doc: Doc<T>, path: Prop[]): unknown {
   return path.reduce((current: any, key) => current?.[key], doc);
 }
 
-/** Extract the parent path from a childNodes patch path */
-function getParentPath(path: Prop[]): Prop[] {
-  const idx = path.lastIndexOf('childNodes');
-  return idx >= 0 ? path.slice(0, idx) : [];
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Events
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,7 +73,6 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   #repo!: Repo;
   #handle!: DocHandle<DOMJElement>;
-  #networkAdapter!: WebSocketClientAdapter;
   #observer: MutationObserver | null = null;
 
   // Bidirectional ID mappings between DOM nodes and Automerge object IDs
@@ -141,8 +134,8 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   /** Get parent element from both Automerge doc and DOM for a childNodes patch */
   #getParentElements(patch: Patch, doc: Doc<DOMJElement>): { amParent: DOMJElement; domParent: Element } | null {
-    const parentPath = getParentPath(patch.path);
-    const amParent = getNodeAtPath(doc, parentPath) as DOMJElement | undefined;
+    const idx = patch.path.lastIndexOf('childNodes');
+    const amParent = getNodeAtPath(doc, idx >= 0 ? patch.path.slice(0, idx) : []) as DOMJElement | undefined;
     if (!amParent || amParent.nodeType !== Node.ELEMENT_NODE) return null;
 
     const parentId = getObjectId(amParent);
@@ -419,46 +412,35 @@ export class FolkSyncAttribute extends CustomAttribute {
       }
     });
 
+    // Create mappings for added nodes (after change, AM IDs are assigned)
+    if (mutation.addedNodes.length > 0) {
+      const doc = this.#handle.doc();
+      if (doc) {
+        const parentNode = this.#getNodeById(doc, parentId);
+        if (parentNode?.nodeType === Node.ELEMENT_NODE) {
+          const domChildren = parentElement.childNodes;
+          for (let i = 0; i < parentNode.childNodes.length; i++) {
+            const amChild = parentNode.childNodes[i];
+            const amChildId = getObjectId(amChild);
+            if (!amChildId || this.#idToDom.has(amChildId)) continue;
+            const domChild = domChildren[i];
+            if (domChild) this.#createMappingsRecursively(domChild, amChild);
+          }
+        }
+      }
+    }
+
     // Clean up mappings AFTER Automerge change (we needed IDs during the change)
     for (const removed of mutation.removedNodes) this.#removeMappingsRecursively(removed);
   }
 
-  /**
-   * Apply a local change to Automerge and create mappings for any new nodes.
-   * Uses patchCallback to get immediate feedback about what was created.
-   */
+  /** Apply a local change to Automerge, preventing the change event from triggering remote patch handling */
   #applyLocalChange(changeFn: (doc: DOMJElement) => void): void {
     this.#isLocalChange = true;
     try {
-      this.#handle.change(changeFn, {
-        patchCallback: (patches, info) => {
-          // Create mappings for any newly inserted nodes
-          for (const patch of patches) {
-            if (patch.action === 'insert' && patch.path.includes('childNodes')) {
-              this.#createMappingsForInsertedNodes(patch, info.after);
-            }
-          }
-        },
-      });
+      this.#handle.change(changeFn);
     } finally {
       this.#isLocalChange = false;
-    }
-  }
-
-  /** Create mappings for nodes that were just inserted locally */
-  #createMappingsForInsertedNodes(patch: Patch & { action: 'insert' }, doc: Doc<DOMJElement>): void {
-    const parents = this.#getParentElements(patch, doc);
-    if (!parents) return;
-    const { amParent, domParent } = parents;
-
-    // Find unmapped Automerge children and map them to their DOM counterparts by position
-    for (let i = 0; i < amParent.childNodes.length; i++) {
-      const amChild = amParent.childNodes[i];
-      const amChildId = getObjectId(amChild);
-      if (!amChildId || this.#idToDom.has(amChildId)) continue;
-
-      const domChild = domParent.childNodes[i];
-      if (domChild) this.#createMappingsRecursively(domChild, amChild);
     }
   }
 
@@ -468,8 +450,7 @@ export class FolkSyncAttribute extends CustomAttribute {
 
   override connectedCallback(): void {
     const peerId = `peer-${Math.floor(Math.random() * 1_000_000)}` as PeerId;
-    this.#networkAdapter = new WebSocketClientAdapter('wss://sync.automerge.org');
-    this.#repo = new Repo({ peerId, network: [this.#networkAdapter] });
+    this.#repo = new Repo({ peerId, network: [new WebSocketClientAdapter('wss://sync.automerge.org')] });
   }
 
   override changedCallback(): void {
@@ -516,15 +497,12 @@ export class FolkSyncAttribute extends CustomAttribute {
       // Existing document: rebuild DOM from Automerge
       this.ownerElement.replaceChildren();
       for (const child of doc.childNodes) {
-        const domNode = this.#hydrate(child);
-        this.ownerElement.appendChild(domNode);
-        this.#createMappingsRecursively(domNode, child);
+        this.ownerElement.appendChild(this.#hydrate(child));
       }
     }
 
-    // Map root element and its children (for new docs, children are already in DOM)
-    this.#storeMapping(this.ownerElement, doc);
-    if (isNew) this.#createMappingsRecursively(this.ownerElement, doc);
+    // Map entire tree from root (works for both new and existing docs)
+    this.#createMappingsRecursively(this.ownerElement, doc);
 
     // Listen for remote changes
     this.#handle.on('change', ({ doc: updatedDoc, patches }) => {
