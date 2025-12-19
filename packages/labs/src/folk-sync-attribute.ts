@@ -222,9 +222,15 @@ export class FolkSyncAttribute extends CustomAttribute {
   #applyRemotePatches(patches: Patch[], doc: Doc<SyncElement>): void {
     this.#observer?.disconnect();
     try {
-      for (const patch of patches) this.#applyRemotePatch(patch, doc);
+      for (const patch of patches) {
+        try {
+          this.#applyRemotePatch(patch, doc);
+        } catch (err) {
+          console.error('[folk-sync] Failed to apply patch:', patch, err);
+          // Continue with other patches even if one fails
+        }
+      }
     } finally {
-      this.#observer?.takeRecords();
       this.#observer?.observe(this.ownerElement, OBSERVER_OPTIONS);
     }
   }
