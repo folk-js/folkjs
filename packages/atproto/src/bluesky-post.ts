@@ -1,5 +1,4 @@
-import { css, property } from '@folkjs/dom/ReactiveElement/index';
-import { ReactiveElement, type PropertyValues } from '@folkjs/dom/ReactiveElement/ReactiveElement';
+import { css, property, ReactiveElement, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 
 const AT = 'at://';
 const EMBED_URL = 'https://embed.bsky.app';
