@@ -36,8 +36,6 @@ describe('BoundingVolumeHierarchy', () => {
       width: 25,
       height: 25,
     });
-
-    expect(BVH.intersections(bvh, shapes[0], S.boundingBox(shapes[0])).length).toBe(0);
   });
 
   const shapes = [S.fromValues(0, 0, 10, 10), S.fromValues(15, 15, 10, 10), S.fromValues(5, 5, 10, 10)];
@@ -56,14 +54,16 @@ describe('BoundingVolumeHierarchy', () => {
   test('intersection', () => {
     const bvh = BVH.fromShapes([...shapes]);
 
-    const c1 = BVH.intersections(bvh, shapes[0], S.boundingBox(shapes[0]));
-    expect(c1.length).toBe(1);
+    const c1 = BVH.intersections(bvh, S.boundingBox(shapes[0]));
+    expect(c1.length).toBe(2);
+    expect(c1).toContain(shapes[0]);
     expect(c1).toContain(shapes[2]);
 
-    const c2 = BVH.intersections(bvh, shapes[2], S.boundingBox(shapes[2]));
-    expect(c2.length).toBe(2);
+    const c2 = BVH.intersections(bvh, S.boundingBox(shapes[2]));
+    expect(c2.length).toBe(3);
     expect(c2).toContain(shapes[0]);
     expect(c2).toContain(shapes[1]);
+    expect(c2).toContain(shapes[2]);
   });
 
   describe('nearest neighbor', () => {

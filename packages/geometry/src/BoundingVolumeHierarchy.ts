@@ -76,13 +76,44 @@ export function fromShapes(shapes: Array<S.Shape2D>): BVHNode<S.Shape2D> {
   return constructBVHTree(leafNodes, 0, leafNodes.length - 1);
 }
 
-export function intersections<T>(root: BVHNode<T>, value: T, rect: R.Rect2D): T[] {
+export function fromElements(elements: Element[]): BVHNode<Element> {
+  if (elements.length === 0) {
+    return {
+      value: new Element(),
+      aabb: R.fromValues(),
+      mortonCode: -1,
+      isLeaf: true,
+      left: null,
+      right: null,
+    };
+  }
+
+  const leafNodes: BVHLeafNode<Element>[] = elements.map((el) => {
+    const aabb = el.getBoundingClientRect();
+
+    return {
+      value: el,
+      aabb,
+      mortonCode: V.mortonCode(R.center(aabb)),
+      isLeaf: true,
+      left: null,
+      right: null,
+    };
+  });
+
+  // Rectangles sorted in order of their morton codes.
+  leafNodes.sort((a, b) => a.mortonCode - b.mortonCode);
+
+  return constructBVHTree(leafNodes, 0, leafNodes.length - 1);
+}
+
+export function intersections<T>(root: BVHNode<T>, rect: R.Rect2D): T[] {
   const stack = [root];
   let node: BVHNode<T> | undefined;
   const collisions: T[] = [];
 
   while ((node = stack.pop())) {
-    if (value === node.value || !R.intersects(rect, node.aabb)) continue;
+    if (!R.intersects(rect, node.aabb)) continue;
 
     if (node.isLeaf) {
       collisions.push(node.value);
@@ -112,6 +143,10 @@ export function depthFirstTraverse<T>(root: BVHNode<T>, cb: (node: BVHNode<T>) =
     if (cb(node) === false) continue;
     if (!node.isLeaf) stack.push(node.right, node.left);
   }
+}
+
+export function proximal<T>(root: BVHNode<T>, rect: R.Rect2D, proximity: number): T[] {
+  return intersections(root, R.expand(rect, proximity));
 }
 
 export function nearestShape(root: BVHNode<S.Shape2D>, shape: S.Shape2D, direction?: V.Vector2): S.Shape2D | undefined {
