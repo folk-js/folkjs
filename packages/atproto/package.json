@@ -26,6 +26,9 @@
     "build": {
       "command": "tsc --build --pretty",
       "clean": "if-file-deleted",
+      "dependencies": [
+        "../dom:build"
+      ],
       "files": [
         "src/**",
         "package.json",
