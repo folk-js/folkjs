@@ -1,0 +1,52 @@
+{
+  "name": "@folkjs/atproto",
+  "version": "0.0.7",
+  "description": "Malleable ATProto explorations",
+  "keywords": [
+    "DOM"
+  ],
+  "author": "Christopher Shank <chris.shank.23@gmail.com>",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./*": {
+      "import": "./dist/*.js",
+      "types": "./dist/*.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "wireit",
+    "publish": "wireit"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --build --pretty",
+      "clean": "if-file-deleted",
+      "files": [
+        "src/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "output": [
+        "dist/**",
+        "tsconfig.tsbuildinfo"
+      ]
+    },
+    "publish": {
+      "command": "npm publish --access public",
+      "dependencies": [
+        "build"
+      ]
+    }
+  },
+  "dependencies": {
+    "@folkjs/dom": "0.0.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}

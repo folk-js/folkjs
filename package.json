@@ -26,7 +26,8 @@
         "./packages/collab:publish",
         "./packages/propagators:publish",
         "./packages/canvas:publish",
-        "./packages/labs:publish"
+        "./packages/labs:publish",
+        "./packages/atproto:publish"
       ]
     }
   },
