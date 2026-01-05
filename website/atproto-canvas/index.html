@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ATProto Canvas</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        font-family: 'Inter', sans-serif;
+        font-optical-sizing: auto;
+        font-style: normal;
+        font-variation-settings: 'slnt' 0;
+      }
+
+      html,
+      body,
+      main {
+        height: 100%;
+        margin: 0;
+      }
+
+      folk-toolbar {
+        position: fixed;
+        bottom: 1rem;
+        left: 50%;
+        translate: -50%;
+      }
+
+      div[folk-shape]:not([contenteditable]) {
+        border: solid 5px black;
+        border-radius: 13px;
+      }
+
+      bluesky-post {
+        box-sizing: content-box;
+        border: 5px solid transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <main folk-space="grid: true">
+      <bluesky-post
+        uri="at://did:plc:zcanytzlaumjwgaopolw6wes/app.bsky.feed.post/3mbp3x7tcnc2y"
+        cid="bafyreigc7zidbvzbuabzeas564t54fxmaxholqke7ac3q7aiii4oq2geyu"
+        folk-shape="x: 100; y: 100;"
+      ></bluesky-post>
+    </main>
+
+    <folk-toolbar container="main">
+      <folk-instrument type="select">Select</folk-instrument>
+      <folk-instrument type="draw">Draw</folk-instrument>
+      <folk-instrument type="erase">Erase</folk-instrument>
+      <folk-instrument type="rectangle">Rectangle</folk-instrument>
+      <folk-instrument type="text">Text</folk-instrument>
+      <folk-instrument type="arrow">Arrow</folk-instrument>
+    </folk-toolbar>
+  </body>
+
+  <script type="module">
+    import '@folkjs/labs/standalone/folk-space-attribute';
+    import '@folkjs/labs/standalone/folk-shape-attribute';
+    import '@folkjs/labs/standalone/folk-ink';
+    import '@folkjs/labs/standalone/folk-arrow';
+    import '@folkjs/atproto/standalone/bluesky-post';
+    import { FolkToolbar, FolkInstrument } from '@folkjs/labs/folk-toolbar';
+
+    FolkInstrument.define();
+    FolkToolbar.define();
+  </script>
+</html>
