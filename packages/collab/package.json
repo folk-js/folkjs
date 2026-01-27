@@ -48,6 +48,7 @@
     "vite-plugin-wasm": "^3.5.0"
   },
   "dependencies": {
+    "@automerge/automerge": "^3.2.3",
     "@automerge/vanillajs": "^2.3.0"
   }
 }

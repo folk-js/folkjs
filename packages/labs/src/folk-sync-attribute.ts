@@ -1,7 +1,7 @@
-import { getBackend } from '@automerge/automerge';
 import type { Doc, DocHandleChangePayload, ObjID, Patch, Prop } from '@folkjs/collab/automerge';
 import {
   DocHandle,
+  getBackend,
   getObjectId,
   ImmutableString,
   isValidAutomergeUrl,
