@@ -1,6 +1,5 @@
-import type { Doc, ObjID, Patch, Prop } from '@automerge/automerge';
 import { getBackend } from '@automerge/automerge';
-import type { DocHandleChangePayload } from '@automerge/automerge-repo';
+import type { Doc, DocHandleChangePayload, ObjID, Patch, Prop } from '@folkjs/collab/automerge';
 import {
   DocHandle,
   getObjectId,
@@ -8,7 +7,7 @@ import {
   isValidAutomergeUrl,
   Repo,
   WebSocketClientAdapter,
-} from '@automerge/vanillajs';
+} from '@folkjs/collab/automerge';
 import { CustomAttribute } from '@folkjs/dom/CustomAttribute';
 import type * as HAST from 'hast';
 import { BiMap } from './BiMap';
