@@ -11,15 +11,14 @@ export class BlueskyPost extends ReactiveElement {
 
   static override styles = css`
     :host {
-      display: flex;
+      display: block;
       max-width: 600px;
-      width: 100%;
       box-sizing: border-box;
+      padding: 5px;
     }
 
     iframe {
       display: block;
-      flex-grow: 1;
       width: 100%;
       border: none;
     }
@@ -37,9 +36,6 @@ export class BlueskyPost extends ReactiveElement {
 
   protected override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
-
-    this.#iframe.scrolling = 'no';
-    this.#iframe.frameBorder = '0';
 
     root.appendChild(this.#iframe);
 
@@ -89,7 +85,7 @@ export class BlueskyPost extends ReactiveElement {
 
     const height = event.data.height;
     if (height) {
-      this.style.height = height + 'px';
+      this.#iframe.style.height = height + 'px';
     }
   };
 }
