@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/labs",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Labs",
   "keywords": [
     "labs"
@@ -87,11 +87,11 @@
     "@codemirror/lang-javascript": "^6.2.3",
     "@codemirror/view": "^6.36.5",
     "@dimforge/rapier2d": "^0.15.0",
-    "@folkjs/canvas": "0.0.9",
-    "@folkjs/collab": "0.0.9",
-    "@folkjs/dom": "0.0.9",
-    "@folkjs/geometry": "0.0.9",
-    "@folkjs/propagators": "0.0.9",
+    "@folkjs/canvas": "0.0.10",
+    "@folkjs/collab": "0.0.10",
+    "@folkjs/dom": "0.0.10",
+    "@folkjs/geometry": "0.0.10",
+    "@folkjs/propagators": "0.0.10",
     "@mlc-ai/web-llm": "^0.2.78",
     "@typescript/vfs": "^1.6.1",
     "@volar/typescript-language-service": "^1.0.1",

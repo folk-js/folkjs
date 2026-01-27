@@ -1,6 +1,6 @@
 {
   "name": "@folkjs/atproto",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Malleable ATProto explorations",
   "keywords": [
     "DOM"
@@ -59,7 +59,7 @@
   },
   "dependencies": {
     "@atcute/bluesky-richtext-builder": "^2.0.4",
-    "@folkjs/dom": "0.0.9",
+    "@folkjs/dom": "0.0.10",
     "commonmark": "^0.31.2"
   },
   "devDependencies": {
