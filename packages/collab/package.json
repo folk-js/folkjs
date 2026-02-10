@@ -43,12 +43,10 @@
     }
   },
   "devDependencies": {
+    "@automerge/automerge": "^3.2.3",
+    "@automerge/vanillajs": "^2.3.0",
     "typescript": "^5.8.2",
     "vite": "^7.1.5",
     "vite-plugin-wasm": "^3.5.0"
-  },
-  "dependencies": {
-    "@automerge/automerge": "^3.2.3",
-    "@automerge/vanillajs": "^2.3.0"
   }
 }

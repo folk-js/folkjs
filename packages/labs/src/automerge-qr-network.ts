@@ -1,5 +1,5 @@
-import type { Message as AutomergeMessage, PeerId } from '@automerge/vanillajs';
-import { NetworkAdapter } from '@automerge/vanillajs';
+import type { Message as AutomergeMessage, PeerId } from '@folkjs/collab/automerge';
+import { NetworkAdapter } from '@folkjs/collab/automerge';
 import { QRTPC } from './QRTP-C';
 
 /**
