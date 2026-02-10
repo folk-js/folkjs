@@ -479,14 +479,17 @@ export class FolkSpreadSheetCell extends HTMLElement {
 
       this.#dependencies.forEach((dep) => dep.removeEventListener('propagate', this));
 
-      if (expression === '') return;
+      if (expression === '') {
+        this.#value = undefined;
+        this.shadowRoot!.textContent = '';
+        return;
+      }
 
       if (!expression.includes('return ')) {
         expression = `return ${expression}`;
       }
 
       const argNames: string[] = expression.match(/[A-Z]+\d+/g) ?? [];
-
       this.#dependencies = Object.freeze(
         argNames
           .map((dep) => {
