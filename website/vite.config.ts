@@ -19,9 +19,11 @@ function getEntryPoints() {
   };
 
   // Add site-level folders
-  ['file-space', 'hyperzoom', 'chess', 'canvas', 'live-2025', 'frello', 'atproto-canvas'].forEach((section) => {
-    entries[section] = resolve(websiteDir, section, 'index.html');
-  });
+  ['file-space', 'hyperzoom', 'chess', 'canvas', 'live-2025', 'substrates-2026', 'frello', 'atproto-canvas'].forEach(
+    (section) => {
+      entries[section] = resolve(websiteDir, section, 'index.html');
+    },
+  );
 
   // Add all canvas files
   getDemoFiles(demoWebsiteDir).forEach((file) => {
