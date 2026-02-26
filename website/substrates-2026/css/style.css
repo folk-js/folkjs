@@ -1,0 +1,244 @@
+/* Native Light/Dark Mode Variables */
+
+:root {
+  --bg-color: light-dark(#ffffff, #17191f);
+  --text-color: light-dark(#24292e, #e9ecf0);
+  --text-secondary: light-dark(#999, #7c838b);
+  --code-bg: light-dark(#e4e9ee, #1f242c);
+  --code-text: light-dark(#38424c, #d6dae0);
+  --blockquote-bg: light-dark(#f1f1f1, #1f242c);
+  --table-border: light-dark(#ddd, #363c45);
+  --table-header-bg: light-dark(#f4f4f4, #282e36);
+  --table-stripe-bg: light-dark(#f9f9f9, #1f242c);
+  --border-color: light-dark(#ddd, #363c45);
+
+  /* Animation colors */
+  --color-black: light-dark(#000000, #f2f4f5);
+  --color-green: light-dark(#4ade80, #34a853);
+  --color-orange: light-dark(#fb923c, #e67e22);
+  --color-blue: light-dark(#60a5fa, #5294cf);
+  --color-gray: light-dark(#a1a1aa, #6b7280);
+  --color-white: light-dark(#ffffff, #f8fafc);
+}
+
+/* Apply theme variables to base elements */
+html,
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  height: 100%;
+}
+
+video {
+  width: 100%;
+  height: auto;
+}
+
+main {
+  max-width: 60em;
+  margin: 0 auto;
+  padding-left: 4em;
+  padding-right: 4em;
+  padding-top: 3em;
+  padding-bottom: 3em;
+  font-family: 'Recursive';
+  font-variation-settings: 'CASL' 1;
+  color: var(--text-color);
+}
+
+h1 {
+  font-size: 2rem;
+}
+h2 {
+  font-size: 1.5rem;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin-top: 0;
+  margin-bottom: 0.5em;
+}
+
+header {
+  margin-bottom: 2em;
+  font-size: 1.5rem;
+  font-variation-settings: 'CASL' 1;
+}
+
+i,
+em {
+  font-variation-settings:
+    'slnt' -15,
+    'CRSV' 1,
+    'wght' 350;
+  font-style: italic;
+}
+
+pre > code {
+  width: 100%;
+  padding: 1em;
+  display: block;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+code {
+  background-color: light-dark(#f6f8fa, #151b23);
+  width: 100%;
+  color: var(--text-color);
+
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-family: 'Recursive';
+  font-variation-settings: 'MONO' 1;
+  font-weight: 400;
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+}
+
+b,
+strong {
+  font-variation-settings: 'wght' 600;
+}
+
+blockquote {
+  margin: 0em;
+  padding: 1em;
+  background-color: var(--blockquote-bg);
+  margin-top: 1em;
+  margin-bottom: 1em;
+  border-radius: 4px;
+  & p {
+    font-variation-settings: 'CASL' 1;
+    margin: 0;
+  }
+}
+
+p {
+  margin-top: 0;
+  margin-bottom: 1.5em;
+  font-size: 1.05rem;
+  font-variation-settings: 'wght' 350;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  margin-bottom: 1em;
+  font-variation-settings: 'casl' 0;
+  th,
+  td {
+    padding: 0.5em;
+    border: 1px solid var(--table-border);
+  }
+
+  th {
+    background-color: var(--table-header-bg);
+    font-weight: bold;
+  }
+
+  tr:nth-child(even) {
+    background-color: var(--table-stripe-bg);
+  }
+}
+
+a {
+  font-variation-settings:
+    'CASL' 0,
+    'wght' 400;
+  transition: font-variation-settings 0.2s ease;
+
+  &:hover {
+    font-variation-settings:
+      'CASL' 1,
+      'wght' 600;
+  }
+}
+
+ol,
+ul {
+  padding-left: 0;
+  margin-top: 0;
+  font-size: 1rem;
+  & li::marker {
+    color: var(--text-secondary);
+  }
+  & a {
+    text-decoration: none;
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+img {
+  display: block;
+  margin: 0 auto;
+}
+
+@media (max-width: 600px) {
+  main {
+    padding: 1.5em;
+  }
+  header {
+    margin-bottom: 1em;
+  }
+  ol,
+  ul {
+    list-style-position: inside;
+    /* Add hanging indent for wrapped text */
+    text-indent: -1.2em;
+    padding-left: 1.2em;
+  }
+}
+
+/* Some conditional spacing */
+table:not(:has(+ p)) {
+  margin-bottom: 2em;
+}
+
+p:has(+ ul) {
+  margin-bottom: 0.5em;
+}
+p:has(+ ol) {
+  margin-bottom: 0.5em;
+}
+
+/* Post media styling */
+main img,
+main video {
+  border-radius: 4px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  display: block;
+  max-width: 100%;
+}
+
+/* Markdown / Marked */
+[role='doc-biblioref'] {
+  font-variation-settings: 'CASL' 1;
+  text-decoration: none;
+}
+
+figcaption {
+  text-align: center;
+}
+
+figure,
+[role='doc-bibliography'] ul li {
+  margin-bottom: 1rem;
+}
