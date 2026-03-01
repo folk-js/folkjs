@@ -46,10 +46,10 @@ video {
 }
 
 main {
-  max-width: 60em;
+  max-width: 80ch;
   margin: 0 auto;
-  padding-left: 4em;
-  padding-right: 4em;
+  padding-left: 5ch;
+  padding-right: 5ch;
   padding-top: 3em;
   padding-bottom: 3em;
   font-family: 'Recursive';
@@ -193,7 +193,7 @@ img {
 
 @media (max-width: 600px) {
   main {
-    padding: 1.5em;
+    padding: 1.5em 2ch;
   }
   header {
     margin-bottom: 1em;
