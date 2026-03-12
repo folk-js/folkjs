@@ -39,11 +39,18 @@
   </head>
   <body>
     <main folk-space="grid: true">
-      <bluesky-post
+      <!-- <bluesky-post
         uri="at://did:plc:zcanytzlaumjwgaopolw6wes/app.bsky.feed.post/3mbp3x7tcnc2y"
         cid="bafyreigc7zidbvzbuabzeas564t54fxmaxholqke7ac3q7aiii4oq2geyu"
         folk-shape="x: 100; y: 100; width: 500"
-      ></bluesky-post>
+      ></bluesky-post> -->
+
+      <at-record
+        repo="did:plc:zcanytzlaumjwgaopolw6wes"
+        collection="app.bsky.feed.post"
+        key="3mbp3x7tcnc2y"
+        folk-shape="x: 100; y: 200; width: 500"
+      ></at-record>
     </main>
 
     <folk-toolbar container="main">
@@ -63,6 +70,8 @@
     import '@folkjs/labs/standalone/folk-arrow';
     import '@folkjs/atproto/standalone/bluesky-post';
     import { FolkToolbar, FolkInstrument } from '@folkjs/labs/folk-toolbar';
+    import '@folkjs/atproto/standalone/at-record';
+    // import '@folkjs/atproto/at-news';
 
     FolkInstrument.define();
     FolkToolbar.define();
