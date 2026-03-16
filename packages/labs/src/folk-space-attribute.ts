@@ -313,6 +313,10 @@ export class FolkSpaceAttribute extends CustomAttribute implements IPointTransfo
 
   // We are using event delegation to capture wheel events that don't happen in the transformed rect of the zoomable element.
   #onWheel = (event: WheelEvent) => {
+    // if the focused element is being scrolled on than dont zoom/pan
+    // TODO: detect if elements are scrollable??
+    if (document.activeElement === event.target) return;
+
     event.preventDefault();
 
     const { left, top } = this.#container.getBoundingClientRect();
