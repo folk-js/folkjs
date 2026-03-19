@@ -70,6 +70,7 @@
     }
   },
   "dependencies": {
+    "@folkjs/atproto": "^0.0.10",
     "@folkjs/canvas": "^0.0.10",
     "@folkjs/dom": "^0.0.10",
     "@folkjs/geometry": "^0.0.10",

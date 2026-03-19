@@ -1,8 +1,6 @@
 import {
   AtUri,
-  isValidDid,
   isValidHandle,
-  type AtUriString,
   type DidString,
   type HandleString,
   type NsidString,
@@ -10,72 +8,7 @@ import {
 } from '@atproto/syntax';
 import { css, property, ReactiveElement, state, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { html, render, type TemplateResult } from 'lit-html';
-
-const didCache = new Map<HandleString, DidString>();
-
-async function resolveDidFromHandle(handle: HandleString): Promise<DidString | null> {
-  const did = didCache.get(handle);
-  if (did !== undefined) return did;
-
-  try {
-    const url = new URL('https://slingshot.microcosm.blue/xrpc/com.atproto.identity.resolveHandle');
-    url.searchParams.set('handle', handle);
-
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      console.warn(`Failed to resolve handle:`, handle);
-      return null;
-    }
-
-    const { did } = await response.json();
-    if (isValidDid(did)) {
-      didCache.set(handle, did);
-      return did;
-    }
-    return null;
-  } catch (error) {
-    console.error(handle, error);
-    return null;
-  }
-}
-
-const recordCache = new Map<AtUriString, AnyATRecord>();
-
-// https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord?repo=did%3Aplc%3Ahdhoaan3xa3jiuq4fg4mefid&collection=app.bsky.feed.like&rkey=3lv4ouczo2b2a
-async function fetchRecord<AnyATRecord>(atUri: AtUri): Promise<AnyATRecord | null> {
-  try {
-    const uriString = atUri.toString();
-    const record = recordCache.get(uriString);
-    if (record !== undefined) return record as AnyATRecord;
-
-    const url = new URL('https://slingshot.microcosm.blue/xrpc/com.atproto.repo.getRecord');
-    url.searchParams.set('repo', atUri.did);
-    url.searchParams.set('collection', atUri.collection);
-    url.searchParams.set('rkey', atUri.rkey);
-
-    const recordResponse = await fetch(url);
-
-    if (!recordResponse.ok) {
-      console.warn(`Failed to fetch record:`, atUri);
-      return null;
-    }
-
-    const recordData = await recordResponse.json();
-
-    recordCache.set(uriString, recordData);
-    return recordData;
-  } catch (error) {
-    console.error(atUri, error);
-    return null;
-  }
-}
-
-type AnyATRecord = {
-  cid: string;
-  uri: AtUriString;
-  value: any;
-};
+import { fetchRecord, resolveDidFromHandle, type AnyATRecord } from './utilities';
 
 type ATRecordRenderer = (record: AnyATRecord) => TemplateResult;
 
@@ -170,9 +103,30 @@ export class ATRecord extends ReactiveElement {
    * [atproto Reference](https://atproto.com/guides/glossary#cid-content-id) */
   // @property({ type: String, reflect: true }) cid = '';
 
+  #atUri: AtUri | null = null;
   #select = document.createElement('select');
   #container = document.createElement('div');
   #renderer: ATRecordRenderer = jsonRenderer;
+
+  get atUri(): AtUri | null {
+    return this.#atUri;
+  }
+
+  set atUri(value: string | AtUri | null) {
+    if (value === null) {
+      this.repo = '';
+      this.collection = '';
+      this.key = '';
+      return;
+    }
+
+    if (typeof value === 'string') {
+      value = new AtUri(value);
+    }
+    this.repo = value.did;
+    this.collection = value.collection as NsidString;
+    this.key = value.rkey;
+  }
 
   protected override createRenderRoot(): HTMLElement | DocumentFragment {
     const root = super.createRenderRoot();
@@ -219,9 +173,9 @@ export class ATRecord extends ReactiveElement {
     if (isValidHandle(didOrHandle)) {
       didOrHandle = (await resolveDidFromHandle(didOrHandle)) || this.repo;
     }
-    const uri = AtUri.make(didOrHandle, this.collection, this.key);
+    this.#atUri = AtUri.make(didOrHandle, this.collection, this.key);
 
-    this.record = await fetchRecord(uri);
+    this.record = await fetchRecord(this.#atUri);
   }
 
   #render() {
@@ -278,4 +232,28 @@ ATRecord.setRenderer(
   `,
 );
 
-ATRecord.setRenderer('network.cosmik.card', 'UI', (record: AnyATRecord) => html`<h1>Hello World</h1>`);
+ATRecord.setRenderer(
+  'network.cosmik.card',
+  'UI',
+  ({ value }: AnyATRecord) => html`
+    <style>
+      h2,
+      p {
+        font-size: 0.75rem;
+      }
+    </style>
+
+    <h2
+      >${value.content.metadata.title} on ${value.content.metadata.siteName}
+      <a href="${value.content.url}" target="_blank">↗</a></h2
+    >
+    <p>${new Date(value.createdAt).toLocaleDateString()}</p>
+    <p><i>${value.content.metadata.description}</i></p>
+  `,
+);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'at-record': ATRecord;
+  }
+}

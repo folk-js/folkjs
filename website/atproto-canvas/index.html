@@ -68,6 +68,7 @@
       <folk-instrument type="rectangle">Rectangle</folk-instrument>
       <folk-instrument type="text">Text</folk-instrument>
       <folk-instrument type="arrow">Arrow</folk-instrument>
+      <folk-instrument type="at-cards">Load Cards</folk-instrument>
     </folk-toolbar>
   </body>
 
@@ -78,9 +79,11 @@
     import '@folkjs/labs/standalone/folk-arrow';
     import '@folkjs/atproto/standalone/bluesky-post';
     import '@folkjs/atproto/standalone/at-record';
+    import { atCards } from '@folkjs/atproto/interactions';
     import { FolkToolbar, FolkInstrument } from '@folkjs/labs/folk-toolbar';
 
     // import '@folkjs/atproto/at-news';
+    FolkInstrument.setInteraction('at-cards', atCards);
 
     FolkInstrument.define();
     FolkToolbar.define();
