@@ -509,7 +509,6 @@ class KanbanCard extends ReactiveElement {
     const { intention } = findClosestIntention(event);
 
     if (intention === undefined) return;
-
     switch (intention) {
       case 'UPDATE_CARD_NAME': {
         this.name = this.#nameInput.value;
@@ -575,9 +574,9 @@ function closestSibling(el: Element, selector: string, where: 'before' | 'after'
   return sibling;
 }
 
-const board = document.querySelector('kanban-board')!;
 const collectionInput = document.querySelector('input')!;
 document.querySelector('button.load')?.addEventListener('click', async () => {
+  const board = document.querySelector('kanban-board')!;
   board.clear();
 
   const collectionLinks = await fetchBacklinks(
@@ -586,22 +585,48 @@ document.querySelector('button.load')?.addEventListener('click', async () => {
     'collection.uri',
   );
 
+  const today = new Date();
+  const lastWeek = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 7);
+
   console.log(collectionLinks);
 
-  const cards = collectionLinks.map((link) => {
-    const card = document.createElement('kanban-card');
-    const record = document.createElement('at-record');
-    record.renderer = 'UI';
-    record.atUri = link.value.card.uri;
+  const cards = collectionLinks
+    .filter((link) => new Date(link.value.createdAt) > lastWeek)
+    .map((link) => {
+      const card = document.createElement('kanban-card');
+      const record = document.createElement('at-record');
+      record.renderer = 'UI';
+      record.atUri = link.value.card.uri;
 
-    card.appendChild(record);
-    return card;
-  });
+      card.appendChild(record);
+      return card;
+    });
 
   board.columns[0].append(...cards);
 });
 
-document.querySelector('button.copy')?.addEventListener('click', () => {});
+document.querySelector('button.copy')?.addEventListener('click', () => {
+  const board = document.querySelector('kanban-board')!;
+
+  const markdown = board.columns.map((column) => {
+    const cardsList = column.cards.map((card) => {
+      if (card.name === '') return '';
+      const record = card.querySelector('at-record')!;
+      return `
+- ${card.name.replaceAll('()', `${record.record?.value.content.url}`)}`;
+    });
+    console.log(cardsList);
+
+    if (cardsList.length === 0) return '';
+
+    return `
+## ${column.name}
+${cardsList.join('')}
+`;
+  });
+  console.log(markdown.join());
+  navigator.clipboard.writeText(markdown.join(''));
+});
 
 document.body.addEventListener('doc-change', (e) => {
   location.hash = e.docId;

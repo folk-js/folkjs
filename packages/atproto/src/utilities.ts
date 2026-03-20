@@ -92,7 +92,7 @@ export async function fetchBacklinks(atUri: AtUri | string, source: NsidString, 
     const url = new URL('https://constellation.microcosm.blue/xrpc/blue.microcosm.links.getBacklinks');
     url.searchParams.set('subject', atUri.toString());
     url.searchParams.set('source', source + ':' + path);
-    url.searchParams.set('limit', '10');
+    url.searchParams.set('limit', '100');
 
     const recordResponse = await fetch(url);
 
