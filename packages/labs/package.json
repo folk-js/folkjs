@@ -12,26 +12,6 @@
     "./*": {
       "import": "./dist/*.js",
       "types": "./dist/*.d.ts"
-    },
-    "./standalone/*": {
-      "import": "./dist/standalone/*.js",
-      "types": "./dist/standalone/*.d.ts"
-    },
-    "./interactions/*": {
-      "import": "./dist/interactions/*.js",
-      "types": "./dist/interactions/*.d.ts"
-    },
-    "./intl-elements/*": {
-      "import": "./dist/intl-elements/*.js",
-      "types": "./dist/intl-elements/*.d.ts"
-    },
-    "./lsp/*": {
-      "import": "./dist/lsp/*.js",
-      "types": "./dist/lsp/*.d.ts"
-    },
-    "./utils/*": {
-      "import": "./dist/utils/*.js",
-      "types": "./dist/utils/*.d.ts"
     }
   },
   "files": [
