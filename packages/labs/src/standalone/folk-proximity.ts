@@ -1,5 +1,6 @@
-import { FolkProximity, FolkCluster } from '../folk-proximity';
+import { FolkCluster, FolkProximity } from '../folk-proximity';
 
+FolkCluster.define();
 FolkProximity.define();
 
-export { FolkProximity, FolkCluster };
+export { FolkCluster, FolkProximity };
