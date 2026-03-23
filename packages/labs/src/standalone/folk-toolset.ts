@@ -1,8 +1,8 @@
-import { FolkDeleteTool, FolkPropagatorTool, FolkShapeTool, FolkToolset } from '../folk-toolset';
+import { FolkPropagatorTool, FolkShapeTool, FolkDeleteTool, FolkToolset } from '../folk-toolset';
 
+FolkPropagatorTool.define();
 FolkShapeTool.define();
 FolkDeleteTool.define();
-FolkPropagatorTool.define();
 FolkToolset.define();
 
-export { FolkToolset };
+export { FolkPropagatorTool, FolkShapeTool, FolkDeleteTool, FolkToolset };
