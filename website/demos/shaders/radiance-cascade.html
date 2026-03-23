@@ -47,49 +47,71 @@
         font-size: 12px;
         color: rgba(255, 255, 255, 0.5);
         pointer-events: none;
+        line-height: 1.6;
+      }
+
+      #scene-label {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 1000;
+        font-family: monospace;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.6);
+        pointer-events: none;
       }
     </style>
   </head>
   <body>
     <div id="color-indicator"></div>
-    <div id="help-text">Draw • 0=erase • 1=black • 2-8=colors • 9=white • +/- size • C=clear</div>
+    <div id="scene-label"></div>
+    <div id="help-text">
+      Draw: 0=off • 1=black • 2-8=colors • 9=white • +/- size • C=clear<br />
+      Scenes: Shift+0-9 • Del=remove shape
+    </div>
 
-    <folk-radiance-cascade id="cascade">
-      <folk-shape x="100" y="100" width="50" height="50"></folk-shape>
-      <folk-shape x="100" y="200" width="50" height="50"></folk-shape>
-      <folk-shape x="100" y="300" width="50" height="50"></folk-shape>
-      <folk-shape x="300" y="150" width="80" height="40"></folk-shape>
-      <folk-shape x="400" y="250" width="60" height="90"></folk-shape>
-      <folk-shape x="200" y="400" width="100" height="100"></folk-shape>
-      <folk-shape x="500" y="100" width="30" height="70" data-color="0"></folk-shape>
-    </folk-radiance-cascade>
+    <folk-radiance-cascade id="cascade"></folk-radiance-cascade>
 
     <script type="module">
       import '@folkjs/labs/standalone/folk-shape';
       import '@folkjs/labs/standalone/folk-radiance-cascade';
 
-      // Color palette: 0 = eraser, 1 = black, 2-8 = colors, 9 = white
       const colors = [
-        { name: 'Eraser', css: null, isEraser: true },
-        { name: 'Black', css: '#111' },
-        { name: 'Red', css: '#ff4444' },
-        { name: 'Orange', css: '#ff8833' },
-        { name: 'Yellow', css: '#dddd33' },
-        { name: 'Green', css: '#44dd55' },
-        { name: 'Cyan', css: '#44dddd' },
-        { name: 'Blue', css: '#4466ff' },
-        { name: 'Purple', css: '#aa44ff' },
-        { name: 'White', css: '#ffffff' },
+        { name: 'Off', css: '#333', rgb: [0, 0, 0] },
+        { name: 'Black', css: '#111', rgb: [0.05, 0.05, 0.05] },
+        { name: 'Red', css: '#ff4444', rgb: [1, 0.25, 0.25] },
+        { name: 'Orange', css: '#ff8833', rgb: [1, 0.5, 0.2] },
+        { name: 'Yellow', css: '#dddd33', rgb: [0.75, 0.75, 0.2] },
+        { name: 'Green', css: '#44dd55', rgb: [0.25, 0.8, 0.35] },
+        { name: 'Cyan', css: '#44dddd', rgb: [0.25, 0.75, 0.75] },
+        { name: 'Blue', css: '#4466ff', rgb: [0.3, 0.4, 1] },
+        { name: 'Purple', css: '#aa44ff', rgb: [0.65, 0.3, 1] },
+        { name: 'White', css: '#ffffff', rgb: [0.8, 0.8, 0.8] },
       ];
 
-      let currentColor = 2; // Start with red
+      const scenes = [
+        { name: 'Empty', fn: loadEmpty },
+        { name: 'Center block', fn: loadCenterBlock },
+        { name: 'Thin walls', fn: loadThinWalls },
+        { name: 'Pillars', fn: loadPillars },
+        { name: 'Corner trap', fn: loadCorner },
+        { name: 'Color mix', fn: loadColorMix },
+        { name: 'Stained glass', fn: loadStainedGlass },
+        { name: 'Color shadows', fn: loadColorShadows },
+        { name: 'Orbit', fn: loadAnimatedOrbit },
+        { name: 'Gate', fn: loadAnimatedGate },
+      ];
+
+      let currentColor = 2;
+      let currentScene = 0;
       let lineThickness = 8;
       const indicator = document.getElementById('color-indicator');
       const cascade = document.getElementById('cascade');
+      const sceneLabel = document.getElementById('scene-label');
 
       function updateIndicator() {
         const color = colors[currentColor];
-        if (color.isEraser) {
+        if (currentColor === 0) {
           indicator.style.backgroundColor = '';
           indicator.classList.add('eraser');
         } else {
@@ -97,50 +119,229 @@
           indicator.style.backgroundColor = color.css;
         }
       }
-      updateIndicator();
 
-      // Key handling
-      document.addEventListener('keydown', (e) => {
-        const num = parseInt(e.key);
-        if (!isNaN(num) && num >= 0 && num <= 9) {
-          currentColor = num;
-          updateIndicator();
+      function updateMouseLightColor() {
+        const c = colors[currentColor];
+        cascade.setMouseLightColor(c.rgb[0], c.rgb[1], c.rgb[2]);
+      }
+
+      function updateSceneLabel() {
+        sceneLabel.textContent = `Scene ${currentScene}: ${scenes[currentScene].name}`;
+      }
+
+      updateIndicator();
+      updateMouseLightColor();
+
+      // --- Scene helpers ---
+      let animationId = null;
+
+      function clearScene() {
+        if (animationId) {
+          cancelAnimationFrame(animationId);
+          animationId = null;
         }
-        // Thickness controls
+        cascade.clearLines();
+        cascade.querySelectorAll('folk-shape').forEach((s) => s.remove());
+      }
+
+      function addShape(x, y, w, h, colorIdx) {
+        const el = document.createElement('folk-shape');
+        el.setAttribute('x', x);
+        el.setAttribute('y', y);
+        el.setAttribute('width', w);
+        el.setAttribute('height', h);
+        if (colorIdx !== undefined) el.setAttribute('data-color', colorIdx);
+        cascade.appendChild(el);
+        return el;
+      }
+
+      function switchScene(index) {
+        currentScene = index;
+        clearScene();
+        scenes[index].fn();
+        updateSceneLabel();
+      }
+
+      // --- Scene definitions ---
+      function loadEmpty() {}
+
+      function loadCenterBlock() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        addShape(cx - 60, cy - 60, 120, 120, 1);
+      }
+
+      // Tests SDF precision and light leaking through very thin geometry
+      function loadThinWalls() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        // 1px, 2px, 4px, 8px thick walls — good for finding the leak threshold
+        addShape(cx - 200, cy - 80, 400, 1, 1);
+        addShape(cx - 200, cy - 20, 400, 2, 1);
+        addShape(cx - 200, cy + 40, 400, 4, 1);
+        addShape(cx - 200, cy + 110, 400, 8, 1);
+      }
+
+      function loadPillars() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const spacing = 120;
+        const count = 5;
+        const startX = cx - ((count - 1) * spacing) / 2;
+        for (let i = 0; i < count; i++) {
+          addShape(startX + i * spacing - 15, cy - 80, 30, 160, 1);
+        }
+      }
+
+      function loadCorner() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        addShape(cx - 150, cy - 150, 300, 20, 1);
+        addShape(cx - 150, cy - 150, 20, 300, 1);
+      }
+
+      // RGB emitters pulse toward/away from a central occluder — tests dynamic
+      // color bleeding and how the cascade responds to changing proximity
+      function loadColorMix() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        addShape(cx - 40, cy - 40, 80, 80, 1);
+        const red = addShape(cx - 150, cy - 120, 50, 50, 2);
+        const green = addShape(cx + 100, cy - 120, 50, 50, 5);
+        const blue = addShape(cx - 25, cy + 100, 50, 50, 7);
+        const baseR = 140;
+        const angles = [-Math.PI * 0.75, -Math.PI * 0.25, Math.PI * 0.5];
+        const shapes = [red, green, blue];
+        function animate() {
+          const t = performance.now() / 2500;
+          for (let i = 0; i < 3; i++) {
+            const phase = t + (i * Math.PI * 2) / 3;
+            const r = baseR * (0.5 + 0.5 * Math.sin(phase));
+            const a = angles[i];
+            shapes[i].setAttribute('x', cx + Math.cos(a) * r - 25);
+            shapes[i].setAttribute('y', cy + Math.sin(a) * r - 25);
+          }
+          animationId = requestAnimationFrame(animate);
+        }
+        animate();
+      }
+
+      // Colored panes in a black wall — tests color transmission and occlusion
+      function loadStainedGlass() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const wallX = cx - 10;
+        addShape(wallX, cy - 180, 20, 60, 1);
+        addShape(wallX, cy - 100, 20, 20, 2); // red pane
+        addShape(wallX, cy - 80, 20, 30, 1);
+        addShape(wallX, cy - 50, 20, 20, 5); // green pane
+        addShape(wallX, cy - 30, 20, 30, 1);
+        addShape(wallX, cy, 20, 20, 7);       // blue pane
+        addShape(wallX, cy + 20, 20, 30, 1);
+        addShape(wallX, cy + 50, 20, 20, 4);  // yellow pane
+        addShape(wallX, cy + 70, 20, 110, 1);
+      }
+
+      // Colored emitters casting shadows onto each other — tests color shadow
+      // accuracy and whether light leaks differently for different colors
+      function loadColorShadows() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        // Two colored lights on the left, occluder in the middle, colored
+        // wall on the right to catch the shadow pattern
+        addShape(cx - 200, cy - 100, 40, 40, 2); // red emitter top
+        addShape(cx - 200, cy + 60, 40, 40, 7);  // blue emitter bottom
+        addShape(cx - 40, cy - 80, 20, 160, 1);  // central occluder
+        addShape(cx + 100, cy - 120, 10, 240, 9); // white catch wall
+      }
+
+      function loadAnimatedOrbit() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        // Colored emitters at cardinal positions, black block orbits between them
+        addShape(cx - 20, cy - 180, 40, 40, 2); // red top
+        addShape(cx + 140, cy - 20, 40, 40, 5); // green right
+        addShape(cx - 20, cy + 140, 40, 40, 7); // blue bottom
+        addShape(cx - 180, cy - 20, 40, 40, 4); // yellow left
+        const block = addShape(cx - 30, cy - 30, 60, 60, 1);
+        const orbitR = 100;
+        function animate() {
+          const t = performance.now() / 2000;
+          block.setAttribute('x', cx + Math.cos(t) * orbitR - 30);
+          block.setAttribute('y', cy + Math.sin(t) * orbitR - 30);
+          animationId = requestAnimationFrame(animate);
+        }
+        animate();
+      }
+
+      // Animated gate with colored emitters that slide up/down on each side —
+      // tests dynamic occlusion, color mixing through a variable gap, and
+      // whether moving emitters cause temporal artifacts
+      function loadAnimatedGate() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const orange = addShape(cx - 250, cy - 25, 50, 50, 3);
+        const left = addShape(cx - 160, cy - 10, 140, 20, 1);
+        const right = addShape(cx + 20, cy - 10, 140, 20, 1);
+        const cyan = addShape(cx + 200, cy - 25, 50, 50, 6);
+        function animate() {
+          const t = performance.now() / 3000;
+          const gap = 20 + Math.abs(Math.sin(t)) * 120;
+          left.setAttribute('x', cx - gap / 2 - 140);
+          left.setAttribute('y', cy - 10);
+          right.setAttribute('x', cx + gap / 2);
+          right.setAttribute('y', cy - 10);
+          const drift = Math.sin(t * 1.3) * 80;
+          orange.setAttribute('y', cy - 25 + drift);
+          cyan.setAttribute('y', cy - 25 - drift);
+          animationId = requestAnimationFrame(animate);
+        }
+        animate();
+      }
+
+      switchScene(1);
+
+      // --- Key handling ---
+      document.addEventListener('keydown', (e) => {
+        // e.code gives the physical key (Digit0-Digit9) regardless of Shift
+        const digitMatch = e.code.match(/^Digit(\d)$/);
+        if (digitMatch) {
+          const num = parseInt(digitMatch[1]);
+          if (e.shiftKey) {
+            switchScene(num);
+          } else {
+            currentColor = num;
+            updateIndicator();
+            updateMouseLightColor();
+          }
+          return;
+        }
         if (e.key === '=' || e.key === '+') {
           lineThickness = Math.min(50, lineThickness + 2);
-          updateIndicator();
         } else if (e.key === '-' || e.key === '_') {
           lineThickness = Math.max(2, lineThickness - 2);
-          updateIndicator();
         }
-        // Clear lines
         if (e.key === 'c' || e.key === 'C') {
           cascade.clearLines();
         }
-        // Delete selected shape
         if (e.key === 'Delete' || e.key === 'Backspace') {
           const selected = cascade.querySelector('folk-shape[aria-selected="true"]');
-          if (selected) {
-            selected.remove();
-          }
+          if (selected) selected.remove();
         }
       });
 
-      // Freehand drawing - creates line segments as you draw
+      // --- Freehand drawing ---
       let isDrawing = false;
       let lastX = 0,
         lastY = 0;
-      const minSegmentLength = 4; // Minimum distance before creating a new segment
+      const minSegmentLength = 4;
 
       document.addEventListener('pointerdown', (e) => {
-        // Don't draw if clicking on a shape or UI elements
         const target = e.target;
         if (target.tagName === 'FOLK-SHAPE' || target.id === 'color-indicator' || target.id === 'help-text') {
           return;
         }
 
-        // Check if click is within the cascade bounds
         const rect = cascade.getBoundingClientRect();
         if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
           return;
@@ -161,7 +362,6 @@
 
         if (dist >= minSegmentLength) {
           if (currentColor === 0) {
-            // Eraser mode - remove nearby lines
             cascade.eraseAt(e.clientX, e.clientY, lineThickness);
           } else {
             cascade.addLine(lastX, lastY, e.clientX, e.clientY, currentColor, lineThickness);
