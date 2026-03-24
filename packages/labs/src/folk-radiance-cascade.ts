@@ -125,25 +125,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #maxCascadeTexW = 0;
   #maxCascadeTexH = 0;
 
-  // Debug visualization
-  #debugMode = 0;
-  #debugDirection = 0;
-  #debugCascadeIdx = 0; // 0 = level-0 result tex, 1 = the other
-  #debugRenderPipeline!: GPURenderPipeline;
-  #debugBindGroup!: GPUBindGroup;
-  #debugUBO!: GPUBuffer;
-  #debugUBOView!: StructuredView;
-
-  static readonly #debugModeNames = [
-    'Normal',
-    'SDF',
-    'World',
-    'Cascade (raw)',
-    'Cascade (tile)',
-    'Fluence',
-    'JFA Seeds',
-  ];
-
   // Profiling
   #profilingSupported = false;
   #profilingQuerySet!: GPUQuerySet;
@@ -168,8 +149,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
-    window.addEventListener('keydown', this.#handleKeyDown);
-
     this.#isRunning = true;
     this.#startAnimationLoop();
 
@@ -184,7 +163,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     }
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
-    window.removeEventListener('keydown', this.#handleKeyDown);
     this.#cleanupResources();
     this.#cleanupProfiling();
   }
@@ -355,7 +333,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#fluenceUBOView = uboView(fluenceShader, 'ubo');
     this.#mouseLightUBOView = uboView(mouseLightShader, 'light');
     this.#jfaParamsView = uboView(jfaSeedShader, 'params');
-    this.#debugUBOView = uboView(debugShader, 'debug');
   }
 
   #initBuffers() {
@@ -470,11 +447,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    this.#debugUBO = this.#device.createBuffer({
-      label: 'DebugUBO',
-      size: Math.max(this.#debugUBOView.arrayBuffer.byteLength, 32),
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
   }
 
   #initPipelines() {
@@ -548,19 +520,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       primitive: { topology: 'triangle-strip' },
     });
 
-    // Debug visualization pipeline
-    const debugModule = device.createShaderModule({ code: debugShader });
-    this.#debugRenderPipeline = device.createRenderPipeline({
-      label: 'Debug-Pipeline',
-      layout: 'auto',
-      vertex: { module: debugModule, entryPoint: 'vertex_main' },
-      fragment: {
-        module: debugModule,
-        entryPoint: 'fragment_main',
-        targets: [{ format: this.#presentationFormat }],
-      },
-      primitive: { topology: 'triangle-strip' },
-    });
   }
 
   #initBindGroups() {
@@ -721,20 +680,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       ],
     });
 
-    // Debug visualization bind group — exposes all intermediate textures
-    this.#debugBindGroup = this.#device.createBindGroup({
-      layout: this.#debugRenderPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.#linearSampler },
-        { binding: 1, resource: this.#sdfTextureView },
-        { binding: 2, resource: this.#worldTextureView },
-        { binding: 3, resource: this.#cascadeTextureViews[0] },
-        { binding: 4, resource: this.#cascadeTextureViews[1] },
-        { binding: 5, resource: this.#fluenceTextureView },
-        { binding: 6, resource: this.#jfaTextureViews[this.#jfaResultIndex] },
-        { binding: 7, resource: { buffer: this.#debugUBO } },
-      ],
-    });
   }
 
   override update(changedProperties: PropertyValues<this>) {
@@ -968,30 +913,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
       computePass.end();
     }
 
-    // Step 5: Final render (or debug visualization)
+    // Step 5: Final render
     {
-      if (this.#debugMode > 0) {
-        const level0ResultIndex = this.#numCascadeLevels % 2;
-        const cascadeWidth = Math.floor(width / PROBE_SPACING_0);
-        const cascadeHeight = Math.floor(height / PROBE_SPACING_0);
-        const sqrtRays = Math.round(Math.sqrt(BASE_RAY_COUNT));
-        const dir = this.#debugDirection;
-        const dx = dir % sqrtRays;
-        const dy = Math.floor(dir / sqrtRays);
-
-        this.#debugUBOView.set({
-          mode: this.#debugMode,
-          resultIdx: this.#debugCascadeIdx === 0 ? level0ResultIndex : 1 - level0ResultIndex,
-          tileOffsetX: dx * cascadeWidth,
-          tileOffsetY: dy * cascadeHeight,
-          tileSizeX: cascadeWidth,
-          tileSizeY: cascadeHeight,
-          texSizeX: this.#maxCascadeTexW,
-          texSizeY: this.#maxCascadeTexH,
-        });
-        this.#device.queue.writeBuffer(this.#debugUBO, 0, this.#debugUBOView.arrayBuffer);
-      }
-
       const renderPass = encoder.beginRenderPass({
         colorAttachments: [
           {
@@ -1003,15 +926,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
         ],
         ...(qs && { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 8, endOfPassWriteIndex: 9 } }),
       });
-
-      if (this.#debugMode > 0) {
-        renderPass.setPipeline(this.#debugRenderPipeline);
-        renderPass.setBindGroup(0, this.#debugBindGroup);
-      } else {
-        renderPass.setPipeline(this.#renderPipeline);
-        renderPass.setBindGroup(0, this.#renderBindGroup);
-      }
-
+      renderPass.setPipeline(this.#renderPipeline);
+      renderPass.setBindGroup(0, this.#renderBindGroup);
       renderPass.setViewport(0, 0, width, height, 0, 1);
       renderPass.draw(4);
       renderPass.end();
@@ -1082,27 +998,11 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#mousePosition.y = e.clientY - rect.top;
   };
 
-  #handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key >= '0' && e.key <= '6') {
-      this.#debugMode = parseInt(e.key);
-    } else if (e.key === '=' || e.key === '+') {
-      this.#debugDirection = (this.#debugDirection + 1) % (BASE_RAY_COUNT * BRANCHING_FACTOR);
-    } else if (e.key === '-' || e.key === '_') {
-      const total = BASE_RAY_COUNT * BRANCHING_FACTOR;
-      this.#debugDirection = (this.#debugDirection + total - 1) % total;
-    } else if (e.key === ']') {
-      this.#debugCascadeIdx = 1 - this.#debugCascadeIdx;
-    } else if (e.key === '[') {
-      this.#debugCascadeIdx = 1 - this.#debugCascadeIdx;
-    }
-  };
-
   #cleanupResources() {
     this.#cascadeTextures?.forEach((t) => t.destroy());
     this.#uboBuffer?.destroy();
     this.#mouseLightUBO?.destroy();
     this.#fluenceUBO?.destroy();
-    this.#debugUBO?.destroy();
     this.#jfaTextures?.forEach((t) => t.destroy());
     this.#jfaParamsBuffer?.destroy();
     this.#sdfTexture?.destroy();
@@ -1188,15 +1088,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const fps = this.#smoothedCpuTime > 0 ? Math.round(1000 / this.#smoothedCpuTime) : 0;
     const fmt = (ms: number) => ms.toFixed(2).padStart(5);
 
-    const modeName = FolkRadianceCascade.#debugModeNames[this.#debugMode] ?? 'Unknown';
-    let text = `${width}×${height}  ${fps} fps  [${this.#debugMode}] ${modeName}`;
-
-    if (this.#debugMode === 4) {
-      text += `  dir=${this.#debugDirection}`;
-    }
-    if (this.#debugMode === 3 || this.#debugMode === 4) {
-      text += `  tex=${this.#debugCascadeIdx}`;
-    }
+    let text = `${width}×${height}  ${fps} fps`;
 
     if (this.#profilingSupported && this.#smoothedGpuTimes.total > 0) {
       const s = this.#smoothedGpuTimes;
@@ -1492,14 +1384,11 @@ fn sampleSDF(pos: vec2f) -> f32 {
   return max(textureSampleLevel(sdfTexture, worldSampler, uv, 0.0).r, 0.0);
 }
 
-// Bilinear merge: sample 4 neighboring upper probes using hardware bilinear
-// interpolation. In direction-first layout, each direction tile contains
-// spatially-arranged probes, so textureSampleLevel with a linear sampler
-// naturally interpolates between neighboring probes.
-//
-// Upper cascade dimensions (upperCascadeW/H) are passed through the UBO
-// rather than re-derived in the shader, avoiding integer division truncation
-// mismatches between CPU and GPU.
+// Merge with upper cascade: sample 4 parent direction bins using hardware
+// bilinear interpolation across spatial probes. In direction-first layout,
+// each direction tile contains spatially-arranged probes, so
+// textureSampleLevel with a linear sampler naturally interpolates between
+// neighboring probes.
 fn sampleUpperCascade(probeCenter: vec2f, dirIndex: i32) -> vec4f {
   if (ubo.level >= ubo.levelCount) { return vec4f(0.0, 0.0, 0.0, 1.0); }
 
@@ -1507,9 +1396,6 @@ fn sampleUpperCascade(probeCenter: vec2f, dirIndex: i32) -> vec4f {
   let upperProbeSpacing = ubo.probeSpacing * 2.0;
   let texSize = vec2f(textureDimensions(upperCascade));
   let upperProbePos = probeCenter / upperProbeSpacing - 0.5;
-  // Clamp to [0.5, size - 1.5] so the bilinear 2×2 footprint stays entirely
-  // within the direction tile. Without this, edge probes sample from adjacent
-  // direction tiles — a different direction's data masquerading as spatial neighbors.
   let clampedPos = clamp(upperProbePos, vec2f(0.5), vec2f(f32(ubo.upperCascadeW) - 1.5, f32(ubo.upperCascadeH) - 1.5));
 
   var acc = vec4f(0.0);
@@ -1695,110 +1581,3 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
 }
 `;
 
-const debugShader = /*wgsl*/ `
-struct VertexOutput {
-  @builtin(position) position: vec4f,
-  @location(0) uv: vec2f,
-}
-
-struct DebugUBO {
-  mode: u32,
-  resultIdx: u32,
-  tileOffsetX: f32,
-  tileOffsetY: f32,
-  tileSizeX: f32,
-  tileSizeY: f32,
-  texSizeX: f32,
-  texSizeY: f32,
-}
-
-@vertex
-fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
-  let pos = array(
-    vec2f(-1.0, -1.0),
-    vec2f( 1.0, -1.0),
-    vec2f(-1.0,  1.0),
-    vec2f( 1.0,  1.0),
-  );
-  var out: VertexOutput;
-  out.position = vec4f(pos[vi], 0.0, 1.0);
-  out.uv = pos[vi] * vec2f(0.5, -0.5) + 0.5;
-  return out;
-}
-
-@group(0) @binding(0) var samp: sampler;
-@group(0) @binding(1) var sdfTex: texture_2d<f32>;
-@group(0) @binding(2) var worldTex: texture_2d<f32>;
-@group(0) @binding(3) var cascadeTex0: texture_2d<f32>;
-@group(0) @binding(4) var cascadeTex1: texture_2d<f32>;
-@group(0) @binding(5) var fluenceTex: texture_2d<f32>;
-@group(0) @binding(6) var jfaTex: texture_2d<f32>;
-@group(0) @binding(7) var<uniform> debug: DebugUBO;
-
-fn linearToSrgb(c: vec3f) -> vec3f {
-  return pow(c, vec3f(1.0 / 2.2));
-}
-
-@fragment
-fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
-  let mode = debug.mode;
-
-  // Mode 1: SDF distance field — grayscale, brighter = further from surface
-  if (mode == 1u) {
-    let dist = textureSample(sdfTex, samp, in.uv).r;
-    let v = saturate(1.0 - dist / 128.0);
-    return vec4f(v, v, v, 1.0);
-  }
-
-  // Mode 2: World texture — raw emissive RGBA as the shaders see it
-  if (mode == 2u) {
-    let w = textureSample(worldTex, samp, in.uv);
-    return vec4f(linearToSrgb(w.rgb * w.a), 1.0);
-  }
-
-  // Mode 3: Raw cascade texture — full direction-first packed texture
-  if (mode == 3u) {
-    var s: vec4f;
-    if (debug.resultIdx == 0u) {
-      s = textureSample(cascadeTex0, samp, in.uv);
-    } else {
-      s = textureSample(cascadeTex1, samp, in.uv);
-    }
-    return vec4f(linearToSrgb(abs(s.rgb) * 3.0), 1.0);
-  }
-
-  // Mode 4: Single direction tile from cascade, stretched to fill canvas
-  if (mode == 4u) {
-    let tileUV = vec2f(
-      (debug.tileOffsetX + in.uv.x * debug.tileSizeX) / debug.texSizeX,
-      (debug.tileOffsetY + in.uv.y * debug.tileSizeY) / debug.texSizeY
-    );
-    var s: vec4f;
-    if (debug.resultIdx == 0u) {
-      s = textureSample(cascadeTex0, samp, tileUV);
-    } else {
-      s = textureSample(cascadeTex1, samp, tileUV);
-    }
-    return vec4f(linearToSrgb(abs(s.rgb) * 3.0), 1.0);
-  }
-
-  // Mode 5: Fluence texture — pre-tonemap indirect illumination
-  if (mode == 5u) {
-    let f = textureSample(fluenceTex, samp, in.uv);
-    return vec4f(linearToSrgb(f.rgb), 1.0);
-  }
-
-  // Mode 6: JFA seed coordinates visualized as color
-  if (mode == 6u) {
-    let dims = vec2f(textureDimensions(jfaTex));
-    let coord = vec2u(clamp(in.uv * dims, vec2f(0.0), dims - 1.0));
-    let seed = textureLoad(jfaTex, coord, 0);
-    if (seed.x < 0.0) {
-      return vec4f(0.0, 0.0, 0.0, 1.0);
-    }
-    return vec4f(fract(seed.xy / 256.0), 0.5, 1.0);
-  }
-
-  return vec4f(1.0, 0.0, 1.0, 1.0);
-}
-`;
