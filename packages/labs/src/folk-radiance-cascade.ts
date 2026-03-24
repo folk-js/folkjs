@@ -28,7 +28,11 @@ function createComputePipeline(device: GPUDevice, label: string, code: string): 
   });
 }
 
-function uploadVertexData(device: GPUDevice, existing: GPUBuffer | undefined, data: Float32Array<ArrayBuffer>): GPUBuffer {
+function uploadVertexData(
+  device: GPUDevice,
+  existing: GPUBuffer | undefined,
+  data: Float32Array<ArrayBuffer>,
+): GPUBuffer {
   if (!existing || existing.size < data.byteLength) {
     existing?.destroy();
     existing = device.createBuffer({
@@ -61,6 +65,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #mouseLightPipeline!: GPURenderPipeline;
   #jfaSeedPipeline!: GPUComputePipeline;
   #jfaPipeline!: GPUComputePipeline;
+  #jfaFinalizePipeline!: GPUComputePipeline;
   #raymarchPipeline!: GPUComputePipeline;
   #fluencePipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
@@ -74,6 +79,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #jfaTextures!: GPUTexture[];
   #jfaTextureViews!: GPUTextureView[];
   #jfaParamsBuffer!: GPUBuffer;
+  #sdfTexture!: GPUTexture;
+  #sdfTextureView!: GPUTextureView;
   #fluenceTexture!: GPUTexture;
   #fluenceTextureView!: GPUTextureView;
 
@@ -81,6 +88,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #mouseLightBindGroup!: GPUBindGroup;
   #jfaSeedBindGroup!: GPUBindGroup;
   #jfaPassBindGroups!: GPUBindGroup[];
+  #jfaFinalizeBindGroup!: GPUBindGroup;
   #raymarchBindGroups!: GPUBindGroup[];
   #fluenceBindGroup!: GPUBindGroup;
   #renderBindGroup!: GPUBindGroup;
@@ -117,6 +125,18 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #maxCascadeTexW = 0;
   #maxCascadeTexH = 0;
 
+  // Profiling
+  #profilingSupported = false;
+  #profilingQuerySet!: GPUQuerySet;
+  #profilingResolveBuffer!: GPUBuffer;
+  #profilingReadBuffers!: [GPUBuffer, GPUBuffer];
+  #profilingWriteIndex = 0;
+  #profilingMappingPending = false;
+  #profilingOverlay!: HTMLDivElement;
+  #smoothedGpuTimes = { world: 0, jfa: 0, cascade: 0, fluence: 0, render: 0, total: 0 };
+  #smoothedCpuTime = 0;
+  #lastOverlayUpdate = 0;
+
   override async connectedCallback() {
     super.connectedCallback();
 
@@ -125,6 +145,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#initBuffers();
     this.#initPipelines();
     this.#initBindGroups();
+    this.#initProfiling();
 
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
@@ -144,6 +165,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
     this.#cleanupResources();
+    this.#cleanupProfiling();
   }
 
   // Public API for line drawing
@@ -267,7 +289,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
       throw new Error('Failed to get GPU adapter.');
     }
 
-    this.#device = await adapter.requestDevice();
+    this.#profilingSupported = adapter.features.has('timestamp-query');
+    this.#device = await adapter.requestDevice({
+      requiredFeatures: this.#profilingSupported ? ['timestamp-query'] : [],
+    });
 
     this.#canvas = document.createElement('canvas');
     this.#canvas.width = this.clientWidth || 800;
@@ -361,17 +386,29 @@ export class FolkRadianceCascade extends FolkBaseSet {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // JFA ping-pong textures for distance field generation.
-    // Each texel stores (seedX, seedY, unused, distance) in pixel coordinates.
+    // JFA ping-pong textures: store (seedX, seedY) per texel.
+    // rg32float halves bandwidth vs rgba32float; distance is computed in a
+    // finalize pass after JFA completes.
     this.#jfaTextures = [0, 1].map((i) =>
       this.#device.createTexture({
         label: `JFA-Texture-${i}`,
         size: { width, height },
-        format: 'rgba32float',
+        format: 'rg32float',
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       }),
     );
     this.#jfaTextureViews = this.#jfaTextures.map((t) => t.createView());
+
+    // Precomputed SDF distance texture. rgba16float is always filterable,
+    // enabling hardware bilinear sampling in the raymarch shader (replaces
+    // 4 textureLoad calls with 1 textureSampleLevel).
+    this.#sdfTexture = this.#device.createTexture({
+      label: 'SDF-Texture',
+      size: { width, height },
+      format: 'rgba16float',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.#sdfTextureView = this.#sdfTexture.createView();
 
     // Pre-compute JFA pass count and result texture index.
     // The number of passes determines which ping-pong texture holds the final SDF.
@@ -465,6 +502,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     this.#jfaSeedPipeline = createComputePipeline(device, 'JFA-Seed', jfaSeedShader);
     this.#jfaPipeline = createComputePipeline(device, 'JFA', jfaShader);
+    this.#jfaFinalizePipeline = createComputePipeline(device, 'JFA-Finalize', jfaFinalizeShader);
     this.#raymarchPipeline = createComputePipeline(device, 'Raymarch', raymarchShader);
     this.#fluencePipeline = createComputePipeline(device, 'Fluence', fluenceShader);
 
@@ -481,7 +519,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       },
       primitive: { topology: 'triangle-strip' },
     });
-
   }
 
   #initBindGroups() {
@@ -540,6 +577,16 @@ export class FolkRadianceCascade extends FolkBaseSet {
       passIndex++;
     }
 
+    // JFA finalize bind group: reads final seed coords, writes precomputed distance
+    this.#jfaFinalizeBindGroup = this.#device.createBindGroup({
+      layout: this.#jfaFinalizePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.#jfaTextureViews[this.#jfaResultIndex] },
+        { binding: 1, resource: this.#sdfTextureView },
+        { binding: 2, resource: { buffer: this.#jfaParamsBuffer, offset: 0, size: 16 } },
+      ],
+    });
+
     // Raymarch bind groups with direction-first cascade texture ping-pong.
     // Processing order is highest level first (no upper cascade) down to level 0.
     // Each level alternates which cascade texture it writes to vs reads from.
@@ -586,7 +633,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
           { binding: 1, resource: { buffer: this.#uboBuffer, offset: level * 256, size: uboSize } },
           { binding: 2, resource: this.#worldTextureView },
           { binding: 3, resource: this.#linearSampler },
-          { binding: 4, resource: this.#jfaTextureViews[this.#jfaResultIndex] },
+          { binding: 4, resource: this.#sdfTextureView },
           { binding: 5, resource: this.#cascadeTextureViews[readIndex] },
         ],
       });
@@ -640,16 +687,16 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
   // Color palette - normalized for similar perceived brightness
   static readonly #colors: [number, number, number][] = [
-    [0, 0, 0],           // 0: Eraser (handled specially)
-    [0.05, 0.05, 0.05],  // 1: Black (blocks light)
-    [1, 0.25, 0.25],     // 2: Red
-    [1, 0.5, 0.2],       // 3: Orange
-    [0.75, 0.75, 0.2],   // 4: Yellow (reduced)
-    [0.25, 0.8, 0.35],   // 5: Green
-    [0.25, 0.75, 0.75],  // 6: Cyan (reduced)
-    [0.3, 0.4, 1],       // 7: Blue
-    [0.65, 0.3, 1],      // 8: Purple
-    [0.8, 0.8, 0.8],     // 9: White (reduced)
+    [0, 0, 0], // 0: Eraser (handled specially)
+    [0.05, 0.05, 0.05], // 1: Black (blocks light)
+    [1, 0.25, 0.25], // 2: Red
+    [1, 0.5, 0.2], // 3: Orange
+    [0.75, 0.75, 0.2], // 4: Yellow (reduced)
+    [0.25, 0.8, 0.35], // 5: Green
+    [0.25, 0.75, 0.75], // 6: Cyan (reduced)
+    [0.3, 0.4, 1], // 7: Blue
+    [0.65, 0.3, 1], // 8: Purple
+    [0.8, 0.8, 0.8], // 9: White (reduced)
   ];
 
   #updateShapeData() {
@@ -701,10 +748,26 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   #startAnimationLoop() {
-    const render = () => {
+    let lastTime = 0;
+
+    const render = (now: number) => {
       if (!this.#isRunning) return;
 
+      if (lastTime > 0) {
+        const delta = now - lastTime;
+        const alpha = 0.05;
+        this.#smoothedCpuTime =
+          this.#smoothedCpuTime === 0 ? delta : this.#smoothedCpuTime + alpha * (delta - this.#smoothedCpuTime);
+      }
+      lastTime = now;
+
       this.#runRadianceCascades();
+
+      if (this.#profilingOverlay && now - this.#lastOverlayUpdate > 200) {
+        this.#lastOverlayUpdate = now;
+        this.#updateOverlayDOM();
+      }
+
       this.#animationFrame = requestAnimationFrame(render);
     };
 
@@ -718,10 +781,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
     }
 
     const { width, height } = this.#canvas;
-    const jfaWorkgroupsX = Math.ceil(width / 8);
-    const jfaWorkgroupsY = Math.ceil(height / 8);
-    const cascadeWorkgroupsX = Math.ceil(this.#maxCascadeTexW / 8);
-    const cascadeWorkgroupsY = Math.ceil(this.#maxCascadeTexH / 8);
+    const jfaWorkgroupsX = Math.ceil(width / 16);
+    const jfaWorkgroupsY = Math.ceil(height / 16);
+    const cascadeWorkgroupsX = Math.ceil(this.#maxCascadeTexW / 16);
+    const cascadeWorkgroupsY = Math.ceil(this.#maxCascadeTexH / 16);
 
     // Only the mouse light UBO changes per frame (mouse position).
     // All other UBOs are written once in #initBindGroups.
@@ -740,6 +803,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#device.queue.writeBuffer(this.#mouseLightUBO, 0, this.#mouseLightUBOView.arrayBuffer);
 
     const encoder = this.#device.createCommandEncoder();
+    const qs = this.#profilingSupported ? this.#profilingQuerySet : null;
 
     // Step 1: Clear and render world texture
     {
@@ -752,6 +816,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
             storeOp: 'store',
           },
         ],
+        ...(qs && { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 0 } }),
       });
 
       renderPass.setPipeline(this.#worldRenderPipeline);
@@ -773,6 +838,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     {
       const renderPass = encoder.beginRenderPass({
         colorAttachments: [{ view: this.#worldTextureView, loadOp: 'load', storeOp: 'store' }],
+        ...(qs && { timestampWrites: { querySet: qs, endOfPassWriteIndex: 1 } }),
       });
       renderPass.setPipeline(this.#mouseLightPipeline);
       renderPass.setBindGroup(0, this.#mouseLightBindGroup);
@@ -780,9 +846,11 @@ export class FolkRadianceCascade extends FolkBaseSet {
       renderPass.end();
     }
 
-    // Step 2: JFA distance field (all params pre-written in #initBindGroups)
+    // Step 2: JFA distance field + SDF finalize
     {
-      const seedPass = encoder.beginComputePass();
+      const seedPass = encoder.beginComputePass(
+        qs ? { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 2 } } : undefined,
+      );
       seedPass.setPipeline(this.#jfaSeedPipeline);
       seedPass.setBindGroup(0, this.#jfaSeedBindGroup);
       seedPass.dispatchWorkgroups(jfaWorkgroupsX, jfaWorkgroupsY);
@@ -795,13 +863,33 @@ export class FolkRadianceCascade extends FolkBaseSet {
         jfaPass.dispatchWorkgroups(jfaWorkgroupsX, jfaWorkgroupsY);
         jfaPass.end();
       }
+
+      // Finalize: convert seed coordinates → distance for hardware-filtered SDF sampling
+      const finalizePass = encoder.beginComputePass(
+        qs ? { timestampWrites: { querySet: qs, endOfPassWriteIndex: 3 } } : undefined,
+      );
+      finalizePass.setPipeline(this.#jfaFinalizePipeline);
+      finalizePass.setBindGroup(0, this.#jfaFinalizeBindGroup);
+      finalizePass.dispatchWorkgroups(jfaWorkgroupsX, jfaWorkgroupsY);
+      finalizePass.end();
     }
 
     // Step 3: Raymarch each cascade level (highest first, ping-ponging cascade textures).
-    // 2D dispatch over the max cascade texture size; per-level bounds checks in shader.
     const levelCount = this.#numCascadeLevels;
     for (let level = levelCount; level >= 0; level--) {
-      const computePass = encoder.beginComputePass();
+      const isFirstCascade = level === levelCount;
+      const isLastCascade = level === 0;
+      const computePass = encoder.beginComputePass(
+        qs && (isFirstCascade || isLastCascade)
+          ? {
+              timestampWrites: {
+                querySet: qs,
+                ...(isFirstCascade && { beginningOfPassWriteIndex: 4 }),
+                ...(isLastCascade && { endOfPassWriteIndex: 5 }),
+              },
+            }
+          : undefined,
+      );
       computePass.setPipeline(this.#raymarchPipeline);
       computePass.setBindGroup(0, this.#raymarchBindGroups[level]);
       computePass.dispatchWorkgroups(cascadeWorkgroupsX, cascadeWorkgroupsY, 1);
@@ -810,7 +898,9 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     // Step 4: Build fluence texture from cascade-0 result
     {
-      const computePass = encoder.beginComputePass();
+      const computePass = encoder.beginComputePass(
+        qs ? { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 6, endOfPassWriteIndex: 7 } } : undefined,
+      );
       computePass.setPipeline(this.#fluencePipeline);
       computePass.setBindGroup(0, this.#fluenceBindGroup);
       computePass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16), 1);
@@ -828,6 +918,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
             storeOp: 'store',
           },
         ],
+        ...(qs && { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 8, endOfPassWriteIndex: 9 } }),
       });
       renderPass.setPipeline(this.#renderPipeline);
       renderPass.setBindGroup(0, this.#renderBindGroup);
@@ -836,7 +927,34 @@ export class FolkRadianceCascade extends FolkBaseSet {
       renderPass.end();
     }
 
+    if (qs) {
+      encoder.resolveQuerySet(qs, 0, 10, this.#profilingResolveBuffer, 0);
+      const writeBuf = this.#profilingReadBuffers[this.#profilingWriteIndex];
+      encoder.copyBufferToBuffer(this.#profilingResolveBuffer, 0, writeBuf, 0, 10 * 8);
+    }
+
     this.#device.queue.submit([encoder.finish()]);
+
+    if (qs && !this.#profilingMappingPending) {
+      const bufToMap = this.#profilingReadBuffers[this.#profilingWriteIndex];
+      this.#profilingWriteIndex = 1 - this.#profilingWriteIndex;
+      this.#profilingMappingPending = true;
+
+      bufToMap
+        .mapAsync(GPUMapMode.READ)
+        .then(() => {
+          try {
+            const data = new BigInt64Array(bufToMap.getMappedRange());
+            this.#processTimestamps(data);
+          } finally {
+            bufToMap.unmap();
+            this.#profilingMappingPending = false;
+          }
+        })
+        .catch(() => {
+          this.#profilingMappingPending = false;
+        });
+    }
   }
 
   #handleResize = async () => {
@@ -882,12 +1000,110 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#fluenceUBO?.destroy();
     this.#jfaTextures?.forEach((t) => t.destroy());
     this.#jfaParamsBuffer?.destroy();
+    this.#sdfTexture?.destroy();
     this.#worldTexture?.destroy();
     this.#fluenceTexture?.destroy();
     this.#shapeDataBuffer?.destroy();
     this.#lineBuffer?.destroy();
     this.#shapeDataBuffer = undefined;
     this.#lineBuffer = undefined;
+  }
+
+  #initProfiling() {
+    if (!this.#profilingSupported) {
+      this.#createProfilingOverlay();
+      return;
+    }
+
+    const count = 10;
+    this.#profilingQuerySet = this.#device.createQuerySet({ type: 'timestamp', count });
+    this.#profilingResolveBuffer = this.#device.createBuffer({
+      label: 'Profiling-Resolve',
+      size: count * 8,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    this.#profilingReadBuffers = [0, 1].map((i) =>
+      this.#device.createBuffer({
+        label: `Profiling-Read-${i}`,
+        size: count * 8,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      }),
+    ) as [GPUBuffer, GPUBuffer];
+
+    this.#createProfilingOverlay();
+  }
+
+  #createProfilingOverlay() {
+    this.#profilingOverlay = document.createElement('div');
+    Object.assign(this.#profilingOverlay.style, {
+      position: 'fixed',
+      bottom: '8px',
+      right: '8px',
+      fontFamily: "'SF Mono', Consolas, Monaco, monospace",
+      fontSize: '11px',
+      lineHeight: '1.5',
+      color: '#0f0',
+      background: 'rgba(0, 0, 0, 0.7)',
+      padding: '6px 10px',
+      borderRadius: '4px',
+      zIndex: '99999',
+      pointerEvents: 'none',
+      whiteSpace: 'pre',
+    });
+    document.body.appendChild(this.#profilingOverlay);
+  }
+
+  #processTimestamps(timestamps: BigInt64Array) {
+    const toMs = (begin: bigint, end: bigint) => Number(end - begin) / 1_000_000;
+
+    const world = toMs(timestamps[0], timestamps[1]);
+    const jfa = toMs(timestamps[2], timestamps[3]);
+    const cascade = toMs(timestamps[4], timestamps[5]);
+    const fluence = toMs(timestamps[6], timestamps[7]);
+    const render = toMs(timestamps[8], timestamps[9]);
+    const total = toMs(timestamps[0], timestamps[9]);
+
+    if (total <= 0 || isNaN(total)) return;
+
+    const alpha = 0.1;
+    const s = this.#smoothedGpuTimes;
+    const ema = (prev: number, curr: number) => (prev === 0 ? curr : prev + alpha * (curr - prev));
+    s.world = ema(s.world, world);
+    s.jfa = ema(s.jfa, jfa);
+    s.cascade = ema(s.cascade, cascade);
+    s.fluence = ema(s.fluence, fluence);
+    s.render = ema(s.render, render);
+    s.total = ema(s.total, total);
+  }
+
+  #updateOverlayDOM() {
+    if (!this.#profilingOverlay) return;
+
+    const { width, height } = this.#canvas;
+    const fps = this.#smoothedCpuTime > 0 ? Math.round(1000 / this.#smoothedCpuTime) : 0;
+    const fmt = (ms: number) => ms.toFixed(2).padStart(5);
+
+    let text = `${width}×${height}  ${fps} fps`;
+
+    if (this.#profilingSupported && this.#smoothedGpuTimes.total > 0) {
+      const s = this.#smoothedGpuTimes;
+      text +=
+        `  GPU ${fmt(s.total)}ms\n` +
+        ` Scene   ${fmt(s.world)}ms\n` +
+        ` JFA     ${fmt(s.jfa)}ms\n` +
+        ` Cascade ${fmt(s.cascade)}ms\n` +
+        ` Fluence ${fmt(s.fluence)}ms\n` +
+        ` Render  ${fmt(s.render)}ms`;
+    }
+
+    this.#profilingOverlay.textContent = text;
+  }
+
+  #cleanupProfiling() {
+    this.#profilingQuerySet?.destroy();
+    this.#profilingResolveBuffer?.destroy();
+    this.#profilingReadBuffers?.forEach((b) => b.destroy());
+    this.#profilingOverlay?.remove();
   }
 }
 
@@ -905,13 +1121,12 @@ struct Params {
 }
 
 const SENTINEL: f32 = -1.0;
-const INF_DIST: f32 = 1e10;
 
 @group(0) @binding(0) var worldTexture: texture_2d<f32>;
-@group(0) @binding(1) var output: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(1) var output: texture_storage_2d<rg32float, write>;
 @group(0) @binding(2) var<uniform> params: Params;
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
   if (id.x >= params.width || id.y >= params.height) {
     return;
@@ -919,12 +1134,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
   let world = textureLoad(worldTexture, id.xy, 0);
 
-  // Pixels with any alpha are seed points (emitters or occluders).
-  // Store pixel coordinates as seed position for JFA propagation.
   if (world.a > 0.0) {
     textureStore(output, id.xy, vec4f(f32(id.x), f32(id.y), 0.0, 0.0));
   } else {
-    textureStore(output, id.xy, vec4f(SENTINEL, SENTINEL, 0.0, INF_DIST));
+    textureStore(output, id.xy, vec4f(SENTINEL, SENTINEL, 0.0, 0.0));
   }
 }
 `;
@@ -950,24 +1163,19 @@ const OFFSETS: array<vec2i, 9> = array(
   vec2i(-1,  1), vec2i(0,  1), vec2i(1,  1)
 );
 
-// Using texture_2d<f32> instead of texture_storage_2d<..., read> for portability.
-// Read access on storage textures requires the optional
-// 'readonly-and-readwrite-storage-textures' feature which not all devices support.
-// Since the JFA textures already have TEXTURE_BINDING usage, a regular texture_2d
-// works universally with the same textureLoad calls (just needs a mip level arg).
 @group(0) @binding(0) var inputField: texture_2d<f32>;
-@group(0) @binding(1) var outputField: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(1) var outputField: texture_storage_2d<rg32float, write>;
 @group(0) @binding(2) var<uniform> params: Params;
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
   if (id.x >= params.width || id.y >= params.height) {
     return;
   }
 
   let pixel = vec2f(id.xy);
-  var nearest = textureLoad(inputField, id.xy, 0);
-  var minDist = nearest.w;
+  var nearest = textureLoad(inputField, id.xy, 0).xy;
+  var minDist = select(distance(pixel, nearest), 1e10, nearest.x < 0.0);
   let step = i32(params.stepSize);
 
   for (var i = 0u; i < 9u; i++) {
@@ -977,19 +1185,46 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
                    all(neighborCoord < vec2i(i32(params.width), i32(params.height)));
     if (!inBounds) { continue; }
 
-    let neighbor = textureLoad(inputField, vec2u(neighborCoord), 0);
+    let neighbor = textureLoad(inputField, vec2u(neighborCoord), 0).xy;
 
-    // Skip neighbors without a valid seed
     if (neighbor.x < 0.0) { continue; }
 
-    let dist = distance(pixel, vec2f(neighbor.x, neighbor.y));
+    let dist = distance(pixel, neighbor);
     if (dist < minDist) {
-      nearest = vec4f(neighbor.x, neighbor.y, 0.0, dist);
+      nearest = neighbor;
       minDist = dist;
     }
   }
 
-  textureStore(outputField, id.xy, nearest);
+  textureStore(outputField, id.xy, vec4f(nearest, 0.0, 0.0));
+}
+`;
+
+// JFA finalize shader — converts seed coordinates from the JFA result into a
+// precomputed distance field. The output rgba16float texture is always filterable,
+// enabling hardware bilinear sampling in the raymarch shader
+const jfaFinalizeShader = /*wgsl*/ `
+struct Params {
+  width: u32,
+  height: u32,
+  stepSize: u32,
+  pad: u32,
+}
+
+@group(0) @binding(0) var jfaResult: texture_2d<f32>;
+@group(0) @binding(1) var sdfOutput: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var<uniform> params: Params;
+
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  if (id.x >= params.width || id.y >= params.height) {
+    return;
+  }
+
+  let seed = textureLoad(jfaResult, id.xy, 0).xy;
+  let pixel = vec2f(id.xy);
+  let dist = select(distance(pixel, seed), 1e6, seed.x < 0.0);
+  textureStore(sdfOutput, id.xy, vec4f(dist, 0.0, 0.0, 0.0));
 }
 `;
 
@@ -1135,22 +1370,13 @@ fn sampleWorld(pos: vec2f) -> vec4f {
   return textureSampleLevel(worldTexture, worldSampler, uv, 0.0);
 }
 
-// Manual bilinear interpolation for SDF sampling because rgba32float is not
-// a filterable format. Four textureLoad calls + mix gives sub-pixel precision.
 fn sampleSDF(pos: vec2f) -> f32 {
   let dims = vec2f(f32(ubo.width), f32(ubo.height));
   if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
     return 1e6;
   }
-  let p = pos - 0.5;
-  let f = fract(p);
-  let c = vec2i(floor(p));
-  let mx = vec2i(i32(ubo.width) - 1, i32(ubo.height) - 1);
-  let d00 = max(textureLoad(sdfTexture, vec2u(clamp(c, vec2i(0), mx)), 0).w, 0.0);
-  let d10 = max(textureLoad(sdfTexture, vec2u(clamp(c + vec2i(1, 0), vec2i(0), mx)), 0).w, 0.0);
-  let d01 = max(textureLoad(sdfTexture, vec2u(clamp(c + vec2i(0, 1), vec2i(0), mx)), 0).w, 0.0);
-  let d11 = max(textureLoad(sdfTexture, vec2u(clamp(c + vec2i(1, 1), vec2i(0), mx)), 0).w, 0.0);
-  return mix(mix(d00, d10, f.x), mix(d01, d11, f.x), f.y);
+  let uv = (pos + 0.5) / dims;
+  return max(textureSampleLevel(sdfTexture, worldSampler, uv, 0.0).r, 0.0);
 }
 
 // Bilinear merge: sample 4 neighboring upper probes using hardware bilinear
@@ -1185,7 +1411,7 @@ fn sampleUpperCascade(probeCenter: vec2f, dirIndex: i32) -> vec4f {
   return acc * 0.25;
 }
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
   let texW = u32(ubo.cascadeWidth * ubo.sqrtRays);
   let texH = u32(ubo.cascadeHeight * ubo.sqrtRays);
