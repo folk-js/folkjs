@@ -617,13 +617,14 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const level0ResultIndex = levelCount % 2;
     const cascadeWidth = Math.floor(width / PROBE_SPACING_0);
     const cascadeHeight = Math.floor(height / PROBE_SPACING_0);
+    const level0SqrtRays = Math.round(Math.sqrt(BASE_RAY_COUNT));
     this.#fluenceUBOView.set({
       probeSpacing: PROBE_SPACING_0,
       cascadeWidth,
       cascadeHeight,
       width,
       height,
-      pad: 0,
+      sqrtRays: level0SqrtRays,
     });
     this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
 
@@ -1180,10 +1181,10 @@ fn sampleSDF(pos: vec2f) -> f32 {
   return mix(mix(d00, d10, f.x), mix(d01, d11, f.x), f.y);
 }
 
-// Bilinear merge: sample 4 neighboring upper probes using hardware
-// bilinear interpolation. In direction-first layout, each direction tile
-// contains spatially-arranged probes, so textureSampleLevel with a linear
-// sampler naturally interpolates between neighboring probes.
+// Bilinear merge: sample 4 neighboring upper probes using hardware bilinear
+// interpolation. In direction-first layout, each direction tile contains
+// spatially-arranged probes, so textureSampleLevel with a linear sampler
+// naturally interpolates between neighboring probes.
 //
 // Upper cascade dimensions (upperCascadeW/H) are passed through the UBO
 // rather than re-derived in the shader, avoiding integer division truncation
@@ -1274,9 +1275,9 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 `;
 
 // Fluence shader: samples the merged cascade-0 texture to produce per-pixel
-// irradiance. Level 0 has BASE_RAY_COUNT=4 rays arranged in a 2x2 grid of
-// direction tiles. For each pixel, we compute the probe coordinate and use
-// hardware bilinear sampling within each direction tile, then sum all 4
+// irradiance. Level 0 has BASE_RAY_COUNT rays arranged in a sqrtRays × sqrtRays
+// grid of direction tiles. For each pixel, we compute the probe coordinate and
+// use hardware bilinear sampling within each direction tile, then sum all
 // directions for isotropic angular integration.
 const fluenceShader = /*wgsl*/ `
 struct UBO {
@@ -1285,7 +1286,7 @@ struct UBO {
   cascadeHeight: i32,
   width: i32,
   height: i32,
-  pad: i32,
+  sqrtRays: i32,
 }
 
 @group(0) @binding(0) var fluenceTexture: texture_storage_2d<rgba16float, write>;
@@ -1300,22 +1301,21 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let pixelCenter = vec2f(id.xy) + 0.5;
   let probeCoord = pixelCenter / ubo.probeSpacing - 0.5;
   // Clamp to [0.5, size - 1.5] so the bilinear 2×2 footprint stays entirely
-  // within the direction tile (same rationale as sampleUpperCascade).
+  // within each direction tile.
   let clampedCoord = clamp(probeCoord, vec2f(0.5), vec2f(f32(ubo.cascadeWidth) - 1.5, f32(ubo.cascadeHeight) - 1.5));
   let texSize = vec2f(textureDimensions(cascadeTexture));
 
-  // Level 0 has sqrtRays=2 → 2x2 direction tiles, 4 directions total.
-  // Each tile spans cascadeWidth × cascadeHeight texels in the cascade texture.
+  let rayCount = ubo.sqrtRays * ubo.sqrtRays;
   var acc = vec4f(0.0);
-  for (var d = 0; d < 4; d++) {
-    let dx = d % 2;
-    let dy = d / 2;
+  for (var d = 0; d < rayCount; d++) {
+    let dx = d % ubo.sqrtRays;
+    let dy = d / ubo.sqrtRays;
     let tileOrigin = vec2f(f32(dx * ubo.cascadeWidth), f32(dy * ubo.cascadeHeight));
     let uv = (tileOrigin + clampedCoord + 0.5) / texSize;
     acc += textureSampleLevel(cascadeTexture, cascadeSampler, uv, 0.0);
   }
 
-  textureStore(fluenceTexture, id.xy, acc * 0.25);
+  textureStore(fluenceTexture, id.xy, acc / f32(rayCount));
 }
 `;
 
