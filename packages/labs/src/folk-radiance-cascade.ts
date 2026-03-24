@@ -122,7 +122,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     await this.#initWebGPU();
     this.#initStructuredViews();
     this.#initBuffers();
-    await this.#initPipelines();
+    this.#initPipelines();
     this.#initBindGroups();
 
     window.addEventListener('resize', this.#handleResize);
@@ -292,7 +292,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#linearSampler = this.#device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
-      mipmapFilter: 'linear',
     });
   }
 
@@ -392,7 +391,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       label: 'WorldTexture',
       size: { width, height },
       format: 'rgba16float',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.#worldTextureView = this.#worldTexture.createView();
 
@@ -412,7 +411,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     });
   }
 
-  async #initPipelines() {
+  #initPipelines() {
     const device = this.#device;
 
     // World render pipeline - renders shapes to world texture
@@ -843,7 +842,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const newWidth = this.clientWidth || 800;
     const newHeight = this.clientHeight || 600;
 
-    // Skip if dimensions haven't actually changed
     if (this.#canvas.width === newWidth && this.#canvas.height === newHeight) {
       return;
     }
@@ -851,15 +849,20 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#canvas.width = newWidth;
     this.#canvas.height = newHeight;
 
-    // Wait for any in-flight GPU work to complete before destroying resources
+    // Stop the render loop so it can't use resources while we rebuild them.
+    cancelAnimationFrame(this.#animationFrame);
+
     await this.#device.queue.onSubmittedWorkDone();
 
     this.#configureContext();
-
     this.#cleanupResources();
     this.#initBuffers();
     this.#initBindGroups();
     this.#updateShapeData();
+
+    if (this.#isRunning) {
+      this.#startAnimationLoop();
+    }
   };
 
   #handleMouseMove = (e: MouseEvent) => {
