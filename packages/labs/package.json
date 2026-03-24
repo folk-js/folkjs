@@ -92,7 +92,8 @@
     "vscode-json-languageservice": "^5.5.0",
     "vscode-languageserver-protocol": "^3.17.5",
     "vscode-markdown-languageservice": "^0.5.0-alpha.9",
-    "webcola": "^3.4.0"
+    "webcola": "^3.4.0",
+    "webgpu-utils": "^2.0.3"
   },
   "devDependencies": {
     "@types/hast": "^3.0.4",

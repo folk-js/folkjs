@@ -1,12 +1,20 @@
 import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { makeShaderDataDefinitions, makeStructuredView, type StructuredView } from 'webgpu-utils';
 import { FolkBaseSet } from './folk-base-set';
 
-const PROBE_SPACING_POWER = 2; // 2^2 = 4 probe spacing at level 0
-const RAY_COUNT_POWER = 3; // 2^3 = 8 rays per probe at level 0
-const BRANCHING_FACTOR = 2; // 2^2 = 4 rays merge per level
-const INTERVAL_RADIUS = 2; // Base interval radius
-const MAX_CASCADE_LEVELS = 6;
-const RESOLUTION_SCALE = 1; // Higher = sharper lines but more GPU work
+type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: number, b: number, thickness: number];
+
+// The one tunable parameter: probe spacing at the finest cascade level.
+// Smaller = higher quality, larger cascade textures.
+const PROBE_SPACING_0 = 1;
+
+// Fixed by the 2D Radiance Cascades algorithm (Sannikov 2023).
+// In 2D, 4 base rays with 4× angular branching and 2× spatial scaling
+// produces equal-sized cascade textures at every level — the standard
+// configuration used by all reference implementations.
+const BASE_RAY_COUNT = 4;
+const BRANCHING_FACTOR = 4;
+const SPATIAL_SCALE = Math.round(Math.sqrt(BRANCHING_FACTOR)); // = 2
 
 /**
  * WebGPU-based Radiance Cascades for 2D global illumination.
@@ -26,49 +34,76 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
   // Pipelines
   #worldRenderPipeline!: GPURenderPipeline;
-  #mipmapPipeline!: GPUComputePipeline;
+  #mouseLightPipeline!: GPURenderPipeline;
+  #jfaSeedPipeline!: GPUComputePipeline;
+  #jfaPipeline!: GPUComputePipeline;
   #raymarchPipeline!: GPUComputePipeline;
   #fluencePipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
   // Buffers and textures
-  #probeBuffer!: GPUBuffer;
+  #cascadeTextures!: GPUTexture[];
+  #cascadeTextureViews!: GPUTextureView[];
   #uboBuffer!: GPUBuffer;
+  #mouseLightUBO!: GPUBuffer;
+  #fluenceUBO!: GPUBuffer;
+  #jfaTextures!: GPUTexture[];
+  #jfaTextureViews!: GPUTextureView[];
+  #jfaParamsBuffer!: GPUBuffer;
   #fluenceTexture!: GPUTexture;
+  #fluenceTextureView!: GPUTextureView;
+
+  // Pre-allocated bind groups (created once at init/resize, not per frame)
+  #mouseLightBindGroup!: GPUBindGroup;
+  #jfaSeedBindGroup!: GPUBindGroup;
+  #jfaPassBindGroups!: GPUBindGroup[];
+  #raymarchBindGroups!: GPUBindGroup[];
+  #fluenceBindGroup!: GPUBindGroup;
+  #renderBindGroup!: GPUBindGroup;
+
+  // Structured views for type-safe UBO packing (from webgpu-utils)
+  #raymarchUBOView!: StructuredView;
+  #fluenceUBOView!: StructuredView;
+  #mouseLightUBOView!: StructuredView;
+  #jfaParamsView!: StructuredView;
 
   // Shape data for rendering to world texture
   #shapeDataBuffer?: GPUBuffer;
   #shapeCount = 0;
 
-  // Line segments: [x1, y1, x2, y2, r, g, b, thickness]
-  #lines: number[][] = [];
+  #lines: Line[] = [];
   #lineBuffer?: GPUBuffer;
-  #lineRenderPipeline!: GPURenderPipeline;
+  #lineVertexCount = 0;
+  #lineBufferDirty = false;
 
   // Samplers
   #linearSampler!: GPUSampler;
 
   // Animation state
   #animationFrame = 0;
-  #startTime = 0;
   #mousePosition = { x: 0, y: 0 };
+  #mouseLightColor = { r: 0.8, g: 0.6, b: 0.3 };
   #isRunning = false;
 
   // Computed values
-  #maxLevel0Rays = 0;
   #numCascadeLevels = 0;
+  #jfaPassCount = 0;
+  #jfaResultIndex = 0;
+  #maxCascadeTexW = 0;
+  #maxCascadeTexH = 0;
 
   override async connectedCallback() {
     super.connectedCallback();
 
     await this.#initWebGPU();
+    this.#initStructuredViews();
     this.#initBuffers();
     await this.#initPipelines();
+    this.#initBindGroups();
 
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
 
-    this.#startTime = performance.now();
     this.#isRunning = true;
     this.#startAnimationLoop();
 
@@ -87,15 +122,19 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   // Public API for line drawing
-  addLine(x1: number, y1: number, x2: number, y2: number, colorIndex: number, thickness = 8) {
-    const color = FolkRadianceCascade.#colors[colorIndex] || FolkRadianceCascade.#colors[1];
-    this.#lines.push([x1, y1, x2, y2, color[0], color[1], color[2], thickness]);
-    this.#updateLineBuffer();
+  addLine(x1: number, y1: number, x2: number, y2: number, colorIndex: number, thickness = 20) {
+    const [r, g, b] = FolkRadianceCascade.#colors[colorIndex] ?? FolkRadianceCascade.#colors[1];
+    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness]);
+    this.#lineBufferDirty = true;
   }
 
   clearLines() {
     this.#lines = [];
-    this.#updateLineBuffer();
+    this.#lineBufferDirty = true;
+  }
+
+  setMouseLightColor(r: number, g: number, b: number) {
+    this.#mouseLightColor = { r, g, b };
   }
 
   eraseAt(x: number, y: number, radius: number) {
@@ -113,26 +152,31 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const nearY = y1 + t * dy;
       return Math.hypot(x - nearX, y - nearY) > radius;
     });
-    this.#updateLineBuffer();
+    this.#lineBufferDirty = true;
   }
 
   #updateLineBuffer() {
-    if (!this.#device || this.#lines.length === 0) return;
+    if (!this.#device || this.#lines.length === 0) {
+      this.#lineVertexCount = 0;
+      return;
+    }
 
-    // Each line becomes a quad (2 triangles, 6 vertices)
-    // Vertex format: x, y, r, g, b, _ (6 floats, 24 bytes)
+    // Each line becomes a quad (2 triangles) plus round endcaps (filled circles
+    // at each endpoint). The caps fill gaps between consecutive segments that
+    // would otherwise let rays leak through at joints — the root cause of the
+    // beaded shadow artifacts along curved lines.
+    const CAP_SEGMENTS = 8;
+    // Vertex format: x, y, r, g, b (5 floats, 20 bytes)
     const vertices: number[] = [];
 
-    for (const line of this.#lines) {
-      const [x1raw, y1raw, x2raw, y2raw, r, g, b, thicknessRaw] = line;
-      // Scale CSS coordinates to internal resolution
-      const x1 = x1raw * RESOLUTION_SCALE;
-      const y1 = y1raw * RESOLUTION_SCALE;
-      const x2 = x2raw * RESOLUTION_SCALE;
-      const y2 = y2raw * RESOLUTION_SCALE;
-      const thickness = thicknessRaw * RESOLUTION_SCALE;
+    const toClipX = (x: number) => (x / this.#canvas.width) * 2 - 1;
+    const toClipY = (y: number) => 1 - (y / this.#canvas.height) * 2;
+    const clipRadiusX = (px: number) => (px / this.#canvas.width) * 2;
+    const clipRadiusY = (px: number) => (px / this.#canvas.height) * 2;
 
-      // Calculate perpendicular direction for line thickness
+    for (const line of this.#lines) {
+      const [x1, y1, x2, y2, r, g, b, thickness] = line;
+
       const dx = x2 - x1;
       const dy = y2 - y1;
       const len = Math.sqrt(dx * dx + dy * dy);
@@ -141,11 +185,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const nx = (-dy / len) * (thickness / 2);
       const ny = (dx / len) * (thickness / 2);
 
-      // Convert to clip space
-      const toClipX = (x: number) => (x / this.#canvas.width) * 2 - 1;
-      const toClipY = (y: number) => 1 - (y / this.#canvas.height) * 2;
-
-      // Four corners of the line quad
+      // Quad body
       const p1x = toClipX(x1 - nx),
         p1y = toClipY(y1 - ny);
       const p2x = toClipX(x1 + nx),
@@ -155,18 +195,40 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const p4x = toClipX(x2 + nx),
         p4y = toClipY(y2 + ny);
 
-      // Triangle 1
-      vertices.push(p1x, p1y, r, g, b, 0);
-      vertices.push(p2x, p2y, r, g, b, 0);
-      vertices.push(p3x, p3y, r, g, b, 0);
-      // Triangle 2
-      vertices.push(p2x, p2y, r, g, b, 0);
-      vertices.push(p4x, p4y, r, g, b, 0);
-      vertices.push(p3x, p3y, r, g, b, 0);
+      vertices.push(p1x, p1y, r, g, b);
+      vertices.push(p2x, p2y, r, g, b);
+      vertices.push(p3x, p3y, r, g, b);
+      vertices.push(p2x, p2y, r, g, b);
+      vertices.push(p4x, p4y, r, g, b);
+      vertices.push(p3x, p3y, r, g, b);
+
+      // Round endcaps — full circles at each endpoint so adjacent segments
+      // overlap cleanly regardless of the joint angle.
+      const rx = clipRadiusX(thickness / 2);
+      const ry = clipRadiusY(thickness / 2);
+
+      for (const [ex, ey] of [
+        [x1, y1],
+        [x2, y2],
+      ]) {
+        const cx = toClipX(ex);
+        const cy = toClipY(ey);
+        for (let i = 0; i < CAP_SEGMENTS; i++) {
+          const a0 = (i / CAP_SEGMENTS) * Math.PI * 2;
+          const a1 = ((i + 1) / CAP_SEGMENTS) * Math.PI * 2;
+          vertices.push(cx, cy, r, g, b);
+          vertices.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b);
+          vertices.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b);
+        }
+      }
     }
 
-    if (vertices.length === 0) return;
+    if (vertices.length === 0) {
+      this.#lineVertexCount = 0;
+      return;
+    }
 
+    this.#lineVertexCount = vertices.length / 5;
     const data = new Float32Array(vertices);
     const requiredSize = data.byteLength;
 
@@ -194,8 +256,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#device = await adapter.requestDevice();
 
     this.#canvas = document.createElement('canvas');
-    this.#canvas.width = (this.clientWidth || 800) * RESOLUTION_SCALE;
-    this.#canvas.height = (this.clientHeight || 600) * RESOLUTION_SCALE;
+    this.#canvas.width = this.clientWidth || 800;
+    this.#canvas.height = this.clientHeight || 600;
     this.#canvas.style.position = 'absolute';
     this.#canvas.style.top = '0';
     this.#canvas.style.left = '0';
@@ -212,11 +274,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#context = context;
     this.#presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
-    this.#context.configure({
-      device: this.#device,
-      format: this.#presentationFormat,
-      alphaMode: 'premultiplied',
-    });
+    this.#configureContext();
 
     this.#linearSampler = this.#device.createSampler({
       magFilter: 'linear',
@@ -225,58 +283,126 @@ export class FolkRadianceCascade extends FolkBaseSet {
     });
   }
 
+  #configureContext() {
+    this.#context.configure({
+      device: this.#device,
+      format: this.#presentationFormat,
+      alphaMode: 'premultiplied',
+    });
+  }
+
+  #initStructuredViews() {
+    const raymarchDefs = makeShaderDataDefinitions(raymarchShader);
+    this.#raymarchUBOView = makeStructuredView(raymarchDefs.uniforms.ubo);
+
+    const fluenceDefs = makeShaderDataDefinitions(fluenceShader);
+    this.#fluenceUBOView = makeStructuredView(fluenceDefs.uniforms.ubo);
+
+    const mouseLightDefs = makeShaderDataDefinitions(mouseLightShader);
+    this.#mouseLightUBOView = makeStructuredView(mouseLightDefs.uniforms.light);
+
+    const jfaDefs = makeShaderDataDefinitions(jfaSeedShader);
+    this.#jfaParamsView = makeStructuredView(jfaDefs.uniforms.params);
+  }
+
   #initBuffers() {
     const { width, height } = this.#canvas;
 
-    // Calculate probe counts at level 0
-    const probeDiameter0 = Math.pow(2, PROBE_SPACING_POWER);
-    const probeRayCount0 = Math.pow(2, RAY_COUNT_POWER);
+    // Number of cascade levels needed to cover the screen diagonal.
+    // Level N covers up to PROBE_SPACING_0 * BRANCHING_FACTOR^N pixels.
+    const diagonal = Math.sqrt(width * width + height * height);
+    this.#numCascadeLevels = Math.ceil(Math.log(diagonal / PROBE_SPACING_0) / Math.log(BRANCHING_FACTOR)) + 1;
 
-    const cascadeWidth0 = Math.floor(width / probeDiameter0);
-    const cascadeHeight0 = Math.floor(height / probeDiameter0);
-    this.#maxLevel0Rays = cascadeWidth0 * cascadeHeight0 * probeRayCount0;
+    // Compute max cascade texture dimensions across all levels.
+    // Each level's texture tiles probes spatially within direction-tiles:
+    //   texW = probesX * sqrtRays, texH = probesY * sqrtRays
+    // Both ping-pong textures are sized to the maximum across all levels
+    // so we can reuse them without reallocation.
+    this.#maxCascadeTexW = 0;
+    this.#maxCascadeTexH = 0;
+    for (let level = 0; level <= this.#numCascadeLevels; level++) {
+      const spacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level);
+      const probesX = Math.floor(width / spacing);
+      const probesY = Math.floor(height / spacing);
+      const sqrtRays = Math.round(Math.sqrt(BASE_RAY_COUNT * Math.pow(BRANCHING_FACTOR, level)));
+      this.#maxCascadeTexW = Math.max(this.#maxCascadeTexW, probesX * sqrtRays);
+      this.#maxCascadeTexH = Math.max(this.#maxCascadeTexH, probesY * sqrtRays);
+    }
 
-    this.#numCascadeLevels = Math.min(
-      MAX_CASCADE_LEVELS,
-      Math.floor(Math.log2(Math.min(width, height) / probeDiameter0)),
+    // Direction-first cascade textures (ping-pong pair).
+    // rgba16float is both storage-compatible and filterable, enabling
+    // hardware bilinear interpolation during cascade merging.
+    this.#cascadeTextures = [0, 1].map((i) =>
+      this.#device.createTexture({
+        label: `Cascade-Texture-${i}`,
+        size: { width: this.#maxCascadeTexW, height: this.#maxCascadeTexH },
+        format: 'rgba16float',
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      }),
     );
-
-    // Probe buffer for ping-pong
-    const probeBufferSize = this.#maxLevel0Rays * 16 * 2;
-    this.#probeBuffer = this.#device.createBuffer({
-      label: 'ProbeBuffer',
-      size: probeBufferSize,
-      usage: GPUBufferUsage.STORAGE,
-    });
+    this.#cascadeTextureViews = this.#cascadeTextures.map((t) => t.createView());
 
     // UBO for per-level parameters
     this.#uboBuffer = this.#device.createBuffer({
       label: 'UBO',
-      size: 256 * (MAX_CASCADE_LEVELS + 1),
+      size: 256 * (this.#numCascadeLevels + 1),
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // World texture with mipmaps
-    const mipLevelCount = Math.floor(Math.log2(Math.max(width, height))) + 1;
+    this.#mouseLightUBO = this.#device.createBuffer({
+      label: 'MouseLightUBO',
+      size: this.#mouseLightUBOView.arrayBuffer.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // JFA ping-pong textures for distance field generation.
+    // Each texel stores (seedX, seedY, unused, distance) in pixel coordinates.
+    this.#jfaTextures = [0, 1].map((i) =>
+      this.#device.createTexture({
+        label: `JFA-Texture-${i}`,
+        size: { width, height },
+        format: 'rgba32float',
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      }),
+    );
+    this.#jfaTextureViews = this.#jfaTextures.map((t) => t.createView());
+
+    // Pre-compute JFA pass count and result texture index.
+    // The number of passes determines which ping-pong texture holds the final SDF.
+    const maxDim = Math.max(width, height);
+    const maxStep = 1 << Math.floor(Math.log2(maxDim));
+    this.#jfaPassCount = Math.floor(Math.log2(maxStep)) + 1;
+    this.#jfaResultIndex = this.#jfaPassCount % 2;
+
+    // JFA params buffer: holds per-pass params at 256-byte-aligned offsets.
+    const maxJfaPasses = this.#jfaPassCount + 1; // +1 for seed pass
+    this.#jfaParamsBuffer = this.#device.createBuffer({
+      label: 'JFA-Params',
+      size: 256 * (maxJfaPasses + 1),
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
     this.#worldTexture = this.#device.createTexture({
       label: 'WorldTexture',
       size: { width, height },
       format: 'rgba16float',
-      mipLevelCount,
-      usage:
-        GPUTextureUsage.RENDER_ATTACHMENT |
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.STORAGE_BINDING |
-        GPUTextureUsage.COPY_DST,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
     this.#worldTextureView = this.#worldTexture.createView();
 
-    // Fluence texture
     this.#fluenceTexture = this.#device.createTexture({
       label: 'FluenceTexture',
       size: { width, height },
-      format: 'rgba8unorm',
+      format: 'rgba16float',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.#fluenceTextureView = this.#fluenceTexture.createView();
+
+    // Fluence UBO - pre-allocated, updated via writeBuffer (not per-frame)
+    this.#fluenceUBO = this.#device.createBuffer({
+      label: 'FluenceUBO',
+      size: this.#fluenceUBOView.arrayBuffer.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
 
@@ -293,11 +419,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
         entryPoint: 'vertex_main',
         buffers: [
           {
-            arrayStride: 24, // 6 floats * 4 bytes
+            arrayStride: 20, // 5 floats * 4 bytes
             attributes: [
               { shaderLocation: 0, offset: 0, format: 'float32x2' }, // position
               { shaderLocation: 1, offset: 8, format: 'float32x3' }, // color
-              { shaderLocation: 2, offset: 20, format: 'float32' }, // isEdge
             ],
           },
         ],
@@ -310,11 +435,41 @@ export class FolkRadianceCascade extends FolkBaseSet {
       primitive: { topology: 'triangle-list' },
     });
 
-    // Mipmap pipeline
-    const mipmapModule = device.createShaderModule({ code: mipmapShader });
-    this.#mipmapPipeline = device.createComputePipeline({
-      label: 'Mipmap-Pipeline',
-      compute: { module: mipmapModule, entryPoint: 'main' },
+    // Mouse light pipeline - renders mouse cursor as emissive circle into world texture
+    const mouseLightModule = device.createShaderModule({ code: mouseLightShader });
+    this.#mouseLightPipeline = device.createRenderPipeline({
+      label: 'MouseLight-Pipeline',
+      layout: 'auto',
+      vertex: { module: mouseLightModule, entryPoint: 'vertex_main' },
+      fragment: {
+        module: mouseLightModule,
+        entryPoint: 'fragment_main',
+        targets: [
+          {
+            format: 'rgba16float',
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' },
+            },
+          },
+        ],
+      },
+      primitive: { topology: 'triangle-strip' },
+    });
+
+    // JFA seed pipeline - initializes distance field seeds from world texture
+    const jfaSeedModule = device.createShaderModule({ code: jfaSeedShader });
+    this.#jfaSeedPipeline = device.createComputePipeline({
+      label: 'JFA-Seed-Pipeline',
+      compute: { module: jfaSeedModule, entryPoint: 'main' },
+      layout: 'auto',
+    });
+
+    // JFA propagation pipeline - runs log2(max(W,H)) passes to build distance field
+    const jfaModule = device.createShaderModule({ code: jfaShader });
+    this.#jfaPipeline = device.createComputePipeline({
+      label: 'JFA-Pipeline',
+      compute: { module: jfaModule, entryPoint: 'main' },
       layout: 'auto',
     });
 
@@ -347,6 +502,152 @@ export class FolkRadianceCascade extends FolkBaseSet {
       },
       primitive: { topology: 'triangle-strip' },
     });
+
+  }
+
+  #initBindGroups() {
+    const { width, height } = this.#canvas;
+    const uboSize = this.#raymarchUBOView.arrayBuffer.byteLength;
+
+    // Mouse light bind group
+    this.#mouseLightBindGroup = this.#device.createBindGroup({
+      layout: this.#mouseLightPipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: this.#mouseLightUBO } }],
+    });
+
+    // JFA seed bind group
+    this.#jfaSeedBindGroup = this.#device.createBindGroup({
+      layout: this.#jfaSeedPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.#worldTextureView },
+        { binding: 1, resource: this.#jfaTextureViews[0] },
+        { binding: 2, resource: { buffer: this.#jfaParamsBuffer, offset: 0, size: 16 } },
+      ],
+    });
+
+    // JFA propagation bind groups (one per pass, pre-created with correct offsets)
+    this.#jfaPassBindGroups = [];
+    let jfaCurrent = 0;
+    for (let i = 0; i < this.#jfaPassCount; i++) {
+      const srcIndex = jfaCurrent;
+      const dstIndex = 1 - jfaCurrent;
+      const bufferOffset = (i + 1) * 256;
+
+      this.#jfaPassBindGroups.push(
+        this.#device.createBindGroup({
+          layout: this.#jfaPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: this.#jfaTextureViews[srcIndex] },
+            { binding: 1, resource: this.#jfaTextureViews[dstIndex] },
+            { binding: 2, resource: { buffer: this.#jfaParamsBuffer, offset: bufferOffset, size: 16 } },
+          ],
+        }),
+      );
+
+      jfaCurrent = dstIndex;
+    }
+
+    // Write JFA params once (they only depend on canvas size, not per-frame state)
+    this.#jfaParamsView.set({ width, height, stepSize: 0, pad: 0 });
+    this.#device.queue.writeBuffer(this.#jfaParamsBuffer, 0, this.#jfaParamsView.arrayBuffer);
+
+    const maxDim = Math.max(width, height);
+    const maxStep = 1 << Math.floor(Math.log2(maxDim));
+    let passIndex = 0;
+    for (let step = maxStep; step >= 1; step >>= 1) {
+      const bufferOffset = (passIndex + 1) * 256;
+      this.#jfaParamsView.set({ width, height, stepSize: step, pad: 0 });
+      this.#device.queue.writeBuffer(this.#jfaParamsBuffer, bufferOffset, this.#jfaParamsView.arrayBuffer);
+      passIndex++;
+    }
+
+    // Raymarch bind groups with direction-first cascade texture ping-pong.
+    // Processing order is highest level first (no upper cascade) down to level 0.
+    // Each level alternates which cascade texture it writes to vs reads from.
+    const levelCount = this.#numCascadeLevels;
+    this.#raymarchBindGroups = [];
+    for (let level = 0; level <= levelCount; level++) {
+      const processIndex = levelCount - level;
+      const writeIndex = processIndex % 2;
+      const readIndex = 1 - writeIndex;
+
+      const probeSpacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level);
+      const sqrtRays = Math.round(Math.sqrt(BASE_RAY_COUNT * Math.pow(BRANCHING_FACTOR, level)));
+      const cascadeWidth = Math.floor(width / probeSpacing);
+      const cascadeHeight = Math.floor(height / probeSpacing);
+      const intervalStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
+      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level);
+
+      // Pre-compute upper cascade dimensions on the CPU so the shader doesn't
+      // re-derive them via integer division (which can mismatch due to truncation).
+      const upperSpacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level + 1);
+      const upperCascadeW = level >= levelCount ? 0 : Math.floor(width / upperSpacing);
+      const upperCascadeH = level >= levelCount ? 0 : Math.floor(height / upperSpacing);
+
+      this.#raymarchUBOView.set({
+        probeSpacing,
+        intervalStart,
+        intervalEnd,
+        level,
+        levelCount,
+        width,
+        height,
+        sqrtRays,
+        cascadeWidth,
+        cascadeHeight,
+        upperCascadeW,
+        upperCascadeH,
+      });
+      this.#device.queue.writeBuffer(this.#uboBuffer, level * 256, this.#raymarchUBOView.arrayBuffer);
+
+      this.#raymarchBindGroups[level] = this.#device.createBindGroup({
+        layout: this.#raymarchPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this.#cascadeTextureViews[writeIndex] },
+          { binding: 1, resource: { buffer: this.#uboBuffer, offset: level * 256, size: uboSize } },
+          { binding: 2, resource: this.#worldTextureView },
+          { binding: 3, resource: this.#linearSampler },
+          { binding: 4, resource: this.#jfaTextureViews[this.#jfaResultIndex] },
+          { binding: 5, resource: this.#cascadeTextureViews[readIndex] },
+        ],
+      });
+    }
+
+    // Fluence samples the merged cascade-0 result.
+    // Level 0 result ends up in cascadeTextures[levelCount % 2].
+    const level0ResultIndex = levelCount % 2;
+    const cascadeWidth = Math.floor(width / PROBE_SPACING_0);
+    const cascadeHeight = Math.floor(height / PROBE_SPACING_0);
+    const level0SqrtRays = Math.round(Math.sqrt(BASE_RAY_COUNT));
+    this.#fluenceUBOView.set({
+      probeSpacing: PROBE_SPACING_0,
+      cascadeWidth,
+      cascadeHeight,
+      width,
+      height,
+      sqrtRays: level0SqrtRays,
+    });
+    this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
+
+    this.#fluenceBindGroup = this.#device.createBindGroup({
+      layout: this.#fluencePipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.#fluenceTextureView },
+        { binding: 1, resource: this.#cascadeTextureViews[level0ResultIndex] },
+        { binding: 2, resource: { buffer: this.#fluenceUBO } },
+        { binding: 3, resource: this.#linearSampler },
+      ],
+    });
+
+    // Final render bind group
+    this.#renderBindGroup = this.#device.createBindGroup({
+      layout: this.#renderPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.#fluenceTextureView },
+        { binding: 1, resource: this.#linearSampler },
+        { binding: 2, resource: this.#worldTextureView },
+      ],
+    });
   }
 
   override update(changedProperties: PropertyValues<this>) {
@@ -359,17 +660,17 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   // Color palette - normalized for similar perceived brightness
-  static readonly #colors = [
-    [0, 0, 0], // 0: Eraser (handled specially)
-    [0.05, 0.05, 0.05], // 1: Black (blocks light)
-    [1, 0.25, 0.25], // 2: Red
-    [1, 0.5, 0.2], // 3: Orange
-    [0.75, 0.75, 0.2], // 4: Yellow (reduced)
-    [0.25, 0.8, 0.35], // 5: Green
-    [0.25, 0.75, 0.75], // 6: Cyan (reduced)
-    [0.3, 0.4, 1], // 7: Blue
-    [0.65, 0.3, 1], // 8: Purple
-    [0.8, 0.8, 0.8], // 9: White (reduced)
+  static readonly #colors: [number, number, number][] = [
+    [0, 0, 0],           // 0: Eraser (handled specially)
+    [0.05, 0.05, 0.05],  // 1: Black (blocks light)
+    [1, 0.25, 0.25],     // 2: Red
+    [1, 0.5, 0.2],       // 3: Orange
+    [0.75, 0.75, 0.2],   // 4: Yellow (reduced)
+    [0.25, 0.8, 0.35],   // 5: Green
+    [0.25, 0.75, 0.75],  // 6: Cyan (reduced)
+    [0.3, 0.4, 1],       // 7: Blue
+    [0.65, 0.3, 1],      // 8: Purple
+    [0.8, 0.8, 0.8],     // 9: White (reduced)
   ];
 
   #updateShapeData() {
@@ -380,10 +681,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     this.sourceRects.forEach((rect, index) => {
       // Convert CSS coordinates to clip space
-      const x0 = (rect.left / (this.#canvas.width / RESOLUTION_SCALE)) * 2 - 1;
-      const y0 = 1 - (rect.top / (this.#canvas.height / RESOLUTION_SCALE)) * 2;
-      const x1 = (rect.right / (this.#canvas.width / RESOLUTION_SCALE)) * 2 - 1;
-      const y1 = 1 - (rect.bottom / (this.#canvas.height / RESOLUTION_SCALE)) * 2;
+      const x0 = (rect.left / this.#canvas.width) * 2 - 1;
+      const y0 = 1 - (rect.top / this.#canvas.height) * 2;
+      const x1 = (rect.right / this.#canvas.width) * 2 - 1;
+      const y1 = 1 - (rect.bottom / this.#canvas.height) * 2;
 
       // Get color from data-color attribute, or use index-based hue
       const element = elements[index];
@@ -402,16 +703,13 @@ export class FolkRadianceCascade extends FolkBaseSet {
         b = 0.5 + 0.5 * Math.sin((hue + 0.666) * Math.PI * 2);
       }
 
-      // Two triangles per quad
-      // x, y, r, g, b, isEdge (1=edge glow, 0=solid)
-      // Triangle 1
-      vertices.push(x0, y0, r, g, b, 0);
-      vertices.push(x1, y0, r, g, b, 0);
-      vertices.push(x0, y1, r, g, b, 0);
-      // Triangle 2
-      vertices.push(x1, y0, r, g, b, 0);
-      vertices.push(x1, y1, r, g, b, 0);
-      vertices.push(x0, y1, r, g, b, 0);
+      // Two triangles per quad: x, y, r, g, b
+      vertices.push(x0, y0, r, g, b);
+      vertices.push(x1, y0, r, g, b);
+      vertices.push(x0, y1, r, g, b);
+      vertices.push(x1, y0, r, g, b);
+      vertices.push(x1, y1, r, g, b);
+      vertices.push(x0, y1, r, g, b);
     });
 
     this.#shapeCount = this.sourceRects.length;
@@ -445,11 +743,32 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   #runRadianceCascades() {
-    const { width, height } = this.#canvas;
-    const time = (performance.now() - this.#startTime) / 1000;
+    if (this.#lineBufferDirty) {
+      this.#lineBufferDirty = false;
+      this.#updateLineBuffer();
+    }
 
-    const probeDiameter0 = Math.pow(2, PROBE_SPACING_POWER);
-    const probeRayCount0 = Math.pow(2, RAY_COUNT_POWER);
+    const { width, height } = this.#canvas;
+    const jfaWorkgroupsX = Math.ceil(width / 8);
+    const jfaWorkgroupsY = Math.ceil(height / 8);
+    const cascadeWorkgroupsX = Math.ceil(this.#maxCascadeTexW / 8);
+    const cascadeWorkgroupsY = Math.ceil(this.#maxCascadeTexH / 8);
+
+    // Only the mouse light UBO changes per frame (mouse position).
+    // All other UBOs are written once in #initBindGroups.
+    this.#mouseLightUBOView.set({
+      mouseX: this.#mousePosition.x,
+      mouseY: this.#mousePosition.y,
+      radius: 20.0,
+      intensity: 1.0,
+      canvasWidth: width,
+      canvasHeight: height,
+      colorR: this.#mouseLightColor.r,
+      colorG: this.#mouseLightColor.g,
+      colorB: this.#mouseLightColor.b,
+      pad: 0,
+    });
+    this.#device.queue.writeBuffer(this.#mouseLightUBO, 0, this.#mouseLightUBOView.arrayBuffer);
 
     const encoder = this.#device.createCommandEncoder();
 
@@ -458,7 +777,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const renderPass = encoder.beginRenderPass({
         colorAttachments: [
           {
-            view: this.#worldTexture.createView({ baseMipLevel: 0, mipLevelCount: 1 }),
+            view: this.#worldTextureView,
             clearValue: { r: 0, g: 0, b: 0, a: 0 },
             loadOp: 'clear',
             storeOp: 'store',
@@ -468,123 +787,69 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
       renderPass.setPipeline(this.#worldRenderPipeline);
 
-      // Draw shapes
       if (this.#shapeDataBuffer && this.#shapeCount > 0) {
         renderPass.setVertexBuffer(0, this.#shapeDataBuffer);
         renderPass.draw(this.#shapeCount * 6);
       }
 
-      // Draw lines (uses same pipeline since vertex format matches)
-      if (this.#lineBuffer && this.#lines.length > 0) {
+      if (this.#lineBuffer && this.#lineVertexCount > 0) {
         renderPass.setVertexBuffer(0, this.#lineBuffer);
-        renderPass.draw(this.#lines.length * 6);
+        renderPass.draw(this.#lineVertexCount);
       }
 
       renderPass.end();
     }
 
-    // Step 2: Generate mipmaps for world texture
-    this.#generateMipmaps(encoder, this.#worldTexture);
+    // Step 1b: Draw mouse light
+    {
+      const renderPass = encoder.beginRenderPass({
+        colorAttachments: [{ view: this.#worldTextureView, loadOp: 'load', storeOp: 'store' }],
+      });
+      renderPass.setPipeline(this.#mouseLightPipeline);
+      renderPass.setBindGroup(0, this.#mouseLightBindGroup);
+      renderPass.draw(4);
+      renderPass.end();
+    }
 
-    // Step 3: Raymarch each cascade level
+    // Step 2: JFA distance field (all params pre-written in #initBindGroups)
+    {
+      const seedPass = encoder.beginComputePass();
+      seedPass.setPipeline(this.#jfaSeedPipeline);
+      seedPass.setBindGroup(0, this.#jfaSeedBindGroup);
+      seedPass.dispatchWorkgroups(jfaWorkgroupsX, jfaWorkgroupsY);
+      seedPass.end();
+
+      for (let i = 0; i < this.#jfaPassCount; i++) {
+        const jfaPass = encoder.beginComputePass();
+        jfaPass.setPipeline(this.#jfaPipeline);
+        jfaPass.setBindGroup(0, this.#jfaPassBindGroups[i]);
+        jfaPass.dispatchWorkgroups(jfaWorkgroupsX, jfaWorkgroupsY);
+        jfaPass.end();
+      }
+    }
+
+    // Step 3: Raymarch each cascade level (highest first, ping-ponging cascade textures).
+    // 2D dispatch over the max cascade texture size; per-level bounds checks in shader.
     const levelCount = this.#numCascadeLevels;
     for (let level = levelCount; level >= 0; level--) {
-      const probeDiameter = probeDiameter0 << level;
-      const probeRadius = probeDiameter >> 1;
-      const probeRayCount = probeRayCount0 << (BRANCHING_FACTOR * level);
-
-      const cascadeWidth = Math.floor(width / probeDiameter);
-      const cascadeHeight = Math.floor(height / probeDiameter);
-      const totalRays = cascadeWidth * cascadeHeight * probeRayCount;
-
-      const intervalRadius = Math.floor(INTERVAL_RADIUS);
-      const intervalStart = level === 0 ? 0 : intervalRadius << (BRANCHING_FACTOR * (level - 1));
-      const intervalEnd = intervalRadius << (BRANCHING_FACTOR * level);
-
-      // Update UBO
-      const uboData = new ArrayBuffer(64);
-      const i32View = new Int32Array(uboData);
-      const f32View = new Float32Array(uboData);
-
-      i32View[0] = totalRays;
-      i32View[1] = probeRadius;
-      i32View[2] = probeRayCount;
-      i32View[3] = level;
-      i32View[4] = levelCount;
-      i32View[5] = width;
-      i32View[6] = height;
-      i32View[7] = this.#maxLevel0Rays;
-      i32View[8] = intervalStart;
-      i32View[9] = intervalEnd;
-      i32View[10] = BRANCHING_FACTOR;
-      i32View[11] = level; // mipLevel for texture sampling
-      f32View[12] = time;
-      f32View[13] = this.#mousePosition.x;
-      f32View[14] = this.#mousePosition.y;
-
-      this.#device.queue.writeBuffer(this.#uboBuffer, level * 256, new Uint8Array(uboData));
-
-      const bindGroup = this.#device.createBindGroup({
-        layout: this.#raymarchPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: this.#probeBuffer } },
-          { binding: 1, resource: { buffer: this.#uboBuffer, offset: level * 256, size: 64 } },
-          { binding: 2, resource: this.#worldTextureView },
-          { binding: 3, resource: this.#linearSampler },
-        ],
-      });
-
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.#raymarchPipeline);
-      computePass.setBindGroup(0, bindGroup);
-      computePass.dispatchWorkgroups(Math.ceil(totalRays / 256), 1, 1);
+      computePass.setBindGroup(0, this.#raymarchBindGroups[level]);
+      computePass.dispatchWorkgroups(cascadeWorkgroupsX, cascadeWorkgroupsY, 1);
       computePass.end();
     }
 
-    // Step 4: Build fluence texture
+    // Step 4: Build fluence texture from cascade-0 result
     {
-      const cascadeWidth = Math.floor(width / probeDiameter0);
-      const cascadeHeight = Math.floor(height / probeDiameter0);
-
-      const uboData = new Int32Array([probeRayCount0, cascadeWidth, cascadeHeight, width, height, probeDiameter0 >> 1]);
-
-      const fluenceUBO = this.#device.createBuffer({
-        size: 32,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Int32Array(fluenceUBO.getMappedRange()).set(uboData);
-      fluenceUBO.unmap();
-
-      const bindGroup = this.#device.createBindGroup({
-        layout: this.#fluencePipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.#fluenceTexture.createView() },
-          { binding: 1, resource: { buffer: this.#probeBuffer } },
-          { binding: 2, resource: { buffer: fluenceUBO } },
-        ],
-      });
-
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.#fluencePipeline);
-      computePass.setBindGroup(0, bindGroup);
+      computePass.setBindGroup(0, this.#fluenceBindGroup);
       computePass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16), 1);
       computePass.end();
-
-      this.#device.queue.onSubmittedWorkDone().then(() => fluenceUBO.destroy());
     }
 
     // Step 5: Final render
     {
-      const bindGroup = this.#device.createBindGroup({
-        layout: this.#renderPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.#fluenceTexture.createView() },
-          { binding: 1, resource: this.#linearSampler },
-          { binding: 2, resource: this.#worldTextureView },
-        ],
-      });
-
       const renderPass = encoder.beginRenderPass({
         colorAttachments: [
           {
@@ -595,9 +860,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
           },
         ],
       });
-
       renderPass.setPipeline(this.#renderPipeline);
-      renderPass.setBindGroup(0, bindGroup);
+      renderPass.setBindGroup(0, this.#renderBindGroup);
       renderPass.setViewport(0, 0, width, height, 0, 1);
       renderPass.draw(4);
       renderPass.end();
@@ -606,58 +870,9 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#device.queue.submit([encoder.finish()]);
   }
 
-  #generateMipmaps(encoder: GPUCommandEncoder, texture: GPUTexture) {
-    const mipLevelCount = texture.mipLevelCount;
-
-    for (let level = 1; level < mipLevelCount; level++) {
-      const dstWidth = Math.max(1, texture.width >> level);
-      const dstHeight = Math.max(1, texture.height >> level);
-
-      if (dstWidth === 0 || dstHeight === 0) break;
-
-      // Create views for source and destination mip levels
-      const srcView = texture.createView({
-        baseMipLevel: level - 1,
-        mipLevelCount: 1,
-      });
-      const dstView = texture.createView({
-        baseMipLevel: level,
-        mipLevelCount: 1,
-      });
-
-      // Create UBO with dimensions
-      const uboData = new Uint32Array([dstWidth, dstHeight]);
-      const ubo = this.#device.createBuffer({
-        size: 8,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Uint32Array(ubo.getMappedRange()).set(uboData);
-      ubo.unmap();
-
-      const bindGroup = this.#device.createBindGroup({
-        layout: this.#mipmapPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: srcView },
-          { binding: 1, resource: dstView },
-          { binding: 2, resource: { buffer: ubo } },
-        ],
-      });
-
-      const computePass = encoder.beginComputePass();
-      computePass.setPipeline(this.#mipmapPipeline);
-      computePass.setBindGroup(0, bindGroup);
-      computePass.dispatchWorkgroups(Math.ceil(dstWidth / 8), Math.ceil(dstHeight / 8), 1);
-      computePass.end();
-
-      // Schedule cleanup
-      this.#device.queue.onSubmittedWorkDone().then(() => ubo.destroy());
-    }
-  }
-
   #handleResize = async () => {
-    const newWidth = (this.clientWidth || 800) * RESOLUTION_SCALE;
-    const newHeight = (this.clientHeight || 600) * RESOLUTION_SCALE;
+    const newWidth = this.clientWidth || 800;
+    const newHeight = this.clientHeight || 600;
 
     // Skip if dimensions haven't actually changed
     if (this.#canvas.width === newWidth && this.#canvas.height === newHeight) {
@@ -670,78 +885,157 @@ export class FolkRadianceCascade extends FolkBaseSet {
     // Wait for any in-flight GPU work to complete before destroying resources
     await this.#device.queue.onSubmittedWorkDone();
 
-    this.#context.configure({
-      device: this.#device,
-      format: this.#presentationFormat,
-      alphaMode: 'premultiplied',
-    });
+    this.#configureContext();
 
     this.#cleanupResources();
     this.#initBuffers();
+    this.#initBindGroups();
     this.#updateShapeData();
   };
 
   #handleMouseMove = (e: MouseEvent) => {
     const rect = this.getBoundingClientRect();
     // Convert to internal (scaled) coordinates
-    this.#mousePosition.x = (e.clientX - rect.left) * RESOLUTION_SCALE;
-    this.#mousePosition.y = (e.clientY - rect.top) * RESOLUTION_SCALE;
+    this.#mousePosition.x = e.clientX - rect.left;
+    this.#mousePosition.y = e.clientY - rect.top;
   };
 
   #cleanupResources() {
-    this.#probeBuffer?.destroy();
+    this.#cascadeTextures?.forEach((t) => t.destroy());
     this.#uboBuffer?.destroy();
+    this.#mouseLightUBO?.destroy();
+    this.#fluenceUBO?.destroy();
+    this.#jfaTextures?.forEach((t) => t.destroy());
+    this.#jfaParamsBuffer?.destroy();
     this.#worldTexture?.destroy();
     this.#fluenceTexture?.destroy();
     this.#shapeDataBuffer?.destroy();
     this.#lineBuffer?.destroy();
-    // Clear references to prevent use-after-destroy
     this.#shapeDataBuffer = undefined;
     this.#lineBuffer = undefined;
   }
 }
 
-// Mipmap generation shader - box filter downsampling
-const mipmapShader = /*wgsl*/ `
-struct UBO {
+// JFA seed shader - initializes the distance field from the world texture.
+// Pixels with alpha > 0 (occupied by emitters/occluders) become seeds with
+// distance 0. Empty pixels get a sentinel value that JFA propagation will fill.
+// This approach generates the SDF from whatever is in the world texture each
+// frame, so it adapts to moving geometry automatically.
+const jfaSeedShader = /*wgsl*/ `
+struct Params {
   width: u32,
   height: u32,
+  stepSize: u32,
+  pad: u32,
 }
 
-@group(0) @binding(0) var srcTexture: texture_2d<f32>;
-@group(0) @binding(1) var dstTexture: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(2) var<uniform> ubo: UBO;
+const SENTINEL: f32 = -1.0;
+const INF_DIST: f32 = 1e10;
+
+@group(0) @binding(0) var worldTexture: texture_2d<f32>;
+@group(0) @binding(1) var output: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(2) var<uniform> params: Params;
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
-  if (id.x >= ubo.width || id.y >= ubo.height) {
+  if (id.x >= params.width || id.y >= params.height) {
     return;
   }
-  
-  // Sample 4 texels from source and average them
-  let srcCoord = vec2i(id.xy) * 2;
-  let s00 = textureLoad(srcTexture, srcCoord, 0);
-  let s10 = textureLoad(srcTexture, srcCoord + vec2i(1, 0), 0);
-  let s01 = textureLoad(srcTexture, srcCoord + vec2i(0, 1), 0);
-  let s11 = textureLoad(srcTexture, srcCoord + vec2i(1, 1), 0);
-  
-  let avg = (s00 + s10 + s01 + s11) * 0.25;
-  textureStore(dstTexture, id.xy, avg);
+
+  let world = textureLoad(worldTexture, id.xy, 0);
+
+  // Pixels with any alpha are seed points (emitters or occluders).
+  // Store pixel coordinates as seed position for JFA propagation.
+  if (world.a > 0.0) {
+    textureStore(output, id.xy, vec4f(f32(id.x), f32(id.y), 0.0, 0.0));
+  } else {
+    textureStore(output, id.xy, vec4f(SENTINEL, SENTINEL, 0.0, INF_DIST));
+  }
 }
 `;
 
-// World render shader - renders shapes to world texture
+// JFA propagation shader - standard Jump Flood Algorithm (Rong & Tan 2006).
+// Each pass checks 9 neighbors at a given step distance and keeps the nearest
+// seed. After log2(max(W,H)) passes with halving step sizes, every pixel knows
+// its nearest seed and the Euclidean distance to it in pixel space.
+// This distance field is then used for sphere marching in the raymarch pass.
+const jfaShader = /*wgsl*/ `
+struct Params {
+  width: u32,
+  height: u32,
+  stepSize: u32,
+  pad: u32,
+}
+
+const SENTINEL: f32 = -1.0;
+
+const OFFSETS: array<vec2i, 9> = array(
+  vec2i(-1, -1), vec2i(0, -1), vec2i(1, -1),
+  vec2i(-1,  0), vec2i(0,  0), vec2i(1,  0),
+  vec2i(-1,  1), vec2i(0,  1), vec2i(1,  1)
+);
+
+// Using texture_2d<f32> instead of texture_storage_2d<..., read> for portability.
+// Read access on storage textures requires the optional
+// 'readonly-and-readwrite-storage-textures' feature which not all devices support.
+// Since the JFA textures already have TEXTURE_BINDING usage, a regular texture_2d
+// works universally with the same textureLoad calls (just needs a mip level arg).
+@group(0) @binding(0) var inputField: texture_2d<f32>;
+@group(0) @binding(1) var outputField: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(2) var<uniform> params: Params;
+
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  if (id.x >= params.width || id.y >= params.height) {
+    return;
+  }
+
+  let pixel = vec2f(id.xy);
+  var nearest = textureLoad(inputField, id.xy, 0);
+  var minDist = nearest.w;
+  let step = i32(params.stepSize);
+
+  for (var i = 0u; i < 9u; i++) {
+    let neighborCoord = vec2i(id.xy) + OFFSETS[i] * step;
+
+    let inBounds = all(neighborCoord >= vec2i(0)) &&
+                   all(neighborCoord < vec2i(i32(params.width), i32(params.height)));
+    if (!inBounds) { continue; }
+
+    let neighbor = textureLoad(inputField, vec2u(neighborCoord), 0);
+
+    // Skip neighbors without a valid seed
+    if (neighbor.x < 0.0) { continue; }
+
+    let dist = distance(pixel, vec2f(neighbor.x, neighbor.y));
+    if (dist < minDist) {
+      nearest = vec4f(neighbor.x, neighbor.y, 0.0, dist);
+      minDist = dist;
+    }
+  }
+
+  textureStore(outputField, id.xy, nearest);
+}
+`;
+
+// World render shader - renders shapes/lines to world texture in linear color space.
+// All cascade processing (raymarching, merging, fluence) operates in linear space;
+// sRGB conversion happens only in the final display pass.
 const worldRenderShader = /*wgsl*/ `
 struct VertexInput {
   @location(0) position: vec2f,
   @location(1) color: vec3f,
-  @location(2) isEdge: f32,
 }
 
 struct VertexOutput {
   @builtin(position) position: vec4f,
   @location(0) color: vec3f,
-  @location(1) isEdge: f32,
+}
+
+// sRGB to linear conversion. Input colors are perceptual (sRGB); the cascade
+// pipeline must operate in linear space for physically correct light transport.
+fn srgbToLinear(c: vec3f) -> vec3f {
+  return pow(c, vec3f(2.2));
 }
 
 @vertex
@@ -749,237 +1043,286 @@ fn vertex_main(input: VertexInput) -> VertexOutput {
   var out: VertexOutput;
   out.position = vec4f(input.position, 0.0, 1.0);
   out.color = input.color;
-  out.isEdge = input.isEdge;
   return out;
 }
 
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
-  // Shapes emit their color and are opaque
-  return vec4f(in.color, 1.0);
+  return vec4f(srgbToLinear(in.color), 1.0);
 }
 `;
 
-// Raymarch shader - traces rays sampling from world texture
+// Mouse light shader - renders the cursor as an emissive circle into the world texture.
+// By placing the mouse light in the world texture (rather than injecting it directly
+// into the raymarch), it naturally participates in occlusion and indirect illumination:
+// objects can block the mouse light and it bounces off surfaces correctly.
+const mouseLightShader = /*wgsl*/ `
+struct MouseLight {
+  mouseX: f32,
+  mouseY: f32,
+  radius: f32,
+  intensity: f32,
+  canvasWidth: f32,
+  canvasHeight: f32,
+  colorR: f32,
+  colorG: f32,
+  colorB: f32,
+  pad: f32,
+}
+
+struct VertexOutput {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+}
+
+@group(0) @binding(0) var<uniform> light: MouseLight;
+
+@vertex
+fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
+  let pos = array(
+    vec2f(-1.0, -1.0),
+    vec2f( 1.0, -1.0),
+    vec2f(-1.0,  1.0),
+    vec2f( 1.0,  1.0),
+  );
+  var out: VertexOutput;
+  out.position = vec4f(pos[vi], 0.0, 1.0);
+  out.uv = pos[vi] * vec2f(0.5, -0.5) + 0.5;
+  return out;
+}
+
+@fragment
+fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
+  let pixelPos = in.uv * vec2f(light.canvasWidth, light.canvasHeight);
+  let mousePos = vec2f(light.mouseX, light.mouseY);
+  let dist = length(pixelPos - mousePos);
+
+  if (dist >= light.radius) {
+    discard;
+  }
+
+  // Quadratic falloff from center. Low opacity so rays pass through the light
+  // volume rather than treating it as a solid occluder.
+  let falloff = 1.0 - dist / light.radius;
+  let brightness = falloff * falloff * light.intensity;
+  let color = vec3f(light.colorR, light.colorG, light.colorB);
+  let opacity = 0.02;
+  return vec4f(brightness * color, opacity);
+}
+`;
+
+// Raymarch shader - traces rays through the scene using SDF sphere marching.
+//
+// Each ray covers a specific interval [intervalStart, intervalEnd] in pixel distance
+// from its probe center. The SDF (generated by JFA) provides the distance to the
+// nearest surface at each sample point, allowing rays to skip empty space in large
+// strides rather than stepping pixel-by-pixel. This reduces per-ray cost from
+// O(interval_length) to O(log(interval_length)) in practice (Sannikov 2023).
+//
+// Radiance is accumulated front-to-back with transmittance tracking:
+//   acc.rgb = accumulated radiance (pre-multiplied by transmittance)
+//   acc.a   = remaining transmittance (1.0 = fully transparent, 0.0 = fully blocked)
+// The merge with the upper cascade uses the standard interval merging formula:
+//   merged.rgb = near.rgb + near.a * far.rgb
+//   merged.a   = near.a * far.a
 const raymarchShader = /*wgsl*/ `
 const PI: f32 = 3.141592653589793;
 const TAU: f32 = PI * 2.0;
 
 struct UBO {
-  totalRays: u32,
-  probeRadius: i32,
-  probeRayCount: i32,
+  probeSpacing: f32,
+  intervalStart: f32,
+  intervalEnd: f32,
   level: i32,
   levelCount: i32,
   width: i32,
   height: i32,
-  maxLevel0Rays: i32,
-  intervalStartRadius: i32,
-  intervalEndRadius: i32,
-  branchingFactor: u32,
-  mipLevel: i32,
-  time: f32,
-  mouseX: f32,
-  mouseY: f32,
+  sqrtRays: i32,
+  cascadeWidth: i32,
+  cascadeHeight: i32,
+  upperCascadeW: i32,
+  upperCascadeH: i32,
 }
 
-@group(0) @binding(0) var<storage, read_write> probes: array<vec4f>;
+@group(0) @binding(0) var cascadeOut: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(1) var<uniform> ubo: UBO;
 @group(0) @binding(2) var worldTexture: texture_2d<f32>;
 @group(0) @binding(3) var worldSampler: sampler;
+@group(0) @binding(4) var sdfTexture: texture_2d<f32>;
+@group(0) @binding(5) var upperCascade: texture_2d<f32>;
 
-fn sampleWorld(pos: vec2f, mipLevel: f32) -> vec4f {
+fn sampleWorld(pos: vec2f) -> vec4f {
   let dims = vec2f(f32(ubo.width), f32(ubo.height));
   let uv = pos / dims;
-  
-  // Check bounds
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
-    return vec4f(0.0, 0.0, 0.0, 0.0);
+    return vec4f(0.0);
   }
-  
-  // Sample at the appropriate mip level for this cascade
-  return textureSampleLevel(worldTexture, worldSampler, uv, mipLevel);
+  return textureSampleLevel(worldTexture, worldSampler, uv, 0.0);
 }
 
-fn SampleUpperProbe(rawPos: vec2i, raysPerProbe: i32, bufferStartIndex: i32, cascadeWidth: i32, cascadeHeight: i32) -> vec4f {
-  let pos = clamp(rawPos, vec2i(0), vec2i(cascadeWidth - 1, cascadeHeight - 1));
-  let index = raysPerProbe * pos.x + pos.y * cascadeWidth * raysPerProbe;
-  
-  let rayCount = 1 << ubo.branchingFactor;
-  var accColor = vec4f(0.0);
-  for (var offset = 0; offset < rayCount; offset++) {
-    accColor += probes[bufferStartIndex + index + offset];
+// Manual bilinear interpolation for SDF sampling because rgba32float is not
+// a filterable format. Four textureLoad calls + mix gives sub-pixel precision.
+fn sampleSDF(pos: vec2f) -> f32 {
+  let dims = vec2f(f32(ubo.width), f32(ubo.height));
+  if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
+    return 1e6;
   }
-  return accColor / f32(rayCount);
+  let p = pos - 0.5;
+  let f = fract(p);
+  let c = vec2i(floor(p));
+  let mx = vec2i(i32(ubo.width) - 1, i32(ubo.height) - 1);
+  let d00 = max(textureLoad(sdfTexture, vec2u(clamp(c, vec2i(0), mx)), 0).w, 0.0);
+  let d10 = max(textureLoad(sdfTexture, vec2u(clamp(c + vec2i(1, 0), vec2i(0), mx)), 0).w, 0.0);
+  let d01 = max(textureLoad(sdfTexture, vec2u(clamp(c + vec2i(0, 1), vec2i(0), mx)), 0).w, 0.0);
+  let d11 = max(textureLoad(sdfTexture, vec2u(clamp(c + vec2i(1, 1), vec2i(0), mx)), 0).w, 0.0);
+  return mix(mix(d00, d10, f.x), mix(d01, d11, f.x), f.y);
 }
 
-fn SampleUpperProbes(lowerProbeCenter: vec2f, rayIndex: i32) -> vec4f {
-  let UpperLevel = ubo.level + 1;
-  
-  if (UpperLevel >= ubo.levelCount) {
-    return vec4f(0.0, 0.0, 0.0, 1.0);
+// Bilinear merge: sample 4 neighboring upper probes using hardware bilinear
+// interpolation. In direction-first layout, each direction tile contains
+// spatially-arranged probes, so textureSampleLevel with a linear sampler
+// naturally interpolates between neighboring probes.
+//
+// Upper cascade dimensions (upperCascadeW/H) are passed through the UBO
+// rather than re-derived in the shader, avoiding integer division truncation
+// mismatches between CPU and GPU.
+fn sampleUpperCascade(probeCenter: vec2f, dirIndex: i32) -> vec4f {
+  if (ubo.level >= ubo.levelCount) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+
+  let upperSqrtRays = ubo.sqrtRays * 2;
+  let upperProbeSpacing = ubo.probeSpacing * 2.0;
+  let texSize = vec2f(textureDimensions(upperCascade));
+  let upperProbePos = probeCenter / upperProbeSpacing - 0.5;
+  // Clamp to [0.5, size - 1.5] so the bilinear 2×2 footprint stays entirely
+  // within the direction tile. Without this, edge probes sample from adjacent
+  // direction tiles — a different direction's data masquerading as spatial neighbors.
+  let clampedPos = clamp(upperProbePos, vec2f(0.5), vec2f(f32(ubo.upperCascadeW) - 1.5, f32(ubo.upperCascadeH) - 1.5));
+
+  var acc = vec4f(0.0);
+  for (var k = 0; k < 4; k++) {
+    let parentDir = dirIndex * 4 + k;
+    let pdx = parentDir % upperSqrtRays;
+    let pdy = parentDir / upperSqrtRays;
+    let tileOrigin = vec2f(f32(pdx * ubo.upperCascadeW), f32(pdy * ubo.upperCascadeH));
+    let uv = (tileOrigin + clampedPos + 0.5) / texSize;
+    acc += textureSampleLevel(upperCascade, worldSampler, uv, 0.0);
   }
-  
-  let UpperRaysPerProbe = ubo.probeRayCount << ubo.branchingFactor;
-  let UpperLevelRayIndex = rayIndex << ubo.branchingFactor;
-  let UpperLevelBufferOffset = ubo.maxLevel0Rays * (UpperLevel % 2);
-  let UpperProbeDiameter = 2 * (ubo.probeRadius << 1);
-  let UpperCascadeWidth = ubo.width / UpperProbeDiameter;
-  let UpperCascadeHeight = ubo.height / UpperProbeDiameter;
-  
-  let index = lowerProbeCenter / f32(UpperProbeDiameter) - 0.5;
-  let basePos = vec2i(floor(index));
-  
-  let bufferStartIndex = UpperLevelBufferOffset + UpperLevelRayIndex;
-  let samples = array(
-    SampleUpperProbe(basePos, UpperRaysPerProbe, bufferStartIndex, UpperCascadeWidth, UpperCascadeHeight),
-    SampleUpperProbe(basePos + vec2i(1, 0), UpperRaysPerProbe, bufferStartIndex, UpperCascadeWidth, UpperCascadeHeight),
-    SampleUpperProbe(basePos + vec2i(0, 1), UpperRaysPerProbe, bufferStartIndex, UpperCascadeWidth, UpperCascadeHeight),
-    SampleUpperProbe(basePos + vec2i(1, 1), UpperRaysPerProbe, bufferStartIndex, UpperCascadeWidth, UpperCascadeHeight),
-  );
-  
-  let factor = fract(index);
-  let invFactor = 1.0 - factor;
-  
-  let r1 = samples[0] * invFactor.x + samples[1] * factor.x;
-  let r2 = samples[2] * invFactor.x + samples[3] * factor.x;
-  return r1 * invFactor.y + r2 * factor.y;
+  return acc * 0.25;
 }
 
-@compute @workgroup_size(256, 1, 1)
-fn main(@builtin(global_invocation_id) GlobalInvocationID: vec3u) {
-  let RayIndex = i32(GlobalInvocationID.x);
-  if (RayIndex >= i32(ubo.totalRays)) {
-    return;
-  }
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  let texW = u32(ubo.cascadeWidth * ubo.sqrtRays);
+  let texH = u32(ubo.cascadeHeight * ubo.sqrtRays);
+  if (id.x >= texW || id.y >= texH) { return; }
 
-  let ProbeIndex = RayIndex / ubo.probeRayCount;
-  let ProbeRayIndex = RayIndex % ubo.probeRayCount;
-  
-  let ProbeRadius = f32(ubo.probeRadius);
-  let IntervalRadius = f32(ubo.intervalEndRadius);
-  let LowerIntervalRadius = f32(ubo.intervalStartRadius);
-  let ProbeDiameter = ProbeRadius * 2.0;
-  let CascadeWidth = ubo.width / i32(ProbeDiameter);
-  
-  let col = ProbeIndex % CascadeWidth;
-  let row = ProbeIndex / CascadeWidth;
-  
-  let RayAngle = TAU * (f32(ProbeRayIndex) + 0.5) / f32(ubo.probeRayCount);
+  // Direction-first layout: each tile of cascadeWidth × cascadeHeight texels
+  // contains all probes for one direction. Tiles are arranged in a
+  // sqrtRays × sqrtRays grid across the texture.
+  let dirX = i32(id.x) / ubo.cascadeWidth;
+  let dirY = i32(id.y) / ubo.cascadeHeight;
+  let probeX = i32(id.x) % ubo.cascadeWidth;
+  let probeY = i32(id.y) % ubo.cascadeHeight;
+  let rayIndex = dirY * ubo.sqrtRays + dirX;
+  let totalRays = ubo.sqrtRays * ubo.sqrtRays;
+
+  let ProbeDiameter = ubo.probeSpacing;
+  let ProbeRadius = ProbeDiameter * 0.5;
+
+  // Half-texel angular offset centers rays between directions (Sannikov 2023 Sec. 3)
+  let RayAngle = TAU * (f32(rayIndex) + 0.5) / f32(totalRays);
   let RayDirection = vec2f(cos(RayAngle), sin(RayAngle));
-  
   let RayOrigin = vec2f(
-    f32(col) * ProbeDiameter + ProbeRadius,
-    f32(row) * ProbeDiameter + ProbeRadius,
+    f32(probeX) * ProbeDiameter + ProbeRadius,
+    f32(probeY) * ProbeDiameter + ProbeRadius,
   );
-  
-  let OutputIndex = ubo.maxLevel0Rays * (ubo.level % 2) + RayIndex;
-  
-  // Raymarch through interval
+
+  let IntervalStart = ubo.intervalStart;
+  let IntervalEnd = ubo.intervalEnd;
+  let IntervalLength = IntervalEnd - IntervalStart;
+
+  // SDF sphere march through the interval
   var acc = vec4f(0.0, 0.0, 0.0, 1.0);
-  let mipLevel = f32(ubo.mipLevel);
   var t = 0.0;
-  let stepSize = max(1.0, pow(2.0, mipLevel));
-  
-  // Add mouse light contribution
-  let mousePos = vec2f(ubo.mouseX, ubo.mouseY);
-  let mouseToOrigin = RayOrigin - mousePos;
-  let mouseDist = length(mouseToOrigin);
-  let mouseRadius = 20.0;
-  if (mouseDist < mouseRadius) {
-    let falloff = 1.0 - mouseDist / mouseRadius;
-    let pulse = 0.9 + 0.1 * sin(ubo.time * 2.0);
-    acc.r += falloff * falloff * pulse * 0.8;
-    acc.g += falloff * falloff * pulse * 0.6;
-    acc.b += falloff * falloff * pulse * 0.3;
-  }
-  
-  while (true) {
-    let pos = RayOrigin + RayDirection * (LowerIntervalRadius + t);
-    
-    if (t > IntervalRadius - LowerIntervalRadius) {
-      break;
+
+  while (t < IntervalLength) {
+    let pos = RayOrigin + RayDirection * (IntervalStart + t);
+    let dist = sampleSDF(pos);
+
+    if (dist < 1.0) {
+      let worldSample = sampleWorld(pos);
+      let transparency = 1.0 - worldSample.a;
+      acc = vec4f(
+        acc.rgb + acc.a * worldSample.rgb,
+        acc.a * transparency
+      );
+      if (acc.a < 0.01) { break; }
+      t += 1.0;
+    } else {
+      t += dist;
     }
-    
-    let sample = sampleWorld(pos, mipLevel);
-    
-    let transparency = 1.0 - sample.a;
-    acc = vec4f(
-      acc.rgb + acc.a * sample.rgb,
-      acc.a * transparency
-    );
-    
-    // Early termination if fully occluded
-    if (acc.a < 0.01) {
-      break;
-    }
-    
-    t += stepSize;
   }
-  
-  let UpperResult = SampleUpperProbes(RayOrigin, ProbeRayIndex);
-  
-  probes[OutputIndex] = vec4f(
-    acc.rgb + acc.a * UpperResult.rgb,
-    acc.a * UpperResult.a
-  );
+
+  let upper = sampleUpperCascade(RayOrigin, rayIndex);
+  textureStore(cascadeOut, id.xy, vec4f(
+    acc.rgb + acc.a * upper.rgb,
+    acc.a * upper.a
+  ));
 }
 `;
 
-// Fluence shader with bilinear interpolation
+// Fluence shader: samples the merged cascade-0 texture to produce per-pixel
+// irradiance. Level 0 has BASE_RAY_COUNT rays arranged in a sqrtRays × sqrtRays
+// grid of direction tiles. For each pixel, we compute the probe coordinate and
+// use hardware bilinear sampling within each direction tile, then sum all
+// directions for isotropic angular integration.
 const fluenceShader = /*wgsl*/ `
 struct UBO {
-  probeRayCount: i32,
+  probeSpacing: f32,
   cascadeWidth: i32,
   cascadeHeight: i32,
   width: i32,
   height: i32,
-  probeRadius: i32,
+  sqrtRays: i32,
 }
 
-@group(0) @binding(0) var fluenceTexture: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(1) var<storage, read_write> probes: array<vec4f>;
+@group(0) @binding(0) var fluenceTexture: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var cascadeTexture: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> ubo: UBO;
-
-fn sampleProbe(probeX: i32, probeY: i32) -> vec4f {
-  let cx = clamp(probeX, 0, ubo.cascadeWidth - 1);
-  let cy = clamp(probeY, 0, ubo.cascadeHeight - 1);
-  let startIndex = cx * ubo.probeRayCount + cy * ubo.probeRayCount * ubo.cascadeWidth;
-  
-  var acc = vec4f(0.0);
-  for (var rayIndex = 0; rayIndex < ubo.probeRayCount; rayIndex++) {
-    acc += probes[startIndex + rayIndex];
-  }
-  return acc / f32(ubo.probeRayCount);
-}
+@group(0) @binding(3) var cascadeSampler: sampler;
 
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
-  if (i32(id.x) >= ubo.width || i32(id.y) >= ubo.height) {
-    return;
-  }
-  
+  if (i32(id.x) >= ubo.width || i32(id.y) >= ubo.height) { return; }
+
   let pixelCenter = vec2f(id.xy) + 0.5;
-  let probeDiameter = f32(ubo.probeRadius) * 2.0;
-  
-  let probeCoord = pixelCenter / probeDiameter - 0.5;
-  let baseProbe = vec2i(floor(probeCoord));
-  let frac = fract(probeCoord);
-  
-  let s00 = sampleProbe(baseProbe.x, baseProbe.y);
-  let s10 = sampleProbe(baseProbe.x + 1, baseProbe.y);
-  let s01 = sampleProbe(baseProbe.x, baseProbe.y + 1);
-  let s11 = sampleProbe(baseProbe.x + 1, baseProbe.y + 1);
-  
-  let r0 = mix(s00, s10, frac.x);
-  let r1 = mix(s01, s11, frac.x);
-  let result = mix(r0, r1, frac.y);
-  
-  textureStore(fluenceTexture, id.xy, result);
+  let probeCoord = pixelCenter / ubo.probeSpacing - 0.5;
+  // Clamp to [0.5, size - 1.5] so the bilinear 2×2 footprint stays entirely
+  // within each direction tile.
+  let clampedCoord = clamp(probeCoord, vec2f(0.5), vec2f(f32(ubo.cascadeWidth) - 1.5, f32(ubo.cascadeHeight) - 1.5));
+  let texSize = vec2f(textureDimensions(cascadeTexture));
+
+  let rayCount = ubo.sqrtRays * ubo.sqrtRays;
+  var acc = vec4f(0.0);
+  for (var d = 0; d < rayCount; d++) {
+    let dx = d % ubo.sqrtRays;
+    let dy = d / ubo.sqrtRays;
+    let tileOrigin = vec2f(f32(dx * ubo.cascadeWidth), f32(dy * ubo.cascadeHeight));
+    let uv = (tileOrigin + clampedCoord + 0.5) / texSize;
+    acc += textureSampleLevel(cascadeTexture, cascadeSampler, uv, 0.0);
+  }
+
+  textureStore(fluenceTexture, id.xy, acc / f32(rayCount));
 }
 `;
 
-// Render shader - composites fluence with emissive surfaces
+// Final display shader - composites emissive surfaces with indirect illumination,
+// applies tone mapping, and converts from linear to sRGB for display.
+//
+// The world texture stores emissive colors in linear space (written by the world
+// render pass). The fluence texture stores indirect illumination accumulated by the
+// cascade pipeline, also in linear space. We combine them, tone map to [0,1], then
+// apply the sRGB transfer function for correct perceptual display.
 const renderShader = /*wgsl*/ `
 struct VertexOutput {
   @builtin(position) position: vec4f,
@@ -1004,17 +1347,29 @@ fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 @group(0) @binding(1) var fluenceSampler: sampler;
 @group(0) @binding(2) var worldTexture: texture_2d<f32>;
 
+// Reinhard tone mapping: simple and stable global operator that maps HDR [0, inf)
+// to LDR [0, 1) per-channel. Chosen over ACES for simplicity; can be swapped later.
+fn reinhardTonemap(hdr: vec3f) -> vec3f {
+  return hdr / (hdr + vec3f(1.0));
+}
+
+fn linearToSrgb(c: vec3f) -> vec3f {
+  return pow(c, vec3f(1.0 / 2.2));
+}
+
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
   let fluence = textureSample(fluenceTexture, fluenceSampler, in.uv);
   let world = textureSample(worldTexture, fluenceSampler, in.uv);
-  
-  // If this pixel has emissive content, show it; otherwise show fluence
-  // world.a = 1 means opaque emitter, world.rgb is emissive color
-  if (world.a > 0.5) {
-    // Blend emissive color with fluence for a nice glow effect
-    return vec4f(world.rgb * 0.3 + fluence.rgb * 0.8, 1.0);
-  }
-  return vec4f(fluence.rgb * 0.8, 1.0);
+
+  // world.a indicates emitter presence; world.rgb is linear emissive color.
+  // Emissive surfaces contribute their own color plus receive indirect light.
+  let emissive = world.rgb * world.a;
+  let indirect = fluence.rgb;
+  let hdr = emissive + indirect;
+
+  let mapped = reinhardTonemap(hdr);
+  let srgb = linearToSrgb(mapped);
+  return vec4f(srgb, 1.0);
 }
 `;
