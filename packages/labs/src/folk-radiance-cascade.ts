@@ -125,15 +125,16 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #maxCascadeTexW = 0;
   #maxCascadeTexH = 0;
 
-  // Profiling
+  // Profiling (toggled with ".")
   #profilingSupported = false;
   #profilingQuerySet!: GPUQuerySet;
   #profilingResolveBuffer!: GPUBuffer;
   #profilingReadBuffers!: [GPUBuffer, GPUBuffer];
   #profilingWriteIndex = 0;
   #profilingMappingPending = false;
-  #profilingOverlay!: HTMLDivElement;
-  #smoothedGpuTimes = { world: 0, jfa: 0, cascade: 0, fluence: 0, render: 0, total: 0 };
+  #profilingOverlay: HTMLDivElement | null = null;
+  #profilingVisible = false;
+  #smoothedGpuTime = 0;
   #smoothedCpuTime = 0;
   #lastOverlayUpdate = 0;
 
@@ -149,6 +150,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
+    window.addEventListener('keydown', this.#handleKeyDown);
     this.#isRunning = true;
     this.#startAnimationLoop();
 
@@ -163,6 +165,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     }
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
+    window.removeEventListener('keydown', this.#handleKeyDown);
     this.#cleanupResources();
     this.#cleanupProfiling();
   }
@@ -768,7 +771,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
       this.#runRadianceCascades();
 
-      if (this.#profilingOverlay && now - this.#lastOverlayUpdate > 200) {
+      if (this.#profilingVisible && now - this.#lastOverlayUpdate > 200) {
         this.#lastOverlayUpdate = now;
         this.#updateOverlayDOM();
       }
@@ -824,6 +827,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
         ...(qs && { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 0 } }),
       });
 
+
       renderPass.setPipeline(this.#worldRenderPipeline);
 
       if (this.#shapeDataBuffer && this.#shapeCount > 0) {
@@ -843,7 +847,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     {
       const renderPass = encoder.beginRenderPass({
         colorAttachments: [{ view: this.#worldTextureView, loadOp: 'load', storeOp: 'store' }],
-        ...(qs && { timestampWrites: { querySet: qs, endOfPassWriteIndex: 1 } }),
       });
       renderPass.setPipeline(this.#mouseLightPipeline);
       renderPass.setBindGroup(0, this.#mouseLightBindGroup);
@@ -853,9 +856,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     // Step 2: JFA distance field + SDF finalize
     {
-      const seedPass = encoder.beginComputePass(
-        qs ? { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 2 } } : undefined,
-      );
+      const seedPass = encoder.beginComputePass();
       seedPass.setPipeline(this.#jfaSeedPipeline);
       seedPass.setBindGroup(0, this.#jfaSeedBindGroup);
       seedPass.dispatchWorkgroups(jfaWorkgroupsX, jfaWorkgroupsY);
@@ -869,10 +870,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
         jfaPass.end();
       }
 
-      // Finalize: convert seed coordinates → distance for hardware-filtered SDF sampling
-      const finalizePass = encoder.beginComputePass(
-        qs ? { timestampWrites: { querySet: qs, endOfPassWriteIndex: 3 } } : undefined,
-      );
+      const finalizePass = encoder.beginComputePass();
       finalizePass.setPipeline(this.#jfaFinalizePipeline);
       finalizePass.setBindGroup(0, this.#jfaFinalizeBindGroup);
       finalizePass.dispatchWorkgroups(jfaWorkgroupsX, jfaWorkgroupsY);
@@ -882,19 +880,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     // Step 3: Raymarch each cascade level (highest first, ping-ponging cascade textures).
     const levelCount = this.#numCascadeLevels;
     for (let level = levelCount; level >= 0; level--) {
-      const isFirstCascade = level === levelCount;
-      const isLastCascade = level === 0;
-      const computePass = encoder.beginComputePass(
-        qs && (isFirstCascade || isLastCascade)
-          ? {
-              timestampWrites: {
-                querySet: qs,
-                ...(isFirstCascade && { beginningOfPassWriteIndex: 4 }),
-                ...(isLastCascade && { endOfPassWriteIndex: 5 }),
-              },
-            }
-          : undefined,
-      );
+      const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.#raymarchPipeline);
       computePass.setBindGroup(0, this.#raymarchBindGroups[level]);
       computePass.dispatchWorkgroups(cascadeWorkgroupsX, cascadeWorkgroupsY, 1);
@@ -903,9 +889,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     // Step 4: Build fluence texture from cascade-0 result
     {
-      const computePass = encoder.beginComputePass(
-        qs ? { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 6, endOfPassWriteIndex: 7 } } : undefined,
-      );
+      const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.#fluencePipeline);
       computePass.setBindGroup(0, this.#fluenceBindGroup);
       computePass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16), 1);
@@ -923,7 +907,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
             storeOp: 'store',
           },
         ],
-        ...(qs && { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 8, endOfPassWriteIndex: 9 } }),
+        ...(qs && { timestampWrites: { querySet: qs, endOfPassWriteIndex: 1 } }),
       });
       renderPass.setPipeline(this.#renderPipeline);
       renderPass.setBindGroup(0, this.#renderBindGroup);
@@ -933,9 +917,9 @@ export class FolkRadianceCascade extends FolkBaseSet {
     }
 
     if (qs) {
-      encoder.resolveQuerySet(qs, 0, 10, this.#profilingResolveBuffer, 0);
+      encoder.resolveQuerySet(qs, 0, 2, this.#profilingResolveBuffer, 0);
       const writeBuf = this.#profilingReadBuffers[this.#profilingWriteIndex];
-      encoder.copyBufferToBuffer(this.#profilingResolveBuffer, 0, writeBuf, 0, 10 * 8);
+      encoder.copyBufferToBuffer(this.#profilingResolveBuffer, 0, writeBuf, 0, 2 * 8);
     }
 
     this.#device.queue.submit([encoder.finish()]);
@@ -997,6 +981,15 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#mousePosition.y = e.clientY - rect.top;
   };
 
+  #handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === '.') {
+      this.#profilingVisible = !this.#profilingVisible;
+      if (this.#profilingOverlay) {
+        this.#profilingOverlay.style.display = this.#profilingVisible ? 'block' : 'none';
+      }
+    }
+  };
+
   #cleanupResources() {
     this.#cascadeTextures?.forEach((t) => t.destroy());
     this.#uboBuffer?.destroy();
@@ -1014,12 +1007,9 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   #initProfiling() {
-    if (!this.#profilingSupported) {
-      this.#createProfilingOverlay();
-      return;
-    }
+    if (!this.#profilingSupported) return;
 
-    const count = 10;
+    const count = 2;
     this.#profilingQuerySet = this.#device.createQuerySet({ type: 'timestamp', count });
     this.#profilingResolveBuffer = this.#device.createBuffer({
       label: 'Profiling-Resolve',
@@ -1033,11 +1023,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       }),
     ) as [GPUBuffer, GPUBuffer];
-
-    this.#createProfilingOverlay();
   }
 
-  #createProfilingOverlay() {
+  #ensureProfilingOverlay() {
+    if (this.#profilingOverlay) return;
     this.#profilingOverlay = document.createElement('div');
     Object.assign(this.#profilingOverlay.style, {
       position: 'fixed',
@@ -1053,54 +1042,30 @@ export class FolkRadianceCascade extends FolkBaseSet {
       zIndex: '99999',
       pointerEvents: 'none',
       whiteSpace: 'pre',
+      display: this.#profilingVisible ? 'block' : 'none',
     });
     document.body.appendChild(this.#profilingOverlay);
   }
 
   #processTimestamps(timestamps: BigInt64Array) {
-    const toMs = (begin: bigint, end: bigint) => Number(end - begin) / 1_000_000;
-
-    const world = toMs(timestamps[0], timestamps[1]);
-    const jfa = toMs(timestamps[2], timestamps[3]);
-    const cascade = toMs(timestamps[4], timestamps[5]);
-    const fluence = toMs(timestamps[6], timestamps[7]);
-    const render = toMs(timestamps[8], timestamps[9]);
-    const total = toMs(timestamps[0], timestamps[9]);
-
+    const total = Number(timestamps[1] - timestamps[0]) / 1_000_000;
     if (total <= 0 || isNaN(total)) return;
-
     const alpha = 0.1;
-    const s = this.#smoothedGpuTimes;
-    const ema = (prev: number, curr: number) => (prev === 0 ? curr : prev + alpha * (curr - prev));
-    s.world = ema(s.world, world);
-    s.jfa = ema(s.jfa, jfa);
-    s.cascade = ema(s.cascade, cascade);
-    s.fluence = ema(s.fluence, fluence);
-    s.render = ema(s.render, render);
-    s.total = ema(s.total, total);
+    this.#smoothedGpuTime = this.#smoothedGpuTime === 0 ? total : this.#smoothedGpuTime + alpha * (total - this.#smoothedGpuTime);
   }
 
   #updateOverlayDOM() {
-    if (!this.#profilingOverlay) return;
+    if (!this.#profilingVisible) return;
+    this.#ensureProfilingOverlay();
 
-    const { width, height } = this.#canvas;
     const fps = this.#smoothedCpuTime > 0 ? Math.round(1000 / this.#smoothedCpuTime) : 0;
-    const fmt = (ms: number) => ms.toFixed(2).padStart(5);
+    let text = `${fps} fps`;
 
-    let text = `${width}×${height}  ${fps} fps`;
-
-    if (this.#profilingSupported && this.#smoothedGpuTimes.total > 0) {
-      const s = this.#smoothedGpuTimes;
-      text +=
-        `  GPU ${fmt(s.total)}ms\n` +
-        ` Scene   ${fmt(s.world)}ms\n` +
-        ` JFA     ${fmt(s.jfa)}ms\n` +
-        ` Cascade ${fmt(s.cascade)}ms\n` +
-        ` Fluence ${fmt(s.fluence)}ms\n` +
-        ` Render  ${fmt(s.render)}ms`;
+    if (this.#profilingSupported && this.#smoothedGpuTime > 0) {
+      text += `  GPU ${this.#smoothedGpuTime.toFixed(1)}ms`;
     }
 
-    this.#profilingOverlay.textContent = text;
+    this.#profilingOverlay!.textContent = text;
   }
 
   #cleanupProfiling() {
