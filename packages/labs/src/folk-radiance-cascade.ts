@@ -16,6 +16,30 @@ const BASE_RAY_COUNT = 4;
 const BRANCHING_FACTOR = 4;
 const SPATIAL_SCALE = Math.round(Math.sqrt(BRANCHING_FACTOR)); // = 2
 
+function uboView(shader: string, name: string): StructuredView {
+  return makeStructuredView(makeShaderDataDefinitions(shader).uniforms[name]);
+}
+
+function createComputePipeline(device: GPUDevice, label: string, code: string): GPUComputePipeline {
+  return device.createComputePipeline({
+    label,
+    layout: 'auto',
+    compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
+  });
+}
+
+function uploadVertexData(device: GPUDevice, existing: GPUBuffer | undefined, data: Float32Array<ArrayBuffer>): GPUBuffer {
+  if (!existing || existing.size < data.byteLength) {
+    existing?.destroy();
+    existing = device.createBuffer({
+      size: data.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+  }
+  device.queue.writeBuffer(existing, 0, data);
+  return existing;
+}
+
 /**
  * WebGPU-based Radiance Cascades for 2D global illumination.
  * Uses a world texture approach for efficient scene sampling.
@@ -229,18 +253,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     }
 
     this.#lineVertexCount = vertices.length / 5;
-    const data = new Float32Array(vertices);
-    const requiredSize = data.byteLength;
-
-    if (!this.#lineBuffer || this.#lineBuffer.size < requiredSize) {
-      this.#lineBuffer?.destroy();
-      this.#lineBuffer = this.#device.createBuffer({
-        size: requiredSize,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      });
-    }
-
-    this.#device.queue.writeBuffer(this.#lineBuffer, 0, data);
+    this.#lineBuffer = uploadVertexData(this.#device, this.#lineBuffer, new Float32Array(vertices));
   }
 
   async #initWebGPU() {
@@ -292,17 +305,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   #initStructuredViews() {
-    const raymarchDefs = makeShaderDataDefinitions(raymarchShader);
-    this.#raymarchUBOView = makeStructuredView(raymarchDefs.uniforms.ubo);
-
-    const fluenceDefs = makeShaderDataDefinitions(fluenceShader);
-    this.#fluenceUBOView = makeStructuredView(fluenceDefs.uniforms.ubo);
-
-    const mouseLightDefs = makeShaderDataDefinitions(mouseLightShader);
-    this.#mouseLightUBOView = makeStructuredView(mouseLightDefs.uniforms.light);
-
-    const jfaDefs = makeShaderDataDefinitions(jfaSeedShader);
-    this.#jfaParamsView = makeStructuredView(jfaDefs.uniforms.params);
+    this.#raymarchUBOView = uboView(raymarchShader, 'ubo');
+    this.#fluenceUBOView = uboView(fluenceShader, 'ubo');
+    this.#mouseLightUBOView = uboView(mouseLightShader, 'light');
+    this.#jfaParamsView = uboView(jfaSeedShader, 'params');
   }
 
   #initBuffers() {
@@ -457,37 +463,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
       primitive: { topology: 'triangle-strip' },
     });
 
-    // JFA seed pipeline - initializes distance field seeds from world texture
-    const jfaSeedModule = device.createShaderModule({ code: jfaSeedShader });
-    this.#jfaSeedPipeline = device.createComputePipeline({
-      label: 'JFA-Seed-Pipeline',
-      compute: { module: jfaSeedModule, entryPoint: 'main' },
-      layout: 'auto',
-    });
-
-    // JFA propagation pipeline - runs log2(max(W,H)) passes to build distance field
-    const jfaModule = device.createShaderModule({ code: jfaShader });
-    this.#jfaPipeline = device.createComputePipeline({
-      label: 'JFA-Pipeline',
-      compute: { module: jfaModule, entryPoint: 'main' },
-      layout: 'auto',
-    });
-
-    // Raymarch pipeline
-    const raymarchModule = device.createShaderModule({ code: raymarchShader });
-    this.#raymarchPipeline = device.createComputePipeline({
-      label: 'Raymarch-Pipeline',
-      compute: { module: raymarchModule, entryPoint: 'main' },
-      layout: 'auto',
-    });
-
-    // Fluence pipeline
-    const fluenceModule = device.createShaderModule({ code: fluenceShader });
-    this.#fluencePipeline = device.createComputePipeline({
-      label: 'Fluence-Pipeline',
-      compute: { module: fluenceModule, entryPoint: 'main' },
-      layout: 'auto',
-    });
+    this.#jfaSeedPipeline = createComputePipeline(device, 'JFA-Seed', jfaSeedShader);
+    this.#jfaPipeline = createComputePipeline(device, 'JFA', jfaShader);
+    this.#raymarchPipeline = createComputePipeline(device, 'Raymarch', raymarchShader);
+    this.#fluencePipeline = createComputePipeline(device, 'Fluence', fluenceShader);
 
     // Final render pipeline
     const renderModule = device.createShaderModule({ code: renderShader });
@@ -718,17 +697,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       return;
     }
 
-    const requiredSize = vertices.length * 4;
-
-    if (!this.#shapeDataBuffer || this.#shapeDataBuffer.size < requiredSize) {
-      this.#shapeDataBuffer?.destroy();
-      this.#shapeDataBuffer = this.#device.createBuffer({
-        size: requiredSize,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      });
-    }
-
-    this.#device.queue.writeBuffer(this.#shapeDataBuffer, 0, new Float32Array(vertices));
+    this.#shapeDataBuffer = uploadVertexData(this.#device, this.#shapeDataBuffer, new Float32Array(vertices));
   }
 
   #startAnimationLoop() {
