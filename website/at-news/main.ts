@@ -108,11 +108,11 @@ class KanbanBoard extends ReactiveElement {
   `;
 
   get cards(): KanbanCard[] {
-    return Array.from(this.querySelectorAll('kanban-card'));
+    return Array.from(this.querySelectorAll<KanbanCard>('kanban-card'));
   }
 
   get columns(): KanbanColumn[] {
-    return Array.from(this.querySelectorAll('kanban-column'));
+    return Array.from(this.querySelectorAll<KanbanColumn>('kanban-column'));
   }
 
   protected override createRenderRoot(): HTMLElement | DocumentFragment {
@@ -139,7 +139,7 @@ class KanbanBoard extends ReactiveElement {
 
     switch (intention) {
       case 'ADD_COLUMN': {
-        const column = document.createElement('kanban-column');
+        const column = document.createElement('kanban-column') as KanbanColumn;
         this.appendChild(column);
         column.focusName();
         return;
@@ -214,7 +214,7 @@ class KanbanColumn extends ReactiveElement {
   #internals = this.attachInternals();
 
   get cards(): KanbanCard[] {
-    return Array.from(this.querySelectorAll('kanban-card'));
+    return Array.from(this.querySelectorAll<KanbanCard>('kanban-card'));
   }
 
   protected override createRenderRoot(): HTMLElement | DocumentFragment {
@@ -334,7 +334,7 @@ class KanbanColumn extends ReactiveElement {
         return;
       }
       case 'ADD_CARD': {
-        const card = document.createElement('kanban-card');
+        const card = document.createElement('kanban-card') as KanbanCard;
         this.appendChild(card);
         card.focusName();
         return;
@@ -481,7 +481,7 @@ class KanbanCard extends ReactiveElement {
         case 'dragover': {
           event.preventDefault();
 
-          const draggedCard = document.querySelector('kanban-card:state(dragging)');
+          const draggedCard = document.querySelector<KanbanCard>('kanban-card:state(dragging)');
 
           if (draggedCard === null || draggedCard === this) return;
 
@@ -530,14 +530,6 @@ KanbanBoard.define();
 KanbanColumn.define();
 KanbanCard.define();
 
-declare global {
-  interface HTMLElementTagNameMap {
-    [KanbanBoard.tagName]: KanbanBoard;
-    [KanbanColumn.tagName]: KanbanColumn;
-    [KanbanCard.tagName]: KanbanCard;
-  }
-}
-
 /** Utils */
 interface Intention {
   intention: string;
@@ -576,7 +568,7 @@ function closestSibling(el: Element, selector: string, where: 'before' | 'after'
 
 const collectionInput = document.querySelector('input')!;
 document.querySelector('button.load')?.addEventListener('click', async () => {
-  const board = document.querySelector('kanban-board')!;
+  const board = document.querySelector('kanban-board') as KanbanBoard;
   board.clear();
 
   const collectionLinks = await fetchBacklinks(
@@ -593,7 +585,7 @@ document.querySelector('button.load')?.addEventListener('click', async () => {
   const cards = collectionLinks
     .filter((link) => new Date(link.value.createdAt) > lastWeek)
     .map((link) => {
-      const card = document.createElement('kanban-card');
+      const card = document.createElement('kanban-card') as KanbanCard;
       const record = document.createElement('at-record');
       record.renderer = 'UI';
       record.atUri = link.value.card.uri;
@@ -606,7 +598,7 @@ document.querySelector('button.load')?.addEventListener('click', async () => {
 });
 
 document.querySelector('button.copy')?.addEventListener('click', () => {
-  const board = document.querySelector('kanban-board')!;
+  const board = document.querySelector('kanban-board') as KanbanBoard;
 
   const markdown = board.columns.map((column) => {
     const cardsList = column.cards.map((card) => {
