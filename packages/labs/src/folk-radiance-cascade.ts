@@ -134,7 +134,15 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #debugUBO!: GPUBuffer;
   #debugUBOView!: StructuredView;
 
-  static readonly #debugModeNames = ['Normal', 'SDF', 'World', 'Cascade (raw)', 'Cascade (tile)', 'Fluence', 'JFA Seeds'];
+  static readonly #debugModeNames = [
+    'Normal',
+    'SDF',
+    'World',
+    'Cascade (raw)',
+    'Cascade (tile)',
+    'Fluence',
+    'JFA Seeds',
+  ];
 
   // Profiling
   #profilingSupported = false;
