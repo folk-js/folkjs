@@ -149,7 +149,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
-
     this.#isRunning = true;
     this.#startAnimationLoop();
 
@@ -447,6 +446,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       size: this.#fluenceUBOView.arrayBuffer.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
   }
 
   #initPipelines() {
@@ -602,11 +602,15 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const cascadeWidth = Math.floor(width / probeSpacing);
       const cascadeHeight = Math.floor(height / probeSpacing);
       const intervalStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
-      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level);
 
       // Pre-compute upper cascade dimensions on the CPU so the shader doesn't
       // re-derive them via integer division (which can mismatch due to truncation).
       const upperSpacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level + 1);
+
+      // Extend each interval by the diagonal of the upper cascade's probe spacing
+      // (Yaazarai pattern) to prevent light leaks at cascade boundaries.
+      const overlap = level < levelCount ? Math.SQRT2 * upperSpacing : 0;
+      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level) + overlap;
       const upperCascadeW = level >= levelCount ? 0 : Math.floor(width / upperSpacing);
       const upperCascadeH = level >= levelCount ? 0 : Math.floor(height / upperSpacing);
 
@@ -674,6 +678,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
         { binding: 2, resource: this.#worldTextureView },
       ],
     });
+
   }
 
   override update(changedProperties: PropertyValues<this>) {
@@ -988,7 +993,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
   #handleMouseMove = (e: MouseEvent) => {
     const rect = this.getBoundingClientRect();
-    // Convert to internal (scaled) coordinates
     this.#mousePosition.x = e.clientX - rect.left;
     this.#mousePosition.y = e.clientY - rect.top;
   };
@@ -1379,14 +1383,11 @@ fn sampleSDF(pos: vec2f) -> f32 {
   return max(textureSampleLevel(sdfTexture, worldSampler, uv, 0.0).r, 0.0);
 }
 
-// Bilinear merge: sample 4 neighboring upper probes using hardware bilinear
-// interpolation. In direction-first layout, each direction tile contains
-// spatially-arranged probes, so textureSampleLevel with a linear sampler
-// naturally interpolates between neighboring probes.
-//
-// Upper cascade dimensions (upperCascadeW/H) are passed through the UBO
-// rather than re-derived in the shader, avoiding integer division truncation
-// mismatches between CPU and GPU.
+// Merge with upper cascade: sample 4 parent direction bins using hardware
+// bilinear interpolation across spatial probes. In direction-first layout,
+// each direction tile contains spatially-arranged probes, so
+// textureSampleLevel with a linear sampler naturally interpolates between
+// neighboring probes.
 fn sampleUpperCascade(probeCenter: vec2f, dirIndex: i32) -> vec4f {
   if (ubo.level >= ubo.levelCount) { return vec4f(0.0, 0.0, 0.0, 1.0); }
 
@@ -1394,9 +1395,6 @@ fn sampleUpperCascade(probeCenter: vec2f, dirIndex: i32) -> vec4f {
   let upperProbeSpacing = ubo.probeSpacing * 2.0;
   let texSize = vec2f(textureDimensions(upperCascade));
   let upperProbePos = probeCenter / upperProbeSpacing - 0.5;
-  // Clamp to [0.5, size - 1.5] so the bilinear 2×2 footprint stays entirely
-  // within the direction tile. Without this, edge probes sample from adjacent
-  // direction tiles — a different direction's data masquerading as spatial neighbors.
   let clampedPos = clamp(upperProbePos, vec2f(0.5), vec2f(f32(ubo.upperCascadeW) - 1.5, f32(ubo.upperCascadeH) - 1.5));
 
   var acc = vec4f(0.0);
@@ -1451,6 +1449,13 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let dist = sampleSDF(pos);
 
     if (dist < 1.0) {
+      // Rays starting inside a light volume on non-zero cascades should not
+      // accumulate that light's radiance — only cascade 0 sees surface emission
+      // directly. Without this, higher cascades double-count nearby emitters.
+      if (dist < 0.001 && t == 0.0 && ubo.level != 0) {
+        t += 1.0;
+        continue;
+      }
       let worldSample = sampleWorld(pos);
       let transparency = 1.0 - worldSample.a;
       acc = vec4f(
@@ -1574,3 +1579,4 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
   return vec4f(srgb, 1.0);
 }
 `;
+
