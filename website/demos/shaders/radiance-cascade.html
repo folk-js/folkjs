@@ -31,43 +31,67 @@
         border-radius: 50%;
         border: 2px solid rgba(255, 255, 255, 0.5);
         z-index: 1000;
-        pointer-events: none;
+        cursor: pointer;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        transition: transform 0.1s;
+      }
+
+      #color-indicator:hover {
+        transform: scale(1.15);
       }
 
       #color-indicator.eraser {
         background: repeating-conic-gradient(#666 0% 25%, #999 0% 50%) 50% / 8px 8px;
       }
 
-      #help-text {
-        position: fixed;
-        bottom: 10px;
-        left: 10px;
-        font-family: monospace;
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.5);
-        pointer-events: none;
-        line-height: 1.6;
-      }
-
-      #scene-label {
+      #scene-select {
         position: fixed;
         top: 10px;
         left: 10px;
         z-index: 1000;
         font-family: monospace;
         font-size: 12px;
-        color: rgba(255, 255, 255, 0.6);
+        background: rgba(0, 0, 0, 0.55);
+        color: rgba(255, 255, 255, 0.75);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+        padding: 3px 6px;
+        cursor: pointer;
+        outline: none;
+      }
+
+      #scene-select:hover {
+        border-color: rgba(255, 255, 255, 0.4);
+      }
+
+      #help-text {
+        position: fixed;
+        bottom: 10px;
+        left: 10px;
+        z-index: 1000;
+        font-family: monospace;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.4);
         pointer-events: none;
+        line-height: 1.8;
+      }
+
+      #help-text kbd {
+        display: inline-block;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 3px;
+        padding: 0 4px;
+        font-family: monospace;
+        font-size: 10px;
       }
     </style>
   </head>
   <body>
-    <div id="color-indicator"></div>
-    <div id="scene-label"></div>
+    <div id="color-indicator" title="Click to cycle color"></div>
+    <select id="scene-select"></select>
     <div id="help-text">
-      Draw: 0=off • 1=black • 2-8=colors • 9=white • +/- size • C=clear<br />
-      Scenes: Shift+0-9 • Del=remove shape
+      <kbd>0</kbd>–<kbd>9</kbd> color &nbsp; <kbd>+</kbd><kbd>−</kbd> size &nbsp; <kbd>C</kbd> clear &nbsp; <kbd>⇧</kbd><kbd>0</kbd>–<kbd>9</kbd> scene &nbsp; click swatch to cycle
     </div>
 
     <folk-radiance-cascade id="cascade"></folk-radiance-cascade>
@@ -107,7 +131,16 @@
       let lineThickness = 8;
       const indicator = document.getElementById('color-indicator');
       const cascade = document.getElementById('cascade');
-      const sceneLabel = document.getElementById('scene-label');
+      const sceneSelect = document.getElementById('scene-select');
+
+      // Populate scene dropdown
+      scenes.forEach((scene, i) => {
+        const option = document.createElement('option');
+        option.value = i;
+        option.textContent = `Scene ${i}: ${scene.name}`;
+        sceneSelect.appendChild(option);
+      });
+      sceneSelect.addEventListener('change', () => switchScene(Number(sceneSelect.value)));
 
       function updateIndicator() {
         const color = colors[currentColor];
@@ -126,11 +159,18 @@
       }
 
       function updateSceneLabel() {
-        sceneLabel.textContent = `Scene ${currentScene}: ${scenes[currentScene].name}`;
+        sceneSelect.value = currentScene;
       }
 
       updateIndicator();
       updateMouseLightColor();
+
+      // Click the color swatch to cycle through drawing colors (1–9)
+      indicator.addEventListener('click', () => {
+        currentColor = currentColor >= colors.length - 1 ? 1 : currentColor + 1;
+        updateIndicator();
+        updateMouseLightColor();
+      });
 
       // --- Scene helpers ---
       let animationId = null;
@@ -299,7 +339,7 @@
         animate();
       }
 
-      switchScene(1);
+      switchScene(5);
 
       // --- Key handling ---
       document.addEventListener('keydown', (e) => {
@@ -338,7 +378,7 @@
 
       document.addEventListener('pointerdown', (e) => {
         const target = e.target;
-        if (target.tagName === 'FOLK-SHAPE' || target.id === 'color-indicator' || target.id === 'help-text') {
+        if (target.tagName === 'FOLK-SHAPE' || target.id === 'color-indicator' || target.id === 'scene-select' || target.id === 'help-text') {
           return;
         }
 

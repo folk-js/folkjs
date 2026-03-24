@@ -2,6 +2,8 @@ import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { makeShaderDataDefinitions, makeStructuredView, type StructuredView } from 'webgpu-utils';
 import { FolkBaseSet } from './folk-base-set';
 
+type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: number, b: number, thickness: number];
+
 // The one tunable parameter: probe spacing at the finest cascade level.
 // Smaller = higher quality, larger cascade textures.
 const PROBE_SPACING_0 = 1;
@@ -69,8 +71,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #shapeDataBuffer?: GPUBuffer;
   #shapeCount = 0;
 
-  // Line segments: [x1, y1, x2, y2, r, g, b, thickness]
-  #lines: number[][] = [];
+  #lines: Line[] = [];
   #lineBuffer?: GPUBuffer;
   #lineVertexCount = 0;
   #lineBufferDirty = false;
@@ -95,6 +96,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     super.connectedCallback();
 
     await this.#initWebGPU();
+    this.#initStructuredViews();
     this.#initBuffers();
     await this.#initPipelines();
     this.#initBindGroups();
@@ -121,8 +123,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
   // Public API for line drawing
   addLine(x1: number, y1: number, x2: number, y2: number, colorIndex: number, thickness = 20) {
-    const color = FolkRadianceCascade.#colors[colorIndex] || FolkRadianceCascade.#colors[1];
-    this.#lines.push([x1, y1, x2, y2, color[0], color[1], color[2], thickness]);
+    const [r, g, b] = FolkRadianceCascade.#colors[colorIndex] ?? FolkRadianceCascade.#colors[1];
+    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness]);
     this.#lineBufferDirty = true;
   }
 
@@ -173,12 +175,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const clipRadiusY = (px: number) => (px / this.#canvas.height) * 2;
 
     for (const line of this.#lines) {
-      const [x1raw, y1raw, x2raw, y2raw, r, g, b, thicknessRaw] = line;
-      const x1 = x1raw;
-      const y1 = y1raw;
-      const x2 = x2raw;
-      const y2 = y2raw;
-      const thickness = thicknessRaw;
+      const [x1, y1, x2, y2, r, g, b, thickness] = line;
 
       const dx = x2 - x1;
       const dy = y2 - y1;
@@ -277,17 +274,35 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#context = context;
     this.#presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
-    this.#context.configure({
-      device: this.#device,
-      format: this.#presentationFormat,
-      alphaMode: 'premultiplied',
-    });
+    this.#configureContext();
 
     this.#linearSampler = this.#device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
       mipmapFilter: 'linear',
     });
+  }
+
+  #configureContext() {
+    this.#context.configure({
+      device: this.#device,
+      format: this.#presentationFormat,
+      alphaMode: 'premultiplied',
+    });
+  }
+
+  #initStructuredViews() {
+    const raymarchDefs = makeShaderDataDefinitions(raymarchShader);
+    this.#raymarchUBOView = makeStructuredView(raymarchDefs.uniforms.ubo);
+
+    const fluenceDefs = makeShaderDataDefinitions(fluenceShader);
+    this.#fluenceUBOView = makeStructuredView(fluenceDefs.uniforms.ubo);
+
+    const mouseLightDefs = makeShaderDataDefinitions(mouseLightShader);
+    this.#mouseLightUBOView = makeStructuredView(mouseLightDefs.uniforms.light);
+
+    const jfaDefs = makeShaderDataDefinitions(jfaSeedShader);
+    this.#jfaParamsView = makeStructuredView(jfaDefs.uniforms.params);
   }
 
   #initBuffers() {
@@ -336,7 +351,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     this.#mouseLightUBO = this.#device.createBuffer({
       label: 'MouseLightUBO',
-      size: 48,
+      size: this.#mouseLightUBOView.arrayBuffer.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -386,7 +401,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     // Fluence UBO - pre-allocated, updated via writeBuffer (not per-frame)
     this.#fluenceUBO = this.#device.createBuffer({
       label: 'FluenceUBO',
-      size: 32,
+      size: this.#fluenceUBOView.arrayBuffer.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
@@ -488,20 +503,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       primitive: { topology: 'triangle-strip' },
     });
 
-    // Parse WGSL structs for type-safe UBO packing. Field names and types are
-    // derived from the shader code, so offset mismatches become runtime errors
-    // instead of silent data corruption.
-    const raymarchDefs = makeShaderDataDefinitions(raymarchShader);
-    this.#raymarchUBOView = makeStructuredView(raymarchDefs.uniforms.ubo);
-
-    const fluenceDefs = makeShaderDataDefinitions(fluenceShader);
-    this.#fluenceUBOView = makeStructuredView(fluenceDefs.uniforms.ubo);
-
-    const mouseLightDefs = makeShaderDataDefinitions(mouseLightShader);
-    this.#mouseLightUBOView = makeStructuredView(mouseLightDefs.uniforms.light);
-
-    const jfaDefs = makeShaderDataDefinitions(jfaSeedShader);
-    this.#jfaParamsView = makeStructuredView(jfaDefs.uniforms.params);
   }
 
   #initBindGroups() {
@@ -659,17 +660,17 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   // Color palette - normalized for similar perceived brightness
-  static readonly #colors = [
-    [0, 0, 0], // 0: Eraser (handled specially)
-    [0.05, 0.05, 0.05], // 1: Black (blocks light)
-    [1, 0.25, 0.25], // 2: Red
-    [1, 0.5, 0.2], // 3: Orange
-    [0.75, 0.75, 0.2], // 4: Yellow (reduced)
-    [0.25, 0.8, 0.35], // 5: Green
-    [0.25, 0.75, 0.75], // 6: Cyan (reduced)
-    [0.3, 0.4, 1], // 7: Blue
-    [0.65, 0.3, 1], // 8: Purple
-    [0.8, 0.8, 0.8], // 9: White (reduced)
+  static readonly #colors: [number, number, number][] = [
+    [0, 0, 0],           // 0: Eraser (handled specially)
+    [0.05, 0.05, 0.05],  // 1: Black (blocks light)
+    [1, 0.25, 0.25],     // 2: Red
+    [1, 0.5, 0.2],       // 3: Orange
+    [0.75, 0.75, 0.2],   // 4: Yellow (reduced)
+    [0.25, 0.8, 0.35],   // 5: Green
+    [0.25, 0.75, 0.75],  // 6: Cyan (reduced)
+    [0.3, 0.4, 1],       // 7: Blue
+    [0.65, 0.3, 1],      // 8: Purple
+    [0.8, 0.8, 0.8],     // 9: White (reduced)
   ];
 
   #updateShapeData() {
@@ -884,11 +885,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     // Wait for any in-flight GPU work to complete before destroying resources
     await this.#device.queue.onSubmittedWorkDone();
 
-    this.#context.configure({
-      device: this.#device,
-      format: this.#presentationFormat,
-      alphaMode: 'premultiplied',
-    });
+    this.#configureContext();
 
     this.#cleanupResources();
     this.#initBuffers();
