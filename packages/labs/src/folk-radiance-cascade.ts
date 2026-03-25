@@ -1,4 +1,4 @@
-import { type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import { makeShaderDataDefinitions, makeStructuredView, type StructuredView } from 'webgpu-utils';
 import { FolkBaseSet } from './folk-base-set';
 
@@ -51,6 +51,8 @@ function uploadVertexData(
 export class FolkRadianceCascade extends FolkBaseSet {
   static override tagName = 'folk-radiance-cascade';
 
+  @property({ type: Number, reflect: true }) exposure = 1.0;
+
   #canvas!: HTMLCanvasElement;
   #device!: GPUDevice;
   #context!: GPUCanvasContext;
@@ -83,6 +85,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #sdfTextureView!: GPUTextureView;
   #fluenceTexture!: GPUTexture;
   #fluenceTextureView!: GPUTextureView;
+  #renderUBO!: GPUBuffer;
 
   // Pre-allocated bind groups (created once at init/resize, not per frame)
   #mouseLightBindGroup!: GPUBindGroup;
@@ -98,6 +101,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #fluenceUBOView!: StructuredView;
   #mouseLightUBOView!: StructuredView;
   #jfaParamsView!: StructuredView;
+  #renderUBOView!: StructuredView;
 
   // Shape data for rendering to world texture
   #shapeDataBuffer?: GPUBuffer;
@@ -336,6 +340,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#fluenceUBOView = uboView(fluenceShader, 'ubo');
     this.#mouseLightUBOView = uboView(mouseLightShader, 'light');
     this.#jfaParamsView = uboView(jfaSeedShader, 'params');
+    this.#renderUBOView = uboView(renderShader, 'ubo');
   }
 
   #initBuffers() {
@@ -450,6 +455,11 @@ export class FolkRadianceCascade extends FolkBaseSet {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
+    this.#renderUBO = this.#device.createBuffer({
+      label: 'RenderUBO',
+      size: this.#renderUBOView.arrayBuffer.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
   }
 
   #initPipelines() {
@@ -673,21 +683,30 @@ export class FolkRadianceCascade extends FolkBaseSet {
     });
 
     // Final render bind group
+    this.#renderUBOView.set({ exposure: this.exposure });
+    this.#device.queue.writeBuffer(this.#renderUBO, 0, this.#renderUBOView.arrayBuffer);
+
     this.#renderBindGroup = this.#device.createBindGroup({
       layout: this.#renderPipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: this.#fluenceTextureView },
         { binding: 1, resource: this.#linearSampler },
         { binding: 2, resource: this.#worldTextureView },
+        { binding: 3, resource: { buffer: this.#renderUBO } },
       ],
     });
-
   }
 
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
 
     if (!this.#device) return;
+
+    if (changedProperties.has('exposure')) {
+      this.#renderUBOView.set({ exposure: this.exposure });
+      this.#device.queue.writeBuffer(this.#renderUBO, 0, this.#renderUBOView.arrayBuffer);
+    }
+
     if (this.sourcesMap.size !== this.sourceElements.size) return;
 
     this.#updateShapeData();
@@ -826,7 +845,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
         ],
         ...(qs && { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 0 } }),
       });
-
 
       renderPass.setPipeline(this.#worldRenderPipeline);
 
@@ -995,6 +1013,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#uboBuffer?.destroy();
     this.#mouseLightUBO?.destroy();
     this.#fluenceUBO?.destroy();
+    this.#renderUBO?.destroy();
     this.#jfaTextures?.forEach((t) => t.destroy());
     this.#jfaParamsBuffer?.destroy();
     this.#sdfTexture?.destroy();
@@ -1051,7 +1070,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const total = Number(timestamps[1] - timestamps[0]) / 1_000_000;
     if (total <= 0 || isNaN(total)) return;
     const alpha = 0.1;
-    this.#smoothedGpuTime = this.#smoothedGpuTime === 0 ? total : this.#smoothedGpuTime + alpha * (total - this.#smoothedGpuTime);
+    this.#smoothedGpuTime =
+      this.#smoothedGpuTime === 0 ? total : this.#smoothedGpuTime + alpha * (total - this.#smoothedGpuTime);
   }
 
   #updateOverlayDOM() {
@@ -1488,13 +1508,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 `;
 
 // Final display shader - composites emissive surfaces with indirect illumination,
-// applies tone mapping, and converts from linear to sRGB for display.
-//
-// The world texture stores emissive colors in linear space (written by the world
-// render pass). The fluence texture stores indirect illumination accumulated by the
-// cascade pipeline, also in linear space. We combine them, tone map to [0,1], then
-// apply the sRGB transfer function for correct perceptual display.
+// applies ACES tone mapping with exposure control, and converts to sRGB for display.
 const renderShader = /*wgsl*/ `
+struct UBO {
+  exposure: f32,
+}
+
 struct VertexOutput {
   @builtin(position) position: vec4f,
   @location(0) uv: vec2f,
@@ -1517,11 +1536,16 @@ fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
 @group(0) @binding(0) var fluenceTexture: texture_2d<f32>;
 @group(0) @binding(1) var fluenceSampler: sampler;
 @group(0) @binding(2) var worldTexture: texture_2d<f32>;
+@group(0) @binding(3) var<uniform> ubo: UBO;
 
-// Reinhard tone mapping: simple and stable global operator that maps HDR [0, inf)
-// to LDR [0, 1) per-channel. Chosen over ACES for simplicity; can be swapped later.
-fn reinhardTonemap(hdr: vec3f) -> vec3f {
-  return hdr / (hdr + vec3f(1.0));
+// ACES filmic tone mapping (Narkowicz 2015 fit). S-curve with a slight toe
+// (contrast in shadows) and hard shoulder (highlights clip to white).
+// At exposure=1, linear 1.0 maps to ~0.93 sRGB — close to full white.
+fn acesTonemap(x: vec3f) -> vec3f {
+  return clamp(
+    (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14),
+    vec3f(0.0), vec3f(1.0)
+  );
 }
 
 fn linearToSrgb(c: vec3f) -> vec3f {
@@ -1533,15 +1557,12 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
   let fluence = textureSample(fluenceTexture, fluenceSampler, in.uv);
   let world = textureSample(worldTexture, fluenceSampler, in.uv);
 
-  // world.a indicates emitter presence; world.rgb is linear emissive color.
-  // Emissive surfaces contribute their own color plus receive indirect light.
   let emissive = world.rgb * world.a;
   let indirect = fluence.rgb;
-  let hdr = emissive + indirect;
+  let hdr = (emissive + indirect) * ubo.exposure;
 
-  let mapped = reinhardTonemap(hdr);
+  let mapped = acesTonemap(hdr);
   let srgb = linearToSrgb(mapped);
   return vec4f(srgb, 1.0);
 }
 `;
-
