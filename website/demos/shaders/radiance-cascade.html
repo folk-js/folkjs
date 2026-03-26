@@ -173,6 +173,11 @@
 
       exposureSlider.addEventListener('input', () => setExposure(Number(exposureSlider.value)));
 
+      function updateMouseRadius() {
+        cascade.setMouseLightRadius(lineThickness / 2);
+      }
+      updateMouseRadius();
+
       // Populate scene dropdown
       scenes.forEach((scene, i) => {
         const option = document.createElement('option');
@@ -398,8 +403,10 @@
         }
         if (e.key === '=' || e.key === '+') {
           lineThickness = Math.min(50, lineThickness + 2);
+          updateMouseRadius();
         } else if (e.key === '-' || e.key === '_') {
           lineThickness = Math.max(2, lineThickness - 2);
+          updateMouseRadius();
         }
         if (e.key === ']') {
           setExposure(cascade.exposure + 0.1);
