@@ -2,7 +2,7 @@ dist
 .vite
 node_modules
 .DS_Store
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 .wireit
 *.log
 .cursor/*
