@@ -6,7 +6,7 @@ type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: numbe
 
 // The one tunable parameter: probe spacing at the finest cascade level.
 // Smaller = higher quality, larger cascade textures.
-const PROBE_SPACING_0 = 1;
+const PROBE_SPACING_0 = 2;
 
 // Fixed by the 2D Radiance Cascades algorithm (Sannikov 2023).
 // In 2D, 4 base rays with 4× angular branching and 2× spatial scaling
@@ -611,6 +611,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     // Processing order is highest level first (no upper cascade) down to level 0.
     // Each level alternates which cascade texture it writes to vs reads from.
     const levelCount = this.#numCascadeLevels;
+    const cm1Dist = this.#c1Enabled ? PROBE_SPACING_0 : 0;
     this.#raymarchBindGroups = [];
     for (let level = 0; level <= levelCount; level++) {
       const processIndex = levelCount - level;
@@ -621,8 +622,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const sqrtBins = Math.round(Math.pow(SPATIAL_SCALE, level));
       const cascadeWidth = Math.floor(width / probeSpacing);
       const cascadeHeight = Math.floor(height / probeSpacing);
-      const intervalStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
-      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level);
+      const baseStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
+      const baseEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level);
+      const intervalStart = baseStart + cm1Dist;
+      const intervalEnd = baseEnd + cm1Dist;
 
       const upperSpacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level + 1);
       const upperCascadeW = level >= levelCount ? 0 : Math.floor(width / upperSpacing);
@@ -662,7 +665,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const level0ResultIndex = levelCount % 2;
     const cascadeWidth = Math.floor(width / PROBE_SPACING_0);
     const cascadeHeight = Math.floor(height / PROBE_SPACING_0);
-    const c0IntervalStart = PROBE_SPACING_0;
     this.#fluenceUBOView.set({
       probeSpacing: PROBE_SPACING_0,
       cascadeWidth,
@@ -670,7 +672,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       width,
       height,
       sqrtBins: 1, // SPATIAL_SCALE^0 = 1
-      c0IntervalStart,
+      c0IntervalStart: cm1Dist,
     });
     this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
 
@@ -681,8 +683,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
         { binding: 1, resource: this.#cascadeTextureViews[level0ResultIndex] },
         { binding: 2, resource: { buffer: this.#fluenceUBO } },
         { binding: 3, resource: this.#linearSampler },
-        { binding: 4, resource: this.#sdfTextureView },
-        { binding: 5, resource: this.#worldTextureView },
+        { binding: 4, resource: this.#worldTextureView },
       ],
     });
 
@@ -899,8 +900,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     // Step 4: Build fluence texture from cascade-0 result
     {
-      this.#fluenceUBOView.set({ c0IntervalStart: this.#c1Enabled ? PROBE_SPACING_0 : 0 });
-      this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.#fluencePipeline);
       computePass.setBindGroup(0, this.#fluenceBindGroup);
@@ -1039,6 +1038,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     c1Check.checked = this.#c1Enabled;
     c1Check.addEventListener('change', () => {
       this.#c1Enabled = c1Check.checked;
+      this.#initBindGroups();
     });
     c1Label.appendChild(c1Check);
     c1Label.append(' C-1 Gathering');
@@ -1589,17 +1589,7 @@ struct UBO {
 @group(0) @binding(1) var cascadeTexture: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> ubo: UBO;
 @group(0) @binding(3) var cascadeSampler: sampler;
-@group(0) @binding(4) var sdfTexture: texture_2d<f32>;
-@group(0) @binding(5) var worldTexture: texture_2d<f32>;
-
-fn sampleSDF(pos: vec2f) -> f32 {
-  let dims = vec2f(f32(ubo.width), f32(ubo.height));
-  if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
-    return 1e6;
-  }
-  let uv = (pos + 0.5) / dims;
-  return max(textureSampleLevel(sdfTexture, cascadeSampler, uv, 0.0).r, 0.0);
-}
+@group(0) @binding(4) var worldTexture: texture_2d<f32>;
 
 fn sampleWorld(pos: vec2f) -> vec4f {
   let ipos = vec2i(pos);
@@ -1610,26 +1600,17 @@ fn sampleWorld(pos: vec2f) -> vec4f {
 }
 
 fn marchRayC1(origin: vec2f, dir: vec2f, maxDist: f32) -> vec4f {
-  var t = 0.0;
+  var radiance = vec3f(0.0);
+  var transmittance = 1.0;
+  var t = 0.5;
   while (t < maxDist) {
     let pos = origin + dir * t;
-    let dist = sampleSDF(pos);
-    if (dist >= maxDist - t) { break; }
-    if (dist < 1.0) {
-      if (dist < 0.001 && t == 0.0) {
-        t += 1.0;
-        continue;
-      }
-      let worldSample = sampleWorld(pos);
-      if (worldSample.a > 0.5) {
-        return vec4f(worldSample.rgb, 0.0);
-      }
-      t += 1.0;
-    } else {
-      t += dist;
-    }
+    let worldSample = sampleWorld(pos);
+    radiance += worldSample.rgb * transmittance * worldSample.a;
+    transmittance *= (1.0 - worldSample.a);
+    t += 1.0;
   }
-  return vec4f(0.0, 0.0, 0.0, 1.0);
+  return vec4f(radiance, transmittance);
 }
 
 @compute @workgroup_size(16, 16, 1)
