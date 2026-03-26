@@ -6,13 +6,12 @@ type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: numbe
 
 // The one tunable parameter: probe spacing at the finest cascade level.
 // Smaller = higher quality, larger cascade textures.
-const PROBE_SPACING_0 = 1;
+const PROBE_SPACING_0 = 2;
 
 // Fixed by the 2D Radiance Cascades algorithm (Sannikov 2023).
 // In 2D, 4 base rays with 4× angular branching and 2× spatial scaling
 // produces equal-sized cascade textures at every level — the standard
 // configuration used by all reference implementations.
-const BASE_RAY_COUNT = 4;
 const BRANCHING_FACTOR = 4;
 const SPATIAL_SCALE = Math.round(Math.sqrt(BRANCHING_FACTOR)); // = 2
 
@@ -104,9 +103,13 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #shapeCount = 0;
 
   #lines: Line[] = [];
-  #lineBuffer?: GPUBuffer;
-  #lineVertexCount = 0;
+  #lineInstanceBuffer?: GPUBuffer;
+  #lineInstanceCapacity = 0;
+  #lineCount = 0;
   #lineBufferDirty = false;
+  #lineRenderPipeline!: GPURenderPipeline;
+  #lineUBO?: GPUBuffer;
+  #lineBindGroup?: GPUBindGroup;
 
   // Samplers
   #linearSampler!: GPUSampler;
@@ -215,79 +218,38 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
   #updateLineBuffer() {
     if (!this.#device || this.#lines.length === 0) {
-      this.#lineVertexCount = 0;
+      this.#lineCount = 0;
       return;
     }
 
-    // Each line becomes a quad (2 triangles) plus round endcaps (filled circles
-    // at each endpoint). The caps fill gaps between consecutive segments that
-    // would otherwise let rays leak through at joints — the root cause of the
-    // beaded shadow artifacts along curved lines.
-    const CAP_SEGMENTS = 8;
-    // Vertex format: x, y, r, g, b (5 floats, 20 bytes)
-    const vertices: number[] = [];
+    const count = this.#lines.length;
+    const FLOATS_PER_LINE = 8;
+    const BYTES_PER_LINE = FLOATS_PER_LINE * 4;
 
-    const toClipX = (x: number) => (x / this.#canvas.width) * 2 - 1;
-    const toClipY = (y: number) => 1 - (y / this.#canvas.height) * 2;
-    const clipRadiusX = (px: number) => (px / this.#canvas.width) * 2;
-    const clipRadiusY = (px: number) => (px / this.#canvas.height) * 2;
-
-    for (const line of this.#lines) {
-      const [x1, y1, x2, y2, r, g, b, thickness] = line;
-
-      const dx = x2 - x1;
-      const dy = y2 - y1;
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len === 0) continue;
-
-      const nx = (-dy / len) * (thickness / 2);
-      const ny = (dx / len) * (thickness / 2);
-
-      // Quad body
-      const p1x = toClipX(x1 - nx),
-        p1y = toClipY(y1 - ny);
-      const p2x = toClipX(x1 + nx),
-        p2y = toClipY(y1 + ny);
-      const p3x = toClipX(x2 - nx),
-        p3y = toClipY(y2 - ny);
-      const p4x = toClipX(x2 + nx),
-        p4y = toClipY(y2 + ny);
-
-      vertices.push(p1x, p1y, r, g, b);
-      vertices.push(p2x, p2y, r, g, b);
-      vertices.push(p3x, p3y, r, g, b);
-      vertices.push(p2x, p2y, r, g, b);
-      vertices.push(p4x, p4y, r, g, b);
-      vertices.push(p3x, p3y, r, g, b);
-
-      // Round endcaps — full circles at each endpoint so adjacent segments
-      // overlap cleanly regardless of the joint angle.
-      const rx = clipRadiusX(thickness / 2);
-      const ry = clipRadiusY(thickness / 2);
-
-      for (const [ex, ey] of [
-        [x1, y1],
-        [x2, y2],
-      ]) {
-        const cx = toClipX(ex);
-        const cy = toClipY(ey);
-        for (let i = 0; i < CAP_SEGMENTS; i++) {
-          const a0 = (i / CAP_SEGMENTS) * Math.PI * 2;
-          const a1 = ((i + 1) / CAP_SEGMENTS) * Math.PI * 2;
-          vertices.push(cx, cy, r, g, b);
-          vertices.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b);
-          vertices.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b);
-        }
-      }
+    if (!this.#lineInstanceBuffer || this.#lineInstanceCapacity < count) {
+      this.#lineInstanceBuffer?.destroy();
+      this.#lineInstanceCapacity = Math.max(count, 256);
+      this.#lineInstanceBuffer = this.#device.createBuffer({
+        size: this.#lineInstanceCapacity * BYTES_PER_LINE,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
     }
 
-    if (vertices.length === 0) {
-      this.#lineVertexCount = 0;
-      return;
+    const data = new Float32Array(count * FLOATS_PER_LINE);
+    for (let i = 0; i < count; i++) {
+      const [x1, y1, x2, y2, r, g, b, thickness] = this.#lines[i];
+      const off = i * FLOATS_PER_LINE;
+      data[off] = x1;
+      data[off + 1] = y1;
+      data[off + 2] = x2;
+      data[off + 3] = y2;
+      data[off + 4] = r;
+      data[off + 5] = g;
+      data[off + 6] = b;
+      data[off + 7] = thickness;
     }
-
-    this.#lineVertexCount = vertices.length / 5;
-    this.#lineBuffer = uploadVertexData(this.#device, this.#lineBuffer, new Float32Array(vertices));
+    this.#device.queue.writeBuffer(this.#lineInstanceBuffer, 0, data);
+    this.#lineCount = count;
   }
 
   #updateMouseLightBuffer() {
@@ -315,11 +277,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     }
 
     this.#mouseLightVertexCount = vertices.length / 5;
-    this.#mouseLightBuffer = uploadVertexData(
-      this.#device,
-      this.#mouseLightBuffer,
-      new Float32Array(vertices),
-    );
+    this.#mouseLightBuffer = uploadVertexData(this.#device, this.#mouseLightBuffer, new Float32Array(vertices));
   }
 
   async #initWebGPU() {
@@ -385,7 +343,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     // Number of cascade levels needed to cover the screen diagonal.
     // Level N covers up to PROBE_SPACING_0 * BRANCHING_FACTOR^N pixels.
     const diagonal = Math.sqrt(width * width + height * height);
-    this.#numCascadeLevels = Math.ceil(Math.log(diagonal / PROBE_SPACING_0) / Math.log(BRANCHING_FACTOR)) + 1;
+    this.#numCascadeLevels = Math.ceil(Math.log(diagonal / PROBE_SPACING_0) / Math.log(BRANCHING_FACTOR));
 
     // Compute max cascade texture dimensions across all levels.
     // With pre-averaging, each texel stores the average of 4 sub-directions,
@@ -520,6 +478,35 @@ export class FolkRadianceCascade extends FolkBaseSet {
       primitive: { topology: 'triangle-list' },
     });
 
+    // Line render pipeline — instanced capsule SDF quads
+    const lineModule = device.createShaderModule({ code: lineRenderShader });
+    this.#lineRenderPipeline = device.createRenderPipeline({
+      label: 'LineRender-Pipeline',
+      layout: 'auto',
+      vertex: {
+        module: lineModule,
+        entryPoint: 'vertex_main',
+        buffers: [
+          {
+            arrayStride: 32, // 8 floats * 4 bytes
+            stepMode: 'instance',
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x2' }, // p1
+              { shaderLocation: 1, offset: 8, format: 'float32x2' }, // p2
+              { shaderLocation: 2, offset: 16, format: 'float32x3' }, // color
+              { shaderLocation: 3, offset: 28, format: 'float32' }, // thickness
+            ],
+          },
+        ],
+      },
+      fragment: {
+        module: lineModule,
+        entryPoint: 'fragment_main',
+        targets: [{ format: 'rgba16float' }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+
     this.#jfaSeedPipeline = createComputePipeline(device, 'JFA-Seed', jfaSeedShader);
     this.#jfaPipeline = createComputePipeline(device, 'JFA', jfaShader);
     this.#jfaFinalizePipeline = createComputePipeline(device, 'JFA-Finalize', jfaFinalizeShader);
@@ -599,6 +586,19 @@ export class FolkRadianceCascade extends FolkBaseSet {
         { binding: 1, resource: this.#sdfTextureView },
         { binding: 2, resource: { buffer: this.#jfaParamsBuffer, offset: 0, size: 16 } },
       ],
+    });
+
+    // Line render UBO: canvas dimensions for clip-space conversion
+    this.#lineUBO?.destroy();
+    this.#lineUBO = this.#device.createBuffer({
+      label: 'LineUBO',
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.#device.queue.writeBuffer(this.#lineUBO, 0, new Float32Array([width, height]));
+    this.#lineBindGroup = this.#device.createBindGroup({
+      layout: this.#lineRenderPipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: this.#lineUBO } }],
     });
 
     // Raymarch bind groups with direction-first cascade texture ping-pong.
@@ -837,9 +837,12 @@ export class FolkRadianceCascade extends FolkBaseSet {
         renderPass.draw(this.#shapeCount * 6);
       }
 
-      if (this.#lineBuffer && this.#lineVertexCount > 0) {
-        renderPass.setVertexBuffer(0, this.#lineBuffer);
-        renderPass.draw(this.#lineVertexCount);
+      if (this.#lineInstanceBuffer && this.#lineCount > 0) {
+        renderPass.setPipeline(this.#lineRenderPipeline);
+        renderPass.setBindGroup(0, this.#lineBindGroup!);
+        renderPass.setVertexBuffer(0, this.#lineInstanceBuffer);
+        renderPass.draw(6, this.#lineCount);
+        renderPass.setPipeline(this.#worldRenderPipeline);
       }
 
       if (this.#mouseLightBuffer && this.#mouseLightVertexCount > 0) {
@@ -997,10 +1000,12 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#worldTexture?.destroy();
     this.#fluenceTexture?.destroy();
     this.#shapeDataBuffer?.destroy();
-    this.#lineBuffer?.destroy();
+    this.#lineInstanceBuffer?.destroy();
+    this.#lineUBO?.destroy();
     this.#mouseLightBuffer?.destroy();
     this.#shapeDataBuffer = undefined;
-    this.#lineBuffer = undefined;
+    this.#lineInstanceBuffer = undefined;
+    this.#lineInstanceCapacity = 0;
     this.#mouseLightBuffer = undefined;
   }
 
@@ -1230,13 +1235,79 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
 }
 `;
 
-// Raymarch shader with pre-averaging.
+// Line render shader: instanced capsule SDF quads.
+// Each line is a single instance — the vertex shader expands it into a bounding
+// quad, and the fragment shader evaluates the capsule SDF for pixel-perfect
+// round endcaps with zero CPU tessellation.
+const lineRenderShader = /*wgsl*/ `
+struct VertexOutput {
+  @builtin(position) position: vec4f,
+  @location(0) color: vec3f,
+  @location(1) p1: vec2f,
+  @location(2) p2: vec2f,
+  @location(3) radius: f32,
+}
+
+struct Canvas { width: f32, height: f32 }
+@group(0) @binding(0) var<uniform> canvas: Canvas;
+
+fn srgbToLinear(c: vec3f) -> vec3f {
+  return pow(c, vec3f(2.2));
+}
+
+@vertex
+fn vertex_main(
+  @builtin(vertex_index) vid: u32,
+  @location(0) p1: vec2f,
+  @location(1) p2: vec2f,
+  @location(2) color: vec3f,
+  @location(3) thickness: f32,
+) -> VertexOutput {
+  let r = thickness * 0.5;
+  let minP = min(p1, p2) - vec2f(r);
+  let maxP = max(p1, p2) + vec2f(r);
+
+  var corners = array<vec2f, 6>(
+    vec2f(0, 0), vec2f(1, 0), vec2f(0, 1),
+    vec2f(1, 0), vec2f(1, 1), vec2f(0, 1),
+  );
+  let c = corners[vid];
+  let pixel = minP + (maxP - minP) * c;
+  let clip = vec2f(
+    pixel.x / canvas.width * 2.0 - 1.0,
+    1.0 - pixel.y / canvas.height * 2.0,
+  );
+
+  var out: VertexOutput;
+  out.position = vec4f(clip, 0.0, 1.0);
+  out.color = color;
+  out.p1 = p1;
+  out.p2 = p2;
+  out.radius = r;
+  return out;
+}
+
+@fragment
+fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
+  let pos = in.position.xy;
+  let ab = in.p2 - in.p1;
+  let ap = pos - in.p1;
+  let lenSq = dot(ab, ab);
+  let t = select(clamp(dot(ap, ab) / lenSq, 0.0, 1.0), 0.0, lenSq < 0.001);
+  let nearest = in.p1 + ab * t;
+  let d = length(pos - nearest) - in.radius;
+  if (d > 0.0) { discard; }
+  return vec4f(srgbToLinear(in.color), 1.0);
+}
+`;
+
+// Raymarch shader with pre-averaging and optional bilinear fix.
 //
 // Each thread handles one pre-averaged "bin" covering 4 sub-directions.
-// It casts 4 rays, merges each individually with the corresponding upper
-// cascade bin via hardware bilinear, and stores the average. This gives
-// 4× smaller textures and 4× fewer thread dispatches with the same total
-// raymarches and correct per-sub-direction hit/miss determination.
+// Vanilla merge: 4 rays, each merged with 1 bilinear upper sample.
+// Bilinear fix: 4 rays × 4 upper probes = 16 rays; each ray is aimed at
+// one of the 4 surrounding upper probes, merged with that probe's value,
+// then spatially weighted. Fixes ringing/parallax artifacts at 4× ray cost.
 const raymarchShader = /*wgsl*/ `
 const PI: f32 = 3.141592653589793;
 const TAU: f32 = PI * 2.0;
@@ -1283,9 +1354,11 @@ fn sampleSDF(pos: vec2f) -> f32 {
 fn marchRay(origin: vec2f, direction: vec2f, intervalStart: f32, intervalLength: f32) -> vec4f {
   var hit = vec4f(0.0, 0.0, 0.0, 1.0);
   var t = 0.0;
-  while (t < intervalLength) {
+  let remaining = intervalLength;
+  while (t < remaining) {
     let pos = origin + direction * (intervalStart + t);
     let dist = sampleSDF(pos);
+    if (dist >= remaining - t) { break; }
     if (dist < 1.0) {
       if (dist < 0.001 && t == 0.0 && ubo.level != 0) {
         t += 1.0;
@@ -1304,21 +1377,60 @@ fn marchRay(origin: vec2f, direction: vec2f, intervalStart: f32, intervalLength:
   return hit;
 }
 
-fn sampleUpperBin(probeCenter: vec2f, upperBinIndex: i32) -> vec4f {
-  if (ubo.level >= ubo.levelCount) { return vec4f(0.0, 0.0, 0.0, 1.0); }
-
+// Bilinear fix: read a specific upper probe's bin via point-sample (textureLoad)
+fn loadUpperProbeBin(upperProbeX: i32, upperProbeY: i32, upperBinIndex: i32) -> vec4f {
   let upperSqrtBins = ubo.sqrtBins * 2;
-  let upperProbeSpacing = ubo.probeSpacing * 2.0;
-  let texSize = vec2f(textureDimensions(upperCascade));
-  let upperProbePos = probeCenter / upperProbeSpacing - 0.5;
-  let clampedPos = clamp(upperProbePos, vec2f(0.5),
-    vec2f(f32(ubo.upperCascadeW) - 1.5, f32(ubo.upperCascadeH) - 1.5));
-
   let pdx = upperBinIndex % upperSqrtBins;
   let pdy = upperBinIndex / upperSqrtBins;
-  let tileOrigin = vec2f(f32(pdx * ubo.upperCascadeW), f32(pdy * ubo.upperCascadeH));
-  let uv = (tileOrigin + clampedPos + 0.5) / texSize;
-  return textureSampleLevel(upperCascade, worldSampler, uv, 0.0);
+  let texelX = pdx * ubo.upperCascadeW + upperProbeX;
+  let texelY = pdy * ubo.upperCascadeH + upperProbeY;
+  return textureLoad(upperCascade, vec2i(texelX, texelY), 0);
+}
+
+// Bilinear fix merge: cast a ray toward each of the 4 surrounding upper probes,
+// merge each with that probe's stored value, then spatially weight the results.
+fn mergeWithBilinearFix(
+  probeCenter: vec2f, dir: vec2f,
+  intervalStart: f32, intervalEnd: f32, upperBinIndex: i32
+) -> vec4f {
+  if (ubo.level >= ubo.levelCount) {
+    return marchRay(probeCenter, dir, intervalStart, intervalEnd - intervalStart);
+  }
+
+  let upperProbeSpacing = ubo.probeSpacing * 2.0;
+  let upperProbeF = probeCenter / upperProbeSpacing - 0.5;
+  let baseProbe = vec2i(floor(upperProbeF));
+  let frac = upperProbeF - vec2f(baseProbe);
+
+  let w00 = (1.0 - frac.x) * (1.0 - frac.y);
+  let w10 = frac.x * (1.0 - frac.y);
+  let w01 = (1.0 - frac.x) * frac.y;
+  let w11 = frac.x * frac.y;
+
+  let maxPX = ubo.upperCascadeW - 1;
+  let maxPY = ubo.upperCascadeH - 1;
+
+  var merged = vec4f(0.0);
+  for (var bi = 0; bi < 4; bi++) {
+    let ox = bi & 1;
+    let oy = (bi >> 1) & 1;
+    let px = clamp(baseProbe.x + ox, 0, maxPX);
+    let py = clamp(baseProbe.y + oy, 0, maxPY);
+
+    let w = select(select(select(w11, w01, ox == 0), w10, oy == 0), w00, ox == 0 && oy == 0);
+
+    let upperCenter = (vec2f(f32(px), f32(py)) + 0.5) * upperProbeSpacing;
+    let rayEnd = upperCenter + dir * intervalEnd;
+    let rayStart = probeCenter + dir * intervalStart;
+    let toEnd = rayEnd - rayStart;
+    let rayLen = length(toEnd);
+    let rayDir = select(toEnd / rayLen, dir, rayLen < 0.001);
+
+    let hit = marchRay(rayStart, rayDir, 0.0, rayLen);
+    let upper = loadUpperProbeBin(px, py, upperBinIndex);
+    merged += vec4f(hit.rgb + hit.a * upper.rgb, hit.a * upper.a) * w;
+  }
+  return merged;
 }
 
 @compute @workgroup_size(16, 16, 1)
@@ -1343,16 +1455,14 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
   let IntervalStart = ubo.intervalStart;
   let IntervalEnd = ubo.intervalEnd;
-  let IntervalLength = IntervalEnd - IntervalStart;
 
   var acc = vec4f(0.0);
   for (var k = 0; k < 4; k++) {
     let rayIndex = binIndex * 4 + k;
     let angle = TAU * (f32(rayIndex) + 0.5) / f32(totalRays);
     let dir = vec2f(cos(angle), sin(angle));
-    let hit = marchRay(RayOrigin, dir, IntervalStart, IntervalLength);
-    let upper = sampleUpperBin(RayOrigin, binIndex * 4 + k);
-    acc += vec4f(hit.rgb + hit.a * upper.rgb, hit.a * upper.a);
+
+    acc += mergeWithBilinearFix(RayOrigin, dir, IntervalStart, IntervalEnd, binIndex * 4 + k);
   }
 
   textureStore(cascadeOut, id.xy, acc * 0.25);
