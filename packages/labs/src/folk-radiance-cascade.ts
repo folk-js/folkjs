@@ -64,7 +64,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
   // Pipelines
   #worldRenderPipeline!: GPURenderPipeline;
-  #mouseLightPipeline!: GPURenderPipeline;
   #jfaSeedPipeline!: GPUComputePipeline;
   #jfaPipeline!: GPUComputePipeline;
   #jfaFinalizePipeline!: GPUComputePipeline;
@@ -76,7 +75,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #cascadeTextures!: GPUTexture[];
   #cascadeTextureViews!: GPUTextureView[];
   #uboBuffer!: GPUBuffer;
-  #mouseLightUBO!: GPUBuffer;
   #fluenceUBO!: GPUBuffer;
   #jfaTextures!: GPUTexture[];
   #jfaTextureViews!: GPUTextureView[];
@@ -88,7 +86,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #renderUBO!: GPUBuffer;
 
   // Pre-allocated bind groups (created once at init/resize, not per frame)
-  #mouseLightBindGroup!: GPUBindGroup;
   #jfaSeedBindGroup!: GPUBindGroup;
   #jfaPassBindGroups!: GPUBindGroup[];
   #jfaFinalizeBindGroup!: GPUBindGroup;
@@ -99,7 +96,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   // Structured views for type-safe UBO packing (from webgpu-utils)
   #raymarchUBOView!: StructuredView;
   #fluenceUBOView!: StructuredView;
-  #mouseLightUBOView!: StructuredView;
   #jfaParamsView!: StructuredView;
   #renderUBOView!: StructuredView;
 
@@ -115,10 +111,15 @@ export class FolkRadianceCascade extends FolkBaseSet {
   // Samplers
   #linearSampler!: GPUSampler;
 
-  // Animation state
-  #animationFrame = 0;
+  // Mouse light (rendered as geometry in the world pass)
   #mousePosition = { x: 0, y: 0 };
   #mouseLightColor = { r: 0.8, g: 0.6, b: 0.3 };
+  #mouseLightRadius = 10;
+  #mouseLightBuffer?: GPUBuffer;
+  #mouseLightVertexCount = 0;
+
+  // Animation state
+  #animationFrame = 0;
   #isRunning = false;
   #resizing = false;
 
@@ -188,6 +189,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
   setMouseLightColor(r: number, g: number, b: number) {
     this.#mouseLightColor = { r, g, b };
+  }
+
+  setMouseLightRadius(radius: number) {
+    this.#mouseLightRadius = radius;
   }
 
   eraseAt(x: number, y: number, radius: number) {
@@ -285,6 +290,38 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#lineBuffer = uploadVertexData(this.#device, this.#lineBuffer, new Float32Array(vertices));
   }
 
+  #updateMouseLightBuffer() {
+    if (!this.#device) return;
+
+    const SEGMENTS = 12;
+    const { x, y } = this.#mousePosition;
+    const { r, g, b } = this.#mouseLightColor;
+    const radius = this.#mouseLightRadius;
+
+    const toClipX = (px: number) => (px / this.#canvas.width) * 2 - 1;
+    const toClipY = (py: number) => 1 - (py / this.#canvas.height) * 2;
+    const rx = (radius / this.#canvas.width) * 2;
+    const ry = (radius / this.#canvas.height) * 2;
+    const cx = toClipX(x);
+    const cy = toClipY(y);
+
+    const vertices: number[] = [];
+    for (let i = 0; i < SEGMENTS; i++) {
+      const a0 = (i / SEGMENTS) * Math.PI * 2;
+      const a1 = ((i + 1) / SEGMENTS) * Math.PI * 2;
+      vertices.push(cx, cy, r, g, b);
+      vertices.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b);
+      vertices.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b);
+    }
+
+    this.#mouseLightVertexCount = vertices.length / 5;
+    this.#mouseLightBuffer = uploadVertexData(
+      this.#device,
+      this.#mouseLightBuffer,
+      new Float32Array(vertices),
+    );
+  }
+
   async #initWebGPU() {
     if (!navigator.gpu) {
       throw new Error('WebGPU is not supported in this browser.');
@@ -338,7 +375,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #initStructuredViews() {
     this.#raymarchUBOView = uboView(raymarchShader, 'ubo');
     this.#fluenceUBOView = uboView(fluenceShader, 'ubo');
-    this.#mouseLightUBOView = uboView(mouseLightShader, 'light');
     this.#jfaParamsView = uboView(jfaSeedShader, 'params');
     this.#renderUBOView = uboView(renderShader, 'ubo');
   }
@@ -384,12 +420,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#uboBuffer = this.#device.createBuffer({
       label: 'UBO',
       size: 256 * (this.#numCascadeLevels + 1),
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    this.#mouseLightUBO = this.#device.createBuffer({
-      label: 'MouseLightUBO',
-      size: this.#mouseLightUBOView.arrayBuffer.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -491,28 +521,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       primitive: { topology: 'triangle-list' },
     });
 
-    // Mouse light pipeline - renders mouse cursor as emissive circle into world texture
-    const mouseLightModule = device.createShaderModule({ code: mouseLightShader });
-    this.#mouseLightPipeline = device.createRenderPipeline({
-      label: 'MouseLight-Pipeline',
-      layout: 'auto',
-      vertex: { module: mouseLightModule, entryPoint: 'vertex_main' },
-      fragment: {
-        module: mouseLightModule,
-        entryPoint: 'fragment_main',
-        targets: [
-          {
-            format: 'rgba16float',
-            blend: {
-              color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
-              alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'max' },
-            },
-          },
-        ],
-      },
-      primitive: { topology: 'triangle-strip' },
-    });
-
     this.#jfaSeedPipeline = createComputePipeline(device, 'JFA-Seed', jfaSeedShader);
     this.#jfaPipeline = createComputePipeline(device, 'JFA', jfaShader);
     this.#jfaFinalizePipeline = createComputePipeline(device, 'JFA-Finalize', jfaFinalizeShader);
@@ -537,12 +545,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #initBindGroups() {
     const { width, height } = this.#canvas;
     const uboSize = this.#raymarchUBOView.arrayBuffer.byteLength;
-
-    // Mouse light bind group
-    this.#mouseLightBindGroup = this.#device.createBindGroup({
-      layout: this.#mouseLightPipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: this.#mouseLightUBO } }],
-    });
 
     // JFA seed bind group
     this.#jfaSeedBindGroup = this.#device.createBindGroup({
@@ -807,32 +809,18 @@ export class FolkRadianceCascade extends FolkBaseSet {
       this.#updateLineBuffer();
     }
 
+    this.#updateMouseLightBuffer();
+
     const { width, height } = this.#canvas;
     const jfaWorkgroupsX = Math.ceil(width / 16);
     const jfaWorkgroupsY = Math.ceil(height / 16);
     const cascadeWorkgroupsX = Math.ceil(this.#maxCascadeTexW / 16);
     const cascadeWorkgroupsY = Math.ceil(this.#maxCascadeTexH / 16);
 
-    // Only the mouse light UBO changes per frame (mouse position).
-    // All other UBOs are written once in #initBindGroups.
-    this.#mouseLightUBOView.set({
-      mouseX: this.#mousePosition.x,
-      mouseY: this.#mousePosition.y,
-      radius: 20.0,
-      intensity: 1.0,
-      canvasWidth: width,
-      canvasHeight: height,
-      colorR: this.#mouseLightColor.r,
-      colorG: this.#mouseLightColor.g,
-      colorB: this.#mouseLightColor.b,
-      pad: 0,
-    });
-    this.#device.queue.writeBuffer(this.#mouseLightUBO, 0, this.#mouseLightUBOView.arrayBuffer);
-
     const encoder = this.#device.createCommandEncoder();
     const qs = this.#profilingSupported ? this.#profilingQuerySet : null;
 
-    // Step 1: Clear and render world texture
+    // Step 1: Clear and render world texture (shapes, lines, mouse light)
     {
       const renderPass = encoder.beginRenderPass({
         colorAttachments: [
@@ -858,17 +846,11 @@ export class FolkRadianceCascade extends FolkBaseSet {
         renderPass.draw(this.#lineVertexCount);
       }
 
-      renderPass.end();
-    }
+      if (this.#mouseLightBuffer && this.#mouseLightVertexCount > 0) {
+        renderPass.setVertexBuffer(0, this.#mouseLightBuffer);
+        renderPass.draw(this.#mouseLightVertexCount);
+      }
 
-    // Step 1b: Draw mouse light
-    {
-      const renderPass = encoder.beginRenderPass({
-        colorAttachments: [{ view: this.#worldTextureView, loadOp: 'load', storeOp: 'store' }],
-      });
-      renderPass.setPipeline(this.#mouseLightPipeline);
-      renderPass.setBindGroup(0, this.#mouseLightBindGroup);
-      renderPass.draw(4);
       renderPass.end();
     }
 
@@ -1011,7 +993,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #cleanupResources() {
     this.#cascadeTextures?.forEach((t) => t.destroy());
     this.#uboBuffer?.destroy();
-    this.#mouseLightUBO?.destroy();
     this.#fluenceUBO?.destroy();
     this.#renderUBO?.destroy();
     this.#jfaTextures?.forEach((t) => t.destroy());
@@ -1021,8 +1002,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#fluenceTexture?.destroy();
     this.#shapeDataBuffer?.destroy();
     this.#lineBuffer?.destroy();
+    this.#mouseLightBuffer?.destroy();
     this.#shapeDataBuffer = undefined;
     this.#lineBuffer = undefined;
+    this.#mouseLightBuffer = undefined;
   }
 
   #initProfiling() {
@@ -1251,65 +1234,6 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
 }
 `;
 
-// Mouse light shader - renders the cursor as an emissive circle into the world texture.
-// By placing the mouse light in the world texture (rather than injecting it directly
-// into the raymarch), it naturally participates in occlusion and indirect illumination:
-// objects can block the mouse light and it bounces off surfaces correctly.
-const mouseLightShader = /*wgsl*/ `
-struct MouseLight {
-  mouseX: f32,
-  mouseY: f32,
-  radius: f32,
-  intensity: f32,
-  canvasWidth: f32,
-  canvasHeight: f32,
-  colorR: f32,
-  colorG: f32,
-  colorB: f32,
-  pad: f32,
-}
-
-struct VertexOutput {
-  @builtin(position) position: vec4f,
-  @location(0) uv: vec2f,
-}
-
-@group(0) @binding(0) var<uniform> light: MouseLight;
-
-@vertex
-fn vertex_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
-  let pos = array(
-    vec2f(-1.0, -1.0),
-    vec2f( 1.0, -1.0),
-    vec2f(-1.0,  1.0),
-    vec2f( 1.0,  1.0),
-  );
-  var out: VertexOutput;
-  out.position = vec4f(pos[vi], 0.0, 1.0);
-  out.uv = pos[vi] * vec2f(0.5, -0.5) + 0.5;
-  return out;
-}
-
-@fragment
-fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
-  let pixelPos = in.uv * vec2f(light.canvasWidth, light.canvasHeight);
-  let mousePos = vec2f(light.mouseX, light.mouseY);
-  let dist = length(pixelPos - mousePos);
-
-  if (dist >= light.radius) {
-    discard;
-  }
-
-  // Quadratic falloff from center. Low opacity so rays pass through the light
-  // volume rather than treating it as a solid occluder.
-  let falloff = 1.0 - dist / light.radius;
-  let brightness = falloff * falloff * light.intensity;
-  let color = vec3f(light.colorR, light.colorG, light.colorB);
-  let opacity = 0.02;
-  return vec4f(brightness * color, opacity);
-}
-`;
-
 // Raymarch shader - traces rays through the scene using SDF sphere marching.
 //
 // Each ray covers a specific interval [intervalStart, intervalEnd] in pixel distance
@@ -1321,7 +1245,9 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
 // Radiance is accumulated front-to-back with transmittance tracking:
 //   acc.rgb = accumulated radiance (pre-multiplied by transmittance)
 //   acc.a   = remaining transmittance (1.0 = fully transparent, 0.0 = fully blocked)
-// The merge with the upper cascade uses the standard interval merging formula:
+// With all surfaces opaque (alpha=1), transmittance drops to 0 on first solid hit,
+// making overlap double-counting impossible while gracefully handling bilinear
+// edge blending. The merge with the upper cascade uses the standard formula:
 //   merged.rgb = near.rgb + near.a * far.rgb
 //   merged.a   = near.a * far.a
 const raymarchShader = /*wgsl*/ `
@@ -1351,12 +1277,11 @@ struct UBO {
 @group(0) @binding(5) var upperCascade: texture_2d<f32>;
 
 fn sampleWorld(pos: vec2f) -> vec4f {
-  let dims = vec2f(f32(ubo.width), f32(ubo.height));
-  let uv = pos / dims;
-  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
+  let ipos = vec2i(pos);
+  if (ipos.x < 0 || ipos.y < 0 || ipos.x >= ubo.width || ipos.y >= ubo.height) {
     return vec4f(0.0);
   }
-  return textureSampleLevel(worldTexture, worldSampler, uv, 0.0);
+  return textureLoad(worldTexture, ipos, 0);
 }
 
 fn sampleSDF(pos: vec2f) -> f32 {
@@ -1426,7 +1351,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let IntervalLength = IntervalEnd - IntervalStart;
 
   // SDF sphere march through the interval
-  var acc = vec4f(0.0, 0.0, 0.0, 1.0);
+  var hit = vec4f(0.0, 0.0, 0.0, 1.0); // .rgb = radiance, .a = 1 miss / 0 hit
   var t = 0.0;
 
   while (t < IntervalLength) {
@@ -1434,20 +1359,15 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let dist = sampleSDF(pos);
 
     if (dist < 1.0) {
-      // Rays starting inside a light volume on non-zero cascades should not
-      // accumulate that light's radiance — only cascade 0 sees surface emission
-      // directly. Without this, higher cascades double-count nearby emitters.
       if (dist < 0.001 && t == 0.0 && ubo.level != 0) {
         t += 1.0;
         continue;
       }
       let worldSample = sampleWorld(pos);
-      let transparency = 1.0 - worldSample.a;
-      acc = vec4f(
-        acc.rgb + acc.a * worldSample.rgb,
-        acc.a * transparency
-      );
-      if (acc.a < 0.01) { break; }
+      if (worldSample.a > 0.5) {
+        hit = vec4f(worldSample.rgb, 0.0);
+        break;
+      }
       t += 1.0;
     } else {
       t += dist;
@@ -1456,8 +1376,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
   let upper = sampleUpperCascade(RayOrigin, rayIndex);
   textureStore(cascadeOut, id.xy, vec4f(
-    acc.rgb + acc.a * upper.rgb,
-    acc.a * upper.a
+    hit.rgb + hit.a * upper.rgb,
+    hit.a * upper.a
   ));
 }
 `;
