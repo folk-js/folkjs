@@ -6,7 +6,7 @@ type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: numbe
 
 // The one tunable parameter: probe spacing at the finest cascade level.
 // Smaller = higher quality, larger cascade textures.
-const PROBE_SPACING_0 = 2;
+const PROBE_SPACING_0 = 1;
 
 // Fixed by the 2D Radiance Cascades algorithm (Sannikov 2023).
 // In 2D, 4 base rays with 4× angular branching and 2× spatial scaling
@@ -149,8 +149,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
   // Debug UI
   #debugPanel: HTMLDivElement | null = null;
   #debugVisible = false;
-  #diagonalInterp = true;
   #screenshotPending = false;
+  #c1Enabled = true;
 
   override async connectedCallback() {
     super.connectedCallback();
@@ -337,8 +337,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
   }
 
   #initStructuredViews() {
-    this.#raymarchUBOView = uboView(buildRaymarchShader(false), 'ubo');
-    this.#fluenceUBOView = uboView(buildFluenceShader(false), 'ubo');
+    this.#raymarchUBOView = uboView(raymarchShader, 'ubo');
+    this.#fluenceUBOView = uboView(fluenceShader, 'ubo');
     this.#jfaParamsView = uboView(jfaSeedShader, 'params');
     this.#renderUBOView = uboView(renderShader, 'ubo');
   }
@@ -516,8 +516,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#jfaSeedPipeline = createComputePipeline(device, 'JFA-Seed', jfaSeedShader);
     this.#jfaPipeline = createComputePipeline(device, 'JFA', jfaShader);
     this.#jfaFinalizePipeline = createComputePipeline(device, 'JFA-Finalize', jfaFinalizeShader);
-    this.#raymarchPipeline = createComputePipeline(device, 'Raymarch', buildRaymarchShader(this.#diagonalInterp));
-    this.#fluencePipeline = createComputePipeline(device, 'Fluence', buildFluenceShader(this.#diagonalInterp));
+    this.#raymarchPipeline = createComputePipeline(device, 'Raymarch', raymarchShader);
+    this.#fluencePipeline = createComputePipeline(device, 'Fluence', fluenceShader);
 
     // Final render pipeline
     const renderModule = device.createShaderModule({ code: renderShader });
@@ -622,13 +622,9 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const cascadeWidth = Math.floor(width / probeSpacing);
       const cascadeHeight = Math.floor(height / probeSpacing);
       const intervalStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
+      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level);
 
       const upperSpacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level + 1);
-
-      // Extend each interval by the diagonal of the upper cascade's probe spacing
-      // (Yaazarai pattern) to prevent light leaks at cascade boundaries.
-      const overlap = level < levelCount ? Math.SQRT2 * upperSpacing : 0;
-      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level) + overlap;
       const upperCascadeW = level >= levelCount ? 0 : Math.floor(width / upperSpacing);
       const upperCascadeH = level >= levelCount ? 0 : Math.floor(height / upperSpacing);
 
@@ -666,6 +662,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
     const level0ResultIndex = levelCount % 2;
     const cascadeWidth = Math.floor(width / PROBE_SPACING_0);
     const cascadeHeight = Math.floor(height / PROBE_SPACING_0);
+    const c0IntervalStart = PROBE_SPACING_0;
     this.#fluenceUBOView.set({
       probeSpacing: PROBE_SPACING_0,
       cascadeWidth,
@@ -673,6 +670,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
       width,
       height,
       sqrtBins: 1, // SPATIAL_SCALE^0 = 1
+      c0IntervalStart,
     });
     this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
 
@@ -683,6 +681,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
         { binding: 1, resource: this.#cascadeTextureViews[level0ResultIndex] },
         { binding: 2, resource: { buffer: this.#fluenceUBO } },
         { binding: 3, resource: this.#linearSampler },
+        { binding: 4, resource: this.#sdfTextureView },
+        { binding: 5, resource: this.#worldTextureView },
       ],
     });
 
@@ -899,6 +899,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
 
     // Step 4: Build fluence texture from cascade-0 result
     {
+      this.#fluenceUBOView.set({ c0IntervalStart: this.#c1Enabled ? PROBE_SPACING_0 : 0 });
+      this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(this.#fluencePipeline);
       computePass.setBindGroup(0, this.#fluenceBindGroup);
@@ -1030,10 +1032,17 @@ export class FolkRadianceCascade extends FolkBaseSet {
     Object.assign(title.style, { fontWeight: 'bold', marginBottom: '6px', color: '#0f0' });
     this.#debugPanel.appendChild(title);
 
-    this.#addToggle('Diagonal 2-tap', this.#diagonalInterp, (v) => {
-      this.#diagonalInterp = v;
-      this.#rebuildPipeline();
+    const c1Label = document.createElement('label');
+    Object.assign(c1Label.style, { display: 'block', cursor: 'pointer', marginBottom: '4px' });
+    const c1Check = document.createElement('input');
+    c1Check.type = 'checkbox';
+    c1Check.checked = this.#c1Enabled;
+    c1Check.addEventListener('change', () => {
+      this.#c1Enabled = c1Check.checked;
     });
+    c1Label.appendChild(c1Check);
+    c1Label.append(' C-1 Gathering');
+    this.#debugPanel.appendChild(c1Label);
 
     const screenshotBtn = document.createElement('button');
     screenshotBtn.textContent = '📷 Screenshot';
@@ -1053,32 +1062,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#debugPanel.appendChild(screenshotBtn);
 
     document.body.appendChild(this.#debugPanel);
-  }
-
-  #addToggle(label: string, initial: boolean, onChange: (v: boolean) => void) {
-    const row = document.createElement('label');
-    Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' });
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = initial;
-    cb.addEventListener('change', () => onChange(cb.checked));
-    row.appendChild(cb);
-    row.appendChild(document.createTextNode(label));
-    this.#debugPanel!.appendChild(row);
-  }
-
-  async #rebuildPipeline() {
-    this.#isRunning = false;
-    cancelAnimationFrame(this.#animationFrame);
-    await this.#device.queue.onSubmittedWorkDone();
-    this.#initPipelines();
-    this.#cleanupResources();
-    this.#initBuffers();
-    this.#initBindGroups();
-    this.#updateShapeData();
-    this.#lineBufferDirty = true;
-    this.#isRunning = true;
-    this.#startAnimationLoop();
   }
 
   #takeScreenshot() {
@@ -1419,129 +1402,11 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
 `;
 
 // Raymarch shader with pre-averaging and optional bilinear fix.
-//
-// Standard bilinear fix merge: 4 taps per direction (cell-centered grids).
-const MERGE_BILINEAR_4TAP = `
-fn mergeUpperCascade(
-  probeCenter: vec2f, dir: vec2f,
-  intervalStart: f32, intervalEnd: f32, upperBinIndex: i32,
-  probeX: i32, probeY: i32
-) -> vec4f {
-  if (ubo.level >= ubo.levelCount) {
-    return marchRay(probeCenter, dir, intervalStart, intervalEnd - intervalStart);
-  }
-
-  let upperProbeSpacing = ubo.probeSpacing * 2.0;
-  let upperProbeF = probeCenter / upperProbeSpacing - 0.5;
-  let baseProbe = vec2i(floor(upperProbeF));
-  let frac = upperProbeF - vec2f(baseProbe);
-
-  let w00 = (1.0 - frac.x) * (1.0 - frac.y);
-  let w10 = frac.x * (1.0 - frac.y);
-  let w01 = (1.0 - frac.x) * frac.y;
-  let w11 = frac.x * frac.y;
-
-  let maxPX = ubo.upperCascadeW - 1;
-  let maxPY = ubo.upperCascadeH - 1;
-
-  var merged = vec4f(0.0);
-  for (var bi = 0; bi < 4; bi++) {
-    let ox = bi & 1;
-    let oy = (bi >> 1) & 1;
-    let px = clamp(baseProbe.x + ox, 0, maxPX);
-    let py = clamp(baseProbe.y + oy, 0, maxPY);
-
-    let w = select(select(select(w11, w01, ox == 0), w10, oy == 0), w00, ox == 0 && oy == 0);
-
-    let upperCenter = (vec2f(f32(px), f32(py)) + 0.5) * upperProbeSpacing;
-    let rayEnd = upperCenter + dir * intervalEnd;
-    let rayStart = probeCenter + dir * intervalStart;
-    let toEnd = rayEnd - rayStart;
-    let rayLen = length(toEnd);
-    let rayDir = select(toEnd / rayLen, dir, rayLen < 0.001);
-
-    let hit = marchRay(rayStart, rayDir, 0.0, rayLen);
-    let upper = loadUpperProbeBin(px, py, upperBinIndex);
-    merged += vec4f(hit.rgb + hit.a * upper.rgb, hit.a * upper.a) * w;
-  }
-  return merged;
-}
-`;
-
-// Diagonal 2-tap merge: vertex-centered grids give 1/2/2 taps per direction.
-// With 2x spatial scaling, each cN probe maps to cN+1 at probeIndex/2.
-// Even indices align exactly (1 tap), odd indices fall between 2 probes (2 taps).
-// At cell centers (both odd), pick the main diagonal pair instead of all 4.
-const MERGE_DIAGONAL_2TAP = `
-fn mergeUpperCascade(
-  probeCenter: vec2f, dir: vec2f,
-  intervalStart: f32, intervalEnd: f32, upperBinIndex: i32,
-  probeX: i32, probeY: i32
-) -> vec4f {
-  if (ubo.level >= ubo.levelCount) {
-    return marchRay(probeCenter, dir, intervalStart, intervalEnd - intervalStart);
-  }
-
-  let upperProbeSpacing = ubo.probeSpacing * 2.0;
-  let upperProbeF = probeCenter / upperProbeSpacing;
-  let baseProbe = vec2i(floor(upperProbeF));
-  let maxPX = ubo.upperCascadeW - 1;
-  let maxPY = ubo.upperCascadeH - 1;
-
-  let evenX = (probeX & 1) == 0;
-  let evenY = (probeY & 1) == 0;
-
-  if (evenX && evenY) {
-    let px = clamp(baseProbe.x, 0, maxPX);
-    let py = clamp(baseProbe.y, 0, maxPY);
-    let upperCenter = vec2f(f32(px), f32(py)) * upperProbeSpacing;
-    let rayEnd = upperCenter + dir * intervalEnd;
-    let rayStart = probeCenter + dir * intervalStart;
-    let toEnd = rayEnd - rayStart;
-    let rayLen = length(toEnd);
-    let rayDir = select(toEnd / rayLen, dir, rayLen < 0.001);
-    let hit = marchRay(rayStart, rayDir, 0.0, rayLen);
-    let upper = loadUpperProbeBin(px, py, upperBinIndex);
-    return vec4f(hit.rgb + hit.a * upper.rgb, hit.a * upper.a);
-  }
-
-  // Determine the 2 upper probes to interpolate between
-  var p0x: i32; var p0y: i32;
-  var p1x: i32; var p1y: i32;
-  if (!evenX && !evenY) {
-    // Both odd → cell center → main diagonal: (base) and (base+1, base+1)
-    p0x = clamp(baseProbe.x, 0, maxPX);     p0y = clamp(baseProbe.y, 0, maxPY);
-    p1x = clamp(baseProbe.x + 1, 0, maxPX); p1y = clamp(baseProbe.y + 1, 0, maxPY);
-  } else if (!evenX) {
-    // X odd, Y even → x-edge: (base.x, y) and (base.x+1, y)
-    p0x = clamp(baseProbe.x, 0, maxPX);     p0y = clamp(baseProbe.y, 0, maxPY);
-    p1x = clamp(baseProbe.x + 1, 0, maxPX); p1y = p0y;
-  } else {
-    // X even, Y odd → y-edge: (x, base.y) and (x, base.y+1)
-    p0x = clamp(baseProbe.x, 0, maxPX);     p0y = clamp(baseProbe.y, 0, maxPY);
-    p1x = p0x;                               p1y = clamp(baseProbe.y + 1, 0, maxPY);
-  }
-
-  let rayStart = probeCenter + dir * intervalStart;
-  var merged = vec4f(0.0);
-  for (var ti = 0; ti < 2; ti++) {
-    let px = select(p1x, p0x, ti == 0);
-    let py = select(p1y, p0y, ti == 0);
-    let upperCenter = vec2f(f32(px), f32(py)) * upperProbeSpacing;
-    let toEnd = upperCenter + dir * intervalEnd - rayStart;
-    let rayLen = length(toEnd);
-    let rayDir = select(toEnd / rayLen, dir, rayLen < 0.001);
-    let hit = marchRay(rayStart, rayDir, 0.0, rayLen);
-    let upper = loadUpperProbeBin(px, py, upperBinIndex);
-    merged += vec4f(hit.rgb + hit.a * upper.rgb, hit.a * upper.a);
-  }
-  return merged * 0.5;
-}
-`;
-
 // Each thread handles one pre-averaged "bin" covering 4 sub-directions.
-function buildRaymarchShader(diagonalInterp: boolean) {
-  return /*wgsl*/ `
+// Bilinear fix: 4 rays × 4 upper probes = 16 rays; each ray is aimed at
+// one of the 4 surrounding upper probes, merged with that probe's value,
+// then spatially weighted. Fixes ringing/parallax artifacts at 4× ray cost.
+const raymarchShader = /*wgsl*/ `
 const PI: f32 = 3.141592653589793;
 const TAU: f32 = PI * 2.0;
 
@@ -1620,7 +1485,51 @@ fn loadUpperProbeBin(upperProbeX: i32, upperProbeY: i32, upperBinIndex: i32) -> 
   return textureLoad(upperCascade, vec2i(texelX, texelY), 0);
 }
 
-${diagonalInterp ? MERGE_DIAGONAL_2TAP : MERGE_BILINEAR_4TAP}
+// Bilinear fix merge: cast a ray toward each of the 4 surrounding upper probes,
+// merge each with that probe's stored value, then spatially weight the results.
+fn mergeWithBilinearFix(
+  probeCenter: vec2f, dir: vec2f,
+  intervalStart: f32, intervalEnd: f32, upperBinIndex: i32
+) -> vec4f {
+  if (ubo.level >= ubo.levelCount) {
+    return marchRay(probeCenter, dir, intervalStart, intervalEnd - intervalStart);
+  }
+
+  let upperProbeSpacing = ubo.probeSpacing * 2.0;
+  let upperProbeF = probeCenter / upperProbeSpacing - 0.5;
+  let baseProbe = vec2i(floor(upperProbeF));
+  let frac = upperProbeF - vec2f(baseProbe);
+
+  let w00 = (1.0 - frac.x) * (1.0 - frac.y);
+  let w10 = frac.x * (1.0 - frac.y);
+  let w01 = (1.0 - frac.x) * frac.y;
+  let w11 = frac.x * frac.y;
+
+  let maxPX = ubo.upperCascadeW - 1;
+  let maxPY = ubo.upperCascadeH - 1;
+
+  var merged = vec4f(0.0);
+  for (var bi = 0; bi < 4; bi++) {
+    let ox = bi & 1;
+    let oy = (bi >> 1) & 1;
+    let px = clamp(baseProbe.x + ox, 0, maxPX);
+    let py = clamp(baseProbe.y + oy, 0, maxPY);
+
+    let w = select(select(select(w11, w01, ox == 0), w10, oy == 0), w00, ox == 0 && oy == 0);
+
+    let upperCenter = (vec2f(f32(px), f32(py)) + 0.5) * upperProbeSpacing;
+    let rayEnd = upperCenter + dir * intervalEnd;
+    let rayStart = probeCenter + dir * intervalStart;
+    let toEnd = rayEnd - rayStart;
+    let rayLen = length(toEnd);
+    let rayDir = select(toEnd / rayLen, dir, rayLen < 0.001);
+
+    let hit = marchRay(rayStart, rayDir, 0.0, rayLen);
+    let upper = loadUpperProbeBin(px, py, upperBinIndex);
+    merged += vec4f(hit.rgb + hit.a * upper.rgb, hit.a * upper.a) * w;
+  }
+  return merged;
+}
 
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
@@ -1636,9 +1545,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let totalRays = ubo.sqrtBins * ubo.sqrtBins * 4;
 
   let ProbeDiameter = ubo.probeSpacing;
+  let ProbeRadius = ProbeDiameter * 0.5;
   let RayOrigin = vec2f(
-    f32(probeX) * ProbeDiameter + ${diagonalInterp ? '0.0' : 'ProbeDiameter * 0.5'},
-    f32(probeY) * ProbeDiameter + ${diagonalInterp ? '0.0' : 'ProbeDiameter * 0.5'},
+    f32(probeX) * ProbeDiameter + ProbeRadius,
+    f32(probeY) * ProbeDiameter + ProbeRadius,
   );
 
   let IntervalStart = ubo.intervalStart;
@@ -1650,19 +1560,21 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let angle = TAU * (f32(rayIndex) + 0.5) / f32(totalRays);
     let dir = vec2f(cos(angle), sin(angle));
 
-    acc += mergeUpperCascade(RayOrigin, dir, IntervalStart, IntervalEnd, binIndex * 4 + k, probeX, probeY);
+    acc += mergeWithBilinearFix(RayOrigin, dir, IntervalStart, IntervalEnd, binIndex * 4 + k);
   }
 
   textureStore(cascadeOut, id.xy, acc * 0.25);
 }
 `;
-}
 
-// Fluence shader: samples the merged cascade-0 texture to produce per-pixel
-// irradiance. With pre-averaging, level 0 has sqrtBins=1 (a single tile),
-// so this reduces to a single bilinear read per pixel.
-function buildFluenceShader(diagonalInterp: boolean) {
-  return /*wgsl*/ `
+// Fluence shader with C-1 gathering. For each pixel, cast short per-pixel rays
+// [0, c0IntervalStart) in each direction, then merge with the bilinearly
+// interpolated c0 cascade value. Gives pixel-perfect contact shadows without
+// storing extra cascade data.
+const fluenceShader = /*wgsl*/ `
+const PI: f32 = 3.141592653589793;
+const TAU: f32 = PI * 2.0;
+
 struct UBO {
   probeSpacing: f32,
   cascadeWidth: i32,
@@ -1670,36 +1582,93 @@ struct UBO {
   width: i32,
   height: i32,
   sqrtBins: i32,
+  c0IntervalStart: f32,
 }
 
 @group(0) @binding(0) var fluenceTexture: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(1) var cascadeTexture: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> ubo: UBO;
 @group(0) @binding(3) var cascadeSampler: sampler;
+@group(0) @binding(4) var sdfTexture: texture_2d<f32>;
+@group(0) @binding(5) var worldTexture: texture_2d<f32>;
+
+fn sampleSDF(pos: vec2f) -> f32 {
+  let dims = vec2f(f32(ubo.width), f32(ubo.height));
+  if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
+    return 1e6;
+  }
+  let uv = (pos + 0.5) / dims;
+  return max(textureSampleLevel(sdfTexture, cascadeSampler, uv, 0.0).r, 0.0);
+}
+
+fn sampleWorld(pos: vec2f) -> vec4f {
+  let ipos = vec2i(pos);
+  if (ipos.x < 0 || ipos.y < 0 || ipos.x >= ubo.width || ipos.y >= ubo.height) {
+    return vec4f(0.0);
+  }
+  return textureLoad(worldTexture, ipos, 0);
+}
+
+fn marchRayC1(origin: vec2f, dir: vec2f, maxDist: f32) -> vec4f {
+  var t = 0.0;
+  while (t < maxDist) {
+    let pos = origin + dir * t;
+    let dist = sampleSDF(pos);
+    if (dist >= maxDist - t) { break; }
+    if (dist < 1.0) {
+      if (dist < 0.001 && t == 0.0) {
+        t += 1.0;
+        continue;
+      }
+      let worldSample = sampleWorld(pos);
+      if (worldSample.a > 0.5) {
+        return vec4f(worldSample.rgb, 0.0);
+      }
+      t += 1.0;
+    } else {
+      t += dist;
+    }
+  }
+  return vec4f(0.0, 0.0, 0.0, 1.0);
+}
 
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
   if (i32(id.x) >= ubo.width || i32(id.y) >= ubo.height) { return; }
 
   let pixelCenter = vec2f(id.xy) + 0.5;
-  let probeCoord = pixelCenter / ubo.probeSpacing${diagonalInterp ? '' : ' - 0.5'};
-  let clampedCoord = clamp(probeCoord, vec2f(${diagonalInterp ? '0.0' : '0.5'}), vec2f(f32(ubo.cascadeWidth) - ${diagonalInterp ? '1.0' : '1.5'}, f32(ubo.cascadeHeight) - ${diagonalInterp ? '1.0' : '1.5'}));
+  let c0Start = ubo.c0IntervalStart;
+
+  // Bilinearly sample c0 (same UV math as old fluence shader)
+  let probeCoord = pixelCenter / ubo.probeSpacing - 0.5;
+  let clampedCoord = clamp(probeCoord, vec2f(0.5),
+    vec2f(f32(ubo.cascadeWidth) - 1.5, f32(ubo.cascadeHeight) - 1.5));
   let texSize = vec2f(textureDimensions(cascadeTexture));
 
   let binCount = ubo.sqrtBins * ubo.sqrtBins;
-  var acc = vec4f(0.0);
+  let totalRays = binCount * 4;
+
+  var fluence = vec4f(0.0);
   for (var d = 0; d < binCount; d++) {
     let dx = d % ubo.sqrtBins;
     let dy = d / ubo.sqrtBins;
     let tileOrigin = vec2f(f32(dx * ubo.cascadeWidth), f32(dy * ubo.cascadeHeight));
     let uv = (tileOrigin + clampedCoord + 0.5) / texSize;
-    acc += textureSampleLevel(cascadeTexture, cascadeSampler, uv, 0.0);
+    let c0Val = textureSampleLevel(cascadeTexture, cascadeSampler, uv, 0.0);
+
+    for (var k = 0; k < 4; k++) {
+      let rayIndex = d * 4 + k;
+      let angle = TAU * (f32(rayIndex) + 0.5) / f32(totalRays);
+      let dir = vec2f(cos(angle), sin(angle));
+
+      let c1Hit = marchRayC1(pixelCenter, dir, c0Start);
+      fluence += vec4f(c1Hit.rgb + c1Hit.a * c0Val.rgb, c1Hit.a * c0Val.a);
+    }
   }
 
-  textureStore(fluenceTexture, id.xy, acc / f32(binCount));
+  textureStore(fluenceTexture, id.xy, fluence / f32(totalRays));
 }
 `;
-}
 
 // Final display shader - composites emissive surfaces with indirect illumination,
 // applies ACES tone mapping with exposure control, and converts to sRGB for display.
