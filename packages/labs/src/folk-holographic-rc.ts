@@ -93,7 +93,7 @@ struct CascadeParams {
   nextNumAngles: u32,
   nextSpacing: f32,
   nextAlongSize: u32,
-  isLastCascade: u32,
+  _pad0: u32,
   screenW: f32,
   screenH: f32,
   originX: f32,
@@ -168,54 +168,52 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   if (perpIdx >= i32(params.perpSize) || alongIdx >= i32(params.alongSize)) { return; }
 
+  let uSize = angSize(angleIdx * 2u, params.nextNumAngles, params.nextSpacing);
+  let lSize = angSize(angleIdx * 2u + 1u, params.nextNumAngles, params.nextSpacing);
+  let offset = 2 * i32(angleIdx) - i32(params.numAngles) + 1;
+  let offset_0 = offset - 1;
+  let offset_1 = offset + 1;
+  let startW = toWorld(perpIdx, alongIdx, params.spacing);
+
   var result = vec3f(0.0);
 
-  if (params.isLastCascade == 0u) {
-    let uSize = angSize(angleIdx * 2u, params.nextNumAngles, params.nextSpacing);
-    let lSize = angSize(angleIdx * 2u + 1u, params.nextNumAngles, params.nextSpacing);
-    let offset = 2 * i32(angleIdx) - i32(params.numAngles) + 1;
-    let offset_0 = offset - 1;
-    let offset_1 = offset + 1;
-    let startW = toWorld(perpIdx, alongIdx, params.spacing);
+  if (alongIdx % 2 == 0) {
+    let nearAlong = alongIdx / 2;
+    let farAlong = nearAlong + 1;
 
-    if (alongIdx % 2 == 0) {
-      let nearAlong = alongIdx / 2;
-      let farAlong = nearAlong + 1;
+    let nearUp = readPrev(perpIdx, nearAlong, angleIdx * 2u, params.nextNumAngles);
+    let nearLo = readPrev(perpIdx, nearAlong, angleIdx * 2u + 1u, params.nextNumAngles);
 
-      let nearUp = readPrev(perpIdx, nearAlong, angleIdx * 2u, params.nextNumAngles);
-      let nearLo = readPrev(perpIdx, nearAlong, angleIdx * 2u + 1u, params.nextNumAngles);
+    let fPerpUp = perpIdx + offset_0 * 2;
+    let fPerpLo = perpIdx + offset_1 * 2;
+    let endUp = toWorld(fPerpUp, farAlong, params.nextSpacing);
+    let endLo = toWorld(fPerpLo, farAlong, params.nextSpacing);
 
-      let fPerpUp = perpIdx + offset_0 * 2;
-      let fPerpLo = perpIdx + offset_1 * 2;
-      let endUp = toWorld(fPerpUp, farAlong, params.nextSpacing);
-      let endLo = toWorld(fPerpLo, farAlong, params.nextSpacing);
+    let trUp = traceRay(startW, endUp);
+    let trLo = traceRay(startW, endLo);
 
-      let trUp = traceRay(startW, endUp);
-      let trLo = traceRay(startW, endLo);
+    let farUp = readPrev(fPerpUp, farAlong, angleIdx * 2u, params.nextNumAngles);
+    let farLo = readPrev(fPerpLo, farAlong, angleIdx * 2u + 1u, params.nextNumAngles);
 
-      let farUp = readPrev(fPerpUp, farAlong, angleIdx * 2u, params.nextNumAngles);
-      let farLo = readPrev(fPerpLo, farAlong, angleIdx * 2u + 1u, params.nextNumAngles);
+    let upper = (nearUp + overComp(trUp, farUp)) * 0.5;
+    let lower = (nearLo + overComp(trLo, farLo)) * 0.5;
+    result = (upper * uSize + lower * lSize) / (uSize + lSize);
+  } else {
+    let tAlong = alongIdx / 2 + 1;
+    let tPerpUp = perpIdx + offset_0;
+    let tPerpLo = perpIdx + offset_1;
+    let endUp = toWorld(tPerpUp, tAlong, params.nextSpacing);
+    let endLo = toWorld(tPerpLo, tAlong, params.nextSpacing);
 
-      let upper = (nearUp + overComp(trUp, farUp)) * 0.5;
-      let lower = (nearLo + overComp(trLo, farLo)) * 0.5;
-      result = (upper * uSize + lower * lSize) / (uSize + lSize);
-    } else {
-      let tAlong = alongIdx / 2 + 1;
-      let tPerpUp = perpIdx + offset_0;
-      let tPerpLo = perpIdx + offset_1;
-      let endUp = toWorld(tPerpUp, tAlong, params.nextSpacing);
-      let endLo = toWorld(tPerpLo, tAlong, params.nextSpacing);
+    let trUp = traceRay(startW, endUp);
+    let trLo = traceRay(startW, endLo);
 
-      let trUp = traceRay(startW, endUp);
-      let trLo = traceRay(startW, endLo);
+    let farUp = readPrev(tPerpUp, tAlong, angleIdx * 2u, params.nextNumAngles);
+    let farLo = readPrev(tPerpLo, tAlong, angleIdx * 2u + 1u, params.nextNumAngles);
 
-      let farUp = readPrev(tPerpUp, tAlong, angleIdx * 2u, params.nextNumAngles);
-      let farLo = readPrev(tPerpLo, tAlong, angleIdx * 2u + 1u, params.nextNumAngles);
-
-      let upper = overComp(trUp, farUp);
-      let lower = overComp(trLo, farLo);
-      result = (upper * uSize + lower * lSize) / (uSize + lSize);
-    }
+    let upper = overComp(trUp, farUp);
+    let lower = overComp(trLo, farLo);
+    result = (upper * uSize + lower * lSize) / (uSize + lSize);
   }
 
   let outX = alongIdx * i32(params.numAngles) + i32(angleIdx);
@@ -412,6 +410,12 @@ export class FolkHolographicRC extends FolkBaseSet {
   #isRunning = false;
   #resizing = false;
 
+  // FPS tracking
+  #fpsOverlay: HTMLDivElement | null = null;
+  #smoothedFrameTime = 0;
+  #lastFrameTimestamp = 0;
+  #lastOverlayUpdate = 0;
+
   static readonly #colors: [number, number, number][] = [
     [0, 0, 0],
     [0.05, 0.05, 0.05],
@@ -443,6 +447,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (this.#animationFrame) cancelAnimationFrame(this.#animationFrame);
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
+    this.#fpsOverlay?.remove();
+    this.#fpsOverlay = null;
     this.#destroyResources();
   }
 
@@ -768,8 +774,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   // ── Render loop ──
 
   #startAnimationLoop() {
-    const render = () => {
+    const render = (now: number) => {
       if (!this.#isRunning) return;
+      this.#updateFps(now);
       this.#renderFrame();
       this.#animationFrame = requestAnimationFrame(render);
     };
@@ -978,7 +985,6 @@ export class FolkHolographicRC extends FolkBaseSet {
         const alongSize = Math.max(Math.floor(alongBase / spacing), 1);
         const numAngles = Math.pow(2, level);
 
-        const isLast = level === numCascades - 1 ? 1 : 0;
         const nextSpacing = Math.pow(2, level + 1);
         const nextNumAngles = Math.pow(2, level + 1);
         const nextAlongSize = Math.max(Math.floor(alongBase / nextSpacing), 1);
@@ -994,7 +1000,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         u32[4] = nextNumAngles;
         f32[5] = nextSpacing;
         u32[6] = nextAlongSize;
-        u32[7] = isLast;
+        u32[7] = 0;
         f32[8] = width;
         f32[9] = height;
         f32[10] = originX;
@@ -1042,4 +1048,41 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mousePosition.x = e.clientX - rect.left;
     this.#mousePosition.y = e.clientY - rect.top;
   };
+
+  #ensureFpsOverlay() {
+    if (this.#fpsOverlay) return;
+    this.#fpsOverlay = document.createElement('div');
+    Object.assign(this.#fpsOverlay.style, {
+      position: 'fixed',
+      bottom: '8px',
+      right: '8px',
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: 'rgba(255,255,255,0.7)',
+      background: 'rgba(0,0,0,0.5)',
+      padding: '4px 8px',
+      borderRadius: '4px',
+      zIndex: '10000',
+      pointerEvents: 'none',
+    });
+    document.body.appendChild(this.#fpsOverlay);
+  }
+
+  #updateFps(now: number) {
+    if (this.#lastFrameTimestamp > 0) {
+      const dt = now - this.#lastFrameTimestamp;
+      const alpha = 0.05;
+      this.#smoothedFrameTime =
+        this.#smoothedFrameTime === 0 ? dt : this.#smoothedFrameTime + alpha * (dt - this.#smoothedFrameTime);
+    }
+    this.#lastFrameTimestamp = now;
+
+    if (now - this.#lastOverlayUpdate > 200) {
+      this.#lastOverlayUpdate = now;
+      this.#ensureFpsOverlay();
+      const fps = this.#smoothedFrameTime > 0 ? Math.round(1000 / this.#smoothedFrameTime) : 0;
+      const ms = this.#smoothedFrameTime.toFixed(1);
+      this.#fpsOverlay!.textContent = `${fps} fps (${ms} ms)`;
+    }
+  }
 }
