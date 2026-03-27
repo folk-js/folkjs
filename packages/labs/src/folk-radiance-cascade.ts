@@ -6,7 +6,7 @@ type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: numbe
 
 // The one tunable parameter: probe spacing at the finest cascade level.
 // Smaller = higher quality, larger cascade textures.
-const PROBE_SPACING_0 = 1;
+const PROBE_SPACING_0 = 2;
 
 // Fixed by the 2D Radiance Cascades algorithm (Sannikov 2023).
 // In 2D, 4 base rays with 4× angular branching and 2× spatial scaling
@@ -145,6 +145,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #smoothedGpuTime = 0;
   #smoothedCpuTime = 0;
   #lastOverlayUpdate = 0;
+  #debugMode = 0;
+  static #debugModeNames = ['normal', 'C-1 only', 'C0 only', 'diff ×4', 'C-1 per-dir', 'cascade atlas'];
 
   override async connectedCallback() {
     super.connectedCallback();
@@ -346,16 +348,16 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#numCascadeLevels = Math.ceil(Math.log(diagonal / PROBE_SPACING_0) / Math.log(BRANCHING_FACTOR));
 
     // Compute max cascade texture dimensions across all levels.
-    // With pre-averaging, each texel stores the average of 4 sub-directions,
-    // so we use sqrtBins = SPATIAL_SCALE^level (= sqrtRays / 2), giving 4×
-    // smaller textures. Texture tiles: sqrtBins × sqrtBins grid.
+    // With C-1 gathering, sqrtBins = SPATIAL_SCALE^(level+1) so each sub-ray
+    // at level N reads a unique bin from level N+1 (maintaining the 4× angular
+    // branching ratio). This gives equal-sized W×H textures at every level.
     this.#maxCascadeTexW = 0;
     this.#maxCascadeTexH = 0;
     for (let level = 0; level <= this.#numCascadeLevels; level++) {
       const spacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level);
       const probesX = Math.floor(width / spacing);
       const probesY = Math.floor(height / spacing);
-      const sqrtBins = Math.round(Math.pow(SPATIAL_SCALE, level));
+      const sqrtBins = Math.round(Math.pow(SPATIAL_SCALE, level + 1));
       this.#maxCascadeTexW = Math.max(this.#maxCascadeTexW, probesX * sqrtBins);
       this.#maxCascadeTexH = Math.max(this.#maxCascadeTexH, probesY * sqrtBins);
     }
@@ -612,15 +614,17 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const readIndex = 1 - writeIndex;
 
       const probeSpacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level);
-      const sqrtBins = Math.round(Math.pow(SPATIAL_SCALE, level));
+      const sqrtBins = Math.round(Math.pow(SPATIAL_SCALE, level + 1));
       const cascadeWidth = Math.floor(width / probeSpacing);
       const cascadeHeight = Math.floor(height / probeSpacing);
-      const intervalStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
+      const baseStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
+      const intervalStart = baseStart + PROBE_SPACING_0;
+      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level) + PROBE_SPACING_0;
 
       const upperSpacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level + 1);
-      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level);
       const upperCascadeW = level >= levelCount ? 0 : Math.floor(width / upperSpacing);
       const upperCascadeH = level >= levelCount ? 0 : Math.floor(height / upperSpacing);
+      const upperSqrtBins = Math.round(Math.pow(SPATIAL_SCALE, level + 2));
 
       this.#raymarchUBOView.set({
         probeSpacing,
@@ -635,6 +639,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
         cascadeHeight,
         upperCascadeW,
         upperCascadeH,
+        upperSqrtBins,
       });
       this.#device.queue.writeBuffer(this.#uboBuffer, level * 256, this.#raymarchUBOView.arrayBuffer);
 
@@ -662,7 +667,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
       cascadeHeight,
       width,
       height,
-      sqrtBins: 1, // SPATIAL_SCALE^0 = 1
+      sqrtBins: SPATIAL_SCALE,
+      debugMode: this.#debugMode,
     });
     this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
 
@@ -673,6 +679,8 @@ export class FolkRadianceCascade extends FolkBaseSet {
         { binding: 1, resource: this.#cascadeTextureViews[level0ResultIndex] },
         { binding: 2, resource: { buffer: this.#fluenceUBO } },
         { binding: 3, resource: this.#linearSampler },
+        { binding: 4, resource: this.#sdfTextureView },
+        { binding: 5, resource: this.#worldTextureView },
       ],
     });
 
@@ -982,6 +990,13 @@ export class FolkRadianceCascade extends FolkBaseSet {
       if (this.#profilingOverlay) {
         this.#profilingOverlay.style.display = this.#profilingVisible ? 'block' : 'none';
       }
+    }
+    if (e.key === 'd') {
+      const count = FolkRadianceCascade.#debugModeNames.length;
+      this.#debugMode = (this.#debugMode + 1) % count;
+      console.log(`[RC debug] mode ${this.#debugMode}: ${FolkRadianceCascade.#debugModeNames[this.#debugMode]}`);
+      this.#fluenceUBOView.set({ debugMode: this.#debugMode });
+      this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
     }
   };
 
@@ -1321,6 +1336,7 @@ struct UBO {
   cascadeHeight: i32,
   upperCascadeW: i32,
   upperCascadeH: i32,
+  upperSqrtBins: i32,
 }
 
 @group(0) @binding(0) var cascadeOut: texture_storage_2d<rgba16float, write>;
@@ -1343,7 +1359,7 @@ fn sampleSDF(pos: vec2f) -> f32 {
   if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
     return 1e6;
   }
-  let uv = (pos + 0.5) / dims;
+  let uv = pos / dims;
   return max(textureSampleLevel(sdfTexture, worldSampler, uv, 0.0).r, 0.0);
 }
 
@@ -1375,9 +1391,8 @@ fn marchRay(origin: vec2f, direction: vec2f, intervalStart: f32, intervalLength:
 
 // Bilinear fix: read a specific upper probe's bin via point-sample (textureLoad)
 fn loadUpperProbeBin(upperProbeX: i32, upperProbeY: i32, upperBinIndex: i32) -> vec4f {
-  let upperSqrtBins = ubo.sqrtBins * 2;
-  let pdx = upperBinIndex % upperSqrtBins;
-  let pdy = upperBinIndex / upperSqrtBins;
+  let pdx = upperBinIndex % ubo.upperSqrtBins;
+  let pdy = upperBinIndex / ubo.upperSqrtBins;
   let texelX = pdx * ubo.upperCascadeW + upperProbeX;
   let texelY = pdy * ubo.upperCascadeH + upperProbeY;
   return textureLoad(upperCascade, vec2i(texelX, texelY), 0);
@@ -1452,23 +1467,31 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let IntervalStart = ubo.intervalStart;
   let IntervalEnd = ubo.intervalEnd;
 
+  let upperTotalBins = ubo.upperSqrtBins * ubo.upperSqrtBins;
+  let currentTotalBins = ubo.sqrtBins * ubo.sqrtBins;
+  let raysPerUpperBin = max(1, (4 * currentTotalBins) / upperTotalBins);
+
   var acc = vec4f(0.0);
   for (var k = 0; k < 4; k++) {
     let rayIndex = binIndex * 4 + k;
     let angle = TAU * (f32(rayIndex) + 0.5) / f32(totalRays);
     let dir = vec2f(cos(angle), sin(angle));
 
-    acc += mergeWithBilinearFix(RayOrigin, dir, IntervalStart, IntervalEnd, binIndex * 4 + k);
+    let upperBinIdx = rayIndex / raysPerUpperBin;
+    acc += mergeWithBilinearFix(RayOrigin, dir, IntervalStart, IntervalEnd, upperBinIdx);
   }
 
   textureStore(cascadeOut, id.xy, acc * 0.25);
 }
 `;
 
-// Fluence shader: samples the merged cascade-0 texture to produce per-pixel
-// irradiance. With pre-averaging, level 0 has sqrtBins=1 (a single tile),
-// so this reduces to a single bilinear read per pixel.
+// Fluence shader with C-1 gathering: for each pixel, traces a short per-pixel
+// ray (C-1) in each of 4 directions and merges with the bilinearly-sampled
+// per-direction C0 data from the cascade texture.
 const fluenceShader = /*wgsl*/ `
+const PI: f32 = 3.141592653589793;
+const TAU: f32 = PI * 2.0;
+
 struct UBO {
   probeSpacing: f32,
   cascadeWidth: i32,
@@ -1476,33 +1499,141 @@ struct UBO {
   width: i32,
   height: i32,
   sqrtBins: i32,
+  debugMode: i32,
 }
 
 @group(0) @binding(0) var fluenceTexture: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(1) var cascadeTexture: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> ubo: UBO;
 @group(0) @binding(3) var cascadeSampler: sampler;
+@group(0) @binding(4) var sdfTexture: texture_2d<f32>;
+@group(0) @binding(5) var worldTexture: texture_2d<f32>;
+
+fn sampleSDF(pos: vec2f) -> f32 {
+  let dims = vec2f(f32(ubo.width), f32(ubo.height));
+  if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
+    return 1e6;
+  }
+  let uv = pos / dims;
+  return max(textureSampleLevel(sdfTexture, cascadeSampler, uv, 0.0).r, 0.0);
+}
+
+fn sampleWorld(pos: vec2f) -> vec4f {
+  let ipos = vec2i(pos);
+  if (ipos.x < 0 || ipos.y < 0 || ipos.x >= ubo.width || ipos.y >= ubo.height) {
+    return vec4f(0.0);
+  }
+  return textureLoad(worldTexture, ipos, 0);
+}
+
+fn marchC1(origin: vec2f, direction: vec2f, maxDist: f32) -> vec4f {
+  let originWorld = sampleWorld(origin);
+  if (originWorld.a > 0.5) {
+    return vec4f(originWorld.rgb, 0.0);
+  }
+
+  var t = 0.0;
+  for (var i = 0; i < 8; i++) {
+    if (t >= maxDist) { break; }
+    let pos = origin + direction * t;
+    let dist = sampleSDF(pos);
+    if (dist >= maxDist - t) { break; }
+    if (dist < 1.0) {
+      let w = sampleWorld(pos);
+      if (w.a > 0.5) {
+        return vec4f(w.rgb, 0.0);
+      }
+    }
+    t += max(dist, 0.5);
+  }
+  return vec4f(0.0, 0.0, 0.0, 1.0);
+}
 
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
   if (i32(id.x) >= ubo.width || i32(id.y) >= ubo.height) { return; }
 
+  let texSize = vec2f(textureDimensions(cascadeTexture));
+
+  // Mode 5: Raw cascade atlas — display the cascade texture directly.
+  // The 2×2 directional tiles are visible at half spatial resolution each.
+  if (ubo.debugMode == 5) {
+    let rawUV = (vec2f(id.xy) + 0.5) / texSize;
+    textureStore(fluenceTexture, id.xy, textureSampleLevel(cascadeTexture, cascadeSampler, rawUV, 0.0));
+    return;
+  }
+
   let pixelCenter = vec2f(id.xy) + 0.5;
   let probeCoord = pixelCenter / ubo.probeSpacing - 0.5;
   let clampedCoord = clamp(probeCoord, vec2f(0.5), vec2f(f32(ubo.cascadeWidth) - 1.5, f32(ubo.cascadeHeight) - 1.5));
-  let texSize = vec2f(textureDimensions(cascadeTexture));
 
   let binCount = ubo.sqrtBins * ubo.sqrtBins;
-  var acc = vec4f(0.0);
+  let cm1Dist = ubo.probeSpacing;
+
+  // Mode 4: Per-direction C-1+C0 merged — 2×2 interleaved.
+  // Each 2×2 block shows all 4 directions from the block's center (probe center).
+  // Layout matches cascade tile order: TL=dir0, TR=dir1, BL=dir2, BR=dir3.
+  if (ubo.debugMode == 4) {
+    let blockX = (id.x / 2u) * 2u;
+    let blockY = (id.y / 2u) * 2u;
+    let blockCenter = vec2f(f32(blockX) + 1.0, f32(blockY) + 1.0);
+    let subX = i32(id.x % 2u);
+    let subY = i32(id.y % 2u);
+    let dirIdx = subY * ubo.sqrtBins + subX;
+
+    let angle = TAU * (f32(dirIdx) + 0.5) / f32(binCount);
+    let dir = vec2f(cos(angle), sin(angle));
+    let cm1 = marchC1(blockCenter, dir, cm1Dist);
+
+    let pc = blockCenter / ubo.probeSpacing - 0.5;
+    let cc = clamp(pc, vec2f(0.5), vec2f(f32(ubo.cascadeWidth) - 1.5, f32(ubo.cascadeHeight) - 1.5));
+    let tdx = dirIdx % ubo.sqrtBins;
+    let tdy = dirIdx / ubo.sqrtBins;
+    let tileOrig = vec2f(f32(tdx * ubo.cascadeWidth), f32(tdy * ubo.cascadeHeight));
+    let dirUV = (tileOrig + cc + 0.5) / texSize;
+    let c0dir = textureSampleLevel(cascadeTexture, cascadeSampler, dirUV, 0.0);
+
+    textureStore(fluenceTexture, id.xy, vec4f(cm1.rgb + cm1.a * c0dir.rgb, 1.0));
+    return;
+  }
+
+  let originSDF = sampleSDF(pixelCenter);
+  let needsC1 = originSDF < cm1Dist;
+
+  var merged = vec4f(0.0);
+  var c0Only = vec4f(0.0);
+  var cm1Only = vec4f(0.0);
   for (var d = 0; d < binCount; d++) {
     let dx = d % ubo.sqrtBins;
     let dy = d / ubo.sqrtBins;
     let tileOrigin = vec2f(f32(dx * ubo.cascadeWidth), f32(dy * ubo.cascadeHeight));
     let uv = (tileOrigin + clampedCoord + 0.5) / texSize;
-    acc += textureSampleLevel(cascadeTexture, cascadeSampler, uv, 0.0);
+    let c0 = textureSampleLevel(cascadeTexture, cascadeSampler, uv, 0.0);
+
+    if (needsC1) {
+      let angle = TAU * (f32(d) + 0.5) / f32(binCount);
+      let dir = vec2f(cos(angle), sin(angle));
+      let cm1 = marchC1(pixelCenter, dir, cm1Dist);
+      merged += vec4f(cm1.rgb + cm1.a * c0.rgb, cm1.a * c0.a);
+      cm1Only += cm1;
+    } else {
+      merged += c0;
+    }
+    c0Only += c0;
   }
 
-  textureStore(fluenceTexture, id.xy, acc / f32(binCount));
+  let n = f32(binCount);
+  if (ubo.debugMode == 1) {
+    textureStore(fluenceTexture, id.xy, cm1Only / n);
+  } else if (ubo.debugMode == 2) {
+    textureStore(fluenceTexture, id.xy, c0Only / n);
+  } else if (ubo.debugMode == 3) {
+    let diff = (merged - c0Only) / n;
+    let vis = diff * 4.0 + 0.5;
+    textureStore(fluenceTexture, id.xy, vec4f(vis.rgb, 1.0));
+  } else {
+    textureStore(fluenceTexture, id.xy, merged / n);
+  }
 }
 `;
 
