@@ -50,7 +50,7 @@ function uploadVertexData(
 export class FolkRadianceCascade extends FolkBaseSet {
   static override tagName = 'folk-radiance-cascade';
 
-  @property({ type: Number, reflect: true }) exposure = 1.0;
+  @property({ type: Number, reflect: true }) exposure = 2.0;
 
   #canvas!: HTMLCanvasElement;
   #device!: GPUDevice;
