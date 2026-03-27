@@ -6,7 +6,7 @@ type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: numbe
 
 // The one tunable parameter: probe spacing at the finest cascade level.
 // Smaller = higher quality, larger cascade textures.
-const PROBE_SPACING_0 = 2;
+const PROBE_SPACING_0 = 1;
 
 // Fixed by the 2D Radiance Cascades algorithm (Sannikov 2023).
 // In 2D, 4 base rays with 4× angular branching and 2× spatial scaling
@@ -145,12 +145,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
   #smoothedGpuTime = 0;
   #smoothedCpuTime = 0;
   #lastOverlayUpdate = 0;
-
-  // Debug UI
-  #debugPanel: HTMLDivElement | null = null;
-  #debugVisible = false;
-  #screenshotPending = false;
-  #c1Enabled = true;
 
   override async connectedCallback() {
     super.connectedCallback();
@@ -611,7 +605,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     // Processing order is highest level first (no upper cascade) down to level 0.
     // Each level alternates which cascade texture it writes to vs reads from.
     const levelCount = this.#numCascadeLevels;
-    const cm1Dist = this.#c1Enabled ? PROBE_SPACING_0 : 0;
     this.#raymarchBindGroups = [];
     for (let level = 0; level <= levelCount; level++) {
       const processIndex = levelCount - level;
@@ -622,12 +615,10 @@ export class FolkRadianceCascade extends FolkBaseSet {
       const sqrtBins = Math.round(Math.pow(SPATIAL_SCALE, level));
       const cascadeWidth = Math.floor(width / probeSpacing);
       const cascadeHeight = Math.floor(height / probeSpacing);
-      const baseStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
-      const baseEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level);
-      const intervalStart = baseStart + cm1Dist;
-      const intervalEnd = baseEnd + cm1Dist;
+      const intervalStart = level === 0 ? 0 : PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level - 1);
 
       const upperSpacing = PROBE_SPACING_0 * Math.pow(SPATIAL_SCALE, level + 1);
+      const intervalEnd = PROBE_SPACING_0 * Math.pow(BRANCHING_FACTOR, level);
       const upperCascadeW = level >= levelCount ? 0 : Math.floor(width / upperSpacing);
       const upperCascadeH = level >= levelCount ? 0 : Math.floor(height / upperSpacing);
 
@@ -672,7 +663,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       width,
       height,
       sqrtBins: 1, // SPATIAL_SCALE^0 = 1
-      c0IntervalStart: cm1Dist,
     });
     this.#device.queue.writeBuffer(this.#fluenceUBO, 0, this.#fluenceUBOView.arrayBuffer);
 
@@ -683,7 +673,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
         { binding: 1, resource: this.#cascadeTextureViews[level0ResultIndex] },
         { binding: 2, resource: { buffer: this.#fluenceUBO } },
         { binding: 3, resource: this.#linearSampler },
-        { binding: 4, resource: this.#worldTextureView },
       ],
     });
 
@@ -794,11 +783,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
       lastTime = now;
 
       this.#runRadianceCascades();
-
-      if (this.#screenshotPending) {
-        this.#screenshotPending = false;
-        this.#captureScreenshot();
-      }
 
       if (this.#profilingVisible && now - this.#lastOverlayUpdate > 200) {
         this.#lastOverlayUpdate = now;
@@ -999,94 +983,7 @@ export class FolkRadianceCascade extends FolkBaseSet {
         this.#profilingOverlay.style.display = this.#profilingVisible ? 'block' : 'none';
       }
     }
-    if (e.key === '/') {
-      this.#debugVisible = !this.#debugVisible;
-      if (this.#debugPanel) {
-        this.#debugPanel.style.display = this.#debugVisible ? 'block' : 'none';
-      } else if (this.#debugVisible) {
-        this.#createDebugPanel();
-      }
-    }
   };
-
-  #createDebugPanel() {
-    this.#debugPanel = document.createElement('div');
-    Object.assign(this.#debugPanel.style, {
-      position: 'fixed',
-      top: '8px',
-      right: '8px',
-      fontFamily: "'SF Mono', Consolas, Monaco, monospace",
-      fontSize: '11px',
-      lineHeight: '1.8',
-      color: '#eee',
-      background: 'rgba(0, 0, 0, 0.85)',
-      padding: '10px 14px',
-      borderRadius: '6px',
-      zIndex: '99999',
-      minWidth: '180px',
-    });
-
-    const title = document.createElement('div');
-    title.textContent = 'RC Debug';
-    Object.assign(title.style, { fontWeight: 'bold', marginBottom: '6px', color: '#0f0' });
-    this.#debugPanel.appendChild(title);
-
-    const c1Label = document.createElement('label');
-    Object.assign(c1Label.style, { display: 'block', cursor: 'pointer', marginBottom: '4px' });
-    const c1Check = document.createElement('input');
-    c1Check.type = 'checkbox';
-    c1Check.checked = this.#c1Enabled;
-    c1Check.addEventListener('change', () => {
-      this.#c1Enabled = c1Check.checked;
-      this.#initBindGroups();
-    });
-    c1Label.appendChild(c1Check);
-    c1Label.append(' C-1 Gathering');
-    this.#debugPanel.appendChild(c1Label);
-
-    const screenshotBtn = document.createElement('button');
-    screenshotBtn.textContent = '📷 Screenshot';
-    Object.assign(screenshotBtn.style, {
-      display: 'block',
-      marginTop: '8px',
-      padding: '4px 10px',
-      background: '#333',
-      color: '#eee',
-      border: '1px solid #555',
-      borderRadius: '3px',
-      cursor: 'pointer',
-      fontFamily: 'inherit',
-      fontSize: 'inherit',
-    });
-    screenshotBtn.addEventListener('click', () => this.#takeScreenshot());
-    this.#debugPanel.appendChild(screenshotBtn);
-
-    document.body.appendChild(this.#debugPanel);
-  }
-
-  #takeScreenshot() {
-    this.#screenshotPending = true;
-  }
-
-  #captureScreenshot() {
-    const w = this.#canvas.width;
-    const h = this.#canvas.height;
-    const offscreen = document.createElement('canvas');
-    offscreen.width = w;
-    offscreen.height = h;
-    const ctx = offscreen.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(this.#canvas, 0, 0);
-    offscreen.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `rc-screenshot-${Date.now()}.png`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
-  }
 
   #cleanupResources() {
     this.#cascadeTextures?.forEach((t) => t.destroy());
@@ -1176,7 +1073,6 @@ export class FolkRadianceCascade extends FolkBaseSet {
     this.#profilingResolveBuffer?.destroy();
     this.#profilingReadBuffers?.forEach((b) => b.destroy());
     this.#profilingOverlay?.remove();
-    this.#debugPanel?.remove();
   }
 }
 
@@ -1402,7 +1298,9 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
 `;
 
 // Raymarch shader with pre-averaging and optional bilinear fix.
+//
 // Each thread handles one pre-averaged "bin" covering 4 sub-directions.
+// Vanilla merge: 4 rays, each merged with 1 bilinear upper sample.
 // Bilinear fix: 4 rays × 4 upper probes = 16 rays; each ray is aimed at
 // one of the 4 surrounding upper probes, merged with that probe's value,
 // then spatially weighted. Fixes ringing/parallax artifacts at 4× ray cost.
@@ -1567,14 +1465,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 }
 `;
 
-// Fluence shader with C-1 gathering. For each pixel, cast short per-pixel rays
-// [0, c0IntervalStart) in each direction, then merge with the bilinearly
-// interpolated c0 cascade value. Gives pixel-perfect contact shadows without
-// storing extra cascade data.
+// Fluence shader: samples the merged cascade-0 texture to produce per-pixel
+// irradiance. With pre-averaging, level 0 has sqrtBins=1 (a single tile),
+// so this reduces to a single bilinear read per pixel.
 const fluenceShader = /*wgsl*/ `
-const PI: f32 = 3.141592653589793;
-const TAU: f32 = PI * 2.0;
-
 struct UBO {
   probeSpacing: f32,
   cascadeWidth: i32,
@@ -1582,72 +1476,33 @@ struct UBO {
   width: i32,
   height: i32,
   sqrtBins: i32,
-  c0IntervalStart: f32,
 }
 
 @group(0) @binding(0) var fluenceTexture: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(1) var cascadeTexture: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> ubo: UBO;
 @group(0) @binding(3) var cascadeSampler: sampler;
-@group(0) @binding(4) var worldTexture: texture_2d<f32>;
-
-fn sampleWorld(pos: vec2f) -> vec4f {
-  let ipos = vec2i(pos);
-  if (ipos.x < 0 || ipos.y < 0 || ipos.x >= ubo.width || ipos.y >= ubo.height) {
-    return vec4f(0.0);
-  }
-  return textureLoad(worldTexture, ipos, 0);
-}
-
-fn marchRayC1(origin: vec2f, dir: vec2f, maxDist: f32) -> vec4f {
-  var radiance = vec3f(0.0);
-  var transmittance = 1.0;
-  var t = 0.5;
-  while (t < maxDist) {
-    let pos = origin + dir * t;
-    let worldSample = sampleWorld(pos);
-    radiance += worldSample.rgb * transmittance * worldSample.a;
-    transmittance *= (1.0 - worldSample.a);
-    t += 1.0;
-  }
-  return vec4f(radiance, transmittance);
-}
 
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
   if (i32(id.x) >= ubo.width || i32(id.y) >= ubo.height) { return; }
 
   let pixelCenter = vec2f(id.xy) + 0.5;
-  let c0Start = ubo.c0IntervalStart;
-
-  // Bilinearly sample c0 (same UV math as old fluence shader)
   let probeCoord = pixelCenter / ubo.probeSpacing - 0.5;
-  let clampedCoord = clamp(probeCoord, vec2f(0.5),
-    vec2f(f32(ubo.cascadeWidth) - 1.5, f32(ubo.cascadeHeight) - 1.5));
+  let clampedCoord = clamp(probeCoord, vec2f(0.5), vec2f(f32(ubo.cascadeWidth) - 1.5, f32(ubo.cascadeHeight) - 1.5));
   let texSize = vec2f(textureDimensions(cascadeTexture));
 
   let binCount = ubo.sqrtBins * ubo.sqrtBins;
-  let totalRays = binCount * 4;
-
-  var fluence = vec4f(0.0);
+  var acc = vec4f(0.0);
   for (var d = 0; d < binCount; d++) {
     let dx = d % ubo.sqrtBins;
     let dy = d / ubo.sqrtBins;
     let tileOrigin = vec2f(f32(dx * ubo.cascadeWidth), f32(dy * ubo.cascadeHeight));
     let uv = (tileOrigin + clampedCoord + 0.5) / texSize;
-    let c0Val = textureSampleLevel(cascadeTexture, cascadeSampler, uv, 0.0);
-
-    for (var k = 0; k < 4; k++) {
-      let rayIndex = d * 4 + k;
-      let angle = TAU * (f32(rayIndex) + 0.5) / f32(totalRays);
-      let dir = vec2f(cos(angle), sin(angle));
-
-      let c1Hit = marchRayC1(pixelCenter, dir, c0Start);
-      fluence += vec4f(c1Hit.rgb + c1Hit.a * c0Val.rgb, c1Hit.a * c0Val.a);
-    }
+    acc += textureSampleLevel(cascadeTexture, cascadeSampler, uv, 0.0);
   }
 
-  textureStore(fluenceTexture, id.xy, fluence / f32(totalRays));
+  textureStore(fluenceTexture, id.xy, acc / f32(binCount));
 }
 `;
 
@@ -1696,6 +1551,26 @@ fn linearToSrgb(c: vec3f) -> vec3f {
   return pow(c, vec3f(1.0 / 2.2));
 }
 
+fn pcg(v: u32) -> u32 {
+  var state = v * 747796405u + 2891336453u;
+  let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return word ^ (word >> 16u);
+}
+
+fn triangularDither(pos: vec2u) -> vec3f {
+  let s0 = pcg(pos.x + pos.y * 65536u);
+  let s1 = pcg(s0);
+  let s2 = pcg(s1);
+  let s3 = pcg(s2);
+  let s4 = pcg(s3);
+  let s5 = pcg(s4);
+  return vec3f(
+    f32(s0) / 4294967295.0 + f32(s1) / 4294967295.0 - 1.0,
+    f32(s2) / 4294967295.0 + f32(s3) / 4294967295.0 - 1.0,
+    f32(s4) / 4294967295.0 + f32(s5) / 4294967295.0 - 1.0,
+  ) / 255.0;
+}
+
 @fragment
 fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
   let fluence = textureSample(fluenceTexture, fluenceSampler, in.uv);
@@ -1706,7 +1581,7 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
   let hdr = (emissive + indirect) * ubo.exposure;
 
   let mapped = acesTonemap(hdr);
-  let srgb = linearToSrgb(mapped);
+  let srgb = linearToSrgb(mapped) + triangularDither(vec2u(in.position.xy));
   return vec4f(srgb, 1.0);
 }
 `;
