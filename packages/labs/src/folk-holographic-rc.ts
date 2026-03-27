@@ -93,7 +93,7 @@ struct CascadeParams {
   nextNumAngles: u32,
   nextSpacing: f32,
   nextAlongSize: u32,
-  _pad0: u32,
+  isLastCascade: u32,
   screenW: f32,
   screenH: f32,
   originX: f32,
@@ -136,7 +136,7 @@ fn traceRay(startW: vec2f, endW: vec2f) -> vec4f {
   let delta = endW - startW;
   let dist = length(delta);
   if (dist < 0.5) { return vec4f(0.0, 0.0, 0.0, 1.0); }
-  let numSteps = clamp(u32(ceil(dist)), 1u, 128u);
+  let numSteps = clamp(u32(ceil(dist)), 1u, 512u);
   let step = delta / f32(numSteps);
   var radiance = vec3f(0.0);
   var transmittance = 1.0;
@@ -181,9 +181,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let nearAlong = alongIdx / 2;
     let farAlong = nearAlong + 1;
 
-    let nearUp = readPrev(perpIdx, nearAlong, angleIdx * 2u, params.nextNumAngles);
-    let nearLo = readPrev(perpIdx, nearAlong, angleIdx * 2u + 1u, params.nextNumAngles);
-
     let fPerpUp = perpIdx + offset_0 * 2;
     let fPerpLo = perpIdx + offset_1 * 2;
     let endUp = toWorld(fPerpUp, farAlong, params.nextSpacing);
@@ -195,10 +192,22 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let farUp = readPrev(fPerpUp, farAlong, angleIdx * 2u, params.nextNumAngles);
     let farLo = readPrev(fPerpLo, farAlong, angleIdx * 2u + 1u, params.nextNumAngles);
 
-    let upper = (nearUp + overComp(trUp, farUp)) * 0.5;
-    let lower = (nearLo + overComp(trLo, farLo)) * 0.5;
-    result = (upper * uSize + lower * lSize) / (uSize + lSize);
+    let nearValid = params.isLastCascade == 0u
+                  && nearAlong >= 0
+                  && nearAlong < i32(params.nextAlongSize);
+    if (nearValid) {
+      let nearUp = readPrev(perpIdx, nearAlong, angleIdx * 2u, params.nextNumAngles);
+      let nearLo = readPrev(perpIdx, nearAlong, angleIdx * 2u + 1u, params.nextNumAngles);
+      let upper = (nearUp + overComp(trUp, farUp)) * 0.5;
+      let lower = (nearLo + overComp(trLo, farLo)) * 0.5;
+      result = (upper * uSize + lower * lSize) / (uSize + lSize);
+    } else {
+      let upper = overComp(trUp, farUp);
+      let lower = overComp(trLo, farLo);
+      result = (upper * uSize + lower * lSize) / (uSize + lSize);
+    }
   } else {
+    // Odd probes: between next cascade probes, trace to both
     let tAlong = alongIdx / 2 + 1;
     let tPerpUp = perpIdx + offset_0;
     let tPerpLo = perpIdx + offset_1;
@@ -249,19 +258,25 @@ struct AccumParams {
 @group(0) @binding(1) var prevFluence: texture_2d<f32>;
 @group(0) @binding(2) var currFluence: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(3) var<uniform> params: AccumParams;
+@group(0) @binding(4) var linearSamp: sampler;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= params.screenW || gid.y >= params.screenH) { return; }
-  var cc: vec2i;
+  let cascadeDims = vec2f(textureDimensions(cascadeTex));
+  // Read one probe ahead in the direction (per paper section 3.9 and
+  // amitabha's pos + grid.axis_y). Cascade 0 cones start one step along
+  // the direction, so the probe at alongIdx+1 traces TOWARD this pixel.
+  var cc: vec2f;
   switch (params.direction) {
-    case 0u: { cc = vec2i(gid.xy); }
-    case 1u: { cc = vec2i(i32(gid.y), i32(gid.x)); }
-    case 2u: { cc = vec2i(i32(params.screenW) - 1 - i32(gid.x), i32(gid.y)); }
-    case 3u: { cc = vec2i(i32(params.screenH) - 1 - i32(gid.y), i32(gid.x)); }
-    default: { cc = vec2i(gid.xy); }
+    case 0u: { cc = vec2f(f32(gid.x) + 1.0, f32(gid.y)); }
+    case 1u: { cc = vec2f(f32(gid.y) + 1.0, f32(gid.x)); }
+    case 2u: { cc = vec2f(f32(params.screenW) - 2.0 - f32(gid.x), f32(gid.y)); }
+    case 3u: { cc = vec2f(f32(params.screenH) - 2.0 - f32(gid.y), f32(gid.x)); }
+    default: { cc = vec2f(gid.xy); }
   }
-  let cv = textureLoad(cascadeTex, cc, 0);
+  let uv = (cc + 0.5) / cascadeDims;
+  let cv = textureSampleLevel(cascadeTex, linearSamp, uv, 0.0);
   let pc = vec2i(gid.xy);
   if (params.isFirstDir == 1u) {
     textureStore(currFluence, pc, cv);
@@ -397,6 +412,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   #fluenceAccumPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
+  // Sampler
+  #linearSampler!: GPUSampler;
+
   // Uniform buffers
   #cascadeParamsBuffer!: GPUBuffer;
   #accumParamsBuffer!: GPUBuffer;
@@ -409,6 +427,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   #animationFrame = 0;
   #isRunning = false;
   #resizing = false;
+
+  // Debug: 0=all directions, 1=east, 2=south, 3=west, 4=north
+  #debugDir = 0;
 
   // FPS tracking
   #fpsOverlay: HTMLDivElement | null = null;
@@ -436,6 +457,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#initPipelines();
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
+    window.addEventListener('keydown', this.#handleKeyDown);
     this.#isRunning = true;
     this.#startAnimationLoop();
     this.requestUpdate();
@@ -447,6 +469,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (this.#animationFrame) cancelAnimationFrame(this.#animationFrame);
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
+    window.removeEventListener('keydown', this.#handleKeyDown);
     this.#fpsOverlay?.remove();
     this.#fpsOverlay = null;
     this.#destroyResources();
@@ -514,13 +537,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#context = context;
     this.#presentationFormat = navigator.gpu.getPreferredCanvasFormat();
     this.#context.configure({ device: this.#device, format: this.#presentationFormat, alphaMode: 'premultiplied' });
+    this.#linearSampler = this.#device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
   }
 
   #initResources() {
     const { width, height } = this.#canvas;
     const device = this.#device;
 
-    this.#numCascades = Math.ceil(Math.log2(Math.max(width, height)));
+    this.#numCascades = Math.min(Math.ceil(Math.log2(Math.max(width, height))), 9);
     this.#maxCascadeDim = Math.max(width, height);
 
     this.#worldTexture = device.createTexture({
@@ -845,8 +869,11 @@ export class FolkHolographicRC extends FolkBaseSet {
     let fluenceReadView = this.#fluenceTexAView;
     let fluenceWriteView = this.#fluenceTexBView;
     let fluenceResultView = this.#fluenceTexAView;
+    let isFirstProcessedDir = true;
 
     for (let dir = 0; dir < 4; dir++) {
+      if (this.#debugDir > 0 && dir !== this.#debugDir - 1) continue;
+
       const cfg = DIRECTIONS[dir];
       const perpSize = cfg.perpSize(width, height);
       const alongBase = cfg.alongBase(width, height);
@@ -905,11 +932,12 @@ export class FolkHolographicRC extends FolkBaseSet {
       device.queue.writeBuffer(
         this.#accumParamsBuffer,
         accumOffset,
-        new Uint32Array([dir, dir === 0 ? 1 : 0, width, height]),
+        new Uint32Array([dir, isFirstProcessedDir ? 1 : 0, width, height]),
       );
 
       // Fluence accumulation ping-pong
-      if (dir === 0) {
+      if (isFirstProcessedDir) {
+        isFirstProcessedDir = false;
         fluenceWriteView = this.#fluenceTexAView;
         fluenceReadView = this.#fluenceTexBView;
       } else {
@@ -925,6 +953,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           { binding: 1, resource: fluenceReadView },
           { binding: 2, resource: fluenceWriteView },
           { binding: 3, resource: { buffer: this.#accumParamsBuffer, offset: accumOffset, size: 16 } },
+          { binding: 4, resource: this.#linearSampler },
         ],
       });
 
@@ -985,6 +1014,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         const alongSize = Math.max(Math.floor(alongBase / spacing), 1);
         const numAngles = Math.pow(2, level);
 
+        const isLast = level === numCascades - 1 ? 1 : 0;
         const nextSpacing = Math.pow(2, level + 1);
         const nextNumAngles = Math.pow(2, level + 1);
         const nextAlongSize = Math.max(Math.floor(alongBase / nextSpacing), 1);
@@ -1000,7 +1030,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         u32[4] = nextNumAngles;
         f32[5] = nextSpacing;
         u32[6] = nextAlongSize;
-        u32[7] = 0;
+        u32[7] = isLast;
         f32[8] = width;
         f32[9] = height;
         f32[10] = originX;
@@ -1049,6 +1079,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mousePosition.y = e.clientY - rect.top;
   };
 
+  #handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'd' || e.key === 'D') {
+      this.#debugDir = (this.#debugDir + 1) % 5;
+      const names = ['All', 'East', 'South', 'West', 'North'];
+      console.log(`HRC debug: ${names[this.#debugDir]}`);
+    }
+  };
+
   #ensureFpsOverlay() {
     if (this.#fpsOverlay) return;
     this.#fpsOverlay = document.createElement('div');
@@ -1082,7 +1120,9 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#ensureFpsOverlay();
       const fps = this.#smoothedFrameTime > 0 ? Math.round(1000 / this.#smoothedFrameTime) : 0;
       const ms = this.#smoothedFrameTime.toFixed(1);
-      this.#fpsOverlay!.textContent = `${fps} fps (${ms} ms)`;
+      const dirNames = ['All', 'E', 'S', 'W', 'N'];
+      const dirLabel = this.#debugDir > 0 ? ` [${dirNames[this.#debugDir]}]` : '';
+      this.#fpsOverlay!.textContent = `${fps} fps (${ms} ms)${dirLabel}`;
     }
   }
 }
