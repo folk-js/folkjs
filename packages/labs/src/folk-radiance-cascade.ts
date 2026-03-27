@@ -1343,7 +1343,7 @@ fn sampleSDF(pos: vec2f) -> f32 {
   if (pos.x < 0.0 || pos.y < 0.0 || pos.x >= dims.x || pos.y >= dims.y) {
     return 1e6;
   }
-  let uv = (pos + 0.5) / dims;
+  let uv = pos / dims;
   return max(textureSampleLevel(sdfTexture, worldSampler, uv, 0.0).r, 0.0);
 }
 
