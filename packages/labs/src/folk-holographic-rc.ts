@@ -282,6 +282,26 @@ struct BlitParams { exposure: f32, pad0: f32, pad1: f32, pad2: f32 };
 @group(0) @binding(1) var worldTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: BlitParams;
 
+fn acesTonemap(x: vec3f) -> vec3f {
+  return clamp(
+    (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14),
+    vec3f(0.0), vec3f(1.0),
+  );
+}
+fn linearToSrgb(c: vec3f) -> vec3f { return pow(c, vec3f(1.0 / 2.2)); }
+
+fn pcg(v: u32) -> u32 {
+  let s = v * 747796405u + 2891336453u;
+  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (w >> 22u) ^ w;
+}
+fn triangularDither(fragCoord: vec2u) -> vec3f {
+  let seed = fragCoord.x + fragCoord.y * 8192u;
+  let r0 = f32(pcg(seed)) / 4294967295.0;
+  let r1 = f32(pcg(seed + 1u)) / 4294967295.0;
+  return vec3f((r0 + r1 - 1.0) / 255.0);
+}
+
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   let pos = array(vec2f(-1, -1), vec2f(1, -1), vec2f(-1, 1), vec2f(1, 1));
   return vec4f(pos[i], 0, 1);
@@ -289,9 +309,12 @@ struct BlitParams { exposure: f32, pad0: f32, pad1: f32, pad2: f32 };
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let fluence = textureLoad(fluenceTex, vec2u(pos.xy), 0).rgb;
   let world = textureLoad(worldTex, vec2u(pos.xy), 0);
-  let lit = fluence * params.exposure;
-  let emission = world.rgb * world.a * 0.15;
-  return vec4f(lit + emission, 1.0);
+  let emissive = world.rgb * world.a;
+  let indirect = fluence;
+  let hdr = (emissive + indirect) * params.exposure;
+  let mapped = acesTonemap(hdr);
+  let srgb = linearToSrgb(mapped) + triangularDither(vec2u(pos.xy));
+  return vec4f(srgb, 1.0);
 }
 `;
 

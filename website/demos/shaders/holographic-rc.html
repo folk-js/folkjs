@@ -252,26 +252,22 @@
         const cx = W / 2;
         const cy = H / 2;
 
-        // Colored emitter bars on the left (stacked vertically)
-        const barW = 30;
-        const barH = 50;
-        const gap = 6;
-        const barColors = [2, 3, 4, 5, 6, 7, 8]; // red, orange, yellow, green, cyan, blue, purple
+        const barW = 16;
+        const barH = 24;
+        const gap = 3;
+        const barColors = [2, 3, 4, 5, 6, 7, 8];
         const totalH = barColors.length * barH + (barColors.length - 1) * gap;
-        const barX = cx * 0.35;
+        const barX = cx - 200;
         const barStartY = cy - totalH / 2;
         for (let i = 0; i < barColors.length; i++) {
           addShape(barX, barStartY + i * (barH + gap), barW, barH, barColors[i]);
         }
 
-        // Divider wall in the middle with a small pinhole gap
         const wallX = cx - 5;
-        const wallW = 10;
-        const pinholeSize = 30;
+        const wallW = 8;
+        const pinholeSize = 24;
         const pinholeY = cy - pinholeSize / 2;
-        // Wall above the pinhole
         addShape(wallX, 0, wallW, pinholeY, 1);
-        // Wall below the pinhole
         addShape(wallX, pinholeY + pinholeSize, wallW, H - (pinholeY + pinholeSize), 1);
       }
 

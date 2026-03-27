@@ -142,6 +142,7 @@
       ];
 
       const scenes = [
+        { name: 'Pinhole', fn: loadPinhole },
         { name: 'Empty', fn: loadEmpty },
         { name: 'Center block', fn: loadCenterBlock },
         { name: 'Thin walls', fn: loadThinWalls },
@@ -247,6 +248,31 @@
       }
 
       // --- Scene definitions ---
+      function loadPinhole() {
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const cx = W / 2;
+        const cy = H / 2;
+
+        const barW = 16;
+        const barH = 24;
+        const gap = 3;
+        const barColors = [2, 3, 4, 5, 6, 7, 8];
+        const totalH = barColors.length * barH + (barColors.length - 1) * gap;
+        const barX = cx - 200;
+        const barStartY = cy - totalH / 2;
+        for (let i = 0; i < barColors.length; i++) {
+          addShape(barX, barStartY + i * (barH + gap), barW, barH, barColors[i]);
+        }
+
+        const wallX = cx - 5;
+        const wallW = 8;
+        const pinholeSize = 24;
+        const pinholeY = cy - pinholeSize / 2;
+        addShape(wallX, 0, wallW, pinholeY, 1);
+        addShape(wallX, pinholeY + pinholeSize, wallW, H - (pinholeY + pinholeSize), 1);
+      }
+
       function loadEmpty() {}
 
       function loadCenterBlock() {
@@ -383,7 +409,7 @@
         animate();
       }
 
-      switchScene(5);
+      switchScene(0);
 
       // --- Key handling ---
       document.addEventListener('keydown', (e) => {
