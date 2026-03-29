@@ -3,6 +3,10 @@ import { FolkBaseSet } from './folk-base-set';
 
 type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: number, b: number, thickness: number];
 
+function nextPowerOf2(n: number): number {
+  return 2 ** Math.ceil(Math.log2(Math.max(n, 2)));
+}
+
 function uploadVertexData(
   device: GPUDevice,
   existing: GPUBuffer | undefined,
@@ -337,14 +341,14 @@ const DIRECTIONS: DirConfig[] = [
   {
     alongAxis: [-1, 0],
     perpAxis: [0, 1],
-    originFn: (w) => [w - 1, 0],
+    originFn: (w) => [w, 0],
     perpSize: (_w, h) => h,
     alongBase: (w) => w,
   },
   {
     alongAxis: [0, -1],
     perpAxis: [1, 0],
-    originFn: (_w, h) => [0, h - 1],
+    originFn: (_w, h) => [0, h],
     perpSize: (w) => w,
     alongBase: (_w, h) => h,
   },
@@ -536,8 +540,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     const { width, height } = this.#canvas;
     const device = this.#device;
 
-    this.#numCascades = Math.ceil(Math.log2(Math.max(width, height)));
-    this.#maxCascadeDim = Math.max(width, height);
+    this.#maxCascadeDim = nextPowerOf2(Math.max(width, height));
+    this.#numCascades = Math.log2(this.#maxCascadeDim);
 
     this.#worldTexture = device.createTexture({
       label: 'HRC-World',
@@ -868,7 +872,8 @@ export class FolkHolographicRC extends FolkBaseSet {
 
       const cfg = DIRECTIONS[dir];
       const perpSize = cfg.perpSize(width, height);
-      const alongBase = cfg.alongBase(width, height);
+      const alongBase = nextPowerOf2(cfg.alongBase(width, height));
+      const dirCascades = Math.log2(alongBase);
 
       // Clear both cascade textures
       for (const view of [this.#cascadeTexAView, this.#cascadeTexBView]) {
@@ -884,8 +889,8 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
 
       const effectiveCascades = this.#debugCascadeCount > 0
-        ? Math.min(this.#debugCascadeCount, numCascades)
-        : numCascades;
+        ? Math.min(this.#debugCascadeCount, dirCascades)
+        : dirCascades;
       let lastWriteView = this.#cascadeTexAView;
       for (let level = effectiveCascades - 1; level >= 0; level--) {
         const k = numCascades - 1 - level;
@@ -893,9 +898,9 @@ export class FolkHolographicRC extends FolkBaseSet {
         const readView = readFromA ? this.#cascadeTexAView : this.#cascadeTexBView;
         const writeView = readFromA ? this.#cascadeTexBView : this.#cascadeTexAView;
 
-        const spacing = Math.pow(2, level);
-        const alongSize = Math.max(Math.floor(alongBase / spacing), 1);
-        const numAngles = Math.pow(2, level);
+        const spacing = 1 << level;
+        const alongSize = alongBase >> level;
+        const numAngles = 1 << level;
 
         const flatSize = alongSize * numAngles;
         const paramsOffset = (dir * numCascades + (numCascades - 1 - level)) * 256;
@@ -999,20 +1004,21 @@ export class FolkHolographicRC extends FolkBaseSet {
     for (let dir = 0; dir < 4; dir++) {
       const cfg = DIRECTIONS[dir];
       const perpSize = cfg.perpSize(width, height);
-      const alongBase = cfg.alongBase(width, height);
+      const alongBase = nextPowerOf2(cfg.alongBase(width, height));
+      const dirCascades = Math.log2(alongBase);
       const [originX, originY] = cfg.originFn(width, height);
       const [axX, axY] = cfg.alongAxis;
       const [pxX, pxY] = cfg.perpAxis;
 
-      for (let level = numCascades - 1; level >= 0; level--) {
-        const spacing = Math.pow(2, level);
-        const alongSize = Math.max(Math.floor(alongBase / spacing), 1);
-        const numAngles = Math.pow(2, level);
+      for (let level = dirCascades - 1; level >= 0; level--) {
+        const spacing = 1 << level;
+        const alongSize = alongBase >> level;
+        const numAngles = 1 << level;
 
-        const isLast = level === numCascades - 1 ? 1 : 0;
-        const nextSpacing = Math.pow(2, level + 1);
-        const nextNumAngles = Math.pow(2, level + 1);
-        const nextAlongSize = Math.max(Math.floor(alongBase / nextSpacing), 1);
+        const isLast = level === dirCascades - 1 ? 1 : 0;
+        const nextSpacing = 1 << (level + 1);
+        const nextNumAngles = 1 << (level + 1);
+        const nextAlongSize = alongBase >> (level + 1);
 
         const data = new ArrayBuffer(64);
         const u32 = new Uint32Array(data);
@@ -1052,7 +1058,6 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#canvas.width = this.clientWidth || 800;
     this.#canvas.height = this.clientHeight || 600;
-
     this.#context.configure({
       device: this.#device,
       format: this.#presentationFormat,
@@ -1122,12 +1127,13 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#ensureFpsOverlay();
       const fps = this.#smoothedFrameTime > 0 ? Math.round(1000 / this.#smoothedFrameTime) : 0;
       const ms = this.#smoothedFrameTime.toFixed(1);
+      const res = `${this.#canvas.width}x${this.#canvas.height}`;
       const dirNames = ['All', 'E', 'S', 'W', 'N'];
       const dirLabel = this.#debugDir > 0 ? ` [${dirNames[this.#debugDir]}]` : '';
       const ec = this.#debugCascadeCount > 0 ? this.#debugCascadeCount : this.#numCascades;
       const maxSp = Math.pow(2, ec - 1);
       const ccLabel = this.#debugCascadeCount > 0 ? ` C${this.#debugCascadeCount}/${this.#numCascades}` : '';
-      this.#fpsOverlay!.textContent = `${fps} fps (${ms} ms)${dirLabel}${ccLabel} sp${maxSp}`;
+      this.#fpsOverlay!.textContent = `${res} ${fps} fps (${ms} ms)${dirLabel}${ccLabel} sp${maxSp}`;
     }
   }
 }
