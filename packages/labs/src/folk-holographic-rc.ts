@@ -506,18 +506,29 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let py = i32(gid.y);
   if (px >= i32(params.screenW) || py >= i32(params.screenH)) { return; }
 
-  let uv = (vec2f(f32(px), f32(py)) + 0.5) / vec2f(f32(params.screenW), f32(params.screenH));
-  let fluence = textureSampleLevel(prevFluence, fluenceSampler, uv, 0.0).rgb;
+  let screenSize = vec2f(f32(params.screenW), f32(params.screenH));
+  let uv = (vec2f(f32(px), f32(py)) + 0.5) / screenSize;
 
   let albedo = textureLoad(emissionTex, vec2i(px, py), 0).a;
   let opacityVal = textureLoad(opacityTex, vec2i(px, py), 0);
   let scattering = opacityVal.a;
   let avgOpacity = (opacityVal.r + opacityVal.g + opacityVal.b) / 3.0;
 
-  // Surface reflection (albedo) + volumetric scattering.
-  // Albedo: solid surfaces reflect a fraction of incoming fluence.
-  // Scattering: volumes re-emit a fraction of absorbed light.
-  // Both are normalized by 2π (Lambertian, fluence→radiance conversion).
+  // For surface pixels (albedo > 0), the fluence AT the surface is ~0 because
+  // probes inside solid geometry have no incoming light. Sample from the nearest
+  // air pixel by checking cardinal neighbors and taking the max.
+  var fluence: vec3f;
+  if (albedo > 0.001 && avgOpacity > 0.5) {
+    let step = 1.0 / screenSize;
+    let f0 = textureSampleLevel(prevFluence, fluenceSampler, uv + vec2f(step.x, 0.0), 0.0).rgb;
+    let f1 = textureSampleLevel(prevFluence, fluenceSampler, uv - vec2f(step.x, 0.0), 0.0).rgb;
+    let f2 = textureSampleLevel(prevFluence, fluenceSampler, uv + vec2f(0.0, step.y), 0.0).rgb;
+    let f3 = textureSampleLevel(prevFluence, fluenceSampler, uv - vec2f(0.0, step.y), 0.0).rgb;
+    fluence = max(max(f0, f1), max(f2, f3));
+  } else {
+    fluence = textureSampleLevel(prevFluence, fluenceSampler, uv, 0.0).rgb;
+  }
+
   const TWO_PI = 6.2831853;
   let surfaceBounce = fluence * albedo;
   let volumeScatter = fluence * avgOpacity * scattering;
@@ -589,64 +600,54 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   for (var s = 0u; s < params.samplesPerPixel; s++) {
     var rayPos = vec2f(f32(px) + 0.5, f32(py) + 0.5);
-    // Stratified sampling: divide 2π into sectors, jitter within each
     let sectorSize = 6.2831853 / f32(params.samplesPerPixel);
     let angle = (f32(s) + randomFloat(&seed)) * sectorSize;
     var rayDir = vec2f(cos(angle), sin(angle));
     var throughput = vec3f(1.0);
     var radiance = vec3f(0.0);
+    var lastAirPos = rayPos;
 
-    for (var bounce = 0u; bounce <= params.maxBounces; bounce++) {
-      // March the ray through the scene
-      var hitSurface = false;
-      let maxSteps = 2048u;
+    for (var step = 0u; step < 4096u; step++) {
+      rayPos += rayDir;
+      let em = sampleScene(rayPos);
+      let op = sampleOpacity(rayPos);
+      let opacity = op.rgb;
+      let avgOpacity = (opacity.r + opacity.g + opacity.b) / 3.0;
 
-      for (var step = 0u; step < maxSteps; step++) {
-        rayPos += rayDir;
-        let em = sampleScene(rayPos);
-        let op = sampleOpacity(rayPos);
-        let opacity = op.rgb;
-        let avgOpacity = (opacity.r + opacity.g + opacity.b) / 3.0;
-        let scatterCoeff = op.a;
-        let albedo = em.a;
-
-        if (avgOpacity < 0.001) { continue; }
-
-        // Volumetric contribution: emission weighted by opacity
-        radiance += throughput * em.rgb * opacity;
-
-        // Scattering: redirect ray with probability proportional to opacity * scattering
-        if (scatterCoeff > 0.0 && avgOpacity < 0.99) {
-          let scatterProb = avgOpacity * scatterCoeff;
-          if (randomFloat(&seed) < scatterProb) {
-            let newAngle = randomFloat(&seed) * 6.2831853;
-            rayDir = vec2f(cos(newAngle), sin(newAngle));
-            throughput *= (1.0 - opacity) + opacity * scatterCoeff;
-            continue;
-          }
-        }
-
-        // Surface hit (high opacity): absorb and possibly bounce
-        if (avgOpacity > 0.5) {
-          if (albedo > 0.001 && randomFloat(&seed) < albedo) {
-            let newAngle = randomFloat(&seed) * 6.2831853;
-            rayDir = vec2f(cos(newAngle), sin(newAngle));
-            throughput *= (1.0 - opacity);
-            hitSurface = true;
-            break;
-          }
-          // Absorbed — ray terminates
-          throughput *= (1.0 - opacity);
-          hitSurface = true;
-          break;
-        }
-
-        // Partial opacity (volume): attenuate and continue
-        throughput *= (1.0 - opacity);
+      if (avgOpacity < 0.001) {
+        lastAirPos = rayPos;
+        continue;
       }
 
-      if (!hitSurface) { break; }
-      if (all(throughput < vec3f(0.001))) { break; }
+      // Accumulate emission and attenuate (standard volumetric transport)
+      radiance += throughput * em.rgb * opacity;
+      throughput *= (1.0 - opacity);
+
+      // If throughput is near zero, the ray is fully absorbed.
+      // Try diffuse bounce via Russian roulette with albedo.
+      if (all(throughput < vec3f(0.001))) {
+        let albedo = em.a;
+        if (albedo > 0.001 && randomFloat(&seed) < albedo) {
+          // Bounce: move back to last air position, pick new direction.
+          // Throughput restored to pre-absorption level (albedo / probability = 1).
+          throughput = vec3f(1.0);
+          rayPos = lastAirPos;
+          let newAngle = randomFloat(&seed) * 6.2831853;
+          rayDir = vec2f(cos(newAngle), sin(newAngle));
+          continue;
+        }
+        break;
+      }
+
+      // Volumetric scattering
+      let scatterCoeff = op.a;
+      if (scatterCoeff > 0.001) {
+        let scatterProb = avgOpacity * scatterCoeff;
+        if (randomFloat(&seed) < scatterProb) {
+          let newAngle = randomFloat(&seed) * 6.2831853;
+          rayDir = vec2f(cos(newAngle), sin(newAngle));
+        }
+      }
     }
 
     sampleSum += radiance;
@@ -738,7 +739,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   static override tagName = 'folk-holographic-rc';
 
   @property({ type: Number, reflect: true }) exposure = 2.0;
-  @property({ type: Number, reflect: true }) probeSize = 2048;
+  @property({ type: Number, reflect: true }) probeSize = 2048 / 2;
   @property({ type: Boolean, reflect: true }) bounces = true;
   @property({ type: Boolean, reflect: true, attribute: 'path-tracing' }) pathTracing = false;
 
@@ -1308,13 +1309,18 @@ export class FolkHolographicRC extends FolkBaseSet {
   #updateShapeData() {
     const vertices: number[] = [];
     const elements = Array.from(this.sourceElements);
-    this.sourceRects.forEach((rect, index) => {
-      const x0 = (rect.left / this.#canvas.width) * 2 - 1;
-      const y0 = 1 - (rect.top / this.#canvas.height) * 2;
-      const x1 = (rect.right / this.#canvas.width) * 2 - 1;
-      const y1 = 1 - (rect.bottom / this.#canvas.height) * 2;
-      const element = elements[index];
-      const colorAttr = element?.getAttribute('data-color');
+    const cw = this.#canvas.width;
+    const ch = this.#canvas.height;
+
+    elements.forEach((element, index) => {
+      const shape = element as HTMLElement & { x: number; y: number; width: number; height: number; rotation: number };
+      const sx = shape.x ?? 0;
+      const sy = shape.y ?? 0;
+      const sw = shape.width ?? 0;
+      const sh = shape.height ?? 0;
+      const rot = shape.rotation ?? 0;
+
+      const colorAttr = element.getAttribute('data-color');
       let r: number, g: number, b: number;
       if (colorAttr !== null) {
         const colorIndex = parseInt(colorAttr) || 0;
@@ -1326,7 +1332,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         g = 0.5 + 0.5 * Math.sin((hue + 0.333) * Math.PI * 2);
         b = 0.5 + 0.5 * Math.sin((hue + 0.666) * Math.PI * 2);
       }
-      const attenAttr = element?.getAttribute('data-opacity');
+      const attenAttr = element.getAttribute('data-opacity');
       let ar: number, ag: number, ab: number;
       if (attenAttr !== null) {
         const parts = attenAttr.split(',').map(Number);
@@ -1338,21 +1344,37 @@ export class FolkHolographicRC extends FolkBaseSet {
         ag = SOLID_OPACITY;
         ab = SOLID_OPACITY;
       }
-      const albedoAttr = element?.getAttribute('data-albedo');
+      const albedoAttr = element.getAttribute('data-albedo');
       const albedo = albedoAttr !== null ? Number(albedoAttr) : 0;
-      const scatterAttr = element?.getAttribute('data-scattering');
+      const scatterAttr = element.getAttribute('data-scattering');
       const scatter = scatterAttr !== null ? Number(scatterAttr) : 0;
+
+      // Compute rotated corners around shape center
+      const cx = sx + sw / 2;
+      const cy = sy + sh / 2;
+      const cos = Math.cos(rot);
+      const sin = Math.sin(rot);
+      const corners: [number, number][] = [
+        [sx - cx, sy - cy],         // top-left
+        [sx + sw - cx, sy - cy],     // top-right
+        [sx - cx, sy + sh - cy],     // bottom-left
+        [sx + sw - cx, sy + sh - cy], // bottom-right
+      ].map(([lx, ly]) => [
+        (cx + lx * cos - ly * sin) / cw * 2 - 1,
+        1 - (cy + lx * sin + ly * cos) / ch * 2,
+      ]);
+
       const v = (vx: number, vy: number) => {
         vertices.push(vx, vy, r, g, b, ar, ag, ab, albedo, scatter);
       };
-      v(x0, y0);
-      v(x1, y0);
-      v(x0, y1);
-      v(x1, y0);
-      v(x1, y1);
-      v(x0, y1);
+      v(corners[0][0], corners[0][1]); // TL
+      v(corners[1][0], corners[1][1]); // TR
+      v(corners[2][0], corners[2][1]); // BL
+      v(corners[1][0], corners[1][1]); // TR
+      v(corners[3][0], corners[3][1]); // BR
+      v(corners[2][0], corners[2][1]); // BL
     });
-    this.#shapeCount = this.sourceRects.length;
+    this.#shapeCount = elements.length;
     if (vertices.length === 0) return;
     this.#shapeDataBuffer = uploadVertexData(this.#device, this.#shapeDataBuffer, new Float32Array(vertices));
   }
