@@ -199,8 +199,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let emission = textureLoad(emissionTex, px, 0).rgb;
     let opacity = textureLoad(opacityTex, px, 0).rgb;
     let bounce = textureLoad(bounceTex, px, 0).rgb;
-    rad = emission * opacity + bounce;
-    trans = 1.0 - opacity;
+    trans = pow(1.0 - opacity, vec3f(params.scaleAlong));
+    rad = (emission + bounce) * (1.0 - trans);
   }
 
   let coord = vec2i(texelX, perpIdx);

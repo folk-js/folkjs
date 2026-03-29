@@ -218,7 +218,9 @@
       exposureSlider.addEventListener('input', () => setExposure(Number(exposureSlider.value)));
       probeSlider.addEventListener('input', () => setProbeSize(Number(probeSlider.value)));
       setProbeSize(4);
-      document.getElementById('bounces-toggle').addEventListener('change', (e) => {
+      const bouncesToggle = document.getElementById('bounces-toggle');
+      bouncesToggle.checked = hrc.bounces;
+      bouncesToggle.addEventListener('change', (e) => {
         hrc.bounces = e.target.checked;
       });
       document.getElementById('pt-toggle').addEventListener('change', (e) => {
