@@ -95,164 +95,218 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 }
 `;
 
-// ── HRC cascade merge shader ──
-// Processes one cascade level for one direction. Each invocation handles
-// one (perpIdx, alongIdx, angleIdx) probe. It traces a short ray to the
-// next cascade's probe positions and merges with the higher cascade's
-// already-computed fluence. Follows the amitabha reference implementation.
+// ── HRC Phase A: Ray Seed (cascade 0) ──
+// Samples world texture at each probe position. At interval=1 the "ray" is a
+// single-pixel path, so we just read emissivity/opacity. Both ray indices per
+// probe receive the same value (differentiation happens during extension).
 
-const cascadeMergeShader = /*wgsl*/ `
-struct CascadeParams {
-  perpSize: u32,
-  alongSize: u32,
-  numAngles: u32,
-  spacing: f32,
-  nextNumAngles: u32,
-  nextSpacing: f32,
-  nextAlongSize: u32,
-  isLastCascade: u32,
+const raySeedShader = /*wgsl*/ `
+struct SeedParams {
+  probeSize: u32,
   screenW: f32,
   screenH: f32,
+  pad0: u32,
   originX: f32,
   originY: f32,
   alongAxisX: f32,
   alongAxisY: f32,
   perpAxisX: f32,
   perpAxisY: f32,
+  scaleAlong: f32,
+  scalePerp: f32,
 };
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
-@group(0) @binding(1) var prevCascade: texture_2d<f32>;
-@group(0) @binding(2) var currCascade: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(3) var<uniform> params: CascadeParams;
-@group(0) @binding(4) var cascadeSampler: sampler;
+@group(0) @binding(1) var rayOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var<uniform> params: SeedParams;
 
-fn toWorld(perpIdx: i32, alongIdx: i32, sp: f32) -> vec2f {
-  return vec2f(params.originX, params.originY)
-       + vec2f(params.perpAxisX, params.perpAxisY) * (f32(perpIdx) + 0.5)
-       + vec2f(params.alongAxisX, params.alongAxisY) * (f32(alongIdx) * sp + 0.5);
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let probeIdx = i32(gid.x);
+  let perpIdx = i32(gid.y);
+  let ps = i32(params.probeSize);
+  if (probeIdx >= ps || perpIdx >= ps) { return; }
+
+  let wp = vec2f(params.originX, params.originY)
+         + vec2f(params.alongAxisX, params.alongAxisY) * (f32(probeIdx) + 0.5) * params.scaleAlong
+         + vec2f(params.perpAxisX, params.perpAxisY) * (f32(perpIdx) + 0.5) * params.scalePerp;
+
+  let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
+  var rad = vec3f(0.0);
+  var trans = 1.0;
+  if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
+    let s = textureLoad(worldTex, px, 0);
+    rad = s.rgb;
+    trans = 1.0 - s.a;
+  }
+
+  let val = vec4f(rad, trans);
+  textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), val);
+  textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), val);
+}
+`;
+
+// ── HRC Phase B: Ray Extension (bottom-up, levels 1..N-1) ──
+// Composes two shorter rays from the previous level into one longer ray.
+// For each output ray, builds two crossed extensions (L→R, R→L) and averages.
+// Follows Yaazarai Shd_Extensions and Amitabha merge_up.
+
+const rayExtendShader = /*wgsl*/ `
+struct ExtendParams {
+  probeSize: u32,
+  level: u32,
+  pad0: u32,
+  pad1: u32,
+};
+
+@group(0) @binding(0) var prevRayTex: texture_2d<f32>;
+@group(0) @binding(1) var currRayTex: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var<uniform> params: ExtendParams;
+
+fn loadPrev(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> vec4f {
+  let prevLevel = params.level - 1u;
+  let prevInterval = i32(1u << prevLevel);
+  let prevNumRays = prevInterval + 1;
+  let prevNumProbes = i32(params.probeSize >> prevLevel);
+  if (probeIdx < 0 || probeIdx >= prevNumProbes ||
+      rayIdx < 0 || rayIdx >= prevNumRays ||
+      perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+  }
+  return textureLoad(prevRayTex, vec2i(probeIdx * prevNumRays + rayIdx, perpIdx), 0);
 }
 
-fn readPrev(perpIdx: i32, alongIdx: i32, angleIdx: u32, numAng: u32) -> vec3f {
-  if (perpIdx < 0 || alongIdx < 0 ||
-      perpIdx >= i32(params.perpSize) || alongIdx >= i32(params.nextAlongSize)) {
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let texelX = i32(gid.x);
+  let perpIdx = i32(gid.y);
+
+  let interval = i32(1u << params.level);
+  let numRays = interval + 1;
+  let numProbes = i32(params.probeSize >> params.level);
+  let probeIdx = texelX / numRays;
+  let rayIdx = texelX - probeIdx * numRays;
+
+  if (probeIdx >= numProbes || perpIdx >= i32(params.probeSize)) { return; }
+
+  let prevInterval = interval / 2;
+  let lower = rayIdx / 2;
+  let upper = (rayIdx + 1) / 2;
+
+  let perpOffL = -prevInterval + lower * 2;
+  let nearL = loadPrev(probeIdx * 2, lower, perpIdx);
+  let farL = loadPrev(probeIdx * 2 + 1, upper, perpIdx + perpOffL);
+  let extL = vec4f(nearL.rgb + farL.rgb * nearL.a, nearL.a * farL.a);
+
+  let perpOffR = -prevInterval + upper * 2;
+  let nearR = loadPrev(probeIdx * 2, upper, perpIdx);
+  let farR = loadPrev(probeIdx * 2 + 1, lower, perpIdx + perpOffR);
+  let extR = vec4f(nearR.rgb + farR.rgb * nearR.a, nearR.a * farR.a);
+
+  textureStore(currRayTex, vec2i(texelX, perpIdx), (extL + extR) * 0.5);
+}
+`;
+
+// ── HRC Phase C: Cone Merge (top-down, levels N-1..0) ──
+// Reads pre-computed ray data from the ray texture and merges with previously
+// merged cones from the coarser level. Even/odd probe parity is handled as in
+// the Amitabha reference: even probes compose two rays and average with the
+// near-probe cone; odd probes do a direct over-composite.
+
+const coneMergeShader = /*wgsl*/ `
+struct MergeParams {
+  probeSize: u32,
+  numCones: u32,
+  numProbes: u32,
+  numRays: u32,
+  nextNumCones: u32,
+  isLastLevel: u32,
+  pad0: u32,
+  pad1: u32,
+};
+
+@group(0) @binding(0) var rayTex: texture_2d<f32>;
+@group(0) @binding(1) var mergeIn: texture_2d<f32>;
+@group(0) @binding(2) var mergeOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var<uniform> params: MergeParams;
+
+fn loadRay(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> vec4f {
+  if (probeIdx < 0 || probeIdx >= i32(params.numProbes) ||
+      rayIdx < 0 || rayIdx >= i32(params.numRays) ||
+      perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+  }
+  return textureLoad(rayTex, vec2i(probeIdx * i32(params.numRays) + rayIdx, perpIdx), 0);
+}
+
+fn loadMerge(texX: i32, perpIdx: i32) -> vec3f {
+  if (params.isLastLevel == 1u ||
+      texX < 0 || texX >= i32(params.probeSize) ||
+      perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
     return vec3f(0.0);
   }
-  let x = f32(alongIdx * i32(numAng) + i32(angleIdx)) + 0.5;
-  let y = f32(perpIdx) + 0.5;
-  let dims = vec2f(textureDimensions(prevCascade));
-  let uv = vec2f(x, y) / dims;
-  return textureSampleLevel(prevCascade, cascadeSampler, uv, 0.0).rgb;
+  return textureLoad(mergeIn, vec2i(texX, perpIdx), 0).rgb;
 }
 
-fn sampleWorld(worldPos: vec2f) -> vec4f {
-  let px = vec2i(i32(floor(worldPos.x + 0.5)), i32(floor(worldPos.y + 0.5)));
-  if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
-    return vec4f(0.0);
-  }
-  return textureLoad(worldTex, px, 0);
+fn angWeight(subCone: u32, numAng: u32) -> f32 {
+  let N = f32(numAng);
+  let s = f32(subCone);
+  return atan2(2.0 * s - N + 2.0, N) - atan2(2.0 * s - N, N);
 }
 
-fn traceRay(startW: vec2f, endW: vec2f) -> vec4f {
-  let delta = endW - startW;
-  let dist = length(delta);
-  if (dist < 0.5) { return vec4f(0.0, 0.0, 0.0, 1.0); }
-  let numSteps = clamp(u32(ceil(dist)), 1u, 512u);
-  let step = delta / f32(numSteps);
-  var radiance = vec3f(0.0);
-  var transmittance = 1.0;
-  for (var i = 0u; i < numSteps; i++) {
-    let pos = startW + step * (f32(i) + 0.5);
-    let s = sampleWorld(pos);
-    radiance += transmittance * s.rgb;
-    transmittance *= (1.0 - s.a);
-  }
-  return vec4f(radiance, transmittance);
-}
-
-fn overComp(traced: vec4f, behind: vec3f) -> vec3f {
-  return traced.rgb + traced.a * behind;
-}
-
-fn angSize(a: u32, numAng: u32, sp: f32) -> f32 {
-  let AR = f32(numAng);
-  let af = f32(a);
-  return atan2(2.0 * af - AR + 2.0, sp) - atan2(2.0 * af - AR, sp);
-}
-
-@compute @workgroup_size(16, 16, 1)
+@compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let perpIdx = i32(gid.x);
-  let flatIdx = gid.y;
-  let alongIdx = i32(flatIdx / params.numAngles);
-  let angleIdx = flatIdx % params.numAngles;
+  let flatIdx = i32(gid.y);
+  let nc = i32(params.numCones);
+  let probeIdx = flatIdx / nc;
+  let coneIdx = flatIdx - probeIdx * nc;
 
-  if (perpIdx >= i32(params.perpSize) || alongIdx >= i32(params.alongSize)) { return; }
-
-  let uSize = angSize(angleIdx * 2u, params.nextNumAngles, params.nextSpacing);
-  let lSize = angSize(angleIdx * 2u + 1u, params.nextNumAngles, params.nextSpacing);
-  let offset = 2 * i32(angleIdx) - i32(params.numAngles) + 1;
-  let offset_0 = offset - 1;
-  let offset_1 = offset + 1;
-  let startW = toWorld(perpIdx, alongIdx, params.spacing);
+  if (probeIdx >= i32(params.numProbes) || perpIdx >= i32(params.probeSize)) { return; }
 
   var result = vec3f(0.0);
 
-  if (alongIdx % 2 == 0) {
-    let nearAlong = alongIdx / 2;
-    let farAlong = nearAlong + 1;
+  for (var side = 0; side < 2; side++) {
+    let subCone = u32(coneIdx * 2 + side);
+    let vrayI = coneIdx + side;
+    let cW = angWeight(subCone, params.nextNumCones);
 
-    let fPerpUp = perpIdx + offset_0 * 2;
-    let fPerpLo = perpIdx + offset_1 * 2;
-    let endUp = toWorld(fPerpUp, farAlong, params.nextSpacing);
-    let endLo = toWorld(fPerpLo, farAlong, params.nextSpacing);
+    let ray = loadRay(probeIdx, vrayI, perpIdx);
+    let perpOff = -nc + vrayI * 2;
+    let isEven = (probeIdx % 2 == 0);
+    let align = select(1, 2, isEven);
 
-    let trUp = traceRay(startW, endUp);
-    let trLo = traceRay(startW, endLo);
+    let farX = (probeIdx + align) * nc + i32(subCone);
+    let farCone = loadMerge(farX, perpIdx + perpOff * align);
 
-    let farUp = readPrev(fPerpUp, farAlong, angleIdx * 2u, params.nextNumAngles);
-    let farLo = readPrev(fPerpLo, farAlong, angleIdx * 2u + 1u, params.nextNumAngles);
-
-    let nearUp = readPrev(perpIdx, nearAlong, angleIdx * 2u, params.nextNumAngles);
-    let nearLo = readPrev(perpIdx, nearAlong, angleIdx * 2u + 1u, params.nextNumAngles);
-
-    let upper = (nearUp + overComp(trUp, farUp)) * 0.5;
-    let lower = (nearLo + overComp(trLo, farLo)) * 0.5;
-    result = (upper * uSize + lower * lSize) / (uSize + lSize);
-  } else {
-    // Odd probes: between next cascade probes, trace to both
-    let tAlong = alongIdx / 2 + 1;
-    let tPerpUp = perpIdx + offset_0;
-    let tPerpLo = perpIdx + offset_1;
-    let endUp = toWorld(tPerpUp, tAlong, params.nextSpacing);
-    let endLo = toWorld(tPerpLo, tAlong, params.nextSpacing);
-
-    let trUp = traceRay(startW, endUp);
-    let trLo = traceRay(startW, endLo);
-
-    let farUp = readPrev(tPerpUp, tAlong, angleIdx * 2u, params.nextNumAngles);
-    let farLo = readPrev(tPerpLo, tAlong, angleIdx * 2u + 1u, params.nextNumAngles);
-
-    let upper = overComp(trUp, farUp);
-    let lower = overComp(trLo, farLo);
-    result = (upper * uSize + lower * lSize) / (uSize + lSize);
+    if (isEven) {
+      let ext = loadRay(probeIdx + 1, vrayI, perpIdx + perpOff);
+      let cRad = ray.rgb + ext.rgb * ray.a;
+      let cTrans = ray.a * ext.a;
+      let merged = cRad * cW + farCone * cTrans;
+      let nearCone = loadMerge(probeIdx * nc + i32(subCone), perpIdx);
+      result += (merged + nearCone) * 0.5;
+    } else {
+      result += ray.rgb * cW + farCone * ray.a;
+    }
   }
 
-  let outX = alongIdx * i32(params.numAngles) + i32(angleIdx);
-  textureStore(currCascade, vec2i(outX, perpIdx), vec4f(result, 1.0));
+  let outX = probeIdx * nc + coneIdx;
+  textureStore(mergeOut, vec2i(outX, perpIdx), vec4f(result, 1.0));
 }
 `;
 
 // ── Fluence accumulation shader ──
-// Reads cascade-0 result and adds it to the running fluence total.
-// Direction determines how pixel coords map to cascade-0 texel coords.
+// Reads the level-0 merge result and adds it to the running fluence total.
+// Operates at probe resolution. Direction determines coordinate mapping.
+// The 1-pixel offset prevents diagonal sampling overlap between frustums.
 
 const fluenceAccumShader = /*wgsl*/ `
 struct AccumParams {
   direction: u32,
   isFirstDir: u32,
-  screenW: u32,
-  screenH: u32,
+  probeSize: u32,
+  pad: u32,
 };
 @group(0) @binding(0) var cascadeTex: texture_2d<f32>;
 @group(0) @binding(1) var prevFluence: texture_2d<f32>;
@@ -261,13 +315,14 @@ struct AccumParams {
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  if (gid.x >= params.screenW || gid.y >= params.screenH) { return; }
+  let ps = params.probeSize;
+  if (gid.x >= ps || gid.y >= ps) { return; }
   var cc: vec2i;
   switch (params.direction) {
     case 0u: { cc = vec2i(i32(gid.x) + 1, i32(gid.y)); }
     case 1u: { cc = vec2i(i32(gid.y) + 1, i32(gid.x)); }
-    case 2u: { cc = vec2i(i32(params.screenW) - i32(gid.x), i32(gid.y)); }
-    case 3u: { cc = vec2i(i32(params.screenH) - i32(gid.y), i32(gid.x)); }
+    case 2u: { cc = vec2i(i32(ps) - i32(gid.x), i32(gid.y)); }
+    case 3u: { cc = vec2i(i32(ps) - i32(gid.y), i32(gid.x)); }
     default: { cc = vec2i(i32(gid.x) + 1, i32(gid.y)); }
   }
   let cv = textureLoad(cascadeTex, cc, 0);
@@ -282,9 +337,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 `;
 
 // ── Final blit shader ──
+// Bilinearly upscales fluence from probe resolution to screen resolution.
 
 const blitShader = /*wgsl*/ `
-struct BlitParams { exposure: f32, pad0: f32, pad1: f32, pad2: f32 };
+struct BlitParams { exposure: f32, screenW: f32, screenH: f32, pad: f32 };
 @group(0) @binding(0) var fluenceTex: texture_2d<f32>;
 @group(0) @binding(1) var worldTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: BlitParams;
@@ -315,8 +371,7 @@ fn triangularDither(fragCoord: vec2u) -> vec3f {
   return vec4f(pos[i], 0, 1);
 }
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let dims = vec2f(textureDimensions(fluenceTex));
-  let uv = pos.xy / dims;
+  let uv = pos.xy / vec2f(params.screenW, params.screenH);
   let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
   let world = textureLoad(worldTex, vec2u(pos.xy), 0);
   let emissive = world.rgb * world.a;
@@ -328,34 +383,31 @@ fn triangularDither(fragCoord: vec2u) -> vec3f {
 }
 `;
 
-// ── Direction definitions ──
+// ── Direction definitions (simplified for square probe grid) ──
 
-interface DirConfig {
-  alongAxis: [number, number];
-  perpAxis: [number, number];
-  originFn: (w: number, h: number) => [number, number];
-  perpSize: (w: number, h: number) => number;
-  alongBase: (w: number, h: number) => number;
+const DIR_ALONG: [number, number][] = [
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+  [0, -1],
+];
+const DIR_PERP: [number, number][] = [
+  [0, 1],
+  [1, 0],
+  [0, 1],
+  [1, 0],
+];
+
+function dirOrigin(dir: number, w: number, h: number): [number, number] {
+  if (dir === 2) return [w, 0];
+  if (dir === 3) return [0, h];
+  return [0, 0];
 }
 
-const DIRECTIONS: DirConfig[] = [
-  { alongAxis: [1, 0], perpAxis: [0, 1], originFn: () => [0, 0], perpSize: (_w, h) => h, alongBase: (w) => w },
-  { alongAxis: [0, 1], perpAxis: [1, 0], originFn: () => [0, 0], perpSize: (w) => w, alongBase: (_w, h) => h },
-  {
-    alongAxis: [-1, 0],
-    perpAxis: [0, 1],
-    originFn: (w) => [w, 0],
-    perpSize: (_w, h) => h,
-    alongBase: (w) => w,
-  },
-  {
-    alongAxis: [0, -1],
-    perpAxis: [1, 0],
-    originFn: (_w, h) => [0, h],
-    perpSize: (w) => w,
-    alongBase: (_w, h) => h,
-  },
-];
+function dirScales(dir: number, w: number, h: number, ps: number): [number, number] {
+  const horiz = dir === 0 || dir === 2;
+  return horiz ? [w / ps, h / ps] : [h / ps, w / ps];
+}
 
 // ── Component ──
 
@@ -363,6 +415,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   static override tagName = 'folk-holographic-rc';
 
   @property({ type: Number, reflect: true }) exposure = 2.0;
+  @property({ type: Number, reflect: true }) probeSize = 1024;
 
   #canvas!: HTMLCanvasElement;
   #device!: GPUDevice;
@@ -391,25 +444,39 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
 
-  // HRC cascade textures (ping-pong pair)
-  #cascadeTextures!: GPUTexture[];
-  #cascadeTextureViews!: GPUTextureView[];
+  // Per-level ray textures (radiance.rgb + transmittance in alpha)
+  #rayTextures!: GPUTexture[];
+  #rayTextureViews!: GPUTextureView[];
 
-  // Fluence textures (ping-pong for directional accumulation)
+  // Merge ping-pong pair (probeSize x probeSize)
+  #mergeTextures!: GPUTexture[];
+  #mergeTextureViews!: GPUTextureView[];
+
+  // Fluence ping-pong pair (probeSize x probeSize)
   #fluenceTextures!: GPUTexture[];
   #fluenceTextureViews!: GPUTextureView[];
 
   // Pipelines
-  #cascadeMergePipeline!: GPUComputePipeline;
+  #raySeedPipeline!: GPUComputePipeline;
+  #rayExtendPipeline!: GPUComputePipeline;
+  #coneMergePipeline!: GPUComputePipeline;
   #fluenceAccumPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
+
+  // Pre-created bind groups (recreated on resize)
+  #seedBindGroups!: GPUBindGroup[];
+  #extendBindGroups!: GPUBindGroup[];
 
   // Sampler
   #linearSampler!: GPUSampler;
 
   // Uniform buffers + structured views
-  #cascadeParamsBuffer!: GPUBuffer;
-  #cascadeParamsView!: StructuredView;
+  #seedParamsBuffer!: GPUBuffer;
+  #seedParamsView!: StructuredView;
+  #extendParamsBuffer!: GPUBuffer;
+  #extendParamsView!: StructuredView;
+  #mergeParamsBuffer!: GPUBuffer;
+  #mergeParamsView!: StructuredView;
   #accumParamsBuffer!: GPUBuffer;
   #accumParamsView!: StructuredView;
   #blitParamsBuffer!: GPUBuffer;
@@ -417,18 +484,15 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   // Computed
   #numCascades = 0;
-  #maxCascadeDim = 0;
+  #ps = 0;
 
   #animationFrame = 0;
   #isRunning = false;
   #resizing = false;
 
-  // Debug: 0=all directions, 1=east, 2=south, 3=west, 4=north
   #debugDir = 0;
-  // Debug: 0=use all cascades, >0=limit to N cascades
   #debugCascadeCount = 0;
 
-  // Frame timing (exposed via getter for external overlays)
   #smoothedFrameTime = 0;
   #lastFrameTimestamp = 0;
 
@@ -536,9 +600,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   #initResources() {
     const { width, height } = this.#canvas;
     const device = this.#device;
-
-    this.#maxCascadeDim = nextPowerOf2(Math.max(width, height));
-    this.#numCascades = Math.log2(this.#maxCascadeDim);
+    const ps = nextPowerOf2(this.probeSize);
+    this.#ps = ps;
+    this.#numCascades = Math.log2(ps);
 
     this.#worldTexture = device.createTexture({
       label: 'HRC-World',
@@ -548,34 +612,61 @@ export class FolkHolographicRC extends FolkBaseSet {
     });
     this.#worldTextureView = this.#worldTexture.createView();
 
-    const cascadeSize = this.#maxCascadeDim;
-    this.#cascadeTextures = [0, 1].map((i) =>
+    this.#rayTextures = [];
+    this.#rayTextureViews = [];
+    for (let i = 0; i < this.#numCascades; i++) {
+      const interval = 1 << i;
+      const numRays = interval + 1;
+      const numProbes = ps >> i;
+      const tex = device.createTexture({
+        label: `HRC-Ray-${i}`,
+        size: { width: numProbes * numRays, height: ps },
+        format: 'rgba16float',
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      this.#rayTextures.push(tex);
+      this.#rayTextureViews.push(tex.createView());
+    }
+
+    this.#mergeTextures = [0, 1].map((i) =>
       device.createTexture({
-        label: `HRC-Cascade-${i}`,
-        size: { width: cascadeSize, height: cascadeSize },
+        label: `HRC-Merge-${i}`,
+        size: { width: ps, height: ps },
         format: 'rgba16float',
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       }),
     );
-    this.#cascadeTextureViews = this.#cascadeTextures.map((t) => t.createView());
+    this.#mergeTextureViews = this.#mergeTextures.map((t) => t.createView());
 
     this.#fluenceTextures = [0, 1].map((i) =>
       device.createTexture({
         label: `HRC-Fluence-${i}`,
-        size: { width, height },
+        size: { width: ps, height: ps },
         format: 'rgba16float',
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       }),
     );
     this.#fluenceTextureViews = this.#fluenceTextures.map((t) => t.createView());
 
-    this.#cascadeParamsView = uboView(cascadeMergeShader, 'params');
+    this.#seedParamsView = uboView(raySeedShader, 'params');
+    this.#extendParamsView = uboView(rayExtendShader, 'params');
+    this.#mergeParamsView = uboView(coneMergeShader, 'params');
     this.#accumParamsView = uboView(fluenceAccumShader, 'params');
     this.#blitParamsView = uboView(blitShader, 'params');
 
-    this.#cascadeParamsBuffer = device.createBuffer({
-      label: 'HRC-CascadeParams',
-      size: this.#numCascades * 4 * 256,
+    this.#seedParamsBuffer = device.createBuffer({
+      label: 'HRC-SeedParams',
+      size: 4 * 256,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.#extendParamsBuffer = device.createBuffer({
+      label: 'HRC-ExtendParams',
+      size: Math.max(1, this.#numCascades - 1) * 256,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.#mergeParamsBuffer = device.createBuffer({
+      label: 'HRC-MergeParams',
+      size: this.#numCascades * 256,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.#accumParamsBuffer = device.createBuffer({
@@ -646,8 +737,12 @@ export class FolkHolographicRC extends FolkBaseSet {
       primitive: { topology: 'triangle-list' },
     });
 
-    this.#cascadeMergePipeline = createComputePipeline(device, 'HRC-CascadeMerge', cascadeMergeShader);
+    this.#raySeedPipeline = createComputePipeline(device, 'HRC-RaySeed', raySeedShader);
+    this.#rayExtendPipeline = createComputePipeline(device, 'HRC-RayExtend', rayExtendShader);
+    this.#coneMergePipeline = createComputePipeline(device, 'HRC-ConeMerge', coneMergeShader);
     this.#fluenceAccumPipeline = createComputePipeline(device, 'HRC-FluenceAccum', fluenceAccumShader);
+
+    this.#createStaticBindGroups();
 
     const blitModule = device.createShaderModule({ code: blitShader });
     this.#renderPipeline = device.createRenderPipeline({
@@ -663,16 +758,51 @@ export class FolkHolographicRC extends FolkBaseSet {
     });
   }
 
+  #createStaticBindGroups() {
+    const device = this.#device;
+
+    this.#seedBindGroups = [];
+    for (let dir = 0; dir < 4; dir++) {
+      this.#seedBindGroups.push(
+        device.createBindGroup({
+          layout: this.#raySeedPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: this.#worldTextureView },
+            { binding: 1, resource: this.#rayTextureViews[0] },
+            { binding: 2, resource: { buffer: this.#seedParamsBuffer, offset: dir * 256, size: this.#seedParamsView.arrayBuffer.byteLength } },
+          ],
+        }),
+      );
+    }
+
+    this.#extendBindGroups = [];
+    for (let level = 1; level < this.#numCascades; level++) {
+      this.#extendBindGroups.push(
+        device.createBindGroup({
+          layout: this.#rayExtendPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: this.#rayTextureViews[level - 1] },
+            { binding: 1, resource: this.#rayTextureViews[level] },
+            { binding: 2, resource: { buffer: this.#extendParamsBuffer, offset: (level - 1) * 256, size: this.#extendParamsView.arrayBuffer.byteLength } },
+          ],
+        }),
+      );
+    }
+  }
+
   #destroyResources() {
     this.#worldTexture?.destroy();
-    this.#cascadeTextures?.forEach((t) => t.destroy());
+    this.#rayTextures?.forEach((t) => t.destroy());
+    this.#mergeTextures?.forEach((t) => t.destroy());
     this.#fluenceTextures?.forEach((t) => t.destroy());
-    this.#cascadeParamsBuffer?.destroy();
+    this.#seedParamsBuffer?.destroy();
+    this.#extendParamsBuffer?.destroy();
+    this.#mergeParamsBuffer?.destroy();
     this.#accumParamsBuffer?.destroy();
     this.#blitParamsBuffer?.destroy();
   }
 
-  // ── Shape / line data (unchanged from scaffold) ──
+  // ── Shape / line data ──
 
   #updateShapeData() {
     const vertices: number[] = [];
@@ -780,13 +910,10 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const { width, height } = this.#canvas;
     const device = this.#device;
-    const numCascades = this.#numCascades;
+    const ps = this.#ps;
+    const nc = this.#numCascades;
 
-    // Upload all cascade params for all 4 directions before encoding
-    this.#uploadAllCascadeParams(width, height);
-
-    this.#blitParamsView.set({ exposure: this.exposure });
-    device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
+    this.#uploadParams(width, height);
 
     const encoder = device.createCommandEncoder();
 
@@ -825,90 +952,101 @@ export class FolkHolographicRC extends FolkBaseSet {
       pass.end();
     }
 
-    // ── Step 2: HRC cascade processing for each direction ──
-    let fluenceReadView = this.#fluenceTextureViews[0];
-    let fluenceWriteView = this.#fluenceTextureViews[1];
-    let fluenceResultView = this.#fluenceTextureViews[0];
-    let isFirstProcessedDir = true;
+    // ── Step 2: HRC cascade processing per direction ──
+    let fluenceReadIdx = 0;
+    let fluenceWriteIdx = 1;
+    let fluenceResultIdx = 0;
+    let isFirstDir = true;
 
     for (let dir = 0; dir < 4; dir++) {
       if (this.#debugDir > 0 && dir !== this.#debugDir - 1) continue;
 
-      const cfg = DIRECTIONS[dir];
-      const perpSize = cfg.perpSize(width, height);
-      const alongBase = nextPowerOf2(cfg.alongBase(width, height));
-      const dirCascades = Math.log2(alongBase);
+      const ec = this.#debugCascadeCount > 0 ? Math.min(this.#debugCascadeCount, nc) : nc;
 
-      const effectiveCascades = this.#debugCascadeCount > 0
-        ? Math.min(this.#debugCascadeCount, dirCascades)
-        : dirCascades;
-      let lastWriteView = this.#cascadeTextureViews[0];
-      for (let level = effectiveCascades - 1; level >= 0; level--) {
-        const k = numCascades - 1 - level;
-        const readFromA = k % 2 !== 0;
-        const readView = this.#cascadeTextureViews[readFromA ? 0 : 1];
-        const writeView = this.#cascadeTextureViews[readFromA ? 1 : 0];
-
-        const spacing = 1 << level;
-        const alongSize = alongBase >> level;
-        const numAngles = 1 << level;
-
-        const flatSize = alongSize * numAngles;
-        const paramsOffset = (dir * numCascades + (numCascades - 1 - level)) * 256;
-
-        const bg = device.createBindGroup({
-          layout: this.#cascadeMergePipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: this.#worldTextureView },
-            { binding: 1, resource: readView },
-            { binding: 2, resource: writeView },
-            { binding: 3, resource: { buffer: this.#cascadeParamsBuffer, offset: paramsOffset, size: 64 } },
-            { binding: 4, resource: this.#linearSampler },
-          ],
-        });
-
+      // Phase A: Ray Seed
+      {
         const pass = encoder.beginComputePass();
-        pass.setPipeline(this.#cascadeMergePipeline);
-        pass.setBindGroup(0, bg);
-        pass.dispatchWorkgroups(Math.ceil(perpSize / 16), Math.ceil(flatSize / 16));
+        pass.setPipeline(this.#raySeedPipeline);
+        pass.setBindGroup(0, this.#seedBindGroups[dir]);
+        pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
         pass.end();
-        lastWriteView = writeView;
       }
 
-      // Use the stopped level's output (or cascade 0 in normal mode)
-      const cascade0View = lastWriteView;
+      // Phase B: Ray Extension (bottom-up)
+      for (let level = 1; level < ec; level++) {
+        const interval = 1 << level;
+        const numRays = interval + 1;
+        const numProbes = ps >> level;
+        const rayWidth = numProbes * numRays;
 
-      const accumOffset = dir * 256;
-      this.#accumParamsView.set({ direction: dir, isFirstDir: isFirstProcessedDir ? 1 : 0, screenW: width, screenH: height });
-      device.queue.writeBuffer(this.#accumParamsBuffer, accumOffset, this.#accumParamsView.arrayBuffer);
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(this.#rayExtendPipeline);
+        pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
+        pass.dispatchWorkgroups(Math.ceil(rayWidth / 16), Math.ceil(ps / 16));
+        pass.end();
+      }
 
-      if (isFirstProcessedDir) {
-        isFirstProcessedDir = false;
-        fluenceWriteView = this.#fluenceTextureViews[0];
-        fluenceReadView = this.#fluenceTextureViews[1];
+      // Phase C: Cone Merge (top-down)
+      let mergeReadIdx = 1;
+      let mergeWriteIdx = 0;
+      for (let k = 0; k < ec; k++) {
+        const level = ec - 1 - k;
+        const numCones = 1 << level;
+        const numProbes = ps >> level;
+        const flatSize = numProbes * numCones;
+
+        const bg = device.createBindGroup({
+          layout: this.#coneMergePipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: this.#rayTextureViews[level] },
+            { binding: 1, resource: this.#mergeTextureViews[mergeReadIdx] },
+            { binding: 2, resource: this.#mergeTextureViews[mergeWriteIdx] },
+            { binding: 3, resource: { buffer: this.#mergeParamsBuffer, offset: level * 256, size: this.#mergeParamsView.arrayBuffer.byteLength } },
+          ],
+        });
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(this.#coneMergePipeline);
+        pass.setBindGroup(0, bg);
+        pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(flatSize / 16));
+        pass.end();
+
+        const tmp = mergeReadIdx;
+        mergeReadIdx = mergeWriteIdx;
+        mergeWriteIdx = tmp;
+      }
+
+      const mergeResultView = this.#mergeTextureViews[mergeReadIdx];
+
+      // Phase D: Fluence Accumulation
+      this.#accumParamsView.set({ direction: dir, isFirstDir: isFirstDir ? 1 : 0, probeSize: ps, pad: 0 });
+      device.queue.writeBuffer(this.#accumParamsBuffer, dir * 256, this.#accumParamsView.arrayBuffer);
+
+      if (isFirstDir) {
+        isFirstDir = false;
+        fluenceWriteIdx = 0;
+        fluenceReadIdx = 1;
       } else {
-        const temp = fluenceWriteView;
-        fluenceWriteView = fluenceReadView;
-        fluenceReadView = temp;
+        const tmp2 = fluenceWriteIdx;
+        fluenceWriteIdx = fluenceReadIdx;
+        fluenceReadIdx = tmp2;
       }
 
       const accumBG = device.createBindGroup({
         layout: this.#fluenceAccumPipeline.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: cascade0View },
-          { binding: 1, resource: fluenceReadView },
-          { binding: 2, resource: fluenceWriteView },
-          { binding: 3, resource: { buffer: this.#accumParamsBuffer, offset: accumOffset, size: 16 } },
+          { binding: 0, resource: mergeResultView },
+          { binding: 1, resource: this.#fluenceTextureViews[fluenceReadIdx] },
+          { binding: 2, resource: this.#fluenceTextureViews[fluenceWriteIdx] },
+          { binding: 3, resource: { buffer: this.#accumParamsBuffer, offset: dir * 256, size: this.#accumParamsView.arrayBuffer.byteLength } },
         ],
       });
-
       const accumPass = encoder.beginComputePass();
       accumPass.setPipeline(this.#fluenceAccumPipeline);
       accumPass.setBindGroup(0, accumBG);
-      accumPass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16));
+      accumPass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
       accumPass.end();
 
-      fluenceResultView = fluenceWriteView;
+      fluenceResultIdx = fluenceWriteIdx;
     }
 
     // ── Step 3: Final blit ──
@@ -916,7 +1054,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       const blitBG = device.createBindGroup({
         layout: this.#renderPipeline.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: fluenceResultView },
+          { binding: 0, resource: this.#fluenceTextureViews[fluenceResultIdx] },
           { binding: 1, resource: this.#worldTextureView },
           { binding: 2, resource: { buffer: this.#blitParamsBuffer } },
           { binding: 3, resource: this.#linearSampler },
@@ -943,40 +1081,58 @@ export class FolkHolographicRC extends FolkBaseSet {
     device.queue.submit([encoder.finish()]);
   }
 
-  #uploadAllCascadeParams(width: number, height: number) {
-    const numCascades = this.#numCascades;
+  #uploadParams(width: number, height: number) {
     const device = this.#device;
+    const ps = this.#ps;
+    const nc = this.#numCascades;
 
     for (let dir = 0; dir < 4; dir++) {
-      const cfg = DIRECTIONS[dir];
-      const perpSize = cfg.perpSize(width, height);
-      const alongBase = nextPowerOf2(cfg.alongBase(width, height));
-      const dirCascades = Math.log2(alongBase);
-      const [originX, originY] = cfg.originFn(width, height);
-      const [axX, axY] = cfg.alongAxis;
-      const [pxX, pxY] = cfg.perpAxis;
-
-      for (let level = dirCascades - 1; level >= 0; level--) {
-        const spacing = 1 << level;
-        this.#cascadeParamsView.set({
-          perpSize,
-          alongSize: alongBase >> level,
-          numAngles: 1 << level,
-          spacing,
-          nextNumAngles: 1 << (level + 1),
-          nextSpacing: 1 << (level + 1),
-          nextAlongSize: alongBase >> (level + 1),
-          isLastCascade: level === dirCascades - 1 ? 1 : 0,
-          screenW: width,
-          screenH: height,
-          originX, originY,
-          alongAxisX: axX, alongAxisY: axY,
-          perpAxisX: pxX, perpAxisY: pxY,
-        });
-        const slotIndex = dir * numCascades + (numCascades - 1 - level);
-        device.queue.writeBuffer(this.#cascadeParamsBuffer, slotIndex * 256, this.#cascadeParamsView.arrayBuffer);
-      }
+      const [ox, oy] = dirOrigin(dir, width, height);
+      const [ax, ay] = DIR_ALONG[dir];
+      const [px, py] = DIR_PERP[dir];
+      const [sa, sp] = dirScales(dir, width, height, ps);
+      this.#seedParamsView.set({
+        probeSize: ps,
+        screenW: width,
+        screenH: height,
+        pad0: 0,
+        originX: ox,
+        originY: oy,
+        alongAxisX: ax,
+        alongAxisY: ay,
+        perpAxisX: px,
+        perpAxisY: py,
+        scaleAlong: sa,
+        scalePerp: sp,
+      });
+      device.queue.writeBuffer(this.#seedParamsBuffer, dir * 256, this.#seedParamsView.arrayBuffer);
     }
+
+    for (let level = 1; level < nc; level++) {
+      this.#extendParamsView.set({ probeSize: ps, level, pad0: 0, pad1: 0 });
+      device.queue.writeBuffer(this.#extendParamsBuffer, (level - 1) * 256, this.#extendParamsView.arrayBuffer);
+    }
+
+    for (let level = 0; level < nc; level++) {
+      const numCones = 1 << level;
+      const numProbes = ps >> level;
+      const numRays = numCones + 1;
+      const nextNumCones = numCones * 2;
+      this.#mergeParamsView.set({
+        probeSize: ps,
+        numCones,
+        numProbes,
+        numRays,
+        nextNumCones,
+        isLastLevel: level === nc - 1 ? 1 : 0,
+        pad0: 0,
+        pad1: 0,
+      });
+      device.queue.writeBuffer(this.#mergeParamsBuffer, level * 256, this.#mergeParamsView.arrayBuffer);
+    }
+
+    this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
+    device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
   }
 
   // ── Event handlers ──
@@ -997,6 +1153,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     });
     this.#destroyResources();
     this.#initResources();
+    this.#createStaticBindGroups();
     this.#lineBindGroup = undefined;
     this.#updateShapeData();
 
@@ -1019,9 +1176,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
     if (e.key === '`' || e.key === '~') {
       const delta = e.shiftKey ? -1 : 1;
-      this.#debugCascadeCount = ((this.#debugCascadeCount + delta) % (this.#numCascades + 1) + this.#numCascades + 1) % (this.#numCascades + 1);
-      const maxSpacing = this.#debugCascadeCount > 0 ? Math.pow(2, this.#debugCascadeCount - 1) : Math.pow(2, this.#numCascades - 1);
-      const label = this.#debugCascadeCount === 0 ? `all (max spacing ${maxSpacing})` : `${this.#debugCascadeCount} (max spacing ${maxSpacing})`;
+      this.#debugCascadeCount =
+        ((this.#debugCascadeCount + delta) % (this.#numCascades + 1) + this.#numCascades + 1) % (this.#numCascades + 1);
+      const maxSpacing = this.#debugCascadeCount > 0
+        ? Math.pow(2, this.#debugCascadeCount - 1)
+        : Math.pow(2, this.#numCascades - 1);
+      const label = this.#debugCascadeCount === 0
+        ? `all (max spacing ${maxSpacing})`
+        : `${this.#debugCascadeCount} (max spacing ${maxSpacing})`;
       console.log(`HRC cascades: ${label}`);
     }
   };
@@ -1043,7 +1205,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const dirLabel = this.#debugDir > 0 ? ` [${dirNames[this.#debugDir]}]` : '';
     const ec = this.#debugCascadeCount > 0 ? this.#debugCascadeCount : this.#numCascades;
     const ccLabel = this.#debugCascadeCount > 0 ? ` C${this.#debugCascadeCount}/${this.#numCascades}` : '';
-    return `${dirLabel}${ccLabel} sp${Math.pow(2, ec - 1)}`;
+    return `p${this.#ps}${dirLabel}${ccLabel} sp${Math.pow(2, ec - 1)}`;
   }
 
   #updateFrameTiming(now: number) {
