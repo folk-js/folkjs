@@ -166,6 +166,9 @@
         { name: 'Color mix', fn: loadColorMix },
         { name: 'Stained glass', fn: loadStainedGlass },
         { name: 'Color shadows', fn: loadColorShadows },
+        { name: 'Fog room', fn: loadFogRoom },
+        { name: 'Colored glass', fn: loadColoredGlass },
+        { name: 'Smoke', fn: loadSmoke },
         { name: 'Orbit', fn: loadAnimatedOrbit },
         { name: 'Gate', fn: loadAnimatedGate },
       ];
@@ -242,13 +245,14 @@
         hrc.querySelectorAll('folk-shape').forEach((s) => s.remove());
       }
 
-      function addShape(x, y, w, h, colorIdx) {
+      function addShape(x, y, w, h, colorIdx, attenuation) {
         const el = document.createElement('folk-shape');
         el.setAttribute('x', x);
         el.setAttribute('y', y);
         el.setAttribute('width', w);
         el.setAttribute('height', h);
         if (colorIdx !== undefined) el.setAttribute('data-color', colorIdx);
+        if (attenuation !== undefined) el.setAttribute('data-attenuation', attenuation);
         hrc.appendChild(el);
         return el;
       }
@@ -350,13 +354,13 @@
         const cy = window.innerHeight / 2;
         const wallX = cx - 10;
         addShape(wallX, cy - 180, 20, 60, 1);
-        addShape(wallX, cy - 100, 20, 20, 2);
+        addShape(wallX, cy - 100, 20, 20, 0, '0.02,0.15,0.15');
         addShape(wallX, cy - 80, 20, 30, 1);
-        addShape(wallX, cy - 50, 20, 20, 5);
+        addShape(wallX, cy - 50, 20, 20, 0, '0.15,0.02,0.15');
         addShape(wallX, cy - 30, 20, 30, 1);
-        addShape(wallX, cy, 20, 20, 7);
+        addShape(wallX, cy, 20, 20, 0, '0.15,0.15,0.02');
         addShape(wallX, cy + 20, 20, 30, 1);
-        addShape(wallX, cy + 50, 20, 20, 4);
+        addShape(wallX, cy + 50, 20, 20, 0, '0.02,0.02,0.15');
         addShape(wallX, cy + 70, 20, 110, 1);
       }
 
@@ -367,6 +371,39 @@
         addShape(cx - 200, cy + 60, 40, 40, 7);
         addShape(cx - 40, cy - 80, 20, 160, 1);
         addShape(cx + 100, cy - 120, 10, 240, 9);
+      }
+
+      function loadFogRoom() {
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const cx = W / 2;
+        const cy = H / 2;
+        addShape(cx - 250, cy - 200, 500, 15, 1);
+        addShape(cx - 250, cy + 185, 500, 15, 1);
+        addShape(cx - 250, cy - 200, 15, 400, 1);
+        addShape(cx + 235, cy - 200, 15, 400, 1);
+        addShape(cx - 200, cy - 185, 30, 30, 3);
+        addShape(cx + 170, cy + 155, 30, 30, 6);
+        addShape(cx - 100, cy - 50, 200, 100, 0, '0.03');
+      }
+
+      function loadColoredGlass() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        addShape(cx - 200, cy - 40, 60, 60, 9);
+        addShape(cx - 60, cy - 120, 20, 240, 0, '0.01,0.12,0.12');
+        addShape(cx, cy - 120, 20, 240, 0, '0.12,0.01,0.12');
+        addShape(cx + 60, cy - 120, 20, 240, 0, '0.12,0.12,0.01');
+        addShape(cx + 140, cy - 40, 40, 80, 1);
+      }
+
+      function loadSmoke() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        addShape(cx - 30, cy + 80, 60, 30, 3);
+        addShape(cx - 80, cy - 100, 160, 160, 0, '0.05');
+        addShape(cx - 200, cy - 60, 30, 30, 1);
+        addShape(cx + 170, cy - 60, 30, 30, 1);
       }
 
       function loadAnimatedOrbit() {
