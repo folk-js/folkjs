@@ -1491,7 +1491,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     if (this.pathTracing) {
-      if (this.#ptFrameIndex === 0) { this.#ptStartTime = performance.now(); }
+      if (this.#ptFrameIndex === 0) {
+        this.#ptStartTime = performance.now();
+      }
       this.#ptShowResult = true;
       this.#renderPathTraced(encoder, width, height);
       this.#submitAndCapture(device, encoder);
@@ -1787,12 +1789,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     });
 
     const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view: this.#context.getCurrentTexture().createView(),
-        clearValue: { r: 0, g: 0, b: 0, a: 1 },
-        loadOp: 'clear',
-        storeOp: 'store',
-      }],
+      colorAttachments: [
+        {
+          view: this.#context.getCurrentTexture().createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        },
+      ],
     });
     pass.setPipeline(this.#ptBlitPipeline);
     pass.setBindGroup(0, blitBG);
