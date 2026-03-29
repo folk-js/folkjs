@@ -8,6 +8,15 @@ type Line = [
   ar: number, ag: number, ab: number,
 ];
 
+// Per-channel opacity for fully solid materials. 1.0 = completely opaque (zero transmittance).
+// The world opacity texture stores per-channel opacity in [0,1], not Beer-Lambert sigma.
+// This gives exact representation of solid/transparent boundaries and intuitive values
+// (0 = transparent, 0.5 = half, 1 = solid). For thick participating media where the
+// exponential falloff exp(-sigma*d) matters, convert at the boundary: opacity ≈ 1-exp(-sigma).
+// The world opacity texture uses rgba16float but could switch to rgba8unorm (256 levels
+// across 0–1) with no meaningful quality loss for practical opacity values.
+const SOLID_OPACITY = 1;
+
 function nextPowerOf2(n: number): number {
   return 2 ** Math.ceil(Math.log2(Math.max(n, 2)));
 }
@@ -40,34 +49,34 @@ function uploadVertexData(
   return existing;
 }
 
-// ── World-render shaders (shapes, lines, mouse light → emission + attenuation) ──
-// MRT: location(0) = emission (rgb = emitted light), location(1) = attenuation (rgb = per-channel absorption)
-// Vertex data carries: position (vec2), color (vec3), attenuation (vec3)
+// ── World-render shaders (shapes, lines, mouse light → emission + opacity) ──
+// MRT: location(0) = emission (rgb = emitted light), location(1) = opacity (rgb = per-channel, 0–1)
+// Vertex data carries: position (vec2), color (vec3), opacity (vec3)
 
 const worldRenderShader = /*wgsl*/ `
 struct VertexInput {
   @location(0) position: vec2f,
   @location(1) color: vec3f,
-  @location(2) attenuation: vec3f,
+  @location(2) opacity: vec3f,
 }
 struct VertexOutput {
   @builtin(position) position: vec4f,
   @location(0) color: vec3f,
-  @location(1) attenuation: vec3f,
+  @location(1) opacity: vec3f,
 }
 fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 @vertex fn vertex_main(input: VertexInput) -> VertexOutput {
   var out: VertexOutput;
   out.position = vec4f(input.position, 0.0, 1.0);
   out.color = input.color;
-  out.attenuation = input.attenuation;
+  out.opacity = input.opacity;
   return out;
 }
-struct FragOut { @location(0) emission: vec4f, @location(1) attenuation: vec4f }
+struct FragOut { @location(0) emission: vec4f, @location(1) opacity: vec4f }
 @fragment fn fragment_main(in: VertexOutput) -> FragOut {
   var out: FragOut;
   out.emission = vec4f(srgbToLinear(in.color), 1.0);
-  out.attenuation = vec4f(in.attenuation, 1.0);
+  out.opacity = vec4f(in.opacity, 1.0);
   return out;
 }
 `;
@@ -79,7 +88,7 @@ struct VertexOutput {
   @location(1) p1: vec2f,
   @location(2) p2: vec2f,
   @location(3) radius: f32,
-  @location(4) attenuation: vec3f,
+  @location(4) opacity: vec3f,
 }
 struct Canvas { width: f32, height: f32 }
 @group(0) @binding(0) var<uniform> canvas: Canvas;
@@ -88,7 +97,7 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   @builtin(vertex_index) vid: u32,
   @location(0) p1: vec2f, @location(1) p2: vec2f,
   @location(2) color: vec3f, @location(3) thickness: f32,
-  @location(4) attenuation: vec3f,
+  @location(4) opacity: vec3f,
 ) -> VertexOutput {
   let r = thickness * 0.5;
   let minP = min(p1, p2) - vec2f(r);
@@ -102,10 +111,10 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   var out: VertexOutput;
   out.position = vec4f(clip, 0.0, 1.0);
   out.color = color; out.p1 = p1; out.p2 = p2; out.radius = r;
-  out.attenuation = attenuation;
+  out.opacity = opacity;
   return out;
 }
-struct FragOut { @location(0) emission: vec4f, @location(1) attenuation: vec4f }
+struct FragOut { @location(0) emission: vec4f, @location(1) opacity: vec4f }
 @fragment fn fragment_main(in: VertexOutput) -> FragOut {
   let pos = in.position.xy;
   let ab = in.p2 - in.p1; let ap = pos - in.p1;
@@ -116,17 +125,17 @@ struct FragOut { @location(0) emission: vec4f, @location(1) attenuation: vec4f }
   if (d > 0.0) { discard; }
   var out: FragOut;
   out.emission = vec4f(srgbToLinear(in.color), 1.0);
-  out.attenuation = vec4f(in.attenuation, 1.0);
+  out.opacity = vec4f(in.opacity, 1.0);
   return out;
 }
 `;
 
 // ── HRC Phase A: Ray Seed (cascade 0) ──
-// Samples emission and attenuation textures at each probe position using
-// volumetric transport: T = exp(-sigma * d), L += T * emission * (1-T_step)/sigma.
-// Both ray indices per probe receive the same value (differentiation happens
-// during extension). Writes radiance to rayOut and per-channel transmittance
-// to transOut (rgba8unorm, rgb = per-channel transmittance).
+// Samples emission and opacity textures at each probe position. The opacity
+// texture stores per-channel opacity in [0,1] (0 = transparent, 1 = solid).
+// Transmittance = 1 - opacity. Radiance = emission * opacity (light produced
+// by the material, weighted by its presence). Both ray indices per probe
+// receive the same value (differentiation happens during extension).
 
 const raySeedShader = /*wgsl*/ `
 struct SeedParams {
@@ -145,7 +154,7 @@ struct SeedParams {
 };
 
 @group(0) @binding(0) var emissionTex: texture_2d<f32>;
-@group(0) @binding(1) var attenuationTex: texture_2d<f32>;
+@group(0) @binding(1) var opacityTex: texture_2d<f32>;
 @group(0) @binding(2) var rayOut: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(3) var transOut: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(4) var<uniform> params: SeedParams;
@@ -167,11 +176,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   var trans = vec3f(1.0);
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
     let emission = textureLoad(emissionTex, px, 0).rgb;
-    let sigma = textureLoad(attenuationTex, px, 0).rgb;
-    let tStep = exp(-sigma);
-    let f = select((1.0 - tStep) / max(sigma, vec3f(1e-6)), vec3f(1.0), sigma < vec3f(1e-4));
-    rad = trans * emission * f;
-    trans *= tStep;
+    let opacity = textureLoad(opacityTex, px, 0).rgb;
+    rad = emission * opacity;
+    trans = 1.0 - opacity;
   }
 
   let coord = vec2i(texelX, perpIdx);
@@ -395,13 +402,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 // ── Final blit shader ──
 // Bilinearly upscales fluence from probe resolution to screen resolution.
-// Uses attenuation texture to compute per-channel opacity for masking indirect light.
+// Uses opacity texture to mask indirect light at solid/translucent surfaces.
 
 const blitShader = /*wgsl*/ `
 struct BlitParams { exposure: f32, screenW: f32, screenH: f32, pad: f32 };
 @group(0) @binding(0) var fluenceTex: texture_2d<f32>;
 @group(0) @binding(1) var emissionTex: texture_2d<f32>;
-@group(0) @binding(2) var attenuationTex: texture_2d<f32>;
+@group(0) @binding(2) var opacityTex: texture_2d<f32>;
 @group(0) @binding(3) var<uniform> params: BlitParams;
 @group(0) @binding(4) var linearSamp: sampler;
 
@@ -433,8 +440,7 @@ fn triangularDither(fragCoord: vec2u) -> vec3f {
   let uv = pos.xy / vec2f(params.screenW, params.screenH);
   let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
   let emission = textureLoad(emissionTex, vec2u(pos.xy), 0).rgb;
-  let sigma = textureLoad(attenuationTex, vec2u(pos.xy), 0).rgb;
-  let opacity = 1.0 - exp(-sigma);
+  let opacity = textureLoad(opacityTex, vec2u(pos.xy), 0).rgb;
   let emissive = emission * opacity;
   let indirect = fluence * (1.0 - opacity);
   let hdr = (emissive + indirect) * params.exposure;
@@ -483,11 +489,11 @@ export class FolkHolographicRC extends FolkBaseSet {
   #context!: GPUCanvasContext;
   #presentationFormat!: GPUTextureFormat;
 
-  // World textures (emission + attenuation, MRT)
+  // World textures (emission + opacity, MRT)
   #emissionTexture!: GPUTexture;
   #emissionTextureView!: GPUTextureView;
-  #attenuationTexture!: GPUTexture;
-  #attenuationTextureView!: GPUTextureView;
+  #opacityTexture!: GPUTexture;
+  #opacityTextureView!: GPUTextureView;
   #worldRenderPipeline!: GPURenderPipeline;
 
   // Shape / line / mouse light rendering
@@ -602,10 +608,12 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   addLine(
     x1: number, y1: number, x2: number, y2: number,
-    colorIndex: number, thickness = 20, attenuation: [number, number, number] = [5, 5, 5],
+    colorIndex: number,
+    thickness = 20,
+    opacity: [number, number, number] = [SOLID_OPACITY, SOLID_OPACITY, SOLID_OPACITY],
   ) {
     const [r, g, b] = FolkHolographicRC.#colors[colorIndex] ?? FolkHolographicRC.#colors[1];
-    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, attenuation[0], attenuation[1], attenuation[2]]);
+    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity[0], opacity[1], opacity[2]]);
     this.#lineBufferDirty = true;
   }
 
@@ -683,13 +691,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     });
     this.#emissionTextureView = this.#emissionTexture.createView();
 
-    this.#attenuationTexture = device.createTexture({
-      label: 'HRC-Attenuation',
+    this.#opacityTexture = device.createTexture({
+      label: 'HRC-Opacity',
       size: { width, height },
       format: 'rgba16float',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
-    this.#attenuationTextureView = this.#attenuationTexture.createView();
+    this.#opacityTextureView = this.#opacityTexture.createView();
 
     this.#rayTextures = [];
     this.#rayTextureViews = [];
@@ -866,7 +874,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           layout: this.#raySeedPipeline.getBindGroupLayout(0),
           entries: [
             { binding: 0, resource: this.#emissionTextureView },
-            { binding: 1, resource: this.#attenuationTextureView },
+            { binding: 1, resource: this.#opacityTextureView },
             { binding: 2, resource: this.#rayTextureViews[0] },
             { binding: 3, resource: this.#transTextureViews[0] },
             {
@@ -940,7 +948,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #destroyResources() {
     this.#emissionTexture?.destroy();
-    this.#attenuationTexture?.destroy();
+    this.#opacityTexture?.destroy();
     this.#rayTextures?.forEach((t) => t.destroy());
     this.#transTextures?.forEach((t) => t.destroy());
     this.#mergeTextures?.forEach((t) => t.destroy());
@@ -975,15 +983,17 @@ export class FolkHolographicRC extends FolkBaseSet {
         g = 0.5 + 0.5 * Math.sin((hue + 0.333) * Math.PI * 2);
         b = 0.5 + 0.5 * Math.sin((hue + 0.666) * Math.PI * 2);
       }
-      const attenAttr = element?.getAttribute('data-attenuation');
+      const attenAttr = element?.getAttribute('data-opacity');
       let ar: number, ag: number, ab: number;
       if (attenAttr !== null) {
         const parts = attenAttr.split(',').map(Number);
-        ar = parts[0] ?? 5;
+        ar = parts[0] ?? SOLID_OPACITY;
         ag = parts[1] ?? ar;
         ab = parts[2] ?? ar;
       } else {
-        ar = 5; ag = 5; ab = 5;
+        ar = SOLID_OPACITY;
+        ag = SOLID_OPACITY;
+        ab = SOLID_OPACITY;
       }
       const v = (px: number, py: number) => { vertices.push(px, py, r, g, b, ar, ag, ab); };
       v(x0, y0); v(x1, y0); v(x0, y1);
@@ -1037,9 +1047,10 @@ export class FolkHolographicRC extends FolkBaseSet {
     for (let i = 0; i < SEGS; i++) {
       const a0 = (i / SEGS) * Math.PI * 2;
       const a1 = ((i + 1) / SEGS) * Math.PI * 2;
-      verts.push(cx, cy, r, g, b, 0, 0, 0);
-      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, 0, 0, 0);
-      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, 0, 0, 0);
+      const sa = SOLID_OPACITY;
+      verts.push(cx, cy, r, g, b, sa, sa, sa);
+      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, sa, sa, sa);
+      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, sa, sa, sa);
     }
     this.#mouseLightVertexCount = verts.length / 8;
     this.#mouseLightBuffer = uploadVertexData(this.#device, this.#mouseLightBuffer, new Float32Array(verts));
@@ -1074,12 +1085,12 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const encoder = device.createCommandEncoder();
 
-    // ── Step 1: Render world textures (emission + attenuation) ──
+    // ── Step 1: Render world textures (emission + opacity) ──
     {
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           { view: this.#emissionTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
-          { view: this.#attenuationTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
+          { view: this.#opacityTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
         ],
       });
       pass.setPipeline(this.#worldRenderPipeline);
@@ -1234,7 +1245,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         entries: [
           { binding: 0, resource: this.#fluenceTextureViews[fluenceResultIdx] },
           { binding: 1, resource: this.#emissionTextureView },
-          { binding: 2, resource: this.#attenuationTextureView },
+          { binding: 2, resource: this.#opacityTextureView },
           { binding: 3, resource: { buffer: this.#blitParamsBuffer } },
           { binding: 4, resource: this.#linearSampler },
         ],

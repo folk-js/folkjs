@@ -245,14 +245,14 @@
         hrc.querySelectorAll('folk-shape').forEach((s) => s.remove());
       }
 
-      function addShape(x, y, w, h, colorIdx, attenuation) {
+      function addShape(x, y, w, h, colorIdx, opacity) {
         const el = document.createElement('folk-shape');
         el.setAttribute('x', x);
         el.setAttribute('y', y);
         el.setAttribute('width', w);
         el.setAttribute('height', h);
         if (colorIdx !== undefined) el.setAttribute('data-color', colorIdx);
-        if (attenuation !== undefined) el.setAttribute('data-attenuation', attenuation);
+        if (opacity !== undefined) el.setAttribute('data-opacity', opacity);
         hrc.appendChild(el);
         return el;
       }
@@ -354,13 +354,13 @@
         const cy = window.innerHeight / 2;
         const wallX = cx - 10;
         addShape(wallX, cy - 180, 20, 60, 1);
-        addShape(wallX, cy - 100, 20, 20, 0, '0.02,0.15,0.15');
+        addShape(wallX, cy - 100, 20, 20, 0, '0,1,1');
         addShape(wallX, cy - 80, 20, 30, 1);
-        addShape(wallX, cy - 50, 20, 20, 0, '0.15,0.02,0.15');
+        addShape(wallX, cy - 50, 20, 20, 0, '1,0,1');
         addShape(wallX, cy - 30, 20, 30, 1);
-        addShape(wallX, cy, 20, 20, 0, '0.15,0.15,0.02');
+        addShape(wallX, cy, 20, 20, 0, '1,1,0');
         addShape(wallX, cy + 20, 20, 30, 1);
-        addShape(wallX, cy + 50, 20, 20, 0, '0.02,0.02,0.15');
+        addShape(wallX, cy + 50, 20, 20, 0, '0,0,1');
         addShape(wallX, cy + 70, 20, 110, 1);
       }
 
@@ -391,9 +391,9 @@
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
         addShape(cx - 200, cy - 40, 60, 60, 9);
-        addShape(cx - 60, cy - 120, 20, 240, 0, '0.01,0.12,0.12');
-        addShape(cx, cy - 120, 20, 240, 0, '0.12,0.01,0.12');
-        addShape(cx + 60, cy - 120, 20, 240, 0, '0.12,0.12,0.01');
+        addShape(cx - 60, cy - 120, 20, 240, 0, '0,1,1');
+        addShape(cx, cy - 120, 20, 240, 0, '1,0,1');
+        addShape(cx + 60, cy - 120, 20, 240, 0, '1,1,0');
         addShape(cx + 140, cy - 40, 40, 80, 1);
       }
 
