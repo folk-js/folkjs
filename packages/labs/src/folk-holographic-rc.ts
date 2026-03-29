@@ -108,20 +108,21 @@ struct CascadeParams {
 @group(0) @binding(1) var prevCascade: texture_2d<f32>;
 @group(0) @binding(2) var currCascade: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(3) var<uniform> params: CascadeParams;
+@group(0) @binding(4) var cascadeSampler: sampler;
 
 fn toWorld(perpIdx: i32, alongIdx: i32, sp: f32) -> vec2f {
   return vec2f(params.originX, params.originY)
-       + vec2f(params.perpAxisX, params.perpAxisY) * f32(perpIdx)
-       + vec2f(params.alongAxisX, params.alongAxisY) * (f32(alongIdx) * sp);
+       + vec2f(params.perpAxisX, params.perpAxisY) * (f32(perpIdx) + 0.5)
+       + vec2f(params.alongAxisX, params.alongAxisY) * (f32(alongIdx) * sp + 0.5);
 }
 
 fn readPrev(perpIdx: i32, alongIdx: i32, angleIdx: u32, numAng: u32) -> vec3f {
-  let x = alongIdx * i32(numAng) + i32(angleIdx);
-  let y = perpIdx;
-  if (x < 0 || y < 0) { return vec3f(0.0); }
-  let dims = textureDimensions(prevCascade);
-  if (u32(x) >= dims.x || u32(y) >= dims.y) { return vec3f(0.0); }
-  return textureLoad(prevCascade, vec2i(x, y), 0).rgb;
+  let x = f32(alongIdx * i32(numAng) + i32(angleIdx)) + 0.5;
+  let y = f32(perpIdx) + 0.5;
+  let dims = vec2f(textureDimensions(prevCascade));
+  let uv = vec2f(x, y) / dims;
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { return vec3f(0.0); }
+  return textureSampleLevel(prevCascade, cascadeSampler, uv, 0.0).rgb;
 }
 
 fn sampleWorld(worldPos: vec2f) -> vec4f {
@@ -192,20 +193,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let farUp = readPrev(fPerpUp, farAlong, angleIdx * 2u, params.nextNumAngles);
     let farLo = readPrev(fPerpLo, farAlong, angleIdx * 2u + 1u, params.nextNumAngles);
 
-    let nearValid = params.isLastCascade == 0u
-                  && nearAlong >= 0
-                  && nearAlong < i32(params.nextAlongSize);
-    if (nearValid) {
-      let nearUp = readPrev(perpIdx, nearAlong, angleIdx * 2u, params.nextNumAngles);
-      let nearLo = readPrev(perpIdx, nearAlong, angleIdx * 2u + 1u, params.nextNumAngles);
-      let upper = (nearUp + overComp(trUp, farUp)) * 0.5;
-      let lower = (nearLo + overComp(trLo, farLo)) * 0.5;
-      result = (upper * uSize + lower * lSize) / (uSize + lSize);
-    } else {
-      let upper = overComp(trUp, farUp);
-      let lower = overComp(trLo, farLo);
-      result = (upper * uSize + lower * lSize) / (uSize + lSize);
-    }
+    let nearUp = readPrev(perpIdx, nearAlong, angleIdx * 2u, params.nextNumAngles);
+    let nearLo = readPrev(perpIdx, nearAlong, angleIdx * 2u + 1u, params.nextNumAngles);
+
+    let upper = (nearUp + overComp(trUp, farUp)) * 0.5;
+    let lower = (nearLo + overComp(trLo, farLo)) * 0.5;
+    result = (upper * uSize + lower * lSize) / (uSize + lSize);
   } else {
     // Odd probes: between next cascade probes, trace to both
     let tAlong = alongIdx / 2 + 1;
@@ -258,25 +251,19 @@ struct AccumParams {
 @group(0) @binding(1) var prevFluence: texture_2d<f32>;
 @group(0) @binding(2) var currFluence: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(3) var<uniform> params: AccumParams;
-@group(0) @binding(4) var linearSamp: sampler;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= params.screenW || gid.y >= params.screenH) { return; }
-  let cascadeDims = vec2f(textureDimensions(cascadeTex));
-  // Read one probe ahead in the direction (per paper section 3.9 and
-  // amitabha's pos + grid.axis_y). Cascade 0 cones start one step along
-  // the direction, so the probe at alongIdx+1 traces TOWARD this pixel.
-  var cc: vec2f;
+  var cc: vec2i;
   switch (params.direction) {
-    case 0u: { cc = vec2f(f32(gid.x) + 1.0, f32(gid.y)); }
-    case 1u: { cc = vec2f(f32(gid.y) + 1.0, f32(gid.x)); }
-    case 2u: { cc = vec2f(f32(params.screenW) - 2.0 - f32(gid.x), f32(gid.y)); }
-    case 3u: { cc = vec2f(f32(params.screenH) - 2.0 - f32(gid.y), f32(gid.x)); }
-    default: { cc = vec2f(gid.xy); }
+    case 0u: { cc = vec2i(gid.xy); }
+    case 1u: { cc = vec2i(i32(gid.y), i32(gid.x)); }
+    case 2u: { cc = vec2i(i32(params.screenW) - 1 - i32(gid.x), i32(gid.y)); }
+    case 3u: { cc = vec2i(i32(params.screenH) - 1 - i32(gid.y), i32(gid.x)); }
+    default: { cc = vec2i(gid.xy); }
   }
-  let uv = (cc + 0.5) / cascadeDims;
-  let cv = textureSampleLevel(cascadeTex, linearSamp, uv, 0.0);
+  let cv = textureLoad(cascadeTex, cc, 0);
   let pc = vec2i(gid.xy);
   if (params.isFirstDir == 1u) {
     textureStore(currFluence, pc, cv);
@@ -294,6 +281,7 @@ struct BlitParams { exposure: f32, pad0: f32, pad1: f32, pad2: f32 };
 @group(0) @binding(0) var fluenceTex: texture_2d<f32>;
 @group(0) @binding(1) var worldTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: BlitParams;
+@group(0) @binding(3) var linearSamp: sampler;
 
 fn acesTonemap(x: vec3f) -> vec3f {
   return clamp(
@@ -320,7 +308,9 @@ fn triangularDither(fragCoord: vec2u) -> vec3f {
   return vec4f(pos[i], 0, 1);
 }
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let fluence = textureLoad(fluenceTex, vec2u(pos.xy), 0).rgb;
+  let dims = vec2f(textureDimensions(fluenceTex));
+  let uv = pos.xy / dims;
+  let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
   let world = textureLoad(worldTex, vec2u(pos.xy), 0);
   let emissive = world.rgb * world.a;
   let indirect = fluence;
@@ -430,6 +420,8 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   // Debug: 0=all directions, 1=east, 2=south, 3=west, 4=north
   #debugDir = 0;
+  // Debug: 0=use all cascades, >0=limit to N cascades
+  #debugCascadeCount = 0;
 
   // FPS tracking
   #fpsOverlay: HTMLDivElement | null = null;
@@ -544,7 +536,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const { width, height } = this.#canvas;
     const device = this.#device;
 
-    this.#numCascades = Math.min(Math.ceil(Math.log2(Math.max(width, height))), 9);
+    this.#numCascades = Math.ceil(Math.log2(Math.max(width, height)));
     this.#maxCascadeDim = Math.max(width, height);
 
     this.#worldTexture = device.createTexture({
@@ -891,8 +883,11 @@ export class FolkHolographicRC extends FolkBaseSet {
         pass.end();
       }
 
-      // Process cascades from highest (numCascades-1) to 0
-      for (let level = numCascades - 1; level >= 0; level--) {
+      const effectiveCascades = this.#debugCascadeCount > 0
+        ? Math.min(this.#debugCascadeCount, numCascades)
+        : numCascades;
+      let lastWriteView = this.#cascadeTexAView;
+      for (let level = effectiveCascades - 1; level >= 0; level--) {
         const k = numCascades - 1 - level;
         const readFromA = k % 2 !== 0;
         const readView = readFromA ? this.#cascadeTexAView : this.#cascadeTexBView;
@@ -912,6 +907,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             { binding: 1, resource: readView },
             { binding: 2, resource: writeView },
             { binding: 3, resource: { buffer: this.#cascadeParamsBuffer, offset: paramsOffset, size: 64 } },
+            { binding: 4, resource: this.#linearSampler },
           ],
         });
 
@@ -920,12 +916,11 @@ export class FolkHolographicRC extends FolkBaseSet {
         pass.setBindGroup(0, bg);
         pass.dispatchWorkgroups(Math.ceil(perpSize / 16), Math.ceil(flatSize / 16));
         pass.end();
+        lastWriteView = writeView;
       }
 
-      // Determine which cascade texture has cascade-0 result
-      const cascade0K = numCascades - 1;
-      const cascade0InA = cascade0K % 2 !== 0;
-      const cascade0View = cascade0InA ? this.#cascadeTexBView : this.#cascadeTexAView;
+      // Use the stopped level's output (or cascade 0 in normal mode)
+      const cascade0View = lastWriteView;
 
       // Upload accumulation params
       const accumOffset = dir * 256;
@@ -953,7 +948,6 @@ export class FolkHolographicRC extends FolkBaseSet {
           { binding: 1, resource: fluenceReadView },
           { binding: 2, resource: fluenceWriteView },
           { binding: 3, resource: { buffer: this.#accumParamsBuffer, offset: accumOffset, size: 16 } },
-          { binding: 4, resource: this.#linearSampler },
         ],
       });
 
@@ -974,6 +968,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           { binding: 0, resource: fluenceResultView },
           { binding: 1, resource: this.#worldTextureView },
           { binding: 2, resource: { buffer: this.#blitParamsBuffer } },
+          { binding: 3, resource: this.#linearSampler },
         ],
       });
 
@@ -1083,7 +1078,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (e.key === 'd' || e.key === 'D') {
       this.#debugDir = (this.#debugDir + 1) % 5;
       const names = ['All', 'East', 'South', 'West', 'North'];
-      console.log(`HRC debug: ${names[this.#debugDir]}`);
+      console.log(`HRC debug dir: ${names[this.#debugDir]}`);
+    }
+    if (e.key === '`' || e.key === '~') {
+      const delta = e.shiftKey ? -1 : 1;
+      this.#debugCascadeCount = ((this.#debugCascadeCount + delta) % (this.#numCascades + 1) + this.#numCascades + 1) % (this.#numCascades + 1);
+      const maxSpacing = this.#debugCascadeCount > 0 ? Math.pow(2, this.#debugCascadeCount - 1) : Math.pow(2, this.#numCascades - 1);
+      const label = this.#debugCascadeCount === 0 ? `all (max spacing ${maxSpacing})` : `${this.#debugCascadeCount} (max spacing ${maxSpacing})`;
+      console.log(`HRC cascades: ${label}`);
     }
   };
 
@@ -1122,7 +1124,10 @@ export class FolkHolographicRC extends FolkBaseSet {
       const ms = this.#smoothedFrameTime.toFixed(1);
       const dirNames = ['All', 'E', 'S', 'W', 'N'];
       const dirLabel = this.#debugDir > 0 ? ` [${dirNames[this.#debugDir]}]` : '';
-      this.#fpsOverlay!.textContent = `${fps} fps (${ms} ms)${dirLabel}`;
+      const ec = this.#debugCascadeCount > 0 ? this.#debugCascadeCount : this.#numCascades;
+      const maxSp = Math.pow(2, ec - 1);
+      const ccLabel = this.#debugCascadeCount > 0 ? ` C${this.#debugCascadeCount}/${this.#numCascades}` : '';
+      this.#fpsOverlay!.textContent = `${fps} fps (${ms} ms)${dirLabel}${ccLabel} sp${maxSp}`;
     }
   }
 }
