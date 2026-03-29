@@ -132,8 +132,8 @@
       </div>
     </div>
     <div id="help-text">
-      <kbd>0</kbd>–<kbd>9</kbd> color &nbsp; <kbd>+</kbd><kbd>−</kbd> size &nbsp; <kbd>[</kbd><kbd>]</kbd> exposure
-      &nbsp; <kbd>C</kbd> clear &nbsp; <kbd>D</kbd> debug dir &nbsp; <kbd>`</kbd> cascade count &nbsp; <kbd>⇧</kbd><kbd>0</kbd>–<kbd>9</kbd> scene &nbsp; click swatch to cycle
+      <kbd>←</kbd><kbd>→</kbd> scene &nbsp; <kbd>0</kbd>–<kbd>9</kbd> color &nbsp; <kbd>+</kbd><kbd>−</kbd> size &nbsp; <kbd>[</kbd><kbd>]</kbd> exposure
+      &nbsp; <kbd>C</kbd> clear &nbsp; <kbd>D</kbd> debug dir &nbsp; <kbd>`</kbd> cascade count &nbsp; click swatch to cycle
     </div>
 
     <div id="fps-overlay"></div>
@@ -161,20 +161,21 @@
         { name: 'Empty', fn: loadEmpty },
         { name: 'Center block', fn: loadCenterBlock },
         { name: 'Thin walls', fn: loadThinWalls },
-        { name: 'Pillars', fn: loadPillars },
         { name: 'Corner trap', fn: loadCorner },
-        { name: 'Color mix', fn: loadColorMix },
-        { name: 'Stained glass', fn: loadStainedGlass },
         { name: 'Color shadows', fn: loadColorShadows },
-        { name: 'Fog room', fn: loadFogRoom },
+        { name: 'Stained glass', fn: loadStainedGlass },
         { name: 'Colored glass', fn: loadColoredGlass },
+        { name: 'Fog room', fn: loadFogRoom },
         { name: 'Smoke', fn: loadSmoke },
         { name: 'Bounce room', fn: loadBounceRoom },
+        { name: 'Bounce maze', fn: loadBounceMaze },
+        { name: 'Materials', fn: loadMaterials },
+        { name: 'Color mix', fn: loadColorMix },
         { name: 'Orbit', fn: loadAnimatedOrbit },
         { name: 'Gate', fn: loadAnimatedGate },
       ];
 
-      let currentColor = 2;
+      let currentColor = 9;
       let currentScene = 0;
       let lineThickness = 8;
       const indicator = document.getElementById('color-indicator');
@@ -309,17 +310,6 @@
         addShape(cx - 200, cy + 110, 400, 8, 1);
       }
 
-      function loadPillars() {
-        const cx = window.innerWidth / 2;
-        const cy = window.innerHeight / 2;
-        const spacing = 120;
-        const count = 5;
-        const startX = cx - ((count - 1) * spacing) / 2;
-        for (let i = 0; i < count; i++) {
-          addShape(startX + i * spacing - 15, cy - 80, 30, 160, 1);
-        }
-      }
-
       function loadCorner() {
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
@@ -414,15 +404,56 @@
         const cx = W / 2;
         const cy = H / 2;
         const t = 15;
-        // Room walls: non-emissive (color 0), fully opaque, reflective
-        addShape(cx - 250, cy - 200, 500, t, 0, undefined, 0.8);  // top
-        addShape(cx - 250, cy + 200 - t, 500, t, 0, undefined, 0.8);  // bottom
-        addShape(cx - 250, cy - 200, t, 400, 0, undefined, 0.8);  // left
-        addShape(cx + 250 - t, cy - 200, t, 400, 0, undefined, 0.8);  // right
-        // White ceiling light (emissive, no albedo)
-        addShape(cx - 40, cy - 190, 80, 10, 9);
-        // Central occluder (non-reflective)
-        addShape(cx - 30, cy - 30, 60, 60, 1);
+        addShape(cx - 250, cy - 200, 500, t, 0, undefined, 0.7);  // ceiling
+        addShape(cx - 250, cy + 200 - t, 500, t, 0, undefined, 0.7);  // floor
+        addShape(cx - 250, cy - 200, t, 400, 2, undefined, 0.5);  // left wall (red tint)
+        addShape(cx + 250 - t, cy - 200, t, 400, 7, undefined, 0.5);  // right wall (blue tint)
+        addShape(cx - 40, cy - 190, 80, 10, 9);  // ceiling light
+        addShape(cx - 30, cy - 30, 60, 60, 1);  // central occluder
+      }
+
+      function loadBounceMaze() {
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const cx = W / 2;
+        const cy = H / 2;
+        const t = 12;
+        const a = 0.6;
+        // Outer walls
+        addShape(cx - 300, cy - 220, 600, t, 0, undefined, a);
+        addShape(cx - 300, cy + 220 - t, 600, t, 0, undefined, a);
+        addShape(cx - 300, cy - 220, t, 440, 0, undefined, a);
+        addShape(cx + 300 - t, cy - 220, t, 440, 0, undefined, a);
+        // Internal maze walls
+        addShape(cx - 200, cy - 100, t, 220, 0, undefined, a);
+        addShape(cx - 100, cy - 220 + t, t, 220, 0, undefined, a);
+        addShape(cx, cy - 100, t, 320 - t, 0, undefined, a);
+        addShape(cx + 100, cy - 220 + t, t, 280, 0, undefined, a);
+        addShape(cx + 200, cy - 100, t, 220, 0, undefined, a);
+        // Light sources tucked into corners
+        addShape(cx - 290, cy - 210, 20, 20, 3);
+        addShape(cx + 270, cy + 190, 20, 20, 6);
+      }
+
+      function loadMaterials() {
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const cx = W / 2;
+        const cy = H / 2;
+        const sz = 50;
+        const gap = 70;
+        const startX = cx - 3 * gap;
+        const y = cy - 20;
+        // Row of materials with different properties
+        addShape(startX, y, sz, sz, 3);                               // emitter (orange)
+        addShape(startX + gap, y, sz, sz, 1);                         // solid occluder
+        addShape(startX + gap * 2, y, sz, sz, 0, '0,1,1');            // red glass
+        addShape(startX + gap * 3, y, sz, sz, 0, '0.05');             // thin fog
+        addShape(startX + gap * 4, y, sz, sz, 0, undefined, 0.8);    // reflective wall
+        addShape(startX + gap * 5, y, sz, sz, 0, '0.3');             // thick fog
+        addShape(startX + gap * 6, y, sz, sz, 5, '0.02');            // glowing fog
+        // Light source above
+        addShape(cx - 30, cy - 150, 60, 15, 9);
       }
 
       function loadAnimatedOrbit() {
@@ -465,7 +496,7 @@
         animate();
       }
 
-      switchScene(12);
+      switchScene(0);
 
       // FPS overlay
       const fpsEl = document.getElementById('fps-overlay');
@@ -508,6 +539,11 @@
         }
         if (e.key === 'c' || e.key === 'C') {
           hrc.clearLines();
+        }
+        if (e.key === 'ArrowRight') {
+          switchScene((currentScene + 1) % scenes.length);
+        } else if (e.key === 'ArrowLeft') {
+          switchScene((currentScene - 1 + scenes.length) % scenes.length);
         }
         if (e.key === 'Delete' || e.key === 'Backspace') {
           const selected = hrc.querySelector('folk-shape[aria-selected="true"]');

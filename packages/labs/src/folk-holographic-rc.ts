@@ -495,7 +495,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   // Lambertian reflection: convert fluence (radiance integrated over 2π) back
   // to radiance by dividing by 2π before applying albedo. This ensures the
   // round-trip gain is exactly albedo (< 1), guaranteeing convergence.
-  let bounce = fluence * albedo / 6.2831853;
+  const TWO_PI = 6.2831853;
+  let bounce = fluence * albedo / TWO_PI;
   textureStore(bounceOut, vec2i(px, py), vec4f(bounce, 0.0));
 }
 `;
@@ -533,6 +534,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   @property({ type: Number, reflect: true }) exposure = 2.0;
   @property({ type: Number, reflect: true }) probeSize = 1024;
+  @property({ type: Boolean, reflect: true }) bounces = true;
 
   #canvas!: HTMLCanvasElement;
   #device!: GPUDevice;
@@ -1210,7 +1212,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // ── Step 1.5: Bounce compute (reads previous frame's fluence at screen resolution) ──
-    if (this.#lastFluenceResultIdx >= 0) {
+    if (this.bounces && this.#lastFluenceResultIdx >= 0) {
       const bounceBG = device.createBindGroup({
         layout: this.#bounceComputePipeline.getBindGroupLayout(0),
         entries: [
