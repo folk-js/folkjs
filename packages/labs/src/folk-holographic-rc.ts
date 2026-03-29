@@ -122,9 +122,10 @@ struct SeedParams {
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let probeIdx = i32(gid.x);
+  let texelX = i32(gid.x);
   let perpIdx = i32(gid.y);
   let ps = i32(params.probeSize);
+  let probeIdx = texelX / 2;
   if (probeIdx >= ps || perpIdx >= ps) { return; }
 
   let wp = vec2f(params.originX, params.originY)
@@ -140,9 +141,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     trans = 1.0 - s.a;
   }
 
-  let val = vec4f(rad, trans);
-  textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), val);
-  textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), val);
+  textureStore(rayOut, vec2i(texelX, perpIdx), vec4f(rad, trans));
 }
 `;
 
@@ -221,8 +220,8 @@ struct MergeParams {
   numRays: u32,
   nextNumCones: u32,
   isLastLevel: u32,
+  aspect: f32,
   pad0: u32,
-  pad1: u32,
 };
 
 @group(0) @binding(0) var rayTex: texture_2d<f32>;
@@ -251,7 +250,8 @@ fn loadMerge(texX: i32, perpIdx: i32) -> vec3f {
 fn angWeight(subCone: u32, numAng: u32) -> f32 {
   let N = f32(numAng);
   let s = f32(subCone);
-  return atan2(2.0 * s - N + 2.0, N) - atan2(2.0 * s - N, N);
+  let a = params.aspect;
+  return atan2((2.0 * s - N + 2.0) * a, N) - atan2((2.0 * s - N) * a, N);
 }
 
 @compute @workgroup_size(16, 16)
@@ -466,6 +466,8 @@ export class FolkHolographicRC extends FolkBaseSet {
   // Pre-created bind groups (recreated on resize)
   #seedBindGroups!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
+  #mergeBindGroups!: GPUBindGroup[][]; // [dir][mergeStep k]
+  #mergeResultIdx!: number; // which merge texture holds level-0 result at full cascade count
 
   // Sampler
   #linearSampler!: GPUSampler;
@@ -514,6 +516,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     await this.#initWebGPU();
     this.#initResources();
     this.#initPipelines();
+    this.#uploadStaticParams(this.#canvas.width, this.#canvas.height);
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
     window.addEventListener('keydown', this.#handleKeyDown);
@@ -666,7 +669,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     });
     this.#mergeParamsBuffer = device.createBuffer({
       label: 'HRC-MergeParams',
-      size: this.#numCascades * 256,
+      size: 4 * this.#numCascades * 256,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.#accumParamsBuffer = device.createBuffer({
@@ -788,6 +791,34 @@ export class FolkHolographicRC extends FolkBaseSet {
         }),
       );
     }
+
+    const nc = this.#numCascades;
+    const mergeParamSize = this.#mergeParamsView.arrayBuffer.byteLength;
+    this.#mergeBindGroups = [];
+    for (let dir = 0; dir < 4; dir++) {
+      const dirBGs: GPUBindGroup[] = [];
+      let readIdx = 1;
+      let writeIdx = 0;
+      for (let k = 0; k < nc; k++) {
+        const level = nc - 1 - k;
+        dirBGs.push(
+          device.createBindGroup({
+            layout: this.#coneMergePipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: this.#rayTextureViews[level] },
+              { binding: 1, resource: this.#mergeTextureViews[readIdx] },
+              { binding: 2, resource: this.#mergeTextureViews[writeIdx] },
+              { binding: 3, resource: { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergeParamSize } },
+            ],
+          }),
+        );
+        const tmp = readIdx;
+        readIdx = writeIdx;
+        writeIdx = tmp;
+      }
+      this.#mergeBindGroups.push(dirBGs);
+    }
+    this.#mergeResultIdx = ((nc - 1) % 2 === 0) ? 0 : 1;
   }
 
   #destroyResources() {
@@ -913,7 +944,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     const ps = this.#ps;
     const nc = this.#numCascades;
 
-    this.#uploadParams(width, height);
+    this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
+    device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
 
     const encoder = device.createCommandEncoder();
 
@@ -968,7 +1000,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         const pass = encoder.beginComputePass();
         pass.setPipeline(this.#raySeedPipeline);
         pass.setBindGroup(0, this.#seedBindGroups[dir]);
-        pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
+        pass.dispatchWorkgroups(Math.ceil((ps * 2) / 16), Math.ceil(ps / 16));
         pass.end();
       }
 
@@ -987,6 +1019,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
 
       // Phase C: Cone Merge (top-down)
+      const usePrebuiltMerge = ec === nc;
       let mergeReadIdx = 1;
       let mergeWriteIdx = 0;
       for (let k = 0; k < ec; k++) {
@@ -995,15 +1028,17 @@ export class FolkHolographicRC extends FolkBaseSet {
         const numProbes = ps >> level;
         const flatSize = numProbes * numCones;
 
-        const bg = device.createBindGroup({
-          layout: this.#coneMergePipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: this.#rayTextureViews[level] },
-            { binding: 1, resource: this.#mergeTextureViews[mergeReadIdx] },
-            { binding: 2, resource: this.#mergeTextureViews[mergeWriteIdx] },
-            { binding: 3, resource: { buffer: this.#mergeParamsBuffer, offset: level * 256, size: this.#mergeParamsView.arrayBuffer.byteLength } },
-          ],
-        });
+        const bg = usePrebuiltMerge
+          ? this.#mergeBindGroups[dir][k]
+          : device.createBindGroup({
+              layout: this.#coneMergePipeline.getBindGroupLayout(0),
+              entries: [
+                { binding: 0, resource: this.#rayTextureViews[level] },
+                { binding: 1, resource: this.#mergeTextureViews[mergeReadIdx] },
+                { binding: 2, resource: this.#mergeTextureViews[mergeWriteIdx] },
+                { binding: 3, resource: { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: this.#mergeParamsView.arrayBuffer.byteLength } },
+              ],
+            });
         const pass = encoder.beginComputePass();
         pass.setPipeline(this.#coneMergePipeline);
         pass.setBindGroup(0, bg);
@@ -1015,10 +1050,12 @@ export class FolkHolographicRC extends FolkBaseSet {
         mergeWriteIdx = tmp;
       }
 
-      const mergeResultView = this.#mergeTextureViews[mergeReadIdx];
+      const mergeResultView = usePrebuiltMerge
+        ? this.#mergeTextureViews[this.#mergeResultIdx]
+        : this.#mergeTextureViews[mergeReadIdx];
 
       // Phase D: Fluence Accumulation
-      this.#accumParamsView.set({ direction: dir, isFirstDir: isFirstDir ? 1 : 0, probeSize: ps, pad: 0 });
+      this.#accumParamsView.set({ direction: dir, isFirstDir: isFirstDir ? 1 : 0, probeSize: ps });
       device.queue.writeBuffer(this.#accumParamsBuffer, dir * 256, this.#accumParamsView.arrayBuffer);
 
       if (isFirstDir) {
@@ -1081,7 +1118,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     device.queue.submit([encoder.finish()]);
   }
 
-  #uploadParams(width: number, height: number) {
+  #uploadStaticParams(width: number, height: number) {
     const device = this.#device;
     const ps = this.#ps;
     const nc = this.#numCascades;
@@ -1113,22 +1150,32 @@ export class FolkHolographicRC extends FolkBaseSet {
       device.queue.writeBuffer(this.#extendParamsBuffer, (level - 1) * 256, this.#extendParamsView.arrayBuffer);
     }
 
-    for (let level = 0; level < nc; level++) {
-      const numCones = 1 << level;
-      const numProbes = ps >> level;
-      const numRays = numCones + 1;
-      const nextNumCones = numCones * 2;
-      this.#mergeParamsView.set({
-        probeSize: ps,
-        numCones,
-        numProbes,
-        numRays,
-        nextNumCones,
-        isLastLevel: level === nc - 1 ? 1 : 0,
-        pad0: 0,
-        pad1: 0,
-      });
-      device.queue.writeBuffer(this.#mergeParamsBuffer, level * 256, this.#mergeParamsView.arrayBuffer);
+    for (let dir = 0; dir < 4; dir++) {
+      const [sa, sp] = dirScales(dir, width, height, ps);
+      const aspect = sp / sa;
+      for (let level = 0; level < nc; level++) {
+        const numCones = 1 << level;
+        const numProbes = ps >> level;
+        const numRays = numCones + 1;
+        const nextNumCones = numCones * 2;
+        this.#mergeParamsView.set({
+          probeSize: ps,
+          numCones,
+          numProbes,
+          numRays,
+          nextNumCones,
+          isLastLevel: level === nc - 1 ? 1 : 0,
+          aspect,
+          pad0: 0,
+        });
+        device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
+      }
+    }
+
+    this.#accumParamsView.set({ direction: 0, isFirstDir: 0, probeSize: ps, pad: 0 });
+    for (let dir = 0; dir < 4; dir++) {
+      this.#accumParamsView.set({ direction: dir });
+      device.queue.writeBuffer(this.#accumParamsBuffer, dir * 256, this.#accumParamsView.arrayBuffer);
     }
 
     this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
@@ -1154,6 +1201,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#destroyResources();
     this.#initResources();
     this.#createStaticBindGroups();
+    this.#uploadStaticParams(this.#canvas.width, this.#canvas.height);
     this.#lineBindGroup = undefined;
     this.#updateShapeData();
 
