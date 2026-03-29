@@ -1,10 +1,23 @@
 import { property, type PropertyValues } from '@folkjs/dom/ReactiveElement';
+import { makeShaderDataDefinitions, makeStructuredView, type StructuredView } from 'webgpu-utils';
 import { FolkBaseSet } from './folk-base-set';
 
 type Line = [x1: number, y1: number, x2: number, y2: number, r: number, g: number, b: number, thickness: number];
 
 function nextPowerOf2(n: number): number {
   return 2 ** Math.ceil(Math.log2(Math.max(n, 2)));
+}
+
+function uboView(shader: string, name: string): StructuredView {
+  return makeStructuredView(makeShaderDataDefinitions(shader).uniforms[name]);
+}
+
+function createComputePipeline(device: GPUDevice, label: string, code: string): GPUComputePipeline {
+  return device.createComputePipeline({
+    label,
+    layout: 'auto',
+    compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
+  });
 }
 
 function uploadVertexData(
@@ -389,16 +402,12 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseLightVertexCount = 0;
 
   // HRC cascade textures (ping-pong pair)
-  #cascadeTexA!: GPUTexture;
-  #cascadeTexAView!: GPUTextureView;
-  #cascadeTexB!: GPUTexture;
-  #cascadeTexBView!: GPUTextureView;
+  #cascadeTextures!: GPUTexture[];
+  #cascadeTextureViews!: GPUTextureView[];
 
   // Fluence textures (ping-pong for directional accumulation)
-  #fluenceTexA!: GPUTexture;
-  #fluenceTexAView!: GPUTextureView;
-  #fluenceTexB!: GPUTexture;
-  #fluenceTexBView!: GPUTextureView;
+  #fluenceTextures!: GPUTexture[];
+  #fluenceTextureViews!: GPUTextureView[];
 
   // Pipelines
   #cascadeMergePipeline!: GPUComputePipeline;
@@ -409,10 +418,13 @@ export class FolkHolographicRC extends FolkBaseSet {
   // Sampler
   #linearSampler!: GPUSampler;
 
-  // Uniform buffers
+  // Uniform buffers + structured views
   #cascadeParamsBuffer!: GPUBuffer;
+  #cascadeParamsView!: StructuredView;
   #accumParamsBuffer!: GPUBuffer;
+  #accumParamsView!: StructuredView;
   #blitParamsBuffer!: GPUBuffer;
+  #blitParamsView!: StructuredView;
 
   // Computed
   #numCascades = 0;
@@ -427,11 +439,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   // Debug: 0=use all cascades, >0=limit to N cascades
   #debugCascadeCount = 0;
 
-  // FPS tracking
-  #fpsOverlay: HTMLDivElement | null = null;
+  // Frame timing (exposed via getter for external overlays)
   #smoothedFrameTime = 0;
   #lastFrameTimestamp = 0;
-  #lastOverlayUpdate = 0;
 
   static readonly #colors: [number, number, number][] = [
     [0, 0, 0],
@@ -466,8 +476,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
     window.removeEventListener('keydown', this.#handleKeyDown);
-    this.#fpsOverlay?.remove();
-    this.#fpsOverlay = null;
     this.#destroyResources();
   }
 
@@ -552,55 +560,43 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#worldTextureView = this.#worldTexture.createView();
 
     const cascadeSize = this.#maxCascadeDim;
-    for (const label of ['A', 'B'] as const) {
-      const tex = device.createTexture({
-        label: `HRC-Cascade-${label}`,
+    this.#cascadeTextures = [0, 1].map((i) =>
+      device.createTexture({
+        label: `HRC-Cascade-${i}`,
         size: { width: cascadeSize, height: cascadeSize },
         format: 'rgba16float',
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      });
-      if (label === 'A') {
-        this.#cascadeTexA = tex;
-        this.#cascadeTexAView = tex.createView();
-      } else {
-        this.#cascadeTexB = tex;
-        this.#cascadeTexBView = tex.createView();
-      }
-    }
+      }),
+    );
+    this.#cascadeTextureViews = this.#cascadeTextures.map((t) => t.createView());
 
-    for (const label of ['A', 'B'] as const) {
-      const tex = device.createTexture({
-        label: `HRC-Fluence-${label}`,
+    this.#fluenceTextures = [0, 1].map((i) =>
+      device.createTexture({
+        label: `HRC-Fluence-${i}`,
         size: { width, height },
         format: 'rgba16float',
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      });
-      if (label === 'A') {
-        this.#fluenceTexA = tex;
-        this.#fluenceTexAView = tex.createView();
-      } else {
-        this.#fluenceTexB = tex;
-        this.#fluenceTexBView = tex.createView();
-      }
-    }
+      }),
+    );
+    this.#fluenceTextureViews = this.#fluenceTextures.map((t) => t.createView());
 
-    // Uniform buffers — cascade params (one slot per cascade per direction)
-    const maxSlots = this.#numCascades * 4;
+    this.#cascadeParamsView = uboView(cascadeMergeShader, 'params');
+    this.#accumParamsView = uboView(fluenceAccumShader, 'params');
+    this.#blitParamsView = uboView(blitShader, 'params');
+
     this.#cascadeParamsBuffer = device.createBuffer({
       label: 'HRC-CascadeParams',
-      size: maxSlots * 256,
+      size: this.#numCascades * 4 * 256,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-
     this.#accumParamsBuffer = device.createBuffer({
       label: 'HRC-AccumParams',
       size: 4 * 256,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-
     this.#blitParamsBuffer = device.createBuffer({
       label: 'HRC-BlitParams',
-      size: 16,
+      size: this.#blitParamsView.arrayBuffer.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
@@ -661,23 +657,9 @@ export class FolkHolographicRC extends FolkBaseSet {
       primitive: { topology: 'triangle-list' },
     });
 
-    this.#cascadeMergePipeline = device.createComputePipeline({
-      label: 'HRC-CascadeMerge',
-      layout: 'auto',
-      compute: { module: device.createShaderModule({ code: cascadeMergeShader }), entryPoint: 'main' },
-    });
-
-    this.#clearPipeline = device.createComputePipeline({
-      label: 'HRC-Clear',
-      layout: 'auto',
-      compute: { module: device.createShaderModule({ code: clearShader }), entryPoint: 'main' },
-    });
-
-    this.#fluenceAccumPipeline = device.createComputePipeline({
-      label: 'HRC-FluenceAccum',
-      layout: 'auto',
-      compute: { module: device.createShaderModule({ code: fluenceAccumShader }), entryPoint: 'main' },
-    });
+    this.#cascadeMergePipeline = createComputePipeline(device, 'HRC-CascadeMerge', cascadeMergeShader);
+    this.#clearPipeline = createComputePipeline(device, 'HRC-Clear', clearShader);
+    this.#fluenceAccumPipeline = createComputePipeline(device, 'HRC-FluenceAccum', fluenceAccumShader);
 
     const blitModule = device.createShaderModule({ code: blitShader });
     this.#renderPipeline = device.createRenderPipeline({
@@ -695,10 +677,8 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #destroyResources() {
     this.#worldTexture?.destroy();
-    this.#cascadeTexA?.destroy();
-    this.#cascadeTexB?.destroy();
-    this.#fluenceTexA?.destroy();
-    this.#fluenceTexB?.destroy();
+    this.#cascadeTextures?.forEach((t) => t.destroy());
+    this.#fluenceTextures?.forEach((t) => t.destroy());
     this.#cascadeParamsBuffer?.destroy();
     this.#accumParamsBuffer?.destroy();
     this.#blitParamsBuffer?.destroy();
@@ -796,7 +776,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #startAnimationLoop() {
     const render = (now: number) => {
       if (!this.#isRunning) return;
-      this.#updateFps(now);
+      this.#updateFrameTiming(now);
       this.#renderFrame();
       this.#animationFrame = requestAnimationFrame(render);
     };
@@ -817,8 +797,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     // Upload all cascade params for all 4 directions before encoding
     this.#uploadAllCascadeParams(width, height);
 
-    // Upload blit params
-    device.queue.writeBuffer(this.#blitParamsBuffer, 0, new Float32Array([this.exposure, 0, 0, 0]));
+    this.#blitParamsView.set({ exposure: this.exposure });
+    device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
 
     const encoder = device.createCommandEncoder();
 
@@ -861,10 +841,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     const cascadeDim = this.#maxCascadeDim;
     const clearWG = Math.ceil(cascadeDim / 16);
 
-    // Track which fluence texture is the "current" output
-    let fluenceReadView = this.#fluenceTexAView;
-    let fluenceWriteView = this.#fluenceTexBView;
-    let fluenceResultView = this.#fluenceTexAView;
+    let fluenceReadView = this.#fluenceTextureViews[0];
+    let fluenceWriteView = this.#fluenceTextureViews[1];
+    let fluenceResultView = this.#fluenceTextureViews[0];
     let isFirstProcessedDir = true;
 
     for (let dir = 0; dir < 4; dir++) {
@@ -875,8 +854,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       const alongBase = nextPowerOf2(cfg.alongBase(width, height));
       const dirCascades = Math.log2(alongBase);
 
-      // Clear both cascade textures
-      for (const view of [this.#cascadeTexAView, this.#cascadeTexBView]) {
+      for (const view of this.#cascadeTextureViews) {
         const bg = device.createBindGroup({
           layout: this.#clearPipeline.getBindGroupLayout(0),
           entries: [{ binding: 0, resource: view }],
@@ -891,12 +869,12 @@ export class FolkHolographicRC extends FolkBaseSet {
       const effectiveCascades = this.#debugCascadeCount > 0
         ? Math.min(this.#debugCascadeCount, dirCascades)
         : dirCascades;
-      let lastWriteView = this.#cascadeTexAView;
+      let lastWriteView = this.#cascadeTextureViews[0];
       for (let level = effectiveCascades - 1; level >= 0; level--) {
         const k = numCascades - 1 - level;
         const readFromA = k % 2 !== 0;
-        const readView = readFromA ? this.#cascadeTexAView : this.#cascadeTexBView;
-        const writeView = readFromA ? this.#cascadeTexBView : this.#cascadeTexAView;
+        const readView = this.#cascadeTextureViews[readFromA ? 0 : 1];
+        const writeView = this.#cascadeTextureViews[readFromA ? 1 : 0];
 
         const spacing = 1 << level;
         const alongSize = alongBase >> level;
@@ -927,19 +905,14 @@ export class FolkHolographicRC extends FolkBaseSet {
       // Use the stopped level's output (or cascade 0 in normal mode)
       const cascade0View = lastWriteView;
 
-      // Upload accumulation params
       const accumOffset = dir * 256;
-      device.queue.writeBuffer(
-        this.#accumParamsBuffer,
-        accumOffset,
-        new Uint32Array([dir, isFirstProcessedDir ? 1 : 0, width, height]),
-      );
+      this.#accumParamsView.set({ direction: dir, isFirstDir: isFirstProcessedDir ? 1 : 0, screenW: width, screenH: height });
+      device.queue.writeBuffer(this.#accumParamsBuffer, accumOffset, this.#accumParamsView.arrayBuffer);
 
-      // Fluence accumulation ping-pong
       if (isFirstProcessedDir) {
         isFirstProcessedDir = false;
-        fluenceWriteView = this.#fluenceTexAView;
-        fluenceReadView = this.#fluenceTexBView;
+        fluenceWriteView = this.#fluenceTextureViews[0];
+        fluenceReadView = this.#fluenceTextureViews[1];
       } else {
         const temp = fluenceWriteView;
         fluenceWriteView = fluenceReadView;
@@ -1012,37 +985,23 @@ export class FolkHolographicRC extends FolkBaseSet {
 
       for (let level = dirCascades - 1; level >= 0; level--) {
         const spacing = 1 << level;
-        const alongSize = alongBase >> level;
-        const numAngles = 1 << level;
-
-        const isLast = level === dirCascades - 1 ? 1 : 0;
-        const nextSpacing = 1 << (level + 1);
-        const nextNumAngles = 1 << (level + 1);
-        const nextAlongSize = alongBase >> (level + 1);
-
-        const data = new ArrayBuffer(64);
-        const u32 = new Uint32Array(data);
-        const f32 = new Float32Array(data);
-
-        u32[0] = perpSize;
-        u32[1] = alongSize;
-        u32[2] = numAngles;
-        f32[3] = spacing;
-        u32[4] = nextNumAngles;
-        f32[5] = nextSpacing;
-        u32[6] = nextAlongSize;
-        u32[7] = isLast;
-        f32[8] = width;
-        f32[9] = height;
-        f32[10] = originX;
-        f32[11] = originY;
-        f32[12] = axX;
-        f32[13] = axY;
-        f32[14] = pxX;
-        f32[15] = pxY;
-
+        this.#cascadeParamsView.set({
+          perpSize,
+          alongSize: alongBase >> level,
+          numAngles: 1 << level,
+          spacing,
+          nextNumAngles: 1 << (level + 1),
+          nextSpacing: 1 << (level + 1),
+          nextAlongSize: alongBase >> (level + 1),
+          isLastCascade: level === dirCascades - 1 ? 1 : 0,
+          screenW: width,
+          screenH: height,
+          originX, originY,
+          alongAxisX: axX, alongAxisY: axY,
+          perpAxisX: pxX, perpAxisY: pxY,
+        });
         const slotIndex = dir * numCascades + (numCascades - 1 - level);
-        device.queue.writeBuffer(this.#cascadeParamsBuffer, slotIndex * 256, data);
+        device.queue.writeBuffer(this.#cascadeParamsBuffer, slotIndex * 256, this.#cascadeParamsView.arrayBuffer);
       }
     }
   }
@@ -1094,26 +1053,27 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
   };
 
-  #ensureFpsOverlay() {
-    if (this.#fpsOverlay) return;
-    this.#fpsOverlay = document.createElement('div');
-    Object.assign(this.#fpsOverlay.style, {
-      position: 'fixed',
-      bottom: '8px',
-      right: '8px',
-      fontFamily: 'monospace',
-      fontSize: '12px',
-      color: 'rgba(255,255,255,0.7)',
-      background: 'rgba(0,0,0,0.5)',
-      padding: '4px 8px',
-      borderRadius: '4px',
-      zIndex: '10000',
-      pointerEvents: 'none',
-    });
-    document.body.appendChild(this.#fpsOverlay);
+  get fps() {
+    return this.#smoothedFrameTime > 0 ? Math.round(1000 / this.#smoothedFrameTime) : 0;
   }
 
-  #updateFps(now: number) {
+  get frameTimeMs() {
+    return this.#smoothedFrameTime;
+  }
+
+  get resolution() {
+    return { width: this.#canvas?.width ?? 0, height: this.#canvas?.height ?? 0 };
+  }
+
+  get debugInfo() {
+    const dirNames = ['All', 'E', 'S', 'W', 'N'];
+    const dirLabel = this.#debugDir > 0 ? ` [${dirNames[this.#debugDir]}]` : '';
+    const ec = this.#debugCascadeCount > 0 ? this.#debugCascadeCount : this.#numCascades;
+    const ccLabel = this.#debugCascadeCount > 0 ? ` C${this.#debugCascadeCount}/${this.#numCascades}` : '';
+    return `${dirLabel}${ccLabel} sp${Math.pow(2, ec - 1)}`;
+  }
+
+  #updateFrameTiming(now: number) {
     if (this.#lastFrameTimestamp > 0) {
       const dt = now - this.#lastFrameTimestamp;
       const alpha = 0.05;
@@ -1121,19 +1081,5 @@ export class FolkHolographicRC extends FolkBaseSet {
         this.#smoothedFrameTime === 0 ? dt : this.#smoothedFrameTime + alpha * (dt - this.#smoothedFrameTime);
     }
     this.#lastFrameTimestamp = now;
-
-    if (now - this.#lastOverlayUpdate > 200) {
-      this.#lastOverlayUpdate = now;
-      this.#ensureFpsOverlay();
-      const fps = this.#smoothedFrameTime > 0 ? Math.round(1000 / this.#smoothedFrameTime) : 0;
-      const ms = this.#smoothedFrameTime.toFixed(1);
-      const res = `${this.#canvas.width}x${this.#canvas.height}`;
-      const dirNames = ['All', 'E', 'S', 'W', 'N'];
-      const dirLabel = this.#debugDir > 0 ? ` [${dirNames[this.#debugDir]}]` : '';
-      const ec = this.#debugCascadeCount > 0 ? this.#debugCascadeCount : this.#numCascades;
-      const maxSp = Math.pow(2, ec - 1);
-      const ccLabel = this.#debugCascadeCount > 0 ? ` C${this.#debugCascadeCount}/${this.#numCascades}` : '';
-      this.#fpsOverlay!.textContent = `${res} ${fps} fps (${ms} ms)${dirLabel}${ccLabel} sp${maxSp}`;
-    }
   }
 }

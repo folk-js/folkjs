@@ -105,6 +105,20 @@
         font-family: monospace;
         font-size: 10px;
       }
+
+      #fps-overlay {
+        position: fixed;
+        bottom: 8px;
+        right: 8px;
+        font-family: monospace;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.7);
+        background: rgba(0, 0, 0, 0.5);
+        padding: 4px 8px;
+        border-radius: 4px;
+        z-index: 10000;
+        pointer-events: none;
+      }
     </style>
   </head>
   <body>
@@ -122,6 +136,7 @@
       &nbsp; <kbd>C</kbd> clear &nbsp; <kbd>D</kbd> debug dir &nbsp; <kbd>`</kbd> cascade count &nbsp; <kbd>⇧</kbd><kbd>0</kbd>–<kbd>9</kbd> scene &nbsp; click swatch to cycle
     </div>
 
+    <div id="fps-overlay"></div>
     <folk-holographic-rc id="hrc"></folk-holographic-rc>
 
     <script type="module">
@@ -395,6 +410,19 @@
       }
 
       switchScene(0);
+
+      // FPS overlay
+      const fpsEl = document.getElementById('fps-overlay');
+      let lastFpsUpdate = 0;
+      function updateFpsOverlay(now) {
+        if (now - lastFpsUpdate > 200) {
+          lastFpsUpdate = now;
+          const { width, height } = hrc.resolution;
+          fpsEl.textContent = `${width}x${height} ${hrc.fps} fps (${hrc.frameTimeMs.toFixed(1)} ms)${hrc.debugInfo}`;
+        }
+        requestAnimationFrame(updateFpsOverlay);
+      }
+      requestAnimationFrame(updateFpsOverlay);
 
       // --- Key handling ---
       document.addEventListener('keydown', (e) => {
