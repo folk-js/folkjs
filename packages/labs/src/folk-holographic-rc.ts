@@ -199,9 +199,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let emission = textureLoad(emissionTex, px, 0).rgb;
     let opacity = textureLoad(opacityTex, px, 0).rgb;
     let bounce = textureLoad(bounceTex, px, 0).rgb;
-    // Emission is weighted by opacity (emitters are present where material exists).
-    // Bounce is NOT weighted by opacity — it's already the correctly computed
-    // scattered radiance from the bounce compute pass.
     rad = emission * opacity + bounce;
     trans = 1.0 - opacity;
   }
@@ -607,6 +604,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var radiance = vec3f(0.0);
     var lastAirPos = rayPos;
 
+    // Sample the starting pixel (the camera's own position in 2D)
+    {
+      let em0 = sampleScene(rayPos);
+      let op0 = sampleOpacity(rayPos);
+      let opacity0 = op0.rgb;
+      radiance += throughput * em0.rgb * opacity0;
+      throughput *= (1.0 - opacity0);
+    }
+
     for (var step = 0u; step < 4096u; step++) {
       rayPos += rayDir;
       let em = sampleScene(rayPos);
@@ -931,6 +937,13 @@ export class FolkHolographicRC extends FolkBaseSet {
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
     if (!this.#device) return;
+    if (changedProperties.has('probeSize') && changedProperties.get('probeSize') !== undefined) {
+      this.#destroyResources();
+      this.#initResources();
+      this.#createStaticBindGroups();
+      this.#uploadStaticParams(this.#canvas.width, this.#canvas.height);
+      this.#lineBindGroup = undefined;
+    }
     if (this.sourcesMap.size !== this.sourceElements.size) return;
     this.#updateShapeData();
     this.#ptFrameIndex = 0;
@@ -1355,14 +1368,11 @@ export class FolkHolographicRC extends FolkBaseSet {
       const cos = Math.cos(rot);
       const sin = Math.sin(rot);
       const corners: [number, number][] = [
-        [sx - cx, sy - cy],         // top-left
-        [sx + sw - cx, sy - cy],     // top-right
-        [sx - cx, sy + sh - cy],     // bottom-left
+        [sx - cx, sy - cy], // top-left
+        [sx + sw - cx, sy - cy], // top-right
+        [sx - cx, sy + sh - cy], // bottom-left
         [sx + sw - cx, sy + sh - cy], // bottom-right
-      ].map(([lx, ly]) => [
-        (cx + lx * cos - ly * sin) / cw * 2 - 1,
-        1 - (cy + lx * sin + ly * cos) / ch * 2,
-      ]);
+      ].map(([lx, ly]) => [((cx + lx * cos - ly * sin) / cw) * 2 - 1, 1 - ((cy + lx * sin + ly * cos) / ch) * 2]);
 
       const v = (vx: number, vy: number) => {
         vertices.push(vx, vy, r, g, b, ar, ag, ab, albedo, scatter);

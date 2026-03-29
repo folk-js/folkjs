@@ -70,7 +70,7 @@
         border-color: rgba(255, 255, 255, 0.4);
       }
 
-      #exposure-control {
+      #controls .slider-group {
         display: flex;
         align-items: center;
         gap: 6px;
@@ -79,7 +79,7 @@
         color: rgba(255, 255, 255, 0.6);
       }
 
-      #exposure-slider {
+      #controls .slider-group input[type="range"] {
         width: 100px;
         accent-color: rgba(255, 255, 255, 0.5);
       }
@@ -125,10 +125,15 @@
     <div id="color-indicator" title="Click to cycle color"></div>
     <div id="controls">
       <select id="scene-select"></select>
-      <div id="exposure-control">
+      <div class="slider-group">
         <label for="exposure-slider">exposure</label>
         <input id="exposure-slider" type="range" min="0.1" max="10" step="0.1" value="2" />
         <span id="exposure-value">2.00</span>
+      </div>
+      <div class="slider-group">
+        <label for="probe-slider">probes</label>
+        <input id="probe-slider" type="range" min="0" max="6" step="1" value="4" />
+        <span id="probe-value">1024</span>
       </div>
       <label style="font-family: monospace; font-size: 11px; color: rgba(255, 255, 255, 0.6); cursor: pointer">
         <input id="bounces-toggle" type="checkbox" checked /> bounces
@@ -192,6 +197,8 @@
       const sceneSelect = document.getElementById('scene-select');
       const exposureSlider = document.getElementById('exposure-slider');
       const exposureValue = document.getElementById('exposure-value');
+      const probeSlider = document.getElementById('probe-slider');
+      const probeValue = document.getElementById('probe-value');
 
       function setExposure(val) {
         val = Math.max(0.1, Math.min(10, val));
@@ -200,7 +207,17 @@
         exposureValue.textContent = val.toFixed(2);
       }
 
+      const probeSizes = [64, 128, 256, 512, 1024, 2048, 4096];
+      function setProbeSize(step) {
+        step = Math.max(0, Math.min(probeSizes.length - 1, Math.round(step)));
+        hrc.probeSize = probeSizes[step];
+        probeSlider.value = step;
+        probeValue.textContent = probeSizes[step];
+      }
+
       exposureSlider.addEventListener('input', () => setExposure(Number(exposureSlider.value)));
+      probeSlider.addEventListener('input', () => setProbeSize(Number(probeSlider.value)));
+      setProbeSize(4);
       document.getElementById('bounces-toggle').addEventListener('change', (e) => {
         hrc.bounces = e.target.checked;
       });
@@ -603,6 +620,11 @@
         if (e.key === 'c' || e.key === 'C') {
           hrc.clearLines();
         }
+        if (e.key === 'o' || e.key === 'O') {
+          hrc.exposure = hrc.exposure < 0 ? 2.0 : -1.0;
+          exposureSlider.value = Math.max(0.1, hrc.exposure);
+          exposureValue.textContent = hrc.exposure < 0 ? 'opacity' : hrc.exposure.toFixed(2);
+        }
         if (e.key === 'p' || e.key === 'P') {
           hrc.pathTracing = !hrc.pathTracing;
           document.getElementById('pt-toggle').checked = hrc.pathTracing;
@@ -635,7 +657,7 @@
           target.id === 'color-indicator' ||
           target.id === 'scene-select' ||
           target.id === 'help-text' ||
-          target.closest('#exposure-control')
+          target.closest('#controls')
         ) {
           return;
         }
