@@ -169,6 +169,7 @@
         { name: 'Fog room', fn: loadFogRoom },
         { name: 'Colored glass', fn: loadColoredGlass },
         { name: 'Smoke', fn: loadSmoke },
+        { name: 'Bounce room', fn: loadBounceRoom },
         { name: 'Orbit', fn: loadAnimatedOrbit },
         { name: 'Gate', fn: loadAnimatedGate },
       ];
@@ -245,7 +246,7 @@
         hrc.querySelectorAll('folk-shape').forEach((s) => s.remove());
       }
 
-      function addShape(x, y, w, h, colorIdx, opacity) {
+      function addShape(x, y, w, h, colorIdx, opacity, albedo) {
         const el = document.createElement('folk-shape');
         el.setAttribute('x', x);
         el.setAttribute('y', y);
@@ -253,6 +254,7 @@
         el.setAttribute('height', h);
         if (colorIdx !== undefined) el.setAttribute('data-color', colorIdx);
         if (opacity !== undefined) el.setAttribute('data-opacity', opacity);
+        if (albedo !== undefined) el.setAttribute('data-albedo', albedo);
         hrc.appendChild(el);
         return el;
       }
@@ -406,6 +408,23 @@
         addShape(cx + 170, cy - 60, 30, 30, 1);
       }
 
+      function loadBounceRoom() {
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const cx = W / 2;
+        const cy = H / 2;
+        const t = 15;
+        // Room walls: non-emissive (color 0), fully opaque, reflective
+        addShape(cx - 250, cy - 200, 500, t, 0, undefined, 0.8);  // top
+        addShape(cx - 250, cy + 200 - t, 500, t, 0, undefined, 0.8);  // bottom
+        addShape(cx - 250, cy - 200, t, 400, 0, undefined, 0.8);  // left
+        addShape(cx + 250 - t, cy - 200, t, 400, 0, undefined, 0.8);  // right
+        // White ceiling light (emissive, no albedo)
+        addShape(cx - 40, cy - 190, 80, 10, 9);
+        // Central occluder (non-reflective)
+        addShape(cx - 30, cy - 30, 60, 60, 1);
+      }
+
       function loadAnimatedOrbit() {
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
@@ -446,7 +465,7 @@
         animate();
       }
 
-      switchScene(0);
+      switchScene(12);
 
       // FPS overlay
       const fpsEl = document.getElementById('fps-overlay');
