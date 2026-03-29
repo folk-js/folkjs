@@ -130,10 +130,14 @@
         <input id="exposure-slider" type="range" min="0.1" max="10" step="0.1" value="2" />
         <span id="exposure-value">2.00</span>
       </div>
+      <label style="font-family: monospace; font-size: 11px; color: rgba(255, 255, 255, 0.6); cursor: pointer">
+        <input id="bounces-toggle" type="checkbox" checked /> bounces
+      </label>
     </div>
     <div id="help-text">
-      <kbd>←</kbd><kbd>→</kbd> scene &nbsp; <kbd>0</kbd>–<kbd>9</kbd> color &nbsp; <kbd>+</kbd><kbd>−</kbd> size &nbsp; <kbd>[</kbd><kbd>]</kbd> exposure
-      &nbsp; <kbd>C</kbd> clear &nbsp; <kbd>D</kbd> debug dir &nbsp; <kbd>`</kbd> cascade count &nbsp; click swatch to cycle
+      <kbd>←</kbd><kbd>→</kbd> scene &nbsp; <kbd>0</kbd>–<kbd>9</kbd> color &nbsp; <kbd>+</kbd><kbd>−</kbd> size &nbsp;
+      <kbd>[</kbd><kbd>]</kbd> exposure &nbsp; <kbd>C</kbd> clear &nbsp; <kbd>D</kbd> debug dir &nbsp;
+      <kbd>`</kbd> cascade count
     </div>
 
     <div id="fps-overlay"></div>
@@ -169,6 +173,7 @@
         { name: 'Smoke', fn: loadSmoke },
         { name: 'Bounce room', fn: loadBounceRoom },
         { name: 'Bounce maze', fn: loadBounceMaze },
+        { name: 'Scattering', fn: loadScattering },
         { name: 'Materials', fn: loadMaterials },
         { name: 'Color mix', fn: loadColorMix },
         { name: 'Orbit', fn: loadAnimatedOrbit },
@@ -192,6 +197,9 @@
       }
 
       exposureSlider.addEventListener('input', () => setExposure(Number(exposureSlider.value)));
+      document.getElementById('bounces-toggle').addEventListener('change', (e) => {
+        hrc.bounces = e.target.checked;
+      });
 
       function updateMouseRadius() {
         hrc.setMouseLightRadius(lineThickness / 2);
@@ -247,15 +255,20 @@
         hrc.querySelectorAll('folk-shape').forEach((s) => s.remove());
       }
 
-      function addShape(x, y, w, h, colorIdx, opacity, albedo) {
+      function addShape(x, y, w, h, colorIdx, opts) {
         const el = document.createElement('folk-shape');
         el.setAttribute('x', x);
         el.setAttribute('y', y);
         el.setAttribute('width', w);
         el.setAttribute('height', h);
         if (colorIdx !== undefined) el.setAttribute('data-color', colorIdx);
-        if (opacity !== undefined) el.setAttribute('data-opacity', opacity);
-        if (albedo !== undefined) el.setAttribute('data-albedo', albedo);
+        if (typeof opts === 'string') {
+          el.setAttribute('data-opacity', opts);
+        } else if (typeof opts === 'object' && opts !== null) {
+          if (opts.opacity !== undefined) el.setAttribute('data-opacity', opts.opacity);
+          if (opts.albedo !== undefined) el.setAttribute('data-albedo', opts.albedo);
+          if (opts.scattering !== undefined) el.setAttribute('data-scattering', opts.scattering);
+        }
         hrc.appendChild(el);
         return el;
       }
@@ -276,7 +289,7 @@
 
         const barW = 16;
         const barH = 24;
-        const gap = 3;
+        const gap = 0;
         const barColors = [2, 3, 4, 5, 6, 7, 8];
         const totalH = barColors.length * barH + (barColors.length - 1) * gap;
         const barX = cx - 200;
@@ -376,7 +389,7 @@
         addShape(cx + 235, cy - 200, 15, 400, 1);
         addShape(cx - 200, cy - 185, 30, 30, 3);
         addShape(cx + 170, cy + 155, 30, 30, 6);
-        addShape(cx - 100, cy - 50, 200, 100, 0, '0.03');
+        addShape(cx - 100, cy - 50, 200, 100, 0, { opacity: '0.1', scattering: 0.8 });
       }
 
       function loadColoredGlass() {
@@ -393,7 +406,7 @@
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
         addShape(cx - 30, cy + 80, 60, 30, 3);
-        addShape(cx - 80, cy - 100, 160, 160, 0, '0.05');
+        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: '0.1', scattering: 0.9 });
         addShape(cx - 200, cy - 60, 30, 30, 1);
         addShape(cx + 170, cy - 60, 30, 30, 1);
       }
@@ -404,12 +417,13 @@
         const cx = W / 2;
         const cy = H / 2;
         const t = 15;
-        addShape(cx - 250, cy - 200, 500, t, 0, undefined, 0.7);  // ceiling
-        addShape(cx - 250, cy + 200 - t, 500, t, 0, undefined, 0.7);  // floor
-        addShape(cx - 250, cy - 200, t, 400, 2, undefined, 0.5);  // left wall (red tint)
-        addShape(cx + 250 - t, cy - 200, t, 400, 7, undefined, 0.5);  // right wall (blue tint)
-        addShape(cx - 40, cy - 190, 80, 10, 9);  // ceiling light
-        addShape(cx - 30, cy - 30, 60, 60, 1);  // central occluder
+        addShape(cx - 250, cy - 200, 500, t, 0, { albedo: 0.7 });
+        addShape(cx - 250, cy + 200 - t, 500, t, 0, { albedo: 0.7 });
+        addShape(cx - 250, cy - 200, t, 400, 0, { albedo: 0.7 });
+        addShape(cx + 250 - t, cy - 200, t, 400, 0, { albedo: 0.7 });
+        addShape(cx - 40, cy - 190, 80, 10, 9);
+        addShape(cx - 30, cy - 30, 60, 60, 1);
+        addShape(cx - 248, cy + 50, 10, 20, 2); // small red emitter on left wall
       }
 
       function loadBounceMaze() {
@@ -417,22 +431,43 @@
         const H = window.innerHeight;
         const cx = W / 2;
         const cy = H / 2;
-        const t = 12;
-        const a = 0.6;
-        // Outer walls
-        addShape(cx - 300, cy - 220, 600, t, 0, undefined, a);
-        addShape(cx - 300, cy + 220 - t, 600, t, 0, undefined, a);
-        addShape(cx - 300, cy - 220, t, 440, 0, undefined, a);
-        addShape(cx + 300 - t, cy - 220, t, 440, 0, undefined, a);
-        // Internal maze walls
-        addShape(cx - 200, cy - 100, t, 220, 0, undefined, a);
-        addShape(cx - 100, cy - 220 + t, t, 220, 0, undefined, a);
-        addShape(cx, cy - 100, t, 320 - t, 0, undefined, a);
-        addShape(cx + 100, cy - 220 + t, t, 280, 0, undefined, a);
-        addShape(cx + 200, cy - 100, t, 220, 0, undefined, a);
-        // Light sources tucked into corners
-        addShape(cx - 290, cy - 210, 20, 20, 3);
-        addShape(cx + 270, cy + 190, 20, 20, 6);
+        const t = 20;
+        const hi = 0.9;
+        const lo = 0.3;
+        // Left maze (high albedo) — light bounces far through corridors
+        addShape(cx - 310, cy - 200, 300, t, 0, { albedo: hi });
+        addShape(cx - 310, cy + 200 - t, 300, t, 0, { albedo: hi });
+        addShape(cx - 310, cy - 200, t, 400, 0, { albedo: hi });
+        addShape(cx - t, cy - 200, t, 400, 0, { albedo: hi });
+        addShape(cx - 200, cy - 70, t, 270, 0, { albedo: hi });
+        addShape(cx - 110, cy - 200 + t, t, 200, 0, { albedo: hi });
+        addShape(cx - 300, cy - 190, 20, 20, 9);
+        // Right maze (low albedo) — light absorbed quickly
+        addShape(cx + 10, cy - 200, 300, t, 0, { albedo: lo });
+        addShape(cx + 10, cy + 200 - t, 300, t, 0, { albedo: lo });
+        addShape(cx + 10, cy - 200, t, 400, 0, { albedo: lo });
+        addShape(cx + 310 - t, cy - 200, t, 400, 0, { albedo: lo });
+        addShape(cx + 120, cy - 70, t, 270, 0, { albedo: lo });
+        addShape(cx + 210, cy - 200 + t, t, 200, 0, { albedo: lo });
+        addShape(cx + 20, cy - 190, 20, 20, 9);
+      }
+
+      function loadScattering() {
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const cx = W / 2;
+        const cy = H / 2;
+        // Bright light on the left shining into a dense scattering cloud
+        addShape(cx - 250, cy - 20, 30, 40, 9);
+        // Dense scattering cloud — high opacity so light is absorbed strongly,
+        // high scattering so absorbed light re-emits and glows
+        addShape(cx - 150, cy - 150, 250, 300, 0, { opacity: '0.2', scattering: 0.99 });
+        // Solid wall behind the cloud — scatter should wrap light around it
+        addShape(cx - 10, cy - 60, 20, 120, 1);
+        // Non-scattering cloud for comparison (just absorbs, no glow)
+        addShape(cx + 150, cy - 100, 150, 200, 0, '0.2');
+        // Second light on the right
+        addShape(cx + 350, cy - 20, 30, 40, 9);
       }
 
       function loadMaterials() {
@@ -442,17 +477,16 @@
         const cy = H / 2;
         const sz = 50;
         const gap = 70;
-        const startX = cx - 3 * gap;
+        const startX = cx - 3.5 * gap;
         const y = cy - 20;
-        // Row of materials with different properties
-        addShape(startX, y, sz, sz, 3);                               // emitter (orange)
-        addShape(startX + gap, y, sz, sz, 1);                         // solid occluder
-        addShape(startX + gap * 2, y, sz, sz, 0, '0,1,1');            // red glass
-        addShape(startX + gap * 3, y, sz, sz, 0, '0.05');             // thin fog
-        addShape(startX + gap * 4, y, sz, sz, 0, undefined, 0.8);    // reflective wall
-        addShape(startX + gap * 5, y, sz, sz, 0, '0.3');             // thick fog
-        addShape(startX + gap * 6, y, sz, sz, 5, '0.02');            // glowing fog
-        // Light source above
+        addShape(startX, y, sz, sz, 3); // emitter
+        addShape(startX + gap, y, sz, sz, 1); // occluder
+        addShape(startX + gap * 2, y, sz, sz, 0, '0,1,1'); // red glass
+        addShape(startX + gap * 3, y, sz, sz, 0, { opacity: '0.05', scattering: 0.8 }); // scattering fog
+        addShape(startX + gap * 4, y, sz, sz, 0, { albedo: 0.8 }); // reflective
+        addShape(startX + gap * 5, y, sz, sz, 0, '0.3'); // dense fog
+        addShape(startX + gap * 6, y, sz, sz, 5, { opacity: '0.03', scattering: 0.5 }); // glowing scatter
+        addShape(startX + gap * 7, y, sz, sz, 0, '1,0,1'); // green glass
         addShape(cx - 30, cy - 150, 60, 15, 9);
       }
 
