@@ -376,7 +376,7 @@ fn triangularDither(fragCoord: vec2u) -> vec3f {
   let world = textureLoad(worldTex, vec2u(pos.xy), 0);
   let emissive = world.rgb * world.a;
   let indirect = fluence;
-  let hdr = (emissive + indirect) * params.exposure;
+  let hdr = (emissive + indirect * (1.0 - world.a)) * params.exposure;
   let mapped = acesTonemap(hdr);
   let srgb = linearToSrgb(mapped) + triangularDither(vec2u(pos.xy));
   return vec4f(srgb, 1.0);
@@ -500,7 +500,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   static readonly #colors: [number, number, number][] = [
     [0, 0, 0],
-    [0.05, 0.05, 0.05],
+    [0, 0, 0],
     [1, 0.25, 0.25],
     [1, 0.5, 0.2],
     [0.75, 0.75, 0.2],
@@ -772,7 +772,14 @@ export class FolkHolographicRC extends FolkBaseSet {
           entries: [
             { binding: 0, resource: this.#worldTextureView },
             { binding: 1, resource: this.#rayTextureViews[0] },
-            { binding: 2, resource: { buffer: this.#seedParamsBuffer, offset: dir * 256, size: this.#seedParamsView.arrayBuffer.byteLength } },
+            {
+              binding: 2,
+              resource: {
+                buffer: this.#seedParamsBuffer,
+                offset: dir * 256,
+                size: this.#seedParamsView.arrayBuffer.byteLength,
+              },
+            },
           ],
         }),
       );
@@ -786,7 +793,14 @@ export class FolkHolographicRC extends FolkBaseSet {
           entries: [
             { binding: 0, resource: this.#rayTextureViews[level - 1] },
             { binding: 1, resource: this.#rayTextureViews[level] },
-            { binding: 2, resource: { buffer: this.#extendParamsBuffer, offset: (level - 1) * 256, size: this.#extendParamsView.arrayBuffer.byteLength } },
+            {
+              binding: 2,
+              resource: {
+                buffer: this.#extendParamsBuffer,
+                offset: (level - 1) * 256,
+                size: this.#extendParamsView.arrayBuffer.byteLength,
+              },
+            },
           ],
         }),
       );
@@ -808,7 +822,10 @@ export class FolkHolographicRC extends FolkBaseSet {
               { binding: 0, resource: this.#rayTextureViews[level] },
               { binding: 1, resource: this.#mergeTextureViews[readIdx] },
               { binding: 2, resource: this.#mergeTextureViews[writeIdx] },
-              { binding: 3, resource: { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergeParamSize } },
+              {
+                binding: 3,
+                resource: { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergeParamSize },
+              },
             ],
           }),
         );
@@ -818,7 +835,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
       this.#mergeBindGroups.push(dirBGs);
     }
-    this.#mergeResultIdx = ((nc - 1) % 2 === 0) ? 0 : 1;
+    this.#mergeResultIdx = (nc - 1) % 2 === 0 ? 0 : 1;
   }
 
   #destroyResources() {
@@ -1036,7 +1053,14 @@ export class FolkHolographicRC extends FolkBaseSet {
                 { binding: 0, resource: this.#rayTextureViews[level] },
                 { binding: 1, resource: this.#mergeTextureViews[mergeReadIdx] },
                 { binding: 2, resource: this.#mergeTextureViews[mergeWriteIdx] },
-                { binding: 3, resource: { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: this.#mergeParamsView.arrayBuffer.byteLength } },
+                {
+                  binding: 3,
+                  resource: {
+                    buffer: this.#mergeParamsBuffer,
+                    offset: (dir * nc + level) * 256,
+                    size: this.#mergeParamsView.arrayBuffer.byteLength,
+                  },
+                },
               ],
             });
         const pass = encoder.beginComputePass();
@@ -1074,7 +1098,14 @@ export class FolkHolographicRC extends FolkBaseSet {
           { binding: 0, resource: mergeResultView },
           { binding: 1, resource: this.#fluenceTextureViews[fluenceReadIdx] },
           { binding: 2, resource: this.#fluenceTextureViews[fluenceWriteIdx] },
-          { binding: 3, resource: { buffer: this.#accumParamsBuffer, offset: dir * 256, size: this.#accumParamsView.arrayBuffer.byteLength } },
+          {
+            binding: 3,
+            resource: {
+              buffer: this.#accumParamsBuffer,
+              offset: dir * 256,
+              size: this.#accumParamsView.arrayBuffer.byteLength,
+            },
+          },
         ],
       });
       const accumPass = encoder.beginComputePass();
@@ -1225,13 +1256,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (e.key === '`' || e.key === '~') {
       const delta = e.shiftKey ? -1 : 1;
       this.#debugCascadeCount =
-        ((this.#debugCascadeCount + delta) % (this.#numCascades + 1) + this.#numCascades + 1) % (this.#numCascades + 1);
-      const maxSpacing = this.#debugCascadeCount > 0
-        ? Math.pow(2, this.#debugCascadeCount - 1)
-        : Math.pow(2, this.#numCascades - 1);
-      const label = this.#debugCascadeCount === 0
-        ? `all (max spacing ${maxSpacing})`
-        : `${this.#debugCascadeCount} (max spacing ${maxSpacing})`;
+        (((this.#debugCascadeCount + delta) % (this.#numCascades + 1)) + this.#numCascades + 1) %
+        (this.#numCascades + 1);
+      const maxSpacing =
+        this.#debugCascadeCount > 0 ? Math.pow(2, this.#debugCascadeCount - 1) : Math.pow(2, this.#numCascades - 1);
+      const label =
+        this.#debugCascadeCount === 0
+          ? `all (max spacing ${maxSpacing})`
+          : `${this.#debugCascadeCount} (max spacing ${maxSpacing})`;
       console.log(`HRC cascades: ${label}`);
     }
   };

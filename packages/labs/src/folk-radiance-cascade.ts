@@ -1577,7 +1577,7 @@ fn fragment_main(in: VertexOutput) -> @location(0) vec4f {
   let world = textureSample(worldTexture, fluenceSampler, in.uv);
 
   let emissive = world.rgb * world.a;
-  let indirect = fluence.rgb;
+  let indirect = fluence.rgb * (1.0 - world.a);
   let hdr = (emissive + indirect) * ubo.exposure;
 
   let mapped = acesTonemap(hdr);
