@@ -133,11 +133,14 @@
       <label style="font-family: monospace; font-size: 11px; color: rgba(255, 255, 255, 0.6); cursor: pointer">
         <input id="bounces-toggle" type="checkbox" checked /> bounces
       </label>
+      <label style="font-family: monospace; font-size: 11px; color: rgba(255, 255, 255, 0.6); cursor: pointer">
+        <input id="pt-toggle" type="checkbox" /> path trace
+      </label>
     </div>
     <div id="help-text">
       <kbd>←</kbd><kbd>→</kbd> scene &nbsp; <kbd>0</kbd>–<kbd>9</kbd> color &nbsp; <kbd>+</kbd><kbd>−</kbd> size &nbsp;
-      <kbd>[</kbd><kbd>]</kbd> exposure &nbsp; <kbd>C</kbd> clear &nbsp; <kbd>D</kbd> debug dir &nbsp;
-      <kbd>`</kbd> cascade count
+      <kbd>[</kbd><kbd>]</kbd> exposure &nbsp; <kbd>C</kbd> clear &nbsp; <kbd>P</kbd> path trace &nbsp;
+      <kbd>S</kbd> screenshot &nbsp; <kbd>D</kbd> debug dir &nbsp; <kbd>`</kbd> cascade count
     </div>
 
     <div id="fps-overlay"></div>
@@ -175,6 +178,7 @@
         { name: 'Bounce maze', fn: loadBounceMaze },
         { name: 'Scattering', fn: loadScattering },
         { name: 'Materials', fn: loadMaterials },
+        { name: 'Furnace test', fn: loadFurnaceTest },
         { name: 'Color mix', fn: loadColorMix },
         { name: 'Orbit', fn: loadAnimatedOrbit },
         { name: 'Gate', fn: loadAnimatedGate },
@@ -199,6 +203,9 @@
       exposureSlider.addEventListener('input', () => setExposure(Number(exposureSlider.value)));
       document.getElementById('bounces-toggle').addEventListener('change', (e) => {
         hrc.bounces = e.target.checked;
+      });
+      document.getElementById('pt-toggle').addEventListener('change', (e) => {
+        hrc.pathTracing = e.target.checked;
       });
 
       function updateMouseRadius() {
@@ -328,6 +335,28 @@
         const cy = window.innerHeight / 2;
         addShape(cx - 150, cy - 150, 300, 20, 1);
         addShape(cx - 150, cy - 150, 20, 300, 1);
+      }
+
+      function loadFurnaceTest() {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const r = 120;
+        const t = 20;
+        const segs = 32;
+        // Draw a hollow ring of orange emitter using rectangular segments
+        for (let i = 0; i < segs; i++) {
+          const a0 = (i / segs) * Math.PI * 2;
+          const a1 = ((i + 1) / segs) * Math.PI * 2;
+          const x0 = cx + Math.cos(a0) * r;
+          const y0 = cy + Math.sin(a0) * r;
+          const x1 = cx + Math.cos(a1) * r;
+          const y1 = cy + Math.sin(a1) * r;
+          const mx = Math.min(x0, x1) - t / 2;
+          const my = Math.min(y0, y1) - t / 2;
+          const w = Math.abs(x1 - x0) + t;
+          const h = Math.abs(y1 - y0) + t;
+          addShape(mx, my, Math.max(w, t), Math.max(h, t), 3);
+        }
       }
 
       function loadColorMix() {
@@ -573,6 +602,14 @@
         }
         if (e.key === 'c' || e.key === 'C') {
           hrc.clearLines();
+        }
+        if (e.key === 'p' || e.key === 'P') {
+          hrc.pathTracing = !hrc.pathTracing;
+          document.getElementById('pt-toggle').checked = hrc.pathTracing;
+        }
+        if (e.key === 's' || e.key === 'S') {
+          const mode = hrc.pathTracing ? 'pt' : 'hrc';
+          hrc.saveScreenshot(`${mode}-${Date.now()}.png`);
         }
         if (e.key === 'ArrowRight') {
           switchScene((currentScene + 1) % scenes.length);

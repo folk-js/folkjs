@@ -3,9 +3,19 @@ import { makeShaderDataDefinitions, makeStructuredView, type StructuredView } fr
 import { FolkBaseSet } from './folk-base-set';
 
 type Line = [
-  x1: number, y1: number, x2: number, y2: number,
-  r: number, g: number, b: number, thickness: number,
-  ar: number, ag: number, ab: number, albedo: number, scattering: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  r: number,
+  g: number,
+  b: number,
+  thickness: number,
+  ar: number,
+  ag: number,
+  ab: number,
+  albedo: number,
+  scattering: number,
 ];
 
 // Per-channel opacity for fully solid materials. 1.0 = completely opaque (zero transmittance).
@@ -515,6 +525,186 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
+// ── 2D Path Tracer (ground truth reference) ──
+// Progressive Monte Carlo path tracer operating at screen resolution.
+// Shares the emission + opacity world textures with HRC. Each frame adds
+// N samples per pixel and blends with the accumulation buffer. Supports
+// volumetric transport, diffuse bounces (albedo), and scattering.
+
+const pathTraceShader = /*wgsl*/ `
+struct PTParams {
+  screenW: u32,
+  screenH: u32,
+  frameIndex: u32,
+  samplesPerPixel: u32,
+  maxBounces: u32,
+  pad0: u32,
+  pad1: u32,
+  pad2: u32,
+};
+
+@group(0) @binding(0) var emissionTex: texture_2d<f32>;
+@group(0) @binding(1) var opacityTex: texture_2d<f32>;
+@group(0) @binding(2) var accumTex: texture_2d<f32>;
+@group(0) @binding(3) var outTex: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(4) var<uniform> params: PTParams;
+
+fn pcgHash(v: u32) -> u32 {
+  var s = v * 747796405u + 2891336453u;
+  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (w >> 22u) ^ w;
+}
+
+fn randomFloat(seed: ptr<function, u32>) -> f32 {
+  *seed = pcgHash(*seed);
+  return f32(*seed) / 4294967295.0;
+}
+
+fn sampleScene(pos: vec2f) -> vec4f {
+  let px = vec2i(i32(floor(pos.x)), i32(floor(pos.y)));
+  if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
+    return vec4f(0.0);
+  }
+  return textureLoad(emissionTex, px, 0);
+}
+
+fn sampleOpacity(pos: vec2f) -> vec4f {
+  let px = vec2i(i32(floor(pos.x)), i32(floor(pos.y)));
+  if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
+    return vec4f(0.0);
+  }
+  return textureLoad(opacityTex, px, 0);
+}
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let px = i32(gid.x);
+  let py = i32(gid.y);
+  if (px >= i32(params.screenW) || py >= i32(params.screenH)) { return; }
+
+  var seed = (u32(px) + u32(py) * params.screenW) * 1099u + params.frameIndex * 6971u;
+
+  var sampleSum = vec3f(0.0);
+
+  for (var s = 0u; s < params.samplesPerPixel; s++) {
+    var rayPos = vec2f(f32(px) + 0.5, f32(py) + 0.5);
+    // Stratified sampling: divide 2π into sectors, jitter within each
+    let sectorSize = 6.2831853 / f32(params.samplesPerPixel);
+    let angle = (f32(s) + randomFloat(&seed)) * sectorSize;
+    var rayDir = vec2f(cos(angle), sin(angle));
+    var throughput = vec3f(1.0);
+    var radiance = vec3f(0.0);
+
+    for (var bounce = 0u; bounce <= params.maxBounces; bounce++) {
+      // March the ray through the scene
+      var hitSurface = false;
+      let maxSteps = 2048u;
+
+      for (var step = 0u; step < maxSteps; step++) {
+        rayPos += rayDir;
+        let em = sampleScene(rayPos);
+        let op = sampleOpacity(rayPos);
+        let opacity = op.rgb;
+        let avgOpacity = (opacity.r + opacity.g + opacity.b) / 3.0;
+        let scatterCoeff = op.a;
+        let albedo = em.a;
+
+        if (avgOpacity < 0.001) { continue; }
+
+        // Volumetric contribution: emission weighted by opacity
+        radiance += throughput * em.rgb * opacity;
+
+        // Scattering: redirect ray with probability proportional to opacity * scattering
+        if (scatterCoeff > 0.0 && avgOpacity < 0.99) {
+          let scatterProb = avgOpacity * scatterCoeff;
+          if (randomFloat(&seed) < scatterProb) {
+            let newAngle = randomFloat(&seed) * 6.2831853;
+            rayDir = vec2f(cos(newAngle), sin(newAngle));
+            throughput *= (1.0 - opacity) + opacity * scatterCoeff;
+            continue;
+          }
+        }
+
+        // Surface hit (high opacity): absorb and possibly bounce
+        if (avgOpacity > 0.5) {
+          if (albedo > 0.001 && randomFloat(&seed) < albedo) {
+            let newAngle = randomFloat(&seed) * 6.2831853;
+            rayDir = vec2f(cos(newAngle), sin(newAngle));
+            throughput *= (1.0 - opacity);
+            hitSurface = true;
+            break;
+          }
+          // Absorbed — ray terminates
+          throughput *= (1.0 - opacity);
+          hitSurface = true;
+          break;
+        }
+
+        // Partial opacity (volume): attenuate and continue
+        throughput *= (1.0 - opacity);
+      }
+
+      if (!hitSurface) { break; }
+      if (all(throughput < vec3f(0.001))) { break; }
+    }
+
+    sampleSum += radiance;
+  }
+
+  let newSample = sampleSum / f32(params.samplesPerPixel);
+
+  // Progressive accumulation: blend with previous frames
+  let coord = vec2i(px, py);
+  if (params.frameIndex == 0u) {
+    textureStore(outTex, coord, vec4f(newSample, 1.0));
+  } else {
+    let prev = textureLoad(accumTex, coord, 0).rgb;
+    let weight = 1.0 / f32(params.frameIndex + 1u);
+    let blended = mix(prev, newSample, weight);
+    textureStore(outTex, coord, vec4f(blended, 1.0));
+  }
+}
+`;
+
+// ── Path tracer blit (tonemaps the accumulated PT result) ──
+
+const ptBlitShader = /*wgsl*/ `
+struct BlitParams { exposure: f32, screenW: f32, screenH: f32, pad: f32 };
+@group(0) @binding(0) var ptAccum: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> params: BlitParams;
+
+fn acesTonemap(x: vec3f) -> vec3f {
+  return clamp(
+    (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14),
+    vec3f(0.0), vec3f(1.0),
+  );
+}
+fn linearToSrgb(c: vec3f) -> vec3f { return pow(c, vec3f(1.0 / 2.2)); }
+
+fn pcg(v: u32) -> u32 {
+  let s = v * 747796405u + 2891336453u;
+  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (w >> 22u) ^ w;
+}
+fn triangularDither(fragCoord: vec2u) -> vec3f {
+  let seed = fragCoord.x + fragCoord.y * 8192u;
+  let r0 = f32(pcg(seed)) / 4294967295.0;
+  let r1 = f32(pcg(seed + 1u)) / 4294967295.0;
+  return vec3f((r0 + r1 - 1.0) / 255.0);
+}
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let pos = array(vec2f(-1, -1), vec2f(1, -1), vec2f(-1, 1), vec2f(1, 1));
+  return vec4f(pos[i], 0, 1);
+}
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let hdr = textureLoad(ptAccum, vec2i(pos.xy), 0).rgb * params.exposure;
+  let mapped = acesTonemap(hdr);
+  let srgb = linearToSrgb(mapped) + triangularDither(vec2u(pos.xy));
+  return vec4f(srgb, 1.0);
+}
+`;
+
 // ── Direction definitions (simplified for square probe grid) ──
 
 const DIR_ALONG: [number, number][] = [
@@ -547,8 +737,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   static override tagName = 'folk-holographic-rc';
 
   @property({ type: Number, reflect: true }) exposure = 2.0;
-  @property({ type: Number, reflect: true }) probeSize = 1024;
+  @property({ type: Number, reflect: true }) probeSize = 2048;
   @property({ type: Boolean, reflect: true }) bounces = true;
+  @property({ type: Boolean, reflect: true, attribute: 'path-tracing' }) pathTracing = false;
 
   #canvas!: HTMLCanvasElement;
   #device!: GPUDevice;
@@ -596,7 +787,20 @@ export class FolkHolographicRC extends FolkBaseSet {
   // Bounce texture (screen resolution) for diffuse light bounces
   #bounceTexture!: GPUTexture;
   #bounceTextureView!: GPUTextureView;
-  #lastFluenceResultIdx = -1; // -1 = no valid previous fluence yet
+  #lastFluenceResultIdx = -1;
+
+  // Path tracer accumulation (screen resolution, rgba32float for precision)
+  #ptAccumTextures!: GPUTexture[];
+  #ptAccumTextureViews!: GPUTextureView[];
+  #ptFrameIndex = 0;
+  #ptStartTime = 0;
+  #ptShowResult = false;
+  #ptPipeline!: GPUComputePipeline;
+  #ptBlitPipeline!: GPURenderPipeline;
+  #ptParamsBuffer!: GPUBuffer;
+  #ptParamsView!: StructuredView;
+  #ptBlitParamsBuffer!: GPUBuffer;
+  #ptBlitParamsView!: StructuredView;
 
   // Pipelines
   #bounceComputePipeline!: GPUComputePipeline;
@@ -681,7 +885,10 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   addLine(
-    x1: number, y1: number, x2: number, y2: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
     colorIndex: number,
     thickness = 20,
     opacity: [number, number, number] = [SOLID_OPACITY, SOLID_OPACITY, SOLID_OPACITY],
@@ -724,6 +931,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (!this.#device) return;
     if (this.sourcesMap.size !== this.sourceElements.size) return;
     this.#updateShapeData();
+    this.#ptFrameIndex = 0;
+    this.#ptShowResult = false;
   }
 
   // ── WebGPU init ──
@@ -874,6 +1083,28 @@ export class FolkHolographicRC extends FolkBaseSet {
       size: this.#bounceParamsView.arrayBuffer.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
+    this.#ptAccumTextures = [0, 1].map((i) =>
+      device.createTexture({
+        label: `PT-Accum-${i}`,
+        size: { width, height },
+        format: 'rgba32float',
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      }),
+    );
+    this.#ptAccumTextureViews = this.#ptAccumTextures.map((t) => t.createView());
+    this.#ptParamsView = uboView(pathTraceShader, 'params');
+    this.#ptParamsBuffer = device.createBuffer({
+      label: 'PT-Params',
+      size: this.#ptParamsView.arrayBuffer.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.#ptBlitParamsView = uboView(ptBlitShader, 'params');
+    this.#ptBlitParamsBuffer = device.createBuffer({
+      label: 'PT-BlitParams',
+      size: this.#ptBlitParamsView.arrayBuffer.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
   }
 
   #initPipelines() {
@@ -902,10 +1133,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       fragment: {
         module: worldModule,
         entryPoint: 'fragment_main',
-        targets: [
-          { format: 'rgba16float' as GPUTextureFormat },
-          { format: 'rgba16float' as GPUTextureFormat },
-        ],
+        targets: [{ format: 'rgba16float' as GPUTextureFormat }, { format: 'rgba16float' as GPUTextureFormat }],
       },
       primitive: { topology: 'triangle-list' },
     });
@@ -936,15 +1164,21 @@ export class FolkHolographicRC extends FolkBaseSet {
       fragment: {
         module: lineModule,
         entryPoint: 'fragment_main',
-        targets: [
-          { format: 'rgba16float' as GPUTextureFormat },
-          { format: 'rgba16float' as GPUTextureFormat },
-        ],
+        targets: [{ format: 'rgba16float' as GPUTextureFormat }, { format: 'rgba16float' as GPUTextureFormat }],
       },
       primitive: { topology: 'triangle-list' },
     });
 
     this.#bounceComputePipeline = createComputePipeline(device, 'HRC-BounceCompute', bounceComputeShader);
+    this.#ptPipeline = createComputePipeline(device, 'PT-PathTrace', pathTraceShader);
+    const ptBlitModule = device.createShaderModule({ code: ptBlitShader });
+    this.#ptBlitPipeline = device.createRenderPipeline({
+      label: 'PT-Blit',
+      layout: 'auto',
+      vertex: { module: ptBlitModule, entryPoint: 'vs' },
+      fragment: { module: ptBlitModule, entryPoint: 'fs', targets: [{ format: this.#presentationFormat }] },
+      primitive: { topology: 'triangle-strip' },
+    });
     this.#raySeedPipeline = createComputePipeline(device, 'HRC-RaySeed', raySeedShader);
     this.#rayExtendPipeline = createComputePipeline(device, 'HRC-RayExtend', rayExtendShader);
     this.#coneMergePipeline = createComputePipeline(device, 'HRC-ConeMerge', coneMergeShader);
@@ -1057,6 +1291,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeTextures?.forEach((t) => t.destroy());
     this.#fluenceTextures?.forEach((t) => t.destroy());
     this.#bounceTexture?.destroy();
+    this.#ptAccumTextures?.forEach((t) => t.destroy());
+    this.#ptParamsBuffer?.destroy();
+    this.#ptBlitParamsBuffer?.destroy();
     this.#seedParamsBuffer?.destroy();
     this.#extendParamsBuffer?.destroy();
     this.#mergeParamsBuffer?.destroy();
@@ -1104,9 +1341,15 @@ export class FolkHolographicRC extends FolkBaseSet {
       const albedo = albedoAttr !== null ? Number(albedoAttr) : 0;
       const scatterAttr = element?.getAttribute('data-scattering');
       const scatter = scatterAttr !== null ? Number(scatterAttr) : 0;
-      const v = (vx: number, vy: number) => { vertices.push(vx, vy, r, g, b, ar, ag, ab, albedo, scatter); };
-      v(x0, y0); v(x1, y0); v(x0, y1);
-      v(x1, y0); v(x1, y1); v(x0, y1);
+      const v = (vx: number, vy: number) => {
+        vertices.push(vx, vy, r, g, b, ar, ag, ab, albedo, scatter);
+      };
+      v(x0, y0);
+      v(x1, y0);
+      v(x0, y1);
+      v(x1, y0);
+      v(x1, y1);
+      v(x0, y1);
     });
     this.#shapeCount = this.sourceRects.length;
     if (vertices.length === 0) return;
@@ -1132,9 +1375,18 @@ export class FolkHolographicRC extends FolkBaseSet {
     for (let i = 0; i < count; i++) {
       const [x1, y1, x2, y2, r, g, b, th, ar, ag, ab, al, sc] = this.#lines[i];
       const off = i * FPL;
-      data[off] = x1; data[off + 1] = y1; data[off + 2] = x2; data[off + 3] = y2;
-      data[off + 4] = r; data[off + 5] = g; data[off + 6] = b; data[off + 7] = th;
-      data[off + 8] = ar; data[off + 9] = ag; data[off + 10] = ab; data[off + 11] = al;
+      data[off] = x1;
+      data[off + 1] = y1;
+      data[off + 2] = x2;
+      data[off + 3] = y2;
+      data[off + 4] = r;
+      data[off + 5] = g;
+      data[off + 6] = b;
+      data[off + 7] = th;
+      data[off + 8] = ar;
+      data[off + 9] = ag;
+      data[off + 10] = ab;
+      data[off + 11] = al;
       data[off + 12] = sc;
     }
     this.#device.queue.writeBuffer(this.#lineInstanceBuffer, 0, data);
@@ -1199,7 +1451,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     {
       const pass = encoder.beginRenderPass({
         colorAttachments: [
-          { view: this.#emissionTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
+          {
+            view: this.#emissionTextureView,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
           { view: this.#opacityTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
         ],
       });
@@ -1224,11 +1481,26 @@ export class FolkHolographicRC extends FolkBaseSet {
         pass.draw(6, this.#lineCount);
         pass.setPipeline(this.#worldRenderPipeline);
       }
-      if (this.#mouseLightBuffer && this.#mouseLightVertexCount > 0) {
+      const { r: mr, g: mg, b: mb } = this.#mouseLightColor;
+      if (this.#mouseLightBuffer && this.#mouseLightVertexCount > 0 && (mr > 0 || mg > 0 || mb > 0)) {
         pass.setVertexBuffer(0, this.#mouseLightBuffer);
         pass.draw(this.#mouseLightVertexCount);
       }
       pass.end();
+    }
+
+    if (this.pathTracing) {
+      if (this.#ptFrameIndex === 0) { this.#ptStartTime = performance.now(); }
+      this.#ptShowResult = true;
+      this.#renderPathTraced(encoder, width, height);
+      this.#submitAndCapture(device, encoder);
+      return;
+    }
+
+    if (this.#ptShowResult) {
+      this.#renderPTBlit(encoder, width, height);
+      this.#submitAndCapture(device, encoder);
+      return;
     }
 
     // ── Step 1.5: Bounce compute (reads previous frame's fluence at screen resolution) ──
@@ -1409,7 +1681,123 @@ export class FolkHolographicRC extends FolkBaseSet {
       pass.end();
     }
 
+    this.#submitAndCapture(device, encoder);
+  }
+
+  #submitAndCapture(device: GPUDevice, encoder: GPUCommandEncoder) {
     device.queue.submit([encoder.finish()]);
+    if (this.#pendingScreenshot) {
+      const filename = this.#pendingScreenshot;
+      this.#pendingScreenshot = '';
+      const tmp = document.createElement('canvas');
+      tmp.width = this.#canvas.width;
+      tmp.height = this.#canvas.height;
+      const ctx2d = tmp.getContext('2d')!;
+      ctx2d.drawImage(this.#canvas, 0, 0);
+      tmp.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+  }
+
+  #renderPathTraced(encoder: GPUCommandEncoder, width: number, height: number) {
+    const device = this.#device;
+    const readIdx = this.#ptFrameIndex % 2;
+    const writeIdx = 1 - readIdx;
+
+    this.#ptParamsView.set({
+      screenW: width,
+      screenH: height,
+      frameIndex: this.#ptFrameIndex,
+      samplesPerPixel: 16,
+      maxBounces: 8,
+      pad0: 0,
+      pad1: 0,
+      pad2: 0,
+    });
+    device.queue.writeBuffer(this.#ptParamsBuffer, 0, this.#ptParamsView.arrayBuffer);
+
+    const ptBG = device.createBindGroup({
+      layout: this.#ptPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.#emissionTextureView },
+        { binding: 1, resource: this.#opacityTextureView },
+        { binding: 2, resource: this.#ptAccumTextureViews[readIdx] },
+        { binding: 3, resource: this.#ptAccumTextureViews[writeIdx] },
+        { binding: 4, resource: { buffer: this.#ptParamsBuffer } },
+      ],
+    });
+
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(this.#ptPipeline);
+    pass.setBindGroup(0, ptBG);
+    pass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
+    pass.end();
+
+    this.#ptBlitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
+    device.queue.writeBuffer(this.#ptBlitParamsBuffer, 0, this.#ptBlitParamsView.arrayBuffer);
+
+    const blitBG = device.createBindGroup({
+      layout: this.#ptBlitPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.#ptAccumTextureViews[writeIdx] },
+        { binding: 1, resource: { buffer: this.#ptBlitParamsBuffer } },
+      ],
+    });
+
+    const blitPass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.#context.getCurrentTexture().createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        },
+      ],
+    });
+    blitPass.setPipeline(this.#ptBlitPipeline);
+    blitPass.setBindGroup(0, blitBG);
+    blitPass.setViewport(0, 0, width, height, 0, 1);
+    blitPass.draw(4);
+    blitPass.end();
+
+    this.#ptFrameIndex++;
+  }
+
+  #renderPTBlit(encoder: GPUCommandEncoder, width: number, height: number) {
+    const device = this.#device;
+    const lastWriteIdx = (this.#ptFrameIndex - 1 + 2) % 2;
+
+    this.#ptBlitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
+    device.queue.writeBuffer(this.#ptBlitParamsBuffer, 0, this.#ptBlitParamsView.arrayBuffer);
+
+    const blitBG = device.createBindGroup({
+      layout: this.#ptBlitPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.#ptAccumTextureViews[lastWriteIdx] },
+        { binding: 1, resource: { buffer: this.#ptBlitParamsBuffer } },
+      ],
+    });
+
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: this.#context.getCurrentTexture().createView(),
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(this.#ptBlitPipeline);
+    pass.setBindGroup(0, blitBG);
+    pass.setViewport(0, 0, width, height, 0, 1);
+    pass.draw(4);
+    pass.end();
   }
 
   #uploadStaticParams(width: number, height: number) {
@@ -1534,6 +1922,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
   };
 
+  #pendingScreenshot = '';
+
+  saveScreenshot(filename = 'hrc-screenshot.png') {
+    this.#pendingScreenshot = filename;
+  }
+
   get fps() {
     return this.#smoothedFrameTime > 0 ? Math.round(1000 / this.#smoothedFrameTime) : 0;
   }
@@ -1547,6 +1941,12 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   get debugInfo() {
+    if (this.pathTracing || this.#ptShowResult) {
+      const spp = this.#ptFrameIndex * 16;
+      const elapsed = this.#ptFrameIndex > 0 ? ((performance.now() - this.#ptStartTime) / 1000).toFixed(1) : '0.0';
+      const label = this.pathTracing ? 'PT' : 'PT (frozen)';
+      return ` ${label} f${this.#ptFrameIndex} ${spp}spp ${elapsed}s`;
+    }
     const dirNames = ['All', 'E', 'S', 'W', 'N'];
     const dirLabel = this.#debugDir > 0 ? ` [${dirNames[this.#debugDir]}]` : '';
     const ccLabel = this.#debugCascadeCount > 0 ? ` C${this.#debugCascadeCount}/${this.#numCascades}` : '';
