@@ -134,11 +134,14 @@ fn toWorld(perpIdx: i32, alongIdx: i32, sp: f32) -> vec2f {
 }
 
 fn readPrev(perpIdx: i32, alongIdx: i32, angleIdx: u32, numAng: u32) -> vec3f {
+  if (perpIdx < 0 || alongIdx < 0 ||
+      perpIdx >= i32(params.perpSize) || alongIdx >= i32(params.nextAlongSize)) {
+    return vec3f(0.0);
+  }
   let x = f32(alongIdx * i32(numAng) + i32(angleIdx)) + 0.5;
   let y = f32(perpIdx) + 0.5;
   let dims = vec2f(textureDimensions(prevCascade));
   let uv = vec2f(x, y) / dims;
-  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { return vec3f(0.0); }
   return textureSampleLevel(prevCascade, cascadeSampler, uv, 0.0).rgb;
 }
 
@@ -240,19 +243,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// ── Clear texture shader ──
-
-const clearShader = /*wgsl*/ `
-@group(0) @binding(0) var tex: texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(16, 16)
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let dims = textureDimensions(tex);
-  if (gid.x < dims.x && gid.y < dims.y) {
-    textureStore(tex, gid.xy, vec4f(0.0));
-  }
-}
-`;
-
 // ── Fluence accumulation shader ──
 // Reads cascade-0 result and adds it to the running fluence total.
 // Direction determines how pixel coords map to cascade-0 texel coords.
@@ -274,11 +264,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (gid.x >= params.screenW || gid.y >= params.screenH) { return; }
   var cc: vec2i;
   switch (params.direction) {
-    case 0u: { cc = vec2i(gid.xy); }
-    case 1u: { cc = vec2i(i32(gid.y), i32(gid.x)); }
-    case 2u: { cc = vec2i(i32(params.screenW) - 1 - i32(gid.x), i32(gid.y)); }
-    case 3u: { cc = vec2i(i32(params.screenH) - 1 - i32(gid.y), i32(gid.x)); }
-    default: { cc = vec2i(gid.xy); }
+    case 0u: { cc = vec2i(i32(gid.x) + 1, i32(gid.y)); }
+    case 1u: { cc = vec2i(i32(gid.y) + 1, i32(gid.x)); }
+    case 2u: { cc = vec2i(i32(params.screenW) - i32(gid.x), i32(gid.y)); }
+    case 3u: { cc = vec2i(i32(params.screenH) - i32(gid.y), i32(gid.x)); }
+    default: { cc = vec2i(i32(gid.x) + 1, i32(gid.y)); }
   }
   let cv = textureLoad(cascadeTex, cc, 0);
   let pc = vec2i(gid.xy);
@@ -411,7 +401,6 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   // Pipelines
   #cascadeMergePipeline!: GPUComputePipeline;
-  #clearPipeline!: GPUComputePipeline;
   #fluenceAccumPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
@@ -658,7 +647,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     });
 
     this.#cascadeMergePipeline = createComputePipeline(device, 'HRC-CascadeMerge', cascadeMergeShader);
-    this.#clearPipeline = createComputePipeline(device, 'HRC-Clear', clearShader);
     this.#fluenceAccumPipeline = createComputePipeline(device, 'HRC-FluenceAccum', fluenceAccumShader);
 
     const blitModule = device.createShaderModule({ code: blitShader });
@@ -838,9 +826,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // ── Step 2: HRC cascade processing for each direction ──
-    const cascadeDim = this.#maxCascadeDim;
-    const clearWG = Math.ceil(cascadeDim / 16);
-
     let fluenceReadView = this.#fluenceTextureViews[0];
     let fluenceWriteView = this.#fluenceTextureViews[1];
     let fluenceResultView = this.#fluenceTextureViews[0];
@@ -853,18 +838,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       const perpSize = cfg.perpSize(width, height);
       const alongBase = nextPowerOf2(cfg.alongBase(width, height));
       const dirCascades = Math.log2(alongBase);
-
-      for (const view of this.#cascadeTextureViews) {
-        const bg = device.createBindGroup({
-          layout: this.#clearPipeline.getBindGroupLayout(0),
-          entries: [{ binding: 0, resource: view }],
-        });
-        const pass = encoder.beginComputePass();
-        pass.setPipeline(this.#clearPipeline);
-        pass.setBindGroup(0, bg);
-        pass.dispatchWorkgroups(clearWG, clearWG);
-        pass.end();
-      }
 
       const effectiveCascades = this.#debugCascadeCount > 0
         ? Math.min(this.#debugCascadeCount, dirCascades)
