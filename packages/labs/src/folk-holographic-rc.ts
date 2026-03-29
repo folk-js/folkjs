@@ -466,8 +466,9 @@ fn triangularDither(fragCoord: vec2u) -> vec3f {
   let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
   let emission = textureLoad(emissionTex, vec2u(pos.xy), 0).rgb;
   let opacity = textureLoad(opacityTex, vec2u(pos.xy), 0).rgb;
+  const TWO_PI = 6.2831853;
   let emissive = emission * opacity;
-  let indirect = fluence * (1.0 - opacity);
+  let indirect = fluence / TWO_PI * (1.0 - opacity);
   let hdr = (emissive + indirect) * params.exposure;
   let mapped = acesTonemap(hdr);
   let srgb = linearToSrgb(mapped) + triangularDither(vec2u(pos.xy));
