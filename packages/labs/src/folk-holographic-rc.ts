@@ -18,12 +18,11 @@ type Line = [
   scattering: number,
 ];
 
-// Per-channel opacity for fully solid materials. 1.0 = completely opaque (zero transmittance).
-// The world opacity texture stores per-channel opacity in [0,1] as rgba8unorm (linear).
-// 256 levels is sufficient for practical opacity values. Linear encoding maximises
-// precision near 0 and 1 (solid/transparent boundaries). A logarithmic or perceptual
-// encoding could give finer control in mid-range opacities for participating media,
-// but would complicate the seed shader's pow() transmittance calculation.
+// Per-channel opacity: 1.0 = fully opaque (zero transmittance), 0.0 = transparent.
+// Stored as rgba8unorm [0,1]. Each value represents per-pixel absorption.
+// The seed compounds opacity over the probe footprint: trans = pow(1-opacity, scaleAlong).
+// This ensures volumetric media look consistent regardless of probe spacing —
+// without it, volumes appear more transparent at lower probe counts.
 const SOLID_OPACITY = 1;
 
 function nextPowerOf2(n: number): number {
@@ -213,20 +212,26 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let emission = textureLoad(emissionTex, px, 0).rgb;
     let opacity = textureLoad(opacityTex, px, 0).rgb;
     let bounce = textureLoad(bounceTex, px, 0).rgb;
+    // Compound per-pixel opacity over the probe's footprint (scaleAlong pixels).
+    // This ensures volumes look consistent regardless of probe spacing.
     trans = pow(1.0 - opacity, vec3f(params.scaleAlong));
     rad = (emission + bounce) * (1.0 - trans);
   }
 
+  var radV: vec4f;
+  var transV: vec4f;
   if (MONO != 0u) {
-    let v = vec4f(rad, dot(trans, vec3f(0.333333)));
-    textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), v);
-    textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), v);
+    let mt = (trans.r + trans.g + trans.b) / 3.0;
+    radV = vec4f(rad, mt);
+    transV = vec4f(vec3f(mt), 1.0);
   } else {
-    textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), vec4f(rad, 0.0));
-    textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), vec4f(rad, 0.0));
-    textureStore(transOut, vec2i(probeIdx * 2, perpIdx), vec4f(trans, 1.0));
-    textureStore(transOut, vec2i(probeIdx * 2 + 1, perpIdx), vec4f(trans, 1.0));
+    radV = vec4f(rad, 0.0);
+    transV = vec4f(trans, 1.0);
   }
+  textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), radV);
+  textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), radV);
+  textureStore(transOut, vec2i(probeIdx * 2, perpIdx), transV);
+  textureStore(transOut, vec2i(probeIdx * 2 + 1, perpIdx), transV);
 }
 `;
 
@@ -307,7 +312,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let avgRad = (extL.rad + extR.rad) * 0.5;
   let avgTrans = (extL.trans + extR.trans) * 0.5;
   if (MONO != 0u) {
-    textureStore(currRayTex, coord, vec4f(avgRad, dot(avgTrans, vec3f(0.333333))));
+    textureStore(currRayTex, coord, vec4f(avgRad, avgTrans.r));
   } else {
     textureStore(currRayTex, coord, vec4f(avgRad, 0.0));
     textureStore(currTransTex, coord, vec4f(avgTrans, 1.0));
@@ -810,7 +815,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #bounceTexture!: GPUTexture;
   #bounceTextureView!: GPUTextureView;
   #lastFluenceResultIdx = -1;
-  #fluenceZeros!: Uint8Array<ArrayBuffer>;
+  #fluenceZeroBuffer!: GPUBuffer;
 
   // Path tracer accumulation (screen resolution, rgba32float for precision)
   #ptAccumTextures!: GPUTexture[];
@@ -876,19 +881,6 @@ export class FolkHolographicRC extends FolkBaseSet {
   #tsReadBuffer?: GPUBuffer;
   #tsPending = false;
 
-  static readonly #colors: [number, number, number][] = [
-    [0, 0, 0],
-    [0, 0, 0],
-    [1, 0.25, 0.25],
-    [1, 0.5, 0.2],
-    [0.75, 0.75, 0.2],
-    [0.25, 0.8, 0.35],
-    [0.25, 0.75, 0.75],
-    [0.3, 0.4, 1],
-    [0.65, 0.3, 1],
-    [0.8, 0.8, 0.8],
-  ];
-
   override async connectedCallback() {
     super.connectedCallback();
     await this.#initWebGPU();
@@ -916,13 +908,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     y1: number,
     x2: number,
     y2: number,
-    colorIndex: number,
+    color: [number, number, number] = [0, 0, 0],
     thickness = 20,
     opacity: [number, number, number] = [SOLID_OPACITY, SOLID_OPACITY, SOLID_OPACITY],
     albedo = 0,
     scattering = 0,
   ) {
-    const [r, g, b] = FolkHolographicRC.#colors[colorIndex] ?? FolkHolographicRC.#colors[1];
+    const [r, g, b] = color;
     this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity[0], opacity[1], opacity[2], albedo, scattering]);
     this.#lineBufferDirty = true;
   }
@@ -1073,7 +1065,9 @@ export class FolkHolographicRC extends FolkBaseSet {
       { width, height },
     );
     this.#lastFluenceResultIdx = -1;
-    this.#fluenceZeros = new Uint8Array(ps * ps * 8);
+    const zeroSize = ps * ps * 8;
+    this.#fluenceZeroBuffer = device.createBuffer({ size: zeroSize, usage: GPUBufferUsage.COPY_SRC });
+    // GPU buffers are zero-initialized by default in WebGPU
 
     this.#seedParamsView = uboView(raySeedShader, 'params');
     this.#extendParamsView = uboView(rayExtendShader, 'params');
@@ -1287,6 +1281,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#transTextures?.forEach((t) => t.destroy());
     this.#mergeTextures?.forEach((t) => t.destroy());
     this.#fluenceTextures?.forEach((t) => t.destroy());
+    this.#fluenceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
     this.#ptAccumTextures?.forEach((t) => t.destroy());
     this.#ptParamsBuffer?.destroy();
@@ -1313,18 +1308,9 @@ export class FolkHolographicRC extends FolkBaseSet {
       const sh = shape.height ?? 0;
       const rot = shape.rotation ?? 0;
 
-      const colorAttr = element.getAttribute('data-color');
-      let r: number, g: number, b: number;
-      if (colorAttr !== null) {
-        const colorIndex = parseInt(colorAttr) || 0;
-        const color = FolkHolographicRC.#colors[colorIndex] || FolkHolographicRC.#colors[0];
-        [r, g, b] = color;
-      } else {
-        const hue = index * 0.618;
-        r = 0.5 + 0.5 * Math.sin(hue * Math.PI * 2);
-        g = 0.5 + 0.5 * Math.sin((hue + 0.333) * Math.PI * 2);
-        b = 0.5 + 0.5 * Math.sin((hue + 0.666) * Math.PI * 2);
-      }
+      const rgbAttr = element.getAttribute('data-rgb');
+      const parts = rgbAttr ? rgbAttr.split(',').map(Number) : [0, 0, 0];
+      const [r, g, b] = [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
       const attenAttr = element.getAttribute('data-opacity');
       let ar: number, ag: number, ab: number;
       if (attenAttr !== null) {
@@ -1523,14 +1509,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // ── Step 2: HRC cascade processing per direction ──
-    // Clear both fluence textures — the fused level-0 merge writes to fluence
-    // at remapped coords, but edge pixels that no cascade probe maps to (due to
-    // the 1px frustum offset) would retain stale data without this clear.
+    // Clear both fluence textures via the encoder (not queue.writeTexture, which
+    // would execute before the bounce pass reads the previous frame's fluence).
     for (const ft of this.#fluenceTextures) {
-      device.queue.writeTexture(
+      encoder.copyBufferToTexture(
+        { buffer: this.#fluenceZeroBuffer, bytesPerRow: ps * 8, rowsPerImage: ps },
         { texture: ft },
-        this.#fluenceZeros,
-        { bytesPerRow: ps * 8, rowsPerImage: ps },
         { width: ps, height: ps },
       );
     }

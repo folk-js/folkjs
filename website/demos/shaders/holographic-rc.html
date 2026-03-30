@@ -173,10 +173,8 @@
 
       const scenes = [
         { name: 'Pinhole', fn: loadPinhole },
-        { name: 'Empty', fn: loadEmpty },
         { name: 'Center block', fn: loadCenterBlock },
         { name: 'Thin walls', fn: loadThinWalls },
-        { name: 'Corner trap', fn: loadCorner },
         { name: 'Color shadows', fn: loadColorShadows },
         { name: 'Stained glass', fn: loadStainedGlass },
         { name: 'Colored glass', fn: loadColoredGlass },
@@ -197,6 +195,9 @@
       let lineThickness = 8;
       const indicator = document.getElementById('color-indicator');
       const hrc = document.getElementById('hrc');
+      const controls = document.getElementById('controls');
+      controls.addEventListener('change', () => document.activeElement?.blur());
+      controls.addEventListener('pointerup', () => setTimeout(() => document.activeElement?.blur(), 0));
       const sceneSelect = document.getElementById('scene-select');
       const exposureSlider = document.getElementById('exposure-slider');
       const exposureValue = document.getElementById('exposure-value');
@@ -295,13 +296,17 @@
         el.setAttribute('y', y);
         el.setAttribute('width', w);
         el.setAttribute('height', h);
-        if (colorIdx !== undefined) el.setAttribute('data-color', colorIdx);
+        if (colorIdx !== undefined) {
+          const c = colors[colorIdx]?.rgb ?? [0, 0, 0];
+          el.setAttribute('data-rgb', c.join(','));
+        }
         if (typeof opts === 'string') {
           el.setAttribute('data-opacity', opts);
         } else if (typeof opts === 'object' && opts !== null) {
           if (opts.opacity !== undefined) el.setAttribute('data-opacity', opts.opacity);
           if (opts.albedo !== undefined) el.setAttribute('data-albedo', opts.albedo);
           if (opts.scattering !== undefined) el.setAttribute('data-scattering', opts.scattering);
+          if (opts.color) el.setAttribute('data-rgb', opts.color.join(','));
         }
         hrc.appendChild(el);
         return el;
@@ -340,8 +345,6 @@
         addShape(wallX, pinholeY + pinholeSize, wallW, H - (pinholeY + pinholeSize), 1);
       }
 
-      function loadEmpty() {}
-
       function loadCenterBlock() {
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
@@ -355,13 +358,6 @@
         addShape(cx - 200, cy - 20, 400, 2, 1);
         addShape(cx - 200, cy + 40, 400, 4, 1);
         addShape(cx - 200, cy + 110, 400, 8, 1);
-      }
-
-      function loadCorner() {
-        const cx = window.innerWidth / 2;
-        const cy = window.innerHeight / 2;
-        addShape(cx - 150, cy - 150, 300, 20, 1);
-        addShape(cx - 150, cy - 150, 20, 300, 1);
       }
 
       function loadFurnaceTest() {
@@ -414,15 +410,13 @@
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
         const wallX = cx - 10;
-        addShape(wallX, cy - 180, 20, 60, 1);
-        addShape(wallX, cy - 100, 20, 20, 0, '0,1,1');
-        addShape(wallX, cy - 80, 20, 30, 1);
-        addShape(wallX, cy - 50, 20, 20, 0, '1,0,1');
-        addShape(wallX, cy - 30, 20, 30, 1);
-        addShape(wallX, cy, 20, 20, 0, '1,1,0');
-        addShape(wallX, cy + 20, 20, 30, 1);
-        addShape(wallX, cy + 50, 20, 20, 0, '0,0,1');
-        addShape(wallX, cy + 70, 20, 110, 1);
+        const h = 40;
+        addShape(wallX, cy - 120, 20, 30, 1);
+        addShape(wallX, cy - 90, 20, h, 0, '0,1,1');
+        addShape(wallX, cy - 50, 20, h, 0, '1,0,1');
+        addShape(wallX, cy - 10, 20, h, 0, '1,1,0');
+        addShape(wallX, cy + 30, 20, h, 0, '0,0,1');
+        addShape(wallX, cy + 70, 20, 30, 1);
       }
 
       function loadColorShadows() {
@@ -462,7 +456,7 @@
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
         addShape(cx - 30, cy + 80, 60, 30, 3);
-        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: '0.1', scattering: 0.9 });
+        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: '0.02', scattering: 0.9 });
         addShape(cx - 200, cy - 60, 30, 30, 1);
         addShape(cx + 170, cy - 60, 30, 30, 1);
       }
@@ -517,11 +511,11 @@
         addShape(cx - 250, cy - 20, 30, 40, 9);
         // Dense scattering cloud — high opacity so light is absorbed strongly,
         // high scattering so absorbed light re-emits and glows
-        addShape(cx - 150, cy - 150, 250, 300, 0, { opacity: '0.2', scattering: 0.99 });
+        addShape(cx - 150, cy - 150, 250, 300, 0, { opacity: '0.03', scattering: 1 });
         // Solid wall behind the cloud — scatter should wrap light around it
         addShape(cx - 10, cy - 60, 20, 120, 1);
         // Non-scattering cloud for comparison (just absorbs, no glow)
-        addShape(cx + 150, cy - 100, 150, 200, 0, '0.2');
+        addShape(cx + 150, cy - 100, 150, 200, 0, '0.03');
         // Second light on the right
         addShape(cx + 350, cy - 20, 30, 40, 9);
       }
@@ -696,7 +690,7 @@
           if (currentColor === 0) {
             hrc.eraseAt(e.clientX, e.clientY, lineThickness);
           } else {
-            hrc.addLine(lastX, lastY, e.clientX, e.clientY, currentColor, lineThickness);
+            hrc.addLine(lastX, lastY, e.clientX, e.clientY, colors[currentColor].rgb, lineThickness);
           }
           lastX = e.clientX;
           lastY = e.clientY;
@@ -712,7 +706,7 @@
           const dx = e.clientX - lastX;
           const dy = e.clientY - lastY;
           if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-            hrc.addLine(lastX, lastY, e.clientX, e.clientY, currentColor, lineThickness);
+            hrc.addLine(lastX, lastY, e.clientX, e.clientY, colors[currentColor].rgb, lineThickness);
           }
         }
 
