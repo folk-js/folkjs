@@ -141,9 +141,6 @@
       <label style="font-family: monospace; font-size: 11px; color: rgba(255, 255, 255, 0.6); cursor: pointer">
         <input id="pt-toggle" type="checkbox" /> path trace
       </label>
-      <label style="font-family: monospace; font-size: 11px; color: rgba(255, 255, 255, 0.6); cursor: pointer">
-        <input id="mono-toggle" type="checkbox" /> mono trans
-      </label>
     </div>
     <div id="help-text">
       <kbd>←</kbd><kbd>→</kbd> scene &nbsp; <kbd>0</kbd>–<kbd>9</kbd> color &nbsp; <kbd>+</kbd><kbd>−</kbd> size &nbsp;
@@ -177,7 +174,7 @@
         { name: 'Thin walls', fn: loadThinWalls },
         { name: 'Color shadows', fn: loadColorShadows },
         { name: 'Stained glass', fn: loadStainedGlass },
-        { name: 'Colored glass', fn: loadColoredGlass },
+        { name: 'Glowing fog', fn: loadGlowingFog },
         { name: 'Fog room', fn: loadFogRoom },
         { name: 'Smoke', fn: loadSmoke },
         { name: 'Bounce room', fn: loadBounceRoom },
@@ -230,12 +227,6 @@
       document.getElementById('pt-toggle').addEventListener('change', (e) => {
         hrc.pathTracing = e.target.checked;
       });
-      const monoToggle = document.getElementById('mono-toggle');
-      monoToggle.checked = hrc.monoTransmittance;
-      monoToggle.addEventListener('change', (e) => {
-        hrc.monoTransmittance = e.target.checked;
-      });
-
       function updateMouseRadius() {
         hrc.setMouseLightRadius(lineThickness / 2);
       }
@@ -300,12 +291,10 @@
           const c = colors[colorIdx]?.rgb ?? [0, 0, 0];
           el.setAttribute('data-rgb', c.join(','));
         }
-        if (typeof opts === 'string') {
-          el.setAttribute('data-opacity', opts);
-        } else if (typeof opts === 'object' && opts !== null) {
-          if (opts.opacity !== undefined) el.setAttribute('data-opacity', opts.opacity);
-          if (opts.albedo !== undefined) el.setAttribute('data-albedo', opts.albedo);
-          if (opts.scattering !== undefined) el.setAttribute('data-scattering', opts.scattering);
+        if (typeof opts === 'object' && opts !== null) {
+          if (opts.opacity !== undefined) el.setAttribute('data-opacity', String(opts.opacity));
+          if (opts.albedo !== undefined) el.setAttribute('data-albedo', String(opts.albedo));
+          if (opts.scattering !== undefined) el.setAttribute('data-scattering', String(opts.scattering));
           if (opts.color) el.setAttribute('data-rgb', opts.color.join(','));
         }
         hrc.appendChild(el);
@@ -412,10 +401,10 @@
         const wallX = cx - 10;
         const h = 40;
         addShape(wallX, cy - 120, 20, 30, 1);
-        addShape(wallX, cy - 90, 20, h, 0, '0,1,1');
-        addShape(wallX, cy - 50, 20, h, 0, '1,0,1');
-        addShape(wallX, cy - 10, 20, h, 0, '1,1,0');
-        addShape(wallX, cy + 30, 20, h, 0, '0,0,1');
+        addShape(wallX, cy - 90, 20, h, 2, { opacity: 0.6 });
+        addShape(wallX, cy - 50, 20, h, 5, { opacity: 0.6 });
+        addShape(wallX, cy - 10, 20, h, 7, { opacity: 0.6 });
+        addShape(wallX, cy + 30, 20, h, 4, { opacity: 0.6 });
         addShape(wallX, cy + 70, 20, 30, 1);
       }
 
@@ -439,24 +428,24 @@
         addShape(cx + 235, cy - 200, 15, 400, 1);
         addShape(cx - 200, cy - 185, 30, 30, 3);
         addShape(cx + 170, cy + 155, 30, 30, 6);
-        addShape(cx - 100, cy - 50, 200, 100, 0, { opacity: '0.01', scattering: 0.99 });
+        addShape(cx - 100, cy - 50, 200, 100, 0, { opacity: 0.01, scattering: 0.99 });
       }
 
-      function loadColoredGlass() {
+      function loadGlowingFog() {
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
         addShape(cx - 200, cy - 40, 60, 60, 9);
-        addShape(cx - 60, cy - 120, 20, 240, 0, '0.01,0.08,0.08');
-        addShape(cx, cy - 120, 20, 240, 0, '0.08,0.01,0.08');
-        addShape(cx + 60, cy - 120, 20, 240, 0, '0.08,0.08,0.01');
-        addShape(cx + 140, cy - 40, 40, 80, 1);
+        addShape(cx - 80, cy - 100, 60, 200, 2, { opacity: 0.015, scattering: 0.5 });
+        addShape(cx - 10, cy - 100, 60, 200, 5, { opacity: 0.015, scattering: 0.5 });
+        addShape(cx + 60, cy - 100, 60, 200, 7, { opacity: 0.015, scattering: 0.5 });
+        addShape(cx + 180, cy - 40, 40, 80, 1);
       }
 
       function loadSmoke() {
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
         addShape(cx - 30, cy + 80, 60, 30, 3);
-        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: '0.02', scattering: 0.9 });
+        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: 0.02, scattering: 0.9 });
         addShape(cx - 200, cy - 60, 30, 30, 1);
         addShape(cx + 170, cy - 60, 30, 30, 1);
       }
@@ -511,11 +500,11 @@
         addShape(cx - 250, cy - 20, 30, 40, 9);
         // Dense scattering cloud — high opacity so light is absorbed strongly,
         // high scattering so absorbed light re-emits and glows
-        addShape(cx - 150, cy - 150, 250, 300, 0, { opacity: '0.03', scattering: 1 });
+        addShape(cx - 150, cy - 150, 250, 300, 0, { opacity: 0.03, scattering: 1 });
         // Solid wall behind the cloud — scatter should wrap light around it
         addShape(cx - 10, cy - 60, 20, 120, 1);
         // Non-scattering cloud for comparison (just absorbs, no glow)
-        addShape(cx + 150, cy - 100, 150, 200, 0, '0.03');
+        addShape(cx + 150, cy - 100, 150, 200, 0, { opacity: 0.03 });
         // Second light on the right
         addShape(cx + 350, cy - 20, 30, 40, 9);
       }
@@ -531,12 +520,12 @@
         const y = cy - 20;
         addShape(startX, y, sz, sz, 3); // emitter
         addShape(startX + gap, y, sz, sz, 1); // occluder
-        addShape(startX + gap * 2, y, sz, sz, 0, '0,1,1'); // red glass
-        addShape(startX + gap * 3, y, sz, sz, 0, { opacity: '0.05', scattering: 0.8 }); // scattering fog
+        addShape(startX + gap * 2, y, sz, sz, 2, { opacity: 0.6 }); // tinted glass
+        addShape(startX + gap * 3, y, sz, sz, 0, { opacity: 0.05, scattering: 0.8 }); // scattering fog
         addShape(startX + gap * 4, y, sz, sz, 0, { albedo: 0.8 }); // reflective
-        addShape(startX + gap * 5, y, sz, sz, 0, '0.3'); // dense fog
-        addShape(startX + gap * 6, y, sz, sz, 5, { opacity: '0.03', scattering: 0.5 }); // glowing scatter
-        addShape(startX + gap * 7, y, sz, sz, 0, '1,0,1'); // green glass
+        addShape(startX + gap * 5, y, sz, sz, 0, { opacity: 0.3 }); // dense fog
+        addShape(startX + gap * 6, y, sz, sz, 5, { opacity: 0.03, scattering: 0.5 }); // glowing scatter
+        addShape(startX + gap * 7, y, sz, sz, 5, { opacity: 0.6 }); // green glass
         addShape(cx - 30, cy - 150, 60, 15, 9);
       }
 
@@ -589,9 +578,7 @@
         if (now - lastFpsUpdate > 200) {
           lastFpsUpdate = now;
           const { width, height } = hrc.resolution;
-          const gpuMs = hrc.gpuTimeMs;
-          const gpuLabel = gpuMs > 0 ? ` gpu ${gpuMs.toFixed(1)}ms` : '';
-          fpsEl.textContent = `${width}x${height} ${hrc.fps} fps (${hrc.frameTimeMs.toFixed(1)}ms)${gpuLabel}${hrc.debugInfo}`;
+          fpsEl.textContent = `${width}x${height} ${hrc.fps} fps (${hrc.frameTimeMs.toFixed(1)}ms)${hrc.debugInfo}`;
         }
         requestAnimationFrame(updateFpsOverlay);
       }

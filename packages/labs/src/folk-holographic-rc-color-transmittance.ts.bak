@@ -11,11 +11,18 @@ type Line = [
   g: number,
   b: number,
   thickness: number,
-  opacity: number,
+  ar: number,
+  ag: number,
+  ab: number,
   albedo: number,
   scattering: number,
 ];
 
+// Per-channel opacity: 1.0 = fully opaque (zero transmittance), 0.0 = transparent.
+// Stored as rgba8unorm [0,1]. Each value represents per-pixel absorption.
+// The seed compounds opacity over the probe footprint: trans = pow(1-opacity, scaleAlong).
+// This ensures volumetric media look consistent regardless of probe spacing —
+// without it, volumes appear more transparent at lower probe counts.
 const SOLID_OPACITY = 1;
 
 function nextPowerOf2(n: number): number {
@@ -65,22 +72,23 @@ function uploadVertexData(
   return existing;
 }
 
-// ── World-render shaders (shapes, lines, mouse light → world + material) ──
-// MRT: location(0) = world    (rgb = emitted light, a = opacity 0–1)
-//      location(1) = material (r = albedo 0–1, g = scattering 0–1)
+// ── World-render shaders (shapes, lines, mouse light → emission + opacity) ──
+// MRT: location(0) = emission (rgb = emitted light, a = albedo for diffuse bounces)
+//      location(1) = opacity (rgb = per-channel 0–1, a = scattering coefficient 0–1)
+// Vertex data: position (vec2), color (vec3), opacity (vec3), albedo (f32), scattering (f32)
 
 const worldRenderShader = /*wgsl*/ `
 struct VertexInput {
   @location(0) position: vec2f,
   @location(1) color: vec3f,
-  @location(2) opacity: f32,
+  @location(2) opacity: vec3f,
   @location(3) albedo: f32,
   @location(4) scattering: f32,
 }
 struct VertexOutput {
   @builtin(position) position: vec4f,
   @location(0) color: vec3f,
-  @location(1) opacity: f32,
+  @location(1) opacity: vec3f,
   @location(2) albedo: f32,
   @location(3) scattering: f32,
 }
@@ -94,11 +102,11 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   out.scattering = input.scattering;
   return out;
 }
-struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
+struct FragOut { @location(0) emission: vec4f, @location(1) opacity: vec4f }
 @fragment fn fragment_main(in: VertexOutput) -> FragOut {
   var out: FragOut;
-  out.world = vec4f(srgbToLinear(in.color), in.opacity);
-  out.material = vec4f(in.albedo, in.scattering, 0.0, 0.0);
+  out.emission = vec4f(srgbToLinear(in.color), in.albedo);
+  out.opacity = vec4f(in.opacity, in.scattering);
   return out;
 }
 `;
@@ -110,7 +118,7 @@ struct VertexOutput {
   @location(1) p1: vec2f,
   @location(2) p2: vec2f,
   @location(3) radius: f32,
-  @location(4) opacity: f32,
+  @location(4) opacity: vec3f,
   @location(5) albedo: f32,
   @location(6) scattering: f32,
 }
@@ -121,7 +129,7 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   @builtin(vertex_index) vid: u32,
   @location(0) p1: vec2f, @location(1) p2: vec2f,
   @location(2) color: vec3f, @location(3) thickness: f32,
-  @location(4) opacity: f32, @location(5) albedo: f32,
+  @location(4) opacity: vec3f, @location(5) albedo: f32,
   @location(6) scattering: f32,
 ) -> VertexOutput {
   let r = thickness * 0.5;
@@ -139,7 +147,7 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   out.opacity = opacity; out.albedo = albedo; out.scattering = scattering;
   return out;
 }
-struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
+struct FragOut { @location(0) emission: vec4f, @location(1) opacity: vec4f }
 @fragment fn fragment_main(in: VertexOutput) -> FragOut {
   let pos = in.position.xy;
   let ab = in.p2 - in.p1; let ap = pos - in.p1;
@@ -149,19 +157,21 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
   let d = length(pos - nearest) - in.radius;
   if (d > 0.0) { discard; }
   var out: FragOut;
-  out.world = vec4f(srgbToLinear(in.color), in.opacity);
-  out.material = vec4f(in.albedo, in.scattering, 0.0, 0.0);
+  out.emission = vec4f(srgbToLinear(in.color), in.albedo);
+  out.opacity = vec4f(in.opacity, in.scattering);
   return out;
 }
 `;
 
 // ── HRC Phase A: Ray Seed (cascade 0) ──
-// Samples the world texture at each probe position. World stores emission in
-// rgb and scalar opacity in alpha. Transmittance (packed into ray.a) is
-// compounded over the probe footprint so volumes look consistent at any
-// probe spacing.
+// Samples emission and opacity textures at each probe position. The opacity
+// texture stores per-channel opacity in [0,1] (0 = transparent, 1 = solid).
+// Transmittance = 1 - opacity. Radiance = emission * opacity (light produced
+// by the material, weighted by its presence). Both ray indices per probe
+// receive the same value (differentiation happens during extension).
 
 const raySeedShader = /*wgsl*/ `
+override MONO: u32 = 0u;
 struct SeedParams {
   probeSize: u32,
   screenW: f32,
@@ -177,10 +187,12 @@ struct SeedParams {
   scalePerp: f32,
 };
 
-@group(0) @binding(0) var worldTex: texture_2d<f32>;
-@group(0) @binding(1) var bounceTex: texture_2d<f32>;
-@group(0) @binding(2) var rayOut: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(3) var<uniform> params: SeedParams;
+@group(0) @binding(0) var emissionTex: texture_2d<f32>;
+@group(0) @binding(1) var opacityTex: texture_2d<f32>;
+@group(0) @binding(2) var bounceTex: texture_2d<f32>;
+@group(0) @binding(3) var rayOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var transOut: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(5) var<uniform> params: SeedParams;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -195,26 +207,41 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
   var rad = vec3f(0.0);
-  var trans = 1.0;
+  var trans = vec3f(1.0);
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
-    let world = textureLoad(worldTex, px, 0);
+    let emission = textureLoad(emissionTex, px, 0).rgb;
+    let opacity = textureLoad(opacityTex, px, 0).rgb;
     let bounce = textureLoad(bounceTex, px, 0).rgb;
-    trans = pow(1.0 - world.a, params.scaleAlong);
-    rad = (world.rgb + bounce) * (1.0 - trans);
+    // Compound per-pixel opacity over the probe's footprint (scaleAlong pixels).
+    // This ensures volumes look consistent regardless of probe spacing.
+    trans = pow(1.0 - opacity, vec3f(params.scaleAlong));
+    rad = (emission + bounce) * (1.0 - trans);
   }
 
-  let v = vec4f(rad, trans);
-  textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), v);
-  textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), v);
+  var radV: vec4f;
+  var transV: vec4f;
+  if (MONO != 0u) {
+    let mt = (trans.r + trans.g + trans.b) / 3.0;
+    radV = vec4f(rad, mt);
+    transV = vec4f(vec3f(mt), 1.0);
+  } else {
+    radV = vec4f(rad, 0.0);
+    transV = vec4f(trans, 1.0);
+  }
+  textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), radV);
+  textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), radV);
+  textureStore(transOut, vec2i(probeIdx * 2, perpIdx), transV);
+  textureStore(transOut, vec2i(probeIdx * 2 + 1, perpIdx), transV);
 }
 `;
 
 // ── HRC Phase B: Ray Extension (bottom-up, levels 1..N-1) ──
 // Composes two shorter rays from the previous level into one longer ray.
 // For each output ray, builds two crossed extensions (L→R, R→L) and averages.
-// Transmittance is scalar, packed in the ray texture alpha channel.
+// Follows Yaazarai Shd_Extensions and Amitabha merge_up.
 
 const rayExtendShader = /*wgsl*/ `
+override MONO: u32 = 0u;
 struct ExtendParams {
   probeSize: u32,
   level: u32,
@@ -223,10 +250,12 @@ struct ExtendParams {
 };
 
 @group(0) @binding(0) var prevRayTex: texture_2d<f32>;
-@group(0) @binding(1) var currRayTex: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(2) var<uniform> params: ExtendParams;
+@group(0) @binding(1) var prevTransTex: texture_2d<f32>;
+@group(0) @binding(2) var currRayTex: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var currTransTex: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(4) var<uniform> params: ExtendParams;
 
-struct RayData { rad: vec3f, trans: f32 }
+struct RayData { rad: vec3f, trans: vec3f }
 
 fn loadPrev(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
   let prevLevel = params.level - 1u;
@@ -236,11 +265,14 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
   if (probeIdx < 0 || probeIdx >= prevNumProbes ||
       rayIdx < 0 || rayIdx >= prevNumRays ||
       perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
-    return RayData(vec3f(0.0), 1.0);
+    return RayData(vec3f(0.0), vec3f(1.0));
   }
   let coord = vec2i(probeIdx * prevNumRays + rayIdx, perpIdx);
   let r = textureLoad(prevRayTex, coord, 0);
-  return RayData(r.rgb, r.a);
+  if (MONO != 0u) {
+    return RayData(r.rgb, vec3f(r.a));
+  }
+  return RayData(r.rgb, textureLoad(prevTransTex, coord, 0).rgb);
 }
 
 fn overComp(near: RayData, far: RayData) -> RayData {
@@ -279,7 +311,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let coord = vec2i(texelX, perpIdx);
   let avgRad = (extL.rad + extR.rad) * 0.5;
   let avgTrans = (extL.trans + extR.trans) * 0.5;
-  textureStore(currRayTex, coord, vec4f(avgRad, avgTrans));
+  if (MONO != 0u) {
+    textureStore(currRayTex, coord, vec4f(avgRad, avgTrans.r));
+  } else {
+    textureStore(currRayTex, coord, vec4f(avgRad, 0.0));
+    textureStore(currTransTex, coord, vec4f(avgTrans, 1.0));
+  }
 }
 `;
 
@@ -290,6 +327,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // near-probe cone; odd probes do a direct over-composite.
 
 const coneMergeShader = /*wgsl*/ `
+override MONO: u32 = 0u;
 struct MergeParams {
   probeSize: u32,
   numCones: u32,
@@ -306,23 +344,27 @@ struct MergeParams {
 };
 
 @group(0) @binding(0) var rayTex: texture_2d<f32>;
-@group(0) @binding(1) var mergeIn: texture_2d<f32>;
-@group(0) @binding(2) var mergeOut: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(3) var<uniform> params: MergeParams;
-@group(0) @binding(4) var fluencePrev: texture_2d<f32>;
-@group(0) @binding(5) var fluenceCurr: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(1) var rayTransTex: texture_2d<f32>;
+@group(0) @binding(2) var mergeIn: texture_2d<f32>;
+@group(0) @binding(3) var mergeOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var<uniform> params: MergeParams;
+@group(0) @binding(5) var fluencePrev: texture_2d<f32>;
+@group(0) @binding(6) var fluenceCurr: texture_storage_2d<rgba16float, write>;
 
-struct RayData { rad: vec3f, trans: f32 }
+struct RayData { rad: vec3f, trans: vec3f }
 
 fn loadRay(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
   if (probeIdx < 0 || probeIdx >= i32(params.numProbes) ||
       rayIdx < 0 || rayIdx >= i32(params.numRays) ||
       perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
-    return RayData(vec3f(0.0), 1.0);
+    return RayData(vec3f(0.0), vec3f(1.0));
   }
   let coord = vec2i(probeIdx * i32(params.numRays) + rayIdx, perpIdx);
   let r = textureLoad(rayTex, coord, 0);
-  return RayData(r.rgb, r.a);
+  if (MONO != 0u) {
+    return RayData(r.rgb, vec3f(r.a));
+  }
+  return RayData(r.rgb, textureLoad(rayTransTex, coord, 0).rgb);
 }
 
 fn loadMerge(texX: i32, perpIdx: i32) -> vec3f {
@@ -381,6 +423,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let outX = probeIdx * nc + coneIdx;
   textureStore(mergeOut, vec2i(outX, perpIdx), vec4f(result, 1.0));
 
+  // At level 0 (numCones==1), write directly to fluence accumulation texture.
+  // Remap from cascade-local (probeIdx, perpIdx) to screen-aligned fluence coords.
+  // This is the inverse of the old accum shader's fluence→cascade mapping.
   if (params.numCones == 1u) {
     let ps = i32(params.probeSize);
     var fc: vec2i;
@@ -405,7 +450,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 // ── Final blit shader ──
 // Bilinearly upscales fluence from probe resolution to screen resolution.
-// Uses world texture alpha (opacity) to mask indirect light at surfaces.
+// Uses opacity texture to mask indirect light at solid/translucent surfaces.
 
 const blitCommon = /*wgsl*/ `
 struct BlitParams { exposure: f32, screenW: f32, screenH: f32, pad: f32 };
@@ -445,24 +490,30 @@ const blitShader =
   blitCommon +
   /*wgsl*/ `
 @group(0) @binding(0) var fluenceTex: texture_2d<f32>;
-@group(0) @binding(1) var worldTex: texture_2d<f32>;
-@group(0) @binding(2) var<uniform> params: BlitParams;
-@group(0) @binding(3) var linearSamp: sampler;
+@group(0) @binding(1) var emissionTex: texture_2d<f32>;
+@group(0) @binding(2) var opacityTex: texture_2d<f32>;
+@group(0) @binding(3) var<uniform> params: BlitParams;
+@group(0) @binding(4) var linearSamp: sampler;
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = pos.xy / vec2f(params.screenW, params.screenH);
   let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
-  let world = textureLoad(worldTex, vec2u(pos.xy), 0);
-  let emissive = world.rgb * world.a;
-  let indirect = fluence / TWO_PI * (1.0 - world.a);
+  let emission = textureLoad(emissionTex, vec2u(pos.xy), 0).rgb;
+  let opacity = textureLoad(opacityTex, vec2u(pos.xy), 0).rgb;
+  let emissive = emission * opacity;
+  let indirect = fluence / TWO_PI * (1.0 - opacity);
   return tonemapAndDither((emissive + indirect) * params.exposure, vec2u(pos.xy));
 }
 `;
 
 // ── Bounce compute shader ──
 // Runs at SCREEN resolution. For each pixel, bilinearly samples the previous
-// frame's fluence (at probe resolution), reads albedo + scattering from the
-// material texture, and writes bounce = fluence * albedo + scatter term.
+// frame's fluence (at probe resolution), reads albedo from the emission texture,
+// and writes bounce = fluence * albedo. This bounce texture is then read by the
+// seed shader at each probe's world position, adding bounced light as emission.
+// Each frame recomputes bounce from scratch — convergence happens naturally as
+// the fluence already includes all previous bounces' contributions via the HRC
+// pipeline.
 
 const bounceComputeShader = /*wgsl*/ `
 struct BounceParams {
@@ -474,8 +525,8 @@ struct BounceParams {
 
 @group(0) @binding(0) var prevFluence: texture_2d<f32>;
 @group(0) @binding(1) var fluenceSampler: sampler;
-@group(0) @binding(2) var worldTex: texture_2d<f32>;
-@group(0) @binding(3) var materialTex: texture_2d<f32>;
+@group(0) @binding(2) var emissionTex: texture_2d<f32>;
+@group(0) @binding(3) var opacityTex: texture_2d<f32>;
 @group(0) @binding(4) var bounceOut: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(5) var<uniform> params: BounceParams;
 
@@ -488,11 +539,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let screenSize = vec2f(f32(params.screenW), f32(params.screenH));
   let uv = (vec2f(f32(px), f32(py)) + 0.5) / screenSize;
 
-  let opacity = textureLoad(worldTex, vec2i(px, py), 0).a;
-  let mat = textureLoad(materialTex, vec2i(px, py), 0);
-  let albedo = mat.r;
-  let scattering = mat.g;
+  let albedo = textureLoad(emissionTex, vec2i(px, py), 0).a;
+  let opacityVal = textureLoad(opacityTex, vec2i(px, py), 0);
+  let scattering = opacityVal.a;
+  let avgOpacity = (opacityVal.r + opacityVal.g + opacityVal.b) / 3.0;
 
+  // Sample fluence for bounce. For pixels with albedo, check cardinal neighbors
+  // weighted by transparency (blocks wall-interior leak) and average the non-zero
+  // results (physically correct incident fluence, avoids max-bias).
   var fluence = textureSampleLevel(prevFluence, fluenceSampler, uv, 0.0).rgb;
   if (albedo > 0.001) {
     let step = 1.0 / screenSize;
@@ -501,7 +555,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var weight = 0.0;
     for (var d = 0; d < 4; d++) {
       let npos = vec2i(px + i32(offsets[d].x), py + i32(offsets[d].y));
-      let ntrans = 1.0 - textureLoad(worldTex, npos, 0).a;
+      let nop = textureLoad(opacityTex, npos, 0);
+      let ntrans = 1.0 - (nop.r + nop.g + nop.b) / 3.0;
       let nf = textureSampleLevel(prevFluence, fluenceSampler, uv + offsets[d] * step, 0.0).rgb * ntrans;
       let lum = dot(nf, vec3f(0.2126, 0.7152, 0.0722));
       if (lum > 0.001) { sum += nf; weight += 1.0; }
@@ -511,7 +566,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   const TWO_PI = 6.2831853;
   let surfaceBounce = fluence * albedo;
-  let volumeScatter = fluence * scattering;
+  let volumeScatter = fluence * avgOpacity * scattering;
   let bounce = (surfaceBounce + volumeScatter) / TWO_PI;
   textureStore(bounceOut, vec2i(px, py), vec4f(bounce, 0.0));
 }
@@ -519,7 +574,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 // ── 2D Path Tracer (ground truth reference) ──
 // Progressive Monte Carlo path tracer operating at screen resolution.
-// Shares the world + material textures with HRC. Each frame adds
+// Shares the emission + opacity world textures with HRC. Each frame adds
 // N samples per pixel and blends with the accumulation buffer. Supports
 // volumetric transport, diffuse bounces (albedo), and scattering.
 
@@ -535,8 +590,8 @@ struct PTParams {
   pad2: u32,
 };
 
-@group(0) @binding(0) var worldTex: texture_2d<f32>;
-@group(0) @binding(1) var materialTex: texture_2d<f32>;
+@group(0) @binding(0) var emissionTex: texture_2d<f32>;
+@group(0) @binding(1) var opacityTex: texture_2d<f32>;
 @group(0) @binding(2) var accumTex: texture_2d<f32>;
 @group(0) @binding(3) var outTex: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(4) var<uniform> params: PTParams;
@@ -552,20 +607,20 @@ fn randomFloat(seed: ptr<function, u32>) -> f32 {
   return f32(*seed) / 4294967295.0;
 }
 
-fn loadWorld(pos: vec2f) -> vec4f {
+fn sampleScene(pos: vec2f) -> vec4f {
   let px = vec2i(i32(floor(pos.x)), i32(floor(pos.y)));
   if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
     return vec4f(0.0);
   }
-  return textureLoad(worldTex, px, 0);
+  return textureLoad(emissionTex, px, 0);
 }
 
-fn loadMaterial(pos: vec2f) -> vec2f {
+fn sampleOpacity(pos: vec2f) -> vec4f {
   let px = vec2i(i32(floor(pos.x)), i32(floor(pos.y)));
   if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
-    return vec2f(0.0);
+    return vec4f(0.0);
   }
-  return textureLoad(materialTex, px, 0).rg;
+  return textureLoad(opacityTex, px, 0);
 }
 
 @compute @workgroup_size(8, 8)
@@ -583,23 +638,28 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let sectorSize = 6.2831853 / f32(params.samplesPerPixel);
     let angle = (f32(s) + randomFloat(&seed)) * sectorSize;
     var rayDir = vec2f(cos(angle), sin(angle));
-    var throughput = 1.0;
+    var throughput = vec3f(1.0);
     var radiance = vec3f(0.0);
     var surfaceEntry = rayPos;
     var inSurface = false;
 
+    // Sample the starting pixel (the camera's own position in 2D)
     {
-      let w0 = loadWorld(rayPos);
-      radiance += throughput * w0.rgb * w0.a;
-      throughput *= (1.0 - w0.a);
+      let em0 = sampleScene(rayPos);
+      let op0 = sampleOpacity(rayPos);
+      let opacity0 = op0.rgb;
+      radiance += throughput * em0.rgb * opacity0;
+      throughput *= (1.0 - opacity0);
     }
 
     for (var step = 0u; step < 4096u; step++) {
       rayPos += rayDir;
-      let w = loadWorld(rayPos);
-      let opacity = w.a;
+      let em = sampleScene(rayPos);
+      let op = sampleOpacity(rayPos);
+      let opacity = op.rgb;
+      let avgOpacity = (opacity.r + opacity.g + opacity.b) / 3.0;
 
-      if (opacity < 0.001) {
+      if (avgOpacity < 0.001) {
         inSurface = false;
         continue;
       }
@@ -609,18 +669,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         inSurface = true;
       }
 
-      let mat = loadMaterial(rayPos);
-      let scatterCoeff = mat.g;
+      // Accumulate emission and attenuate (standard volumetric transport)
+      radiance += throughput * em.rgb * opacity;
+      throughput *= (1.0 - opacity);
 
-      radiance += throughput * w.rgb * opacity;
-      // Only absorption reduces throughput; scattering preserves energy.
-      let absorption = opacity * (1.0 - scatterCoeff);
-      throughput *= (1.0 - absorption);
-
-      if (throughput < 0.001) {
-        let albedo = mat.r;
+      // If throughput is near zero, the ray is fully absorbed.
+      // Try diffuse bounce via Russian roulette with albedo.
+      if (all(throughput < vec3f(0.001))) {
+        let albedo = em.a;
         if (albedo > 0.001 && randomFloat(&seed) < albedo) {
-          throughput = 1.0;
+          throughput = vec3f(1.0);
           rayPos = surfaceEntry;
           inSurface = false;
           let newAngle = randomFloat(&seed) * 6.2831853;
@@ -630,8 +688,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         break;
       }
 
+      // Volumetric scattering
+      let scatterCoeff = op.a;
       if (scatterCoeff > 0.001) {
-        let scatterProb = opacity * scatterCoeff;
+        let scatterProb = avgOpacity * scatterCoeff;
         if (randomFloat(&seed) < scatterProb) {
           let newAngle = randomFloat(&seed) * 6.2831853;
           rayDir = vec2f(cos(newAngle), sin(newAngle));
@@ -644,6 +704,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let newSample = sampleSum / f32(params.samplesPerPixel);
 
+  // Progressive accumulation: blend with previous frames
   let coord = vec2i(px, py);
   if (params.frameIndex == 0u) {
     textureStore(outTex, coord, vec4f(newSample, 1.0));
@@ -702,17 +763,18 @@ export class FolkHolographicRC extends FolkBaseSet {
   @property({ type: Number, reflect: true }) probeSize = 1024;
   @property({ type: Boolean, reflect: true }) bounces = true;
   @property({ type: Boolean, reflect: true, attribute: 'path-tracing' }) pathTracing = false;
+  @property({ type: Boolean, reflect: true, attribute: 'mono-transmittance' }) monoTransmittance = false;
 
   #canvas!: HTMLCanvasElement;
   #device!: GPUDevice;
   #context!: GPUCanvasContext;
   #presentationFormat!: GPUTextureFormat;
 
-  // World textures (world + material, MRT)
-  #worldTexture!: GPUTexture;
-  #worldTextureView!: GPUTextureView;
-  #materialTexture!: GPUTexture;
-  #materialTextureView!: GPUTextureView;
+  // World textures (emission + opacity, MRT)
+  #emissionTexture!: GPUTexture;
+  #emissionTextureView!: GPUTextureView;
+  #opacityTexture!: GPUTexture;
+  #opacityTextureView!: GPUTextureView;
   #worldRenderPipeline!: GPURenderPipeline;
 
   // Shape / line / mouse light rendering
@@ -733,9 +795,11 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
 
-  // Per-level ray textures: radiance rgb + scalar transmittance in alpha (rgba16float)
+  // Per-level ray textures: radiance (rgba16float) + transmittance (rgba8unorm)
   #rayTextures!: GPUTexture[];
   #rayTextureViews!: GPUTextureView[];
+  #transTextures!: GPUTexture[];
+  #transTextureViews!: GPUTextureView[];
 
   // Merge ping-pong pair (probeSize x probeSize)
   #mergeTextures!: GPUTexture[];
@@ -764,17 +828,23 @@ export class FolkHolographicRC extends FolkBaseSet {
   #ptParamsBuffer!: GPUBuffer;
   #ptParamsView!: StructuredView;
 
-  // Pipelines
+  // Pipelines (color + mono variants for ray shaders)
   #bounceComputePipeline!: GPUComputePipeline;
   #raySeedPipeline!: GPUComputePipeline;
+  #raySeedPipelineMono!: GPUComputePipeline;
   #rayExtendPipeline!: GPUComputePipeline;
+  #rayExtendPipelineMono!: GPUComputePipeline;
   #coneMergePipeline!: GPUComputePipeline;
+  #coneMergePipelineMono!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
-  // Pre-created bind groups
+  // Pre-created bind groups — separate sets for color and mono pipelines
   #seedBindGroups!: GPUBindGroup[];
+  #seedBindGroupsMono!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
+  #extendBindGroupsMono!: GPUBindGroup[];
   #mergeBindGroups!: GPUBindGroup[][];
+  #mergeBindGroupsMono!: GPUBindGroup[][];
   #blitBindGroups!: GPUBindGroup[];
   #bounceBindGroups!: GPUBindGroup[];
 
@@ -802,7 +872,14 @@ export class FolkHolographicRC extends FolkBaseSet {
   #resizing = false;
 
   #smoothedFrameTime = 0;
+  #smoothedGpuTime = 0;
   #lastFrameTimestamp = 0;
+
+  // GPU timestamp profiling (decoupled from frame pacing)
+  #tsQuerySet?: GPUQuerySet;
+  #tsResolveBuffer?: GPUBuffer;
+  #tsReadBuffer?: GPUBuffer;
+  #tsPending = false;
 
   override async connectedCallback() {
     super.connectedCallback();
@@ -833,12 +910,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     y2: number,
     color: [number, number, number] = [0, 0, 0],
     thickness = 20,
-    opacity = SOLID_OPACITY,
+    opacity: [number, number, number] = [SOLID_OPACITY, SOLID_OPACITY, SOLID_OPACITY],
     albedo = 0,
     scattering = 0,
   ) {
     const [r, g, b] = color;
-    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity, albedo, scattering]);
+    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity[0], opacity[1], opacity[2], albedo, scattering]);
     this.#lineBufferDirty = true;
   }
 
@@ -892,7 +969,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (!navigator.gpu) throw new Error('WebGPU is not supported in this browser.');
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('Failed to get GPU adapter.');
-    this.#device = await adapter.requestDevice();
+    const features: GPUFeatureName[] = [];
+    if (adapter.features.has('timestamp-query')) features.push('timestamp-query');
+    this.#device = await adapter.requestDevice({ requiredFeatures: features });
 
     this.#canvas = document.createElement('canvas');
     this.#canvas.width = this.clientWidth || 800;
@@ -915,6 +994,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     // WebGL can bypass the compositor with desynchronized:true, WebGPU can't.
     this.#context.configure({ device: this.#device, format: this.#presentationFormat, alphaMode: 'premultiplied' });
     this.#linearSampler = this.#device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+    if (this.#device.features.has('timestamp-query')) {
+      this.#tsQuerySet = this.#device.createQuerySet({ type: 'timestamp', count: 2 });
+      this.#tsResolveBuffer = this.#device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+      this.#tsReadBuffer = this.#device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    }
   }
 
   #initResources() {
@@ -927,22 +1012,39 @@ export class FolkHolographicRC extends FolkBaseSet {
     const ubo = (label: string, size: number) =>
       device.createBuffer({ label, size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER);
-    [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'rg8unorm', TEX_RENDER);
+    [this.#emissionTexture, this.#emissionTextureView] = tex(
+      device,
+      'Emission',
+      width,
+      height,
+      'rgba16float',
+      TEX_RENDER,
+    );
+    [this.#opacityTexture, this.#opacityTextureView] = tex(device, 'Opacity', width, height, 'rgba8unorm', TEX_RENDER);
 
     this.#rayTextures = [];
     this.#rayTextureViews = [];
+    this.#transTextures = [];
+    this.#transTextureViews = [];
     for (let i = 0; i < this.#numCascades; i++) {
       const w = (ps >> i) * ((1 << i) + 1);
       const [rt, rv] = tex(device, `Ray-${i}`, w, ps, 'rgba16float', TEX_STORAGE);
+      const [tt, tv] = tex(device, `Trans-${i}`, w, ps, 'rgba8unorm', TEX_STORAGE);
       this.#rayTextures.push(rt);
       this.#rayTextureViews.push(rv);
+      this.#transTextures.push(tt);
+      this.#transTextureViews.push(tv);
     }
 
-    const [mt0, mv0] = tex(device, 'Merge-0', ps, ps, 'rgba16float', TEX_STORAGE);
-    const [mt1, mv1] = tex(device, 'Merge-1', ps, ps, 'rgba16float', TEX_STORAGE);
-    this.#mergeTextures = [mt0, mt1];
-    this.#mergeTextureViews = [mv0, mv1];
+    const texPair = (label: string, w: number, h: number, fmt: GPUTextureFormat): [GPUTexture[], GPUTextureView[]] => {
+      const [t0, v0] = tex(device, `${label}-0`, w, h, fmt, TEX_STORAGE);
+      const [t1, v1] = tex(device, `${label}-1`, w, h, fmt, TEX_STORAGE);
+      return [
+        [t0, t1],
+        [v0, v1],
+      ];
+    };
+    [this.#mergeTextures, this.#mergeTextureViews] = texPair('Merge', ps, ps, 'rgba16float');
     const [ft0, fv0] = tex(device, 'Fluence-0', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
     const [ft1, fv1] = tex(device, 'Fluence-1', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
     this.#fluenceTextures = [ft0, ft1];
@@ -989,7 +1091,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #initPipelines() {
     const device = this.#device;
-    const MRT_TARGETS: GPUColorTargetState[] = [{ format: 'rgba16float' }, { format: 'rg8unorm' }];
+    const MRT_TARGETS: GPUColorTargetState[] = [{ format: 'rgba16float' }, { format: 'rgba8unorm' }];
 
     const attr = (loc: number, off: number, fmt: GPUVertexFormat): GPUVertexAttribute => ({
       shaderLocation: loc,
@@ -1017,13 +1119,13 @@ export class FolkHolographicRC extends FolkBaseSet {
         entryPoint: 'vertex_main',
         buffers: [
           {
-            arrayStride: 32,
+            arrayStride: 40,
             attributes: [
               attr(0, 0, 'float32x2'),
               attr(1, 8, 'float32x3'),
-              attr(2, 20, 'float32'),
-              attr(3, 24, 'float32'),
-              attr(4, 28, 'float32'),
+              attr(2, 20, 'float32x3'),
+              attr(3, 32, 'float32'),
+              attr(4, 36, 'float32'),
             ],
           },
         ],
@@ -1041,16 +1143,16 @@ export class FolkHolographicRC extends FolkBaseSet {
         entryPoint: 'vertex_main',
         buffers: [
           {
-            arrayStride: 44,
+            arrayStride: 52,
             stepMode: 'instance',
             attributes: [
               attr(0, 0, 'float32x2'),
               attr(1, 8, 'float32x2'),
               attr(2, 16, 'float32x3'),
               attr(3, 28, 'float32'),
-              attr(4, 32, 'float32'),
-              attr(5, 36, 'float32'),
-              attr(6, 40, 'float32'),
+              attr(4, 32, 'float32x3'),
+              attr(5, 44, 'float32'),
+              attr(6, 48, 'float32'),
             ],
           },
         ],
@@ -1059,10 +1161,23 @@ export class FolkHolographicRC extends FolkBaseSet {
       primitive: { topology: 'triangle-list' },
     });
 
+    const monoPair = (label: string, code: string): [GPUComputePipeline, GPUComputePipeline] => {
+      const module = device.createShaderModule({ code });
+      const color = device.createComputePipeline({
+        label, layout: 'auto',
+        compute: { module, entryPoint: 'main', constants: { MONO: 0 } },
+      });
+      const mono = device.createComputePipeline({
+        label: `${label}-mono`, layout: 'auto',
+        compute: { module, entryPoint: 'main', constants: { MONO: 1 } },
+      });
+      return [color, mono];
+    };
+
     this.#bounceComputePipeline = computePipeline(device, 'HRC-BounceCompute', bounceComputeShader);
-    this.#raySeedPipeline = computePipeline(device, 'HRC-RaySeed', raySeedShader);
-    this.#rayExtendPipeline = computePipeline(device, 'HRC-RayExtend', rayExtendShader);
-    this.#coneMergePipeline = computePipeline(device, 'HRC-ConeMerge', coneMergeShader);
+    [this.#raySeedPipeline, this.#raySeedPipelineMono] = monoPair('HRC-RaySeed', raySeedShader);
+    [this.#rayExtendPipeline, this.#rayExtendPipelineMono] = monoPair('HRC-RayExtend', rayExtendShader);
+    [this.#coneMergePipeline, this.#coneMergePipelineMono] = monoPair('HRC-ConeMerge', coneMergeShader);
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
     this.#ptPipeline = computePipeline(device, 'PT-PathTrace', pathTraceShader);
     this.#ptBlitPipeline = fullscreenBlit('PT-Blit', ptBlitShader, this.#presentationFormat);
@@ -1080,48 +1195,66 @@ export class FolkHolographicRC extends FolkBaseSet {
     const extPS = this.#extendParamsView.arrayBuffer.byteLength;
     const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
 
-    this.#seedBindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(device, seedLayout,
-        this.#worldTextureView, this.#bounceTextureView,
-        this.#rayTextureViews[0],
+    const seedLayoutMono = this.#raySeedPipelineMono.getBindGroupLayout(0);
+    const extLayoutMono = this.#rayExtendPipelineMono.getBindGroupLayout(0);
+    const mergeLayoutMono = this.#coneMergePipelineMono.getBindGroupLayout(0);
+
+    const makeSeedBGs = (layout: GPUBindGroupLayout) => [0, 1, 2, 3].map((dir) =>
+      bg(device, layout,
+        this.#emissionTextureView, this.#opacityTextureView, this.#bounceTextureView,
+        this.#rayTextureViews[0], this.#transTextureViews[0],
         { buffer: this.#seedParamsBuffer, offset: dir * 256, size: seedPS },
       ),
     );
+    this.#seedBindGroups = makeSeedBGs(seedLayout);
+    this.#seedBindGroupsMono = makeSeedBGs(seedLayoutMono);
 
-    this.#extendBindGroups = [];
-    for (let level = 1; level < nc; level++) {
-      this.#extendBindGroups.push(bg(device, extLayout,
-        this.#rayTextureViews[level - 1],
-        this.#rayTextureViews[level],
-        { buffer: this.#extendParamsBuffer, offset: (level - 1) * 256, size: extPS },
-      ));
-    }
-
-    this.#mergeBindGroups = [];
-    for (let dir = 0; dir < 4; dir++) {
-      const dirBGs: GPUBindGroup[] = [];
-      let readIdx = 1, writeIdx = 0;
-      const fReadIdx = dir % 2 === 0 ? 1 : 0;
-      const fWriteIdx = dir % 2 === 0 ? 0 : 1;
-      for (let k = 0; k < nc; k++) {
-        const level = nc - 1 - k;
-        dirBGs.push(bg(device, mergeLayout,
-          this.#rayTextureViews[level],
-          this.#mergeTextureViews[readIdx], this.#mergeTextureViews[writeIdx],
-          { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
-          this.#fluenceTextureViews[fReadIdx], this.#fluenceTextureViews[fWriteIdx],
+    const makeExtBGs = (layout: GPUBindGroupLayout) => {
+      const bgs: GPUBindGroup[] = [];
+      for (let level = 1; level < nc; level++) {
+        bgs.push(bg(device, layout,
+          this.#rayTextureViews[level - 1], this.#transTextureViews[level - 1],
+          this.#rayTextureViews[level], this.#transTextureViews[level],
+          { buffer: this.#extendParamsBuffer, offset: (level - 1) * 256, size: extPS },
         ));
-        [readIdx, writeIdx] = [writeIdx, readIdx];
       }
-      this.#mergeBindGroups.push(dirBGs);
-    }
+      return bgs;
+    };
+    this.#extendBindGroups = makeExtBGs(extLayout);
+    this.#extendBindGroupsMono = makeExtBGs(extLayoutMono);
 
+    const makeMergeBGs = (layout: GPUBindGroupLayout) => {
+      const result: GPUBindGroup[][] = [];
+      for (let dir = 0; dir < 4; dir++) {
+        const dirBGs: GPUBindGroup[] = [];
+        let readIdx = 1, writeIdx = 0;
+        const fReadIdx = dir % 2 === 0 ? 1 : 0;
+        const fWriteIdx = dir % 2 === 0 ? 0 : 1;
+        for (let k = 0; k < nc; k++) {
+          const level = nc - 1 - k;
+          dirBGs.push(bg(device, layout,
+            this.#rayTextureViews[level], this.#transTextureViews[level],
+            this.#mergeTextureViews[readIdx], this.#mergeTextureViews[writeIdx],
+            { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
+            this.#fluenceTextureViews[fReadIdx], this.#fluenceTextureViews[fWriteIdx],
+          ));
+          [readIdx, writeIdx] = [writeIdx, readIdx];
+        }
+        result.push(dirBGs);
+      }
+      return result;
+    };
+    this.#mergeBindGroups = makeMergeBGs(mergeLayout);
+    this.#mergeBindGroupsMono = makeMergeBGs(mergeLayoutMono);
+
+    // Fluence result after 4 dirs is always in fluence[1]
     this.#blitBindGroups = [0, 1].map((idx) =>
       bg(
         device,
         this.#renderPipeline.getBindGroupLayout(0),
         this.#fluenceTextureViews[idx],
-        this.#worldTextureView,
+        this.#emissionTextureView,
+        this.#opacityTextureView,
         { buffer: this.#blitParamsBuffer },
         this.#linearSampler,
       ),
@@ -1133,8 +1266,8 @@ export class FolkHolographicRC extends FolkBaseSet {
         this.#bounceComputePipeline.getBindGroupLayout(0),
         this.#fluenceTextureViews[idx],
         this.#linearSampler,
-        this.#worldTextureView,
-        this.#materialTextureView,
+        this.#emissionTextureView,
+        this.#opacityTextureView,
         this.#bounceTextureView,
         { buffer: this.#bounceParamsBuffer },
       ),
@@ -1142,9 +1275,10 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   #destroyResources() {
-    this.#worldTexture?.destroy();
-    this.#materialTexture?.destroy();
+    this.#emissionTexture?.destroy();
+    this.#opacityTexture?.destroy();
     this.#rayTextures?.forEach((t) => t.destroy());
+    this.#transTextures?.forEach((t) => t.destroy());
     this.#mergeTextures?.forEach((t) => t.destroy());
     this.#fluenceTextures?.forEach((t) => t.destroy());
     this.#fluenceZeroBuffer?.destroy();
@@ -1177,8 +1311,18 @@ export class FolkHolographicRC extends FolkBaseSet {
       const rgbAttr = element.getAttribute('data-rgb');
       const parts = rgbAttr ? rgbAttr.split(',').map(Number) : [0, 0, 0];
       const [r, g, b] = [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
-      const opacityAttr = element.getAttribute('data-opacity');
-      const opacity = opacityAttr !== null ? Number(opacityAttr) : SOLID_OPACITY;
+      const attenAttr = element.getAttribute('data-opacity');
+      let ar: number, ag: number, ab: number;
+      if (attenAttr !== null) {
+        const parts = attenAttr.split(',').map(Number);
+        ar = parts[0] ?? SOLID_OPACITY;
+        ag = parts[1] ?? ar;
+        ab = parts[2] ?? ar;
+      } else {
+        ar = SOLID_OPACITY;
+        ag = SOLID_OPACITY;
+        ab = SOLID_OPACITY;
+      }
       const albedoAttr = element.getAttribute('data-albedo');
       const albedo = albedoAttr !== null ? Number(albedoAttr) : 0;
       const scatterAttr = element.getAttribute('data-scattering');
@@ -1197,7 +1341,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       ].map(([lx, ly]) => [((cx + lx * cos - ly * sin) / cw) * 2 - 1, 1 - ((cy + lx * sin + ly * cos) / ch) * 2]);
 
       const v = (vx: number, vy: number) => {
-        vertices.push(vx, vy, r, g, b, opacity, albedo, scatter);
+        vertices.push(vx, vy, r, g, b, ar, ag, ab, albedo, scatter);
       };
       v(corners[0][0], corners[0][1]); // TL
       v(corners[1][0], corners[1][1]); // TR
@@ -1217,7 +1361,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       return;
     }
     const count = this.#lines.length;
-    const FPL = 11;
+    const FPL = 13;
     if (!this.#lineInstanceBuffer || this.#lineInstanceCapacity < count) {
       this.#lineInstanceBuffer?.destroy();
       this.#lineInstanceCapacity = Math.max(count, 256);
@@ -1248,11 +1392,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     for (let i = 0; i < SEGS; i++) {
       const a0 = (i / SEGS) * Math.PI * 2;
       const a1 = ((i + 1) / SEGS) * Math.PI * 2;
-      verts.push(cx, cy, r, g, b, SOLID_OPACITY, 0, 0);
-      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, SOLID_OPACITY, 0, 0);
-      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, SOLID_OPACITY, 0, 0);
+      const sa = SOLID_OPACITY;
+      verts.push(cx, cy, r, g, b, sa, sa, sa, 0, 0);
+      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, sa, sa, sa, 0, 0);
+      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, sa, sa, sa, 0, 0);
     }
-    this.#mouseLightVertexCount = verts.length / 8;
+    this.#mouseLightVertexCount = verts.length / 10;
     this.#mouseLightBuffer = uploadVertexData(this.#device, this.#mouseLightBuffer, new Float32Array(verts));
   }
 
@@ -1289,18 +1434,19 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const encoder = device.createCommandEncoder();
 
-    // ── Step 1: Render world textures (world + material) ──
+    // ── Step 1: Render world textures (emission + opacity) ──
     {
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
-            view: this.#worldTextureView,
+            view: this.#emissionTextureView,
             clearValue: { r: 0, g: 0, b: 0, a: 0 },
             loadOp: 'clear',
             storeOp: 'store',
           },
-          { view: this.#materialTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
+          { view: this.#opacityTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
         ],
+        ...(this.#tsQuerySet ? { timestampWrites: { querySet: this.#tsQuerySet, beginningOfPassWriteIndex: 0 } } : {}),
       });
       pass.setPipeline(this.#worldRenderPipeline);
       if (this.#shapeDataBuffer && this.#shapeCount > 0) {
@@ -1373,26 +1519,37 @@ export class FolkHolographicRC extends FolkBaseSet {
       );
     }
 
+    const mono = this.monoTransmittance;
+    const seedPL = mono ? this.#raySeedPipelineMono : this.#raySeedPipeline;
+    const extPL = mono ? this.#rayExtendPipelineMono : this.#rayExtendPipeline;
+    const mergePL = mono ? this.#coneMergePipelineMono : this.#coneMergePipeline;
+    const seedBGs = mono ? this.#seedBindGroupsMono : this.#seedBindGroups;
+    const extBGs = mono ? this.#extendBindGroupsMono : this.#extendBindGroups;
+    const mergeBGs = mono ? this.#mergeBindGroupsMono : this.#mergeBindGroups;
+
     for (let dir = 0; dir < 4; dir++) {
+      // Phase A: Ray Seed
       {
         const pass = encoder.beginComputePass();
-        pass.setPipeline(this.#raySeedPipeline);
-        pass.setBindGroup(0, this.#seedBindGroups[dir]);
+        pass.setPipeline(seedPL);
+        pass.setBindGroup(0, seedBGs[dir]);
         pass.dispatchWorkgroups(wg, wg);
         pass.end();
       }
+      // Phase B: Ray Extension (bottom-up)
       for (let level = 1; level < nc; level++) {
         const pass = encoder.beginComputePass();
-        pass.setPipeline(this.#rayExtendPipeline);
-        pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
+        pass.setPipeline(extPL);
+          pass.setBindGroup(0, extBGs[level - 1]);
         pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
         pass.end();
       }
+      // Phase C: Cone Merge (top-down) — level 0 writes directly to fluence
       for (let k = 0; k < nc; k++) {
         const level = nc - 1 - k;
         const pass = encoder.beginComputePass();
-        pass.setPipeline(this.#coneMergePipeline);
-        pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
+        pass.setPipeline(mergePL);
+          pass.setBindGroup(0, mergeBGs[dir][k]);
         pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
         pass.end();
       }
@@ -1416,6 +1573,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           storeOp: 'store' as const,
         },
       ],
+      ...(this.#tsQuerySet ? { timestampWrites: { querySet: this.#tsQuerySet, endOfPassWriteIndex: 1 } } : {}),
     });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
@@ -1425,8 +1583,30 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   #submitAndCapture(device: GPUDevice, encoder: GPUCommandEncoder) {
+    // Resolve timestamp queries if supported
+    if (this.#tsQuerySet && this.#tsResolveBuffer && this.#tsReadBuffer) {
+      encoder.resolveQuerySet(this.#tsQuerySet, 0, 2, this.#tsResolveBuffer, 0);
+      if (!this.#tsPending) {
+        encoder.copyBufferToBuffer(this.#tsResolveBuffer, 0, this.#tsReadBuffer, 0, 16);
+      }
+    }
+
     device.queue.submit([encoder.finish()]);
 
+    // Read back previous frame's timestamp results (non-blocking, pipelined)
+    if (this.#tsReadBuffer && !this.#tsPending) {
+      this.#tsPending = true;
+      this.#tsReadBuffer.mapAsync(GPUMapMode.READ).then(() => {
+        const data = new BigInt64Array(this.#tsReadBuffer!.getMappedRange());
+        const ns = Number(data[1] - data[0]);
+        this.#tsReadBuffer!.unmap();
+        this.#tsPending = false;
+        if (ns > 0) {
+          const gpuMs = ns / 1_000_000;
+          this.#smoothedGpuTime = this.#smoothedGpuTime === 0 ? gpuMs : this.#smoothedGpuTime * 0.7 + gpuMs * 0.3;
+        }
+      });
+    }
     if (this.#pendingScreenshot) {
       const filename = this.#pendingScreenshot;
       this.#pendingScreenshot = '';
@@ -1467,8 +1647,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     const ptBG = bg(
       device,
       this.#ptPipeline.getBindGroupLayout(0),
-      this.#worldTextureView,
-      this.#materialTextureView,
+      this.#emissionTextureView,
+      this.#opacityTextureView,
       this.#ptAccumTextureViews[readIdx],
       this.#ptAccumTextureViews[writeIdx],
       { buffer: this.#ptParamsBuffer },
@@ -1613,6 +1793,10 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   get frameTimeMs() {
     return this.#smoothedFrameTime;
+  }
+
+  get gpuTimeMs() {
+    return this.#smoothedGpuTime;
   }
 
   get resolution() {
