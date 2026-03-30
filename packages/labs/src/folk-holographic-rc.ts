@@ -30,11 +30,26 @@ function nextPowerOf2(n: number): number {
   return 2 ** Math.ceil(Math.log2(Math.max(n, 2)));
 }
 
+const TEX_RENDER = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+const TEX_STORAGE = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING;
+
 function uboView(shader: string, name: string): StructuredView {
   return makeStructuredView(makeShaderDataDefinitions(shader).uniforms[name]);
 }
 
-function createComputePipeline(device: GPUDevice, label: string, code: string): GPUComputePipeline {
+function tex(device: GPUDevice, label: string, w: number, h: number, format: GPUTextureFormat, usage: number) {
+  const t = device.createTexture({ label, size: { width: w, height: h }, format, usage });
+  return [t, t.createView()] as const;
+}
+
+function bg(device: GPUDevice, layout: GPUBindGroupLayout, ...resources: GPUBindingResource[]) {
+  return device.createBindGroup({
+    layout,
+    entries: resources.map((resource, binding) => ({ binding, resource })),
+  });
+}
+
+function computePipeline(device: GPUDevice, label: string, code: string) {
   return device.createComputePipeline({
     label,
     layout: 'auto',
@@ -427,13 +442,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // Bilinearly upscales fluence from probe resolution to screen resolution.
 // Uses opacity texture to mask indirect light at solid/translucent surfaces.
 
-const blitShader = /*wgsl*/ `
+const blitCommon = /*wgsl*/ `
 struct BlitParams { exposure: f32, screenW: f32, screenH: f32, pad: f32 };
-@group(0) @binding(0) var fluenceTex: texture_2d<f32>;
-@group(0) @binding(1) var emissionTex: texture_2d<f32>;
-@group(0) @binding(2) var opacityTex: texture_2d<f32>;
-@group(0) @binding(3) var<uniform> params: BlitParams;
-@group(0) @binding(4) var linearSamp: sampler;
+const TWO_PI = 6.2831853;
 
 fn acesTonemap(x: vec3f) -> vec3f {
   return clamp(
@@ -455,22 +466,31 @@ fn triangularDither(fragCoord: vec2u) -> vec3f {
   return vec3f((r0 + r1 - 1.0) / 255.0);
 }
 
+fn tonemapAndDither(hdr: vec3f, fragCoord: vec2u) -> vec4f {
+  return vec4f(linearToSrgb(acesTonemap(hdr)) + triangularDither(fragCoord), 1.0);
+}
+
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   let pos = array(vec2f(-1, -1), vec2f(1, -1), vec2f(-1, 1), vec2f(1, 1));
   return vec4f(pos[i], 0, 1);
 }
+`;
+
+const blitShader = blitCommon + /*wgsl*/ `
+@group(0) @binding(0) var fluenceTex: texture_2d<f32>;
+@group(0) @binding(1) var emissionTex: texture_2d<f32>;
+@group(0) @binding(2) var opacityTex: texture_2d<f32>;
+@group(0) @binding(3) var<uniform> params: BlitParams;
+@group(0) @binding(4) var linearSamp: sampler;
+
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = pos.xy / vec2f(params.screenW, params.screenH);
   let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
   let emission = textureLoad(emissionTex, vec2u(pos.xy), 0).rgb;
   let opacity = textureLoad(opacityTex, vec2u(pos.xy), 0).rgb;
-  const TWO_PI = 6.2831853;
   let emissive = emission * opacity;
   let indirect = fluence / TWO_PI * (1.0 - opacity);
-  let hdr = (emissive + indirect) * params.exposure;
-  let mapped = acesTonemap(hdr);
-  let srgb = linearToSrgb(mapped) + triangularDither(vec2u(pos.xy));
-  return vec4f(srgb, 1.0);
+  return tonemapAndDither((emissive + indirect) * params.exposure, vec2u(pos.xy));
 }
 `;
 
@@ -675,42 +695,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// ── Path tracer blit (tonemaps the accumulated PT result) ──
-
-const ptBlitShader = /*wgsl*/ `
-struct BlitParams { exposure: f32, screenW: f32, screenH: f32, pad: f32 };
+const ptBlitShader = blitCommon + /*wgsl*/ `
 @group(0) @binding(0) var ptAccum: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> params: BlitParams;
 
-fn acesTonemap(x: vec3f) -> vec3f {
-  return clamp(
-    (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14),
-    vec3f(0.0), vec3f(1.0),
-  );
-}
-fn linearToSrgb(c: vec3f) -> vec3f { return pow(c, vec3f(1.0 / 2.2)); }
-
-fn pcg(v: u32) -> u32 {
-  let s = v * 747796405u + 2891336453u;
-  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
-  return (w >> 22u) ^ w;
-}
-fn triangularDither(fragCoord: vec2u) -> vec3f {
-  let seed = fragCoord.x + fragCoord.y * 8192u;
-  let r0 = f32(pcg(seed)) / 4294967295.0;
-  let r1 = f32(pcg(seed + 1u)) / 4294967295.0;
-  return vec3f((r0 + r1 - 1.0) / 255.0);
-}
-
-@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-  let pos = array(vec2f(-1, -1), vec2f(1, -1), vec2f(-1, 1), vec2f(1, 1));
-  return vec4f(pos[i], 0, 1);
-}
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let hdr = textureLoad(ptAccum, vec2i(pos.xy), 0).rgb * params.exposure;
-  let mapped = acesTonemap(hdr);
-  let srgb = linearToSrgb(mapped) + triangularDither(vec2u(pos.xy));
-  return vec4f(srgb, 1.0);
+  return tonemapAndDither(textureLoad(ptAccum, vec2i(pos.xy), 0).rgb * params.exposure, vec2u(pos.xy));
 }
 `;
 
@@ -746,7 +736,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   static override tagName = 'folk-holographic-rc';
 
   @property({ type: Number, reflect: true }) exposure = 2.0;
-  @property({ type: Number, reflect: true }) probeSize = 2048 / 2;
+  @property({ type: Number, reflect: true }) probeSize = 1024;
   @property({ type: Boolean, reflect: true }) bounces = true;
   @property({ type: Boolean, reflect: true, attribute: 'path-tracing' }) pathTracing = false;
 
@@ -809,8 +799,6 @@ export class FolkHolographicRC extends FolkBaseSet {
   #ptBlitPipeline!: GPURenderPipeline;
   #ptParamsBuffer!: GPUBuffer;
   #ptParamsView!: StructuredView;
-  #ptBlitParamsBuffer!: GPUBuffer;
-  #ptBlitParamsView!: StructuredView;
 
   // Pipelines
   #bounceComputePipeline!: GPUComputePipeline;
@@ -968,11 +956,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#canvas = document.createElement('canvas');
     this.#canvas.width = this.clientWidth || 800;
     this.#canvas.height = this.clientHeight || 600;
-    this.#canvas.style.position = 'absolute';
-    this.#canvas.style.inset = '0';
-    this.#canvas.style.width = '100%';
-    this.#canvas.style.height = '100%';
-    this.#canvas.style.pointerEvents = 'none';
+    Object.assign(this.#canvas.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', pointerEvents: 'none' });
     this.renderRoot.prepend(this.#canvas);
 
     const context = this.#canvas.getContext('webgpu');
@@ -990,76 +974,35 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#ps = ps;
     this.#numCascades = Math.log2(ps);
 
-    this.#emissionTexture = device.createTexture({
-      label: 'HRC-Emission',
-      size: { width, height },
-      format: 'rgba16float',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    this.#emissionTextureView = this.#emissionTexture.createView();
+    const ubo = (label: string, size: number) =>
+      device.createBuffer({ label, size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    this.#opacityTexture = device.createTexture({
-      label: 'HRC-Opacity',
-      size: { width, height },
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    this.#opacityTextureView = this.#opacityTexture.createView();
+    [this.#emissionTexture, this.#emissionTextureView] = tex(device, 'Emission', width, height, 'rgba16float', TEX_RENDER);
+    [this.#opacityTexture, this.#opacityTextureView] = tex(device, 'Opacity', width, height, 'rgba8unorm', TEX_RENDER);
 
     this.#rayTextures = [];
     this.#rayTextureViews = [];
     this.#transTextures = [];
     this.#transTextureViews = [];
     for (let i = 0; i < this.#numCascades; i++) {
-      const interval = 1 << i;
-      const numRays = interval + 1;
-      const numProbes = ps >> i;
-      const w = numProbes * numRays;
-      const rayTex = device.createTexture({
-        label: `HRC-Ray-${i}`,
-        size: { width: w, height: ps },
-        format: 'rgba16float',
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      });
-      this.#rayTextures.push(rayTex);
-      this.#rayTextureViews.push(rayTex.createView());
-      const transTex = device.createTexture({
-        label: `HRC-Trans-${i}`,
-        size: { width: w, height: ps },
-        format: 'rgba8unorm',
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      });
-      this.#transTextures.push(transTex);
-      this.#transTextureViews.push(transTex.createView());
+      const w = (ps >> i) * ((1 << i) + 1);
+      const [rt, rv] = tex(device, `Ray-${i}`, w, ps, 'rgba16float', TEX_STORAGE);
+      const [tt, tv] = tex(device, `Trans-${i}`, w, ps, 'rgba8unorm', TEX_STORAGE);
+      this.#rayTextures.push(rt);
+      this.#rayTextureViews.push(rv);
+      this.#transTextures.push(tt);
+      this.#transTextureViews.push(tv);
     }
 
-    this.#mergeTextures = [0, 1].map((i) =>
-      device.createTexture({
-        label: `HRC-Merge-${i}`,
-        size: { width: ps, height: ps },
-        format: 'rgba16float',
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      }),
-    );
-    this.#mergeTextureViews = this.#mergeTextures.map((t) => t.createView());
+    const texPair = (label: string, w: number, h: number, fmt: GPUTextureFormat): [GPUTexture[], GPUTextureView[]] => {
+      const [t0, v0] = tex(device, `${label}-0`, w, h, fmt, TEX_STORAGE);
+      const [t1, v1] = tex(device, `${label}-1`, w, h, fmt, TEX_STORAGE);
+      return [[t0, t1], [v0, v1]];
+    };
+    [this.#mergeTextures, this.#mergeTextureViews] = texPair('Merge', ps, ps, 'rgba16float');
+    [this.#fluenceTextures, this.#fluenceTextureViews] = texPair('Fluence', ps, ps, 'rgba16float');
 
-    this.#fluenceTextures = [0, 1].map((i) =>
-      device.createTexture({
-        label: `HRC-Fluence-${i}`,
-        size: { width: ps, height: ps },
-        format: 'rgba16float',
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      }),
-    );
-    this.#fluenceTextureViews = this.#fluenceTextures.map((t) => t.createView());
-
-    this.#bounceTexture = device.createTexture({
-      label: 'HRC-Bounce',
-      size: { width, height },
-      format: 'rgba16float',
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-    this.#bounceTextureView = this.#bounceTexture.createView();
+    [this.#bounceTexture, this.#bounceTextureView] = tex(device, 'Bounce', width, height, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
     device.queue.writeTexture(
       { texture: this.#bounceTexture },
       new Uint8Array(width * height * 8),
@@ -1073,281 +1016,157 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeParamsView = uboView(coneMergeShader, 'params');
     this.#accumParamsView = uboView(fluenceAccumShader, 'params');
     this.#blitParamsView = uboView(blitShader, 'params');
-
-    this.#seedParamsBuffer = device.createBuffer({
-      label: 'HRC-SeedParams',
-      size: 4 * 256,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.#extendParamsBuffer = device.createBuffer({
-      label: 'HRC-ExtendParams',
-      size: Math.max(1, this.#numCascades - 1) * 256,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.#mergeParamsBuffer = device.createBuffer({
-      label: 'HRC-MergeParams',
-      size: 4 * this.#numCascades * 256,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.#accumParamsBuffer = device.createBuffer({
-      label: 'HRC-AccumParams',
-      size: 4 * 256,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.#blitParamsBuffer = device.createBuffer({
-      label: 'HRC-BlitParams',
-      size: this.#blitParamsView.arrayBuffer.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
     this.#bounceParamsView = uboView(bounceComputeShader, 'params');
-    this.#bounceParamsBuffer = device.createBuffer({
-      label: 'HRC-BounceParams',
-      size: this.#bounceParamsView.arrayBuffer.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
 
-    this.#ptAccumTextures = [0, 1].map((i) =>
-      device.createTexture({
-        label: `PT-Accum-${i}`,
-        size: { width, height },
-        format: 'rgba32float',
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      }),
-    );
-    this.#ptAccumTextureViews = this.#ptAccumTextures.map((t) => t.createView());
+    this.#seedParamsBuffer = ubo('SeedParams', 4 * 256);
+    this.#extendParamsBuffer = ubo('ExtendParams', Math.max(1, this.#numCascades - 1) * 256);
+    this.#mergeParamsBuffer = ubo('MergeParams', 4 * this.#numCascades * 256);
+    this.#accumParamsBuffer = ubo('AccumParams', 4 * 256);
+    this.#blitParamsBuffer = ubo('BlitParams', this.#blitParamsView.arrayBuffer.byteLength);
+    this.#bounceParamsBuffer = ubo('BounceParams', this.#bounceParamsView.arrayBuffer.byteLength);
+
+    const [ptA0, ptV0] = tex(device, 'PT-Accum-0', width, height, 'rgba32float', TEX_STORAGE);
+    const [ptA1, ptV1] = tex(device, 'PT-Accum-1', width, height, 'rgba32float', TEX_STORAGE);
+    this.#ptAccumTextures = [ptA0, ptA1];
+    this.#ptAccumTextureViews = [ptV0, ptV1];
     this.#ptParamsView = uboView(pathTraceShader, 'params');
-    this.#ptParamsBuffer = device.createBuffer({
-      label: 'PT-Params',
-      size: this.#ptParamsView.arrayBuffer.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.#ptBlitParamsView = uboView(ptBlitShader, 'params');
-    this.#ptBlitParamsBuffer = device.createBuffer({
-      label: 'PT-BlitParams',
-      size: this.#ptBlitParamsView.arrayBuffer.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    this.#ptParamsBuffer = ubo('PT-Params', this.#ptParamsView.arrayBuffer.byteLength);
   }
 
   #initPipelines() {
     const device = this.#device;
+    const MRT_TARGETS: GPUColorTargetState[] = [{ format: 'rgba16float' }, { format: 'rgba8unorm' }];
+
+    const attr = (loc: number, off: number, fmt: GPUVertexFormat): GPUVertexAttribute => ({
+      shaderLocation: loc, offset: off, format: fmt,
+    });
+
+    const fullscreenBlit = (label: string, code: string, format: GPUTextureFormat) => {
+      const module = device.createShaderModule({ code });
+      return device.createRenderPipeline({
+        label, layout: 'auto',
+        vertex: { module, entryPoint: 'vs' },
+        fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+        primitive: { topology: 'triangle-strip' },
+      });
+    };
 
     const worldModule = device.createShaderModule({ code: worldRenderShader });
     this.#worldRenderPipeline = device.createRenderPipeline({
-      label: 'HRC-WorldRender',
-      layout: 'auto',
+      label: 'HRC-WorldRender', layout: 'auto',
       vertex: {
-        module: worldModule,
-        entryPoint: 'vertex_main',
-        buffers: [
-          {
-            arrayStride: 40,
-            attributes: [
-              { shaderLocation: 0, offset: 0, format: 'float32x2' as GPUVertexFormat },
-              { shaderLocation: 1, offset: 8, format: 'float32x3' as GPUVertexFormat },
-              { shaderLocation: 2, offset: 20, format: 'float32x3' as GPUVertexFormat },
-              { shaderLocation: 3, offset: 32, format: 'float32' as GPUVertexFormat },
-              { shaderLocation: 4, offset: 36, format: 'float32' as GPUVertexFormat },
-            ],
-          },
-        ],
+        module: worldModule, entryPoint: 'vertex_main',
+        buffers: [{
+          arrayStride: 40,
+          attributes: [
+            attr(0, 0, 'float32x2'), attr(1, 8, 'float32x3'), attr(2, 20, 'float32x3'),
+            attr(3, 32, 'float32'), attr(4, 36, 'float32'),
+          ],
+        }],
       },
-      fragment: {
-        module: worldModule,
-        entryPoint: 'fragment_main',
-        targets: [{ format: 'rgba16float' as GPUTextureFormat }, { format: 'rgba8unorm' as GPUTextureFormat }],
-      },
+      fragment: { module: worldModule, entryPoint: 'fragment_main', targets: MRT_TARGETS },
       primitive: { topology: 'triangle-list' },
     });
 
     const lineModule = device.createShaderModule({ code: lineRenderShader });
     this.#lineRenderPipeline = device.createRenderPipeline({
-      label: 'HRC-LineRender',
-      layout: 'auto',
+      label: 'HRC-LineRender', layout: 'auto',
       vertex: {
-        module: lineModule,
-        entryPoint: 'vertex_main',
-        buffers: [
-          {
-            arrayStride: 52,
-            stepMode: 'instance' as GPUVertexStepMode,
-            attributes: [
-              { shaderLocation: 0, offset: 0, format: 'float32x2' as GPUVertexFormat },
-              { shaderLocation: 1, offset: 8, format: 'float32x2' as GPUVertexFormat },
-              { shaderLocation: 2, offset: 16, format: 'float32x3' as GPUVertexFormat },
-              { shaderLocation: 3, offset: 28, format: 'float32' as GPUVertexFormat },
-              { shaderLocation: 4, offset: 32, format: 'float32x3' as GPUVertexFormat },
-              { shaderLocation: 5, offset: 44, format: 'float32' as GPUVertexFormat },
-              { shaderLocation: 6, offset: 48, format: 'float32' as GPUVertexFormat },
-            ],
-          },
-        ],
+        module: lineModule, entryPoint: 'vertex_main',
+        buffers: [{
+          arrayStride: 52, stepMode: 'instance',
+          attributes: [
+            attr(0, 0, 'float32x2'), attr(1, 8, 'float32x2'), attr(2, 16, 'float32x3'),
+            attr(3, 28, 'float32'), attr(4, 32, 'float32x3'), attr(5, 44, 'float32'),
+            attr(6, 48, 'float32'),
+          ],
+        }],
       },
-      fragment: {
-        module: lineModule,
-        entryPoint: 'fragment_main',
-        targets: [{ format: 'rgba16float' as GPUTextureFormat }, { format: 'rgba8unorm' as GPUTextureFormat }],
-      },
+      fragment: { module: lineModule, entryPoint: 'fragment_main', targets: MRT_TARGETS },
       primitive: { topology: 'triangle-list' },
     });
 
-    this.#bounceComputePipeline = createComputePipeline(device, 'HRC-BounceCompute', bounceComputeShader);
-    this.#ptPipeline = createComputePipeline(device, 'PT-PathTrace', pathTraceShader);
-    const ptBlitModule = device.createShaderModule({ code: ptBlitShader });
-    this.#ptBlitPipeline = device.createRenderPipeline({
-      label: 'PT-Blit',
-      layout: 'auto',
-      vertex: { module: ptBlitModule, entryPoint: 'vs' },
-      fragment: { module: ptBlitModule, entryPoint: 'fs', targets: [{ format: this.#presentationFormat }] },
-      primitive: { topology: 'triangle-strip' },
-    });
-    this.#raySeedPipeline = createComputePipeline(device, 'HRC-RaySeed', raySeedShader);
-    this.#rayExtendPipeline = createComputePipeline(device, 'HRC-RayExtend', rayExtendShader);
-    this.#coneMergePipeline = createComputePipeline(device, 'HRC-ConeMerge', coneMergeShader);
-    this.#fluenceAccumPipeline = createComputePipeline(device, 'HRC-FluenceAccum', fluenceAccumShader);
-
-    const blitModule = device.createShaderModule({ code: blitShader });
-    this.#renderPipeline = device.createRenderPipeline({
-      label: 'HRC-Blit',
-      layout: 'auto',
-      vertex: { module: blitModule, entryPoint: 'vs' },
-      fragment: {
-        module: blitModule,
-        entryPoint: 'fs',
-        targets: [{ format: this.#presentationFormat }],
-      },
-      primitive: { topology: 'triangle-strip' },
-    });
+    this.#bounceComputePipeline = computePipeline(device, 'HRC-BounceCompute', bounceComputeShader);
+    this.#raySeedPipeline = computePipeline(device, 'HRC-RaySeed', raySeedShader);
+    this.#rayExtendPipeline = computePipeline(device, 'HRC-RayExtend', rayExtendShader);
+    this.#coneMergePipeline = computePipeline(device, 'HRC-ConeMerge', coneMergeShader);
+    this.#fluenceAccumPipeline = computePipeline(device, 'HRC-FluenceAccum', fluenceAccumShader);
+    this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
+    this.#ptPipeline = computePipeline(device, 'PT-PathTrace', pathTraceShader);
+    this.#ptBlitPipeline = fullscreenBlit('PT-Blit', ptBlitShader, this.#presentationFormat);
 
     this.#createStaticBindGroups();
   }
 
   #createStaticBindGroups() {
     const device = this.#device;
+    const nc = this.#numCascades;
+    const seedLayout = this.#raySeedPipeline.getBindGroupLayout(0);
+    const extLayout = this.#rayExtendPipeline.getBindGroupLayout(0);
+    const mergeLayout = this.#coneMergePipeline.getBindGroupLayout(0);
+    const accumLayout = this.#fluenceAccumPipeline.getBindGroupLayout(0);
+    const seedPS = this.#seedParamsView.arrayBuffer.byteLength;
+    const extPS = this.#extendParamsView.arrayBuffer.byteLength;
+    const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
+    const accumPS = this.#accumParamsView.arrayBuffer.byteLength;
 
-    this.#seedBindGroups = [];
-    for (let dir = 0; dir < 4; dir++) {
-      this.#seedBindGroups.push(
-        device.createBindGroup({
-          layout: this.#raySeedPipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: this.#emissionTextureView },
-            { binding: 1, resource: this.#opacityTextureView },
-            { binding: 2, resource: this.#bounceTextureView },
-            { binding: 3, resource: this.#rayTextureViews[0] },
-            { binding: 4, resource: this.#transTextureViews[0] },
-            {
-              binding: 5,
-              resource: {
-                buffer: this.#seedParamsBuffer,
-                offset: dir * 256,
-                size: this.#seedParamsView.arrayBuffer.byteLength,
-              },
-            },
-          ],
-        }),
-      );
-    }
+    this.#seedBindGroups = [0, 1, 2, 3].map((dir) =>
+      bg(device, seedLayout,
+        this.#emissionTextureView, this.#opacityTextureView, this.#bounceTextureView,
+        this.#rayTextureViews[0], this.#transTextureViews[0],
+        { buffer: this.#seedParamsBuffer, offset: dir * 256, size: seedPS },
+      ),
+    );
 
     this.#extendBindGroups = [];
-    for (let level = 1; level < this.#numCascades; level++) {
-      this.#extendBindGroups.push(
-        device.createBindGroup({
-          layout: this.#rayExtendPipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: this.#rayTextureViews[level - 1] },
-            { binding: 1, resource: this.#transTextureViews[level - 1] },
-            { binding: 2, resource: this.#rayTextureViews[level] },
-            { binding: 3, resource: this.#transTextureViews[level] },
-            {
-              binding: 4,
-              resource: {
-                buffer: this.#extendParamsBuffer,
-                offset: (level - 1) * 256,
-                size: this.#extendParamsView.arrayBuffer.byteLength,
-              },
-            },
-          ],
-        }),
-      );
+    for (let level = 1; level < nc; level++) {
+      this.#extendBindGroups.push(bg(device, extLayout,
+        this.#rayTextureViews[level - 1], this.#transTextureViews[level - 1],
+        this.#rayTextureViews[level], this.#transTextureViews[level],
+        { buffer: this.#extendParamsBuffer, offset: (level - 1) * 256, size: extPS },
+      ));
     }
 
-    const nc = this.#numCascades;
-    const mergeParamSize = this.#mergeParamsView.arrayBuffer.byteLength;
     this.#mergeBindGroups = [];
     for (let dir = 0; dir < 4; dir++) {
       const dirBGs: GPUBindGroup[] = [];
-      let readIdx = 1;
-      let writeIdx = 0;
+      let readIdx = 1, writeIdx = 0;
       for (let k = 0; k < nc; k++) {
         const level = nc - 1 - k;
-        dirBGs.push(
-          device.createBindGroup({
-            layout: this.#coneMergePipeline.getBindGroupLayout(0),
-            entries: [
-              { binding: 0, resource: this.#rayTextureViews[level] },
-              { binding: 1, resource: this.#transTextureViews[level] },
-              { binding: 2, resource: this.#mergeTextureViews[readIdx] },
-              { binding: 3, resource: this.#mergeTextureViews[writeIdx] },
-              {
-                binding: 4,
-                resource: { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergeParamSize },
-              },
-            ],
-          }),
-        );
-        const tmp = readIdx;
-        readIdx = writeIdx;
-        writeIdx = tmp;
+        dirBGs.push(bg(device, mergeLayout,
+          this.#rayTextureViews[level], this.#transTextureViews[level],
+          this.#mergeTextureViews[readIdx], this.#mergeTextureViews[writeIdx],
+          { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
+        ));
+        [readIdx, writeIdx] = [writeIdx, readIdx];
       }
       this.#mergeBindGroups.push(dirBGs);
     }
     this.#mergeResultIdx = (nc - 1) % 2 === 0 ? 0 : 1;
 
     const mergeResultView = this.#mergeTextureViews[this.#mergeResultIdx];
-    const accumParamSize = this.#accumParamsView.arrayBuffer.byteLength;
-    this.#accumBindGroups = [];
-    for (let dir = 0; dir < 4; dir++) {
-      const fluenceReadIdx = dir % 2 === 0 ? 1 : 0;
-      const fluenceWriteIdx = dir % 2 === 0 ? 0 : 1;
-      this.#accumBindGroups.push(
-        device.createBindGroup({
-          layout: this.#fluenceAccumPipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: mergeResultView },
-            { binding: 1, resource: this.#fluenceTextureViews[fluenceReadIdx] },
-            { binding: 2, resource: this.#fluenceTextureViews[fluenceWriteIdx] },
-            { binding: 3, resource: { buffer: this.#accumParamsBuffer, offset: dir * 256, size: accumParamSize } },
-          ],
-        }),
-      );
-    }
+    this.#accumBindGroups = [0, 1, 2, 3].map((dir) =>
+      bg(device, accumLayout,
+        mergeResultView,
+        this.#fluenceTextureViews[dir % 2 === 0 ? 1 : 0],
+        this.#fluenceTextureViews[dir % 2 === 0 ? 0 : 1],
+        { buffer: this.#accumParamsBuffer, offset: dir * 256, size: accumPS },
+      ),
+    );
 
     this.#blitBindGroups = [0, 1].map((idx) =>
-      device.createBindGroup({
-        layout: this.#renderPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.#fluenceTextureViews[idx] },
-          { binding: 1, resource: this.#emissionTextureView },
-          { binding: 2, resource: this.#opacityTextureView },
-          { binding: 3, resource: { buffer: this.#blitParamsBuffer } },
-          { binding: 4, resource: this.#linearSampler },
-        ],
-      }),
+      bg(device, this.#renderPipeline.getBindGroupLayout(0),
+        this.#fluenceTextureViews[idx], this.#emissionTextureView, this.#opacityTextureView,
+        { buffer: this.#blitParamsBuffer }, this.#linearSampler,
+      ),
     );
 
     this.#bounceBindGroups = [0, 1].map((idx) =>
-      device.createBindGroup({
-        layout: this.#bounceComputePipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.#fluenceTextureViews[idx] },
-          { binding: 1, resource: this.#linearSampler },
-          { binding: 2, resource: this.#emissionTextureView },
-          { binding: 3, resource: this.#opacityTextureView },
-          { binding: 4, resource: this.#bounceTextureView },
-          { binding: 5, resource: { buffer: this.#bounceParamsBuffer } },
-        ],
-      }),
+      bg(device, this.#bounceComputePipeline.getBindGroupLayout(0),
+        this.#fluenceTextureViews[idx], this.#linearSampler,
+        this.#emissionTextureView, this.#opacityTextureView, this.#bounceTextureView,
+        { buffer: this.#bounceParamsBuffer },
+      ),
     );
   }
 
@@ -1361,7 +1180,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#bounceTexture?.destroy();
     this.#ptAccumTextures?.forEach((t) => t.destroy());
     this.#ptParamsBuffer?.destroy();
-    this.#ptBlitParamsBuffer?.destroy();
     this.#seedParamsBuffer?.destroy();
     this.#extendParamsBuffer?.destroy();
     this.#mergeParamsBuffer?.destroy();
@@ -1458,23 +1276,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       });
     }
     const data = new Float32Array(count * FPL);
-    for (let i = 0; i < count; i++) {
-      const [x1, y1, x2, y2, r, g, b, th, ar, ag, ab, al, sc] = this.#lines[i];
-      const off = i * FPL;
-      data[off] = x1;
-      data[off + 1] = y1;
-      data[off + 2] = x2;
-      data[off + 3] = y2;
-      data[off + 4] = r;
-      data[off + 5] = g;
-      data[off + 6] = b;
-      data[off + 7] = th;
-      data[off + 8] = ar;
-      data[off + 9] = ag;
-      data[off + 10] = ab;
-      data[off + 11] = al;
-      data[off + 12] = sc;
-    }
+    for (let i = 0; i < count; i++) data.set(this.#lines[i], i * FPL);
     this.#device.queue.writeBuffer(this.#lineInstanceBuffer, 0, data);
     this.#lineCount = count;
   }
@@ -1530,6 +1332,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const device = this.#device;
     const ps = this.#ps;
     const nc = this.#numCascades;
+    const wg = Math.ceil(ps / 16);
 
     this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
@@ -1560,10 +1363,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           this.#lineUBO?.destroy();
           this.#lineUBO = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
           device.queue.writeBuffer(this.#lineUBO, 0, new Float32Array([width, height]));
-          this.#lineBindGroup = device.createBindGroup({
-            layout: this.#lineRenderPipeline.getBindGroupLayout(0),
-            entries: [{ binding: 0, resource: { buffer: this.#lineUBO } }],
-          });
+          this.#lineBindGroup = bg(device, this.#lineRenderPipeline.getBindGroupLayout(0), { buffer: this.#lineUBO });
         }
         pass.setBindGroup(0, this.#lineBindGroup);
         pass.setVertexBuffer(0, this.#lineInstanceBuffer);
@@ -1589,7 +1389,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     if (this.#ptShowResult) {
-      this.#renderPTBlit(encoder, width, height);
+      this.#renderPTBlit(encoder);
       this.#submitAndCapture(device, encoder);
       return;
     }
@@ -1617,45 +1417,39 @@ export class FolkHolographicRC extends FolkBaseSet {
     let fluenceResultIdx = 0;
 
     if (!isDebugMode) {
-      // Standard path: 4 directions, full cascades, pre-created bind groups
       for (let dir = 0; dir < 4; dir++) {
         // Phase A: Ray Seed
         {
           const pass = encoder.beginComputePass();
           pass.setPipeline(this.#raySeedPipeline);
           pass.setBindGroup(0, this.#seedBindGroups[dir]);
-          pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
+          pass.dispatchWorkgroups(wg, wg);
           pass.end();
         }
-
         // Phase B: Ray Extension (bottom-up)
         for (let level = 1; level < nc; level++) {
-          const numProbes = ps >> level;
-          const rayWidth = numProbes * ((1 << level) + 1);
           const pass = encoder.beginComputePass();
           pass.setPipeline(this.#rayExtendPipeline);
           pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
-          pass.dispatchWorkgroups(Math.ceil(rayWidth / 16), Math.ceil(ps / 16));
+          pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
           pass.end();
         }
-
         // Phase C: Cone Merge (top-down)
         for (let k = 0; k < nc; k++) {
-          const level = nc - 1 - k;
-          const flatSize = (ps >> level) * (1 << level);
           const pass = encoder.beginComputePass();
           pass.setPipeline(this.#coneMergePipeline);
           pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
-          pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(flatSize / 16));
+          pass.dispatchWorkgroups(wg, Math.ceil(((ps >> (nc - 1 - k)) * (1 << (nc - 1 - k))) / 16));
           pass.end();
         }
-
         // Phase D: Fluence Accumulation
-        const accumPass = encoder.beginComputePass();
-        accumPass.setPipeline(this.#fluenceAccumPipeline);
-        accumPass.setBindGroup(0, this.#accumBindGroups[dir]);
-        accumPass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
-        accumPass.end();
+        {
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(this.#fluenceAccumPipeline);
+          pass.setBindGroup(0, this.#accumBindGroups[dir]);
+          pass.dispatchWorkgroups(wg, wg);
+          pass.end();
+        }
       }
       // After 4 dirs starting with write=0, alternating: result is in fluence[1]
       fluenceResultIdx = 1;
@@ -1673,53 +1467,35 @@ export class FolkHolographicRC extends FolkBaseSet {
           const pass = encoder.beginComputePass();
           pass.setPipeline(this.#raySeedPipeline);
           pass.setBindGroup(0, this.#seedBindGroups[dir]);
-          pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
+          pass.dispatchWorkgroups(wg, wg);
           pass.end();
         }
 
         for (let level = 1; level < ec; level++) {
-          const numProbes = ps >> level;
-          const rayWidth = numProbes * ((1 << level) + 1);
           const pass = encoder.beginComputePass();
           pass.setPipeline(this.#rayExtendPipeline);
           pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
-          pass.dispatchWorkgroups(Math.ceil(rayWidth / 16), Math.ceil(ps / 16));
+          pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
           pass.end();
         }
 
         const usePrebuiltMerge = ec === nc;
-        let mergeReadIdx = 1;
-        let mergeWriteIdx = 0;
+        let mergeReadIdx = 1, mergeWriteIdx = 0;
         for (let k = 0; k < ec; k++) {
           const level = ec - 1 - k;
-          const flatSize = (ps >> level) * (1 << level);
-          const bg = usePrebuiltMerge
+          const mergeBG = usePrebuiltMerge
             ? this.#mergeBindGroups[dir][k]
-            : device.createBindGroup({
-                layout: this.#coneMergePipeline.getBindGroupLayout(0),
-                entries: [
-                  { binding: 0, resource: this.#rayTextureViews[level] },
-                  { binding: 1, resource: this.#transTextureViews[level] },
-                  { binding: 2, resource: this.#mergeTextureViews[mergeReadIdx] },
-                  { binding: 3, resource: this.#mergeTextureViews[mergeWriteIdx] },
-                  {
-                    binding: 4,
-                    resource: {
-                      buffer: this.#mergeParamsBuffer,
-                      offset: (dir * nc + level) * 256,
-                      size: this.#mergeParamsView.arrayBuffer.byteLength,
-                    },
-                  },
-                ],
-              });
+            : bg(device, this.#coneMergePipeline.getBindGroupLayout(0),
+                this.#rayTextureViews[level], this.#transTextureViews[level],
+                this.#mergeTextureViews[mergeReadIdx], this.#mergeTextureViews[mergeWriteIdx],
+                { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: this.#mergeParamsView.arrayBuffer.byteLength },
+              );
           const pass = encoder.beginComputePass();
           pass.setPipeline(this.#coneMergePipeline);
-          pass.setBindGroup(0, bg);
-          pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(flatSize / 16));
+          pass.setBindGroup(0, mergeBG);
+          pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
           pass.end();
-          const tmp = mergeReadIdx;
-          mergeReadIdx = mergeWriteIdx;
-          mergeWriteIdx = tmp;
+          [mergeReadIdx, mergeWriteIdx] = [mergeWriteIdx, mergeReadIdx];
         }
 
         const mergeResultView = usePrebuiltMerge
@@ -1739,22 +1515,14 @@ export class FolkHolographicRC extends FolkBaseSet {
           fluenceReadIdx = tmp2;
         }
 
-        const accumBG = device.createBindGroup({
-          layout: this.#fluenceAccumPipeline.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: mergeResultView },
-            { binding: 1, resource: this.#fluenceTextureViews[fluenceReadIdx] },
-            { binding: 2, resource: this.#fluenceTextureViews[fluenceWriteIdx] },
-            {
-              binding: 3,
-              resource: { buffer: this.#accumParamsBuffer, offset: dir * 256, size: this.#accumParamsView.arrayBuffer.byteLength },
-            },
-          ],
-        });
+        const accumBG = bg(device, this.#fluenceAccumPipeline.getBindGroupLayout(0),
+          mergeResultView, this.#fluenceTextureViews[fluenceReadIdx], this.#fluenceTextureViews[fluenceWriteIdx],
+          { buffer: this.#accumParamsBuffer, offset: dir * 256, size: this.#accumParamsView.arrayBuffer.byteLength },
+        );
         const accumPass = encoder.beginComputePass();
         accumPass.setPipeline(this.#fluenceAccumPipeline);
         accumPass.setBindGroup(0, accumBG);
-        accumPass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
+        accumPass.dispatchWorkgroups(wg, wg);
         accumPass.end();
 
         fluenceResultIdx = fluenceWriteIdx;
@@ -1764,25 +1532,25 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#lastFluenceResultIdx = fluenceResultIdx;
 
     // ── Step 3: Final blit ──
-    {
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [
-          {
-            view: this.#context.getCurrentTexture().createView(),
-            clearValue: { r: 0, g: 0, b: 0, a: 1 },
-            loadOp: 'clear',
-            storeOp: 'store',
-          },
-        ],
-      });
-      pass.setPipeline(this.#renderPipeline);
-      pass.setBindGroup(0, this.#blitBindGroups[fluenceResultIdx]);
-      pass.setViewport(0, 0, width, height, 0, 1);
-      pass.draw(4);
-      pass.end();
-    }
+    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroups[fluenceResultIdx]);
 
     this.#submitAndCapture(device, encoder);
+  }
+
+  #blitToScreen(encoder: GPUCommandEncoder, pipeline: GPURenderPipeline, bindGroup: GPUBindGroup) {
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: this.#context.getCurrentTexture().createView(),
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: 'clear' as const,
+        storeOp: 'store' as const,
+      }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.setViewport(0, 0, this.#canvas.width, this.#canvas.height, 0, 1);
+    pass.draw(4);
+    pass.end();
   }
 
   #submitAndCapture(device: GPUDevice, encoder: GPUCommandEncoder) {
@@ -1824,16 +1592,11 @@ export class FolkHolographicRC extends FolkBaseSet {
     });
     device.queue.writeBuffer(this.#ptParamsBuffer, 0, this.#ptParamsView.arrayBuffer);
 
-    const ptBG = device.createBindGroup({
-      layout: this.#ptPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.#emissionTextureView },
-        { binding: 1, resource: this.#opacityTextureView },
-        { binding: 2, resource: this.#ptAccumTextureViews[readIdx] },
-        { binding: 3, resource: this.#ptAccumTextureViews[writeIdx] },
-        { binding: 4, resource: { buffer: this.#ptParamsBuffer } },
-      ],
-    });
+    const ptBG = bg(device, this.#ptPipeline.getBindGroupLayout(0),
+      this.#emissionTextureView, this.#opacityTextureView,
+      this.#ptAccumTextureViews[readIdx], this.#ptAccumTextureViews[writeIdx],
+      { buffer: this.#ptParamsBuffer },
+    );
 
     const pass = encoder.beginComputePass();
     pass.setPipeline(this.#ptPipeline);
@@ -1841,66 +1604,19 @@ export class FolkHolographicRC extends FolkBaseSet {
     pass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
     pass.end();
 
-    this.#ptBlitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
-    device.queue.writeBuffer(this.#ptBlitParamsBuffer, 0, this.#ptBlitParamsView.arrayBuffer);
-
-    const blitBG = device.createBindGroup({
-      layout: this.#ptBlitPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.#ptAccumTextureViews[writeIdx] },
-        { binding: 1, resource: { buffer: this.#ptBlitParamsBuffer } },
-      ],
-    });
-
-    const blitPass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.#context.getCurrentTexture().createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
-    });
-    blitPass.setPipeline(this.#ptBlitPipeline);
-    blitPass.setBindGroup(0, blitBG);
-    blitPass.setViewport(0, 0, width, height, 0, 1);
-    blitPass.draw(4);
-    blitPass.end();
-
+    this.#blitToScreen(encoder, this.#ptBlitPipeline,
+      bg(device, this.#ptBlitPipeline.getBindGroupLayout(0),
+        this.#ptAccumTextureViews[writeIdx], { buffer: this.#blitParamsBuffer }),
+    );
     this.#ptFrameIndex++;
   }
 
-  #renderPTBlit(encoder: GPUCommandEncoder, width: number, height: number) {
-    const device = this.#device;
-    const lastWriteIdx = (this.#ptFrameIndex - 1 + 2) % 2;
-
-    this.#ptBlitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
-    device.queue.writeBuffer(this.#ptBlitParamsBuffer, 0, this.#ptBlitParamsView.arrayBuffer);
-
-    const blitBG = device.createBindGroup({
-      layout: this.#ptBlitPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.#ptAccumTextureViews[lastWriteIdx] },
-        { binding: 1, resource: { buffer: this.#ptBlitParamsBuffer } },
-      ],
-    });
-
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.#context.getCurrentTexture().createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        },
-      ],
-    });
-    pass.setPipeline(this.#ptBlitPipeline);
-    pass.setBindGroup(0, blitBG);
-    pass.setViewport(0, 0, width, height, 0, 1);
-    pass.draw(4);
-    pass.end();
+  #renderPTBlit(encoder: GPUCommandEncoder) {
+    const lastWriteIdx = (this.#ptFrameIndex + 1) % 2;
+    this.#blitToScreen(encoder, this.#ptBlitPipeline,
+      bg(this.#device, this.#ptBlitPipeline.getBindGroupLayout(0),
+        this.#ptAccumTextureViews[lastWriteIdx], { buffer: this.#blitParamsBuffer }),
+    );
   }
 
   #uploadStaticParams(width: number, height: number) {
