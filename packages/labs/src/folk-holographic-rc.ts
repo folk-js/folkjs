@@ -222,12 +222,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), v);
     textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), v);
   } else {
-    let radV = vec4f(rad, 0.0);
-    let transV = vec4f(trans, 1.0);
-    textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), radV);
-    textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), radV);
-    textureStore(transOut, vec2i(probeIdx * 2, perpIdx), transV);
-    textureStore(transOut, vec2i(probeIdx * 2 + 1, perpIdx), transV);
+    textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), vec4f(rad, 0.0));
+    textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), vec4f(rad, 0.0));
+    textureStore(transOut, vec2i(probeIdx * 2, perpIdx), vec4f(trans, 1.0));
+    textureStore(transOut, vec2i(probeIdx * 2 + 1, perpIdx), vec4f(trans, 1.0));
   }
 }
 `;
@@ -835,12 +833,15 @@ export class FolkHolographicRC extends FolkBaseSet {
   #coneMergePipelineMono!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
-  // Pre-created bind groups (recreated on resize)
+  // Pre-created bind groups — separate sets for color and mono pipelines
   #seedBindGroups!: GPUBindGroup[];
+  #seedBindGroupsMono!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
-  #mergeBindGroups!: GPUBindGroup[][]; // [dir][mergeStep k]
-  #blitBindGroups!: GPUBindGroup[]; // [fluenceIdx] for final blit
-  #bounceBindGroups!: GPUBindGroup[]; // [fluenceIdx] for bounce compute
+  #extendBindGroupsMono!: GPUBindGroup[];
+  #mergeBindGroups!: GPUBindGroup[][];
+  #mergeBindGroupsMono!: GPUBindGroup[][];
+  #blitBindGroups!: GPUBindGroup[];
+  #bounceBindGroups!: GPUBindGroup[];
 
   // Sampler
   #linearSampler!: GPUSampler;
@@ -866,7 +867,14 @@ export class FolkHolographicRC extends FolkBaseSet {
   #resizing = false;
 
   #smoothedFrameTime = 0;
+  #smoothedGpuTime = 0;
   #lastFrameTimestamp = 0;
+
+  // GPU timestamp profiling (decoupled from frame pacing)
+  #tsQuerySet?: GPUQuerySet;
+  #tsResolveBuffer?: GPUBuffer;
+  #tsReadBuffer?: GPUBuffer;
+  #tsPending = false;
 
   static readonly #colors: [number, number, number][] = [
     [0, 0, 0],
@@ -969,7 +977,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (!navigator.gpu) throw new Error('WebGPU is not supported in this browser.');
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('Failed to get GPU adapter.');
-    this.#device = await adapter.requestDevice();
+    const features: GPUFeatureName[] = [];
+    if (adapter.features.has('timestamp-query')) features.push('timestamp-query');
+    this.#device = await adapter.requestDevice({ requiredFeatures: features });
 
     this.#canvas = document.createElement('canvas');
     this.#canvas.width = this.clientWidth || 800;
@@ -987,8 +997,17 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (!context) throw new Error('Failed to get WebGPU context.');
     this.#context = context;
     this.#presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+    // Chrome adds 1-2 frames of input lag because WebGPU doesn't support
+    // desynchronized canvas contexts yet (gpuweb/gpuweb#1224, Milestone 4+).
+    // WebGL can bypass the compositor with desynchronized:true, WebGPU can't.
     this.#context.configure({ device: this.#device, format: this.#presentationFormat, alphaMode: 'premultiplied' });
     this.#linearSampler = this.#device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+
+    if (this.#device.features.has('timestamp-query')) {
+      this.#tsQuerySet = this.#device.createQuerySet({ type: 'timestamp', count: 2 });
+      this.#tsResolveBuffer = this.#device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+      this.#tsReadBuffer = this.#device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    }
   }
 
   #initResources() {
@@ -1151,16 +1170,11 @@ export class FolkHolographicRC extends FolkBaseSet {
     const monoPair = (label: string, code: string): [GPUComputePipeline, GPUComputePipeline] => {
       const module = device.createShaderModule({ code });
       const color = device.createComputePipeline({
-        label,
-        layout: 'auto',
+        label, layout: 'auto',
         compute: { module, entryPoint: 'main', constants: { MONO: 0 } },
       });
-      const sharedLayout = device.createPipelineLayout({
-        bindGroupLayouts: [color.getBindGroupLayout(0)],
-      });
       const mono = device.createComputePipeline({
-        label: `${label}-mono`,
-        layout: sharedLayout,
+        label: `${label}-mono`, layout: 'auto',
         compute: { module, entryPoint: 'main', constants: { MONO: 1 } },
       });
       return [color, mono];
@@ -1187,63 +1201,57 @@ export class FolkHolographicRC extends FolkBaseSet {
     const extPS = this.#extendParamsView.arrayBuffer.byteLength;
     const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
 
-    this.#seedBindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(
-        device,
-        seedLayout,
-        this.#emissionTextureView,
-        this.#opacityTextureView,
-        this.#bounceTextureView,
-        this.#rayTextureViews[0],
-        this.#transTextureViews[0],
+    const seedLayoutMono = this.#raySeedPipelineMono.getBindGroupLayout(0);
+    const extLayoutMono = this.#rayExtendPipelineMono.getBindGroupLayout(0);
+    const mergeLayoutMono = this.#coneMergePipelineMono.getBindGroupLayout(0);
+
+    const makeSeedBGs = (layout: GPUBindGroupLayout) => [0, 1, 2, 3].map((dir) =>
+      bg(device, layout,
+        this.#emissionTextureView, this.#opacityTextureView, this.#bounceTextureView,
+        this.#rayTextureViews[0], this.#transTextureViews[0],
         { buffer: this.#seedParamsBuffer, offset: dir * 256, size: seedPS },
       ),
     );
+    this.#seedBindGroups = makeSeedBGs(seedLayout);
+    this.#seedBindGroupsMono = makeSeedBGs(seedLayoutMono);
 
-    this.#extendBindGroups = [];
-    for (let level = 1; level < nc; level++) {
-      this.#extendBindGroups.push(
-        bg(
-          device,
-          extLayout,
-          this.#rayTextureViews[level - 1],
-          this.#transTextureViews[level - 1],
-          this.#rayTextureViews[level],
-          this.#transTextureViews[level],
+    const makeExtBGs = (layout: GPUBindGroupLayout) => {
+      const bgs: GPUBindGroup[] = [];
+      for (let level = 1; level < nc; level++) {
+        bgs.push(bg(device, layout,
+          this.#rayTextureViews[level - 1], this.#transTextureViews[level - 1],
+          this.#rayTextureViews[level], this.#transTextureViews[level],
           { buffer: this.#extendParamsBuffer, offset: (level - 1) * 256, size: extPS },
-        ),
-      );
-    }
-
-    // Merge bind groups: include fluence textures for fused level-0 accumulation.
-    // At level 0 (k=nc-1), the shader writes to fluence. Other levels bind fluence but don't access it.
-    // Fluence ping-pong per direction: dir 0 writes [0], dir 1 reads [0] writes [1], etc.
-    this.#mergeBindGroups = [];
-    for (let dir = 0; dir < 4; dir++) {
-      const dirBGs: GPUBindGroup[] = [];
-      let readIdx = 1,
-        writeIdx = 0;
-      const fluenceReadIdx = dir % 2 === 0 ? 1 : 0;
-      const fluenceWriteIdx = dir % 2 === 0 ? 0 : 1;
-      for (let k = 0; k < nc; k++) {
-        const level = nc - 1 - k;
-        dirBGs.push(
-          bg(
-            device,
-            mergeLayout,
-            this.#rayTextureViews[level],
-            this.#transTextureViews[level],
-            this.#mergeTextureViews[readIdx],
-            this.#mergeTextureViews[writeIdx],
-            { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
-            this.#fluenceTextureViews[fluenceReadIdx],
-            this.#fluenceTextureViews[fluenceWriteIdx],
-          ),
-        );
-        [readIdx, writeIdx] = [writeIdx, readIdx];
+        ));
       }
-      this.#mergeBindGroups.push(dirBGs);
-    }
+      return bgs;
+    };
+    this.#extendBindGroups = makeExtBGs(extLayout);
+    this.#extendBindGroupsMono = makeExtBGs(extLayoutMono);
+
+    const makeMergeBGs = (layout: GPUBindGroupLayout) => {
+      const result: GPUBindGroup[][] = [];
+      for (let dir = 0; dir < 4; dir++) {
+        const dirBGs: GPUBindGroup[] = [];
+        let readIdx = 1, writeIdx = 0;
+        const fReadIdx = dir % 2 === 0 ? 1 : 0;
+        const fWriteIdx = dir % 2 === 0 ? 0 : 1;
+        for (let k = 0; k < nc; k++) {
+          const level = nc - 1 - k;
+          dirBGs.push(bg(device, layout,
+            this.#rayTextureViews[level], this.#transTextureViews[level],
+            this.#mergeTextureViews[readIdx], this.#mergeTextureViews[writeIdx],
+            { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
+            this.#fluenceTextureViews[fReadIdx], this.#fluenceTextureViews[fWriteIdx],
+          ));
+          [readIdx, writeIdx] = [writeIdx, readIdx];
+        }
+        result.push(dirBGs);
+      }
+      return result;
+    };
+    this.#mergeBindGroups = makeMergeBGs(mergeLayout);
+    this.#mergeBindGroupsMono = makeMergeBGs(mergeLayoutMono);
 
     // Fluence result after 4 dirs is always in fluence[1]
     this.#blitBindGroups = [0, 1].map((idx) =>
@@ -1452,6 +1460,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           },
           { view: this.#opacityTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
         ],
+        ...(this.#tsQuerySet ? { timestampWrites: { querySet: this.#tsQuerySet, beginningOfPassWriteIndex: 0 } } : {}),
       });
       pass.setPipeline(this.#worldRenderPipeline);
       if (this.#shapeDataBuffer && this.#shapeCount > 0) {
@@ -1530,13 +1539,16 @@ export class FolkHolographicRC extends FolkBaseSet {
     const seedPL = mono ? this.#raySeedPipelineMono : this.#raySeedPipeline;
     const extPL = mono ? this.#rayExtendPipelineMono : this.#rayExtendPipeline;
     const mergePL = mono ? this.#coneMergePipelineMono : this.#coneMergePipeline;
+    const seedBGs = mono ? this.#seedBindGroupsMono : this.#seedBindGroups;
+    const extBGs = mono ? this.#extendBindGroupsMono : this.#extendBindGroups;
+    const mergeBGs = mono ? this.#mergeBindGroupsMono : this.#mergeBindGroups;
 
     for (let dir = 0; dir < 4; dir++) {
       // Phase A: Ray Seed
       {
         const pass = encoder.beginComputePass();
         pass.setPipeline(seedPL);
-        pass.setBindGroup(0, this.#seedBindGroups[dir]);
+        pass.setBindGroup(0, seedBGs[dir]);
         pass.dispatchWorkgroups(wg, wg);
         pass.end();
       }
@@ -1544,7 +1556,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       for (let level = 1; level < nc; level++) {
         const pass = encoder.beginComputePass();
         pass.setPipeline(extPL);
-        pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
+          pass.setBindGroup(0, extBGs[level - 1]);
         pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
         pass.end();
       }
@@ -1553,7 +1565,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         const level = nc - 1 - k;
         const pass = encoder.beginComputePass();
         pass.setPipeline(mergePL);
-        pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
+          pass.setBindGroup(0, mergeBGs[dir][k]);
         pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
         pass.end();
       }
@@ -1577,6 +1589,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           storeOp: 'store' as const,
         },
       ],
+      ...(this.#tsQuerySet ? { timestampWrites: { querySet: this.#tsQuerySet, endOfPassWriteIndex: 1 } } : {}),
     });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
@@ -1586,7 +1599,30 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   #submitAndCapture(device: GPUDevice, encoder: GPUCommandEncoder) {
+    // Resolve timestamp queries if supported
+    if (this.#tsQuerySet && this.#tsResolveBuffer && this.#tsReadBuffer) {
+      encoder.resolveQuerySet(this.#tsQuerySet, 0, 2, this.#tsResolveBuffer, 0);
+      if (!this.#tsPending) {
+        encoder.copyBufferToBuffer(this.#tsResolveBuffer, 0, this.#tsReadBuffer, 0, 16);
+      }
+    }
+
     device.queue.submit([encoder.finish()]);
+
+    // Read back previous frame's timestamp results (non-blocking, pipelined)
+    if (this.#tsReadBuffer && !this.#tsPending) {
+      this.#tsPending = true;
+      this.#tsReadBuffer.mapAsync(GPUMapMode.READ).then(() => {
+        const data = new BigInt64Array(this.#tsReadBuffer!.getMappedRange());
+        const ns = Number(data[1] - data[0]);
+        this.#tsReadBuffer!.unmap();
+        this.#tsPending = false;
+        if (ns > 0) {
+          const gpuMs = ns / 1_000_000;
+          this.#smoothedGpuTime = this.#smoothedGpuTime === 0 ? gpuMs : this.#smoothedGpuTime * 0.7 + gpuMs * 0.3;
+        }
+      });
+    }
     if (this.#pendingScreenshot) {
       const filename = this.#pendingScreenshot;
       this.#pendingScreenshot = '';
@@ -1773,6 +1809,10 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   get frameTimeMs() {
     return this.#smoothedFrameTime;
+  }
+
+  get gpuTimeMs() {
+    return this.#smoothedGpuTime;
   }
 
   get resolution() {

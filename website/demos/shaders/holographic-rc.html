@@ -595,7 +595,9 @@
         if (now - lastFpsUpdate > 200) {
           lastFpsUpdate = now;
           const { width, height } = hrc.resolution;
-          fpsEl.textContent = `${width}x${height} ${hrc.fps} fps (${hrc.frameTimeMs.toFixed(1)} ms)${hrc.debugInfo}`;
+          const gpuMs = hrc.gpuTimeMs;
+          const gpuLabel = gpuMs > 0 ? ` gpu ${gpuMs.toFixed(1)}ms` : '';
+          fpsEl.textContent = `${width}x${height} ${hrc.fps} fps (${hrc.frameTimeMs.toFixed(1)}ms)${gpuLabel}${hrc.debugInfo}`;
         }
         requestAnimationFrame(updateFpsOverlay);
       }
