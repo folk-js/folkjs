@@ -172,6 +172,7 @@ struct FragOut { @location(0) emission: vec4f, @location(1) opacity: vec4f }
 // receive the same value (differentiation happens during extension).
 
 const raySeedShader = /*wgsl*/ `
+override MONO: u32 = 0u;
 struct SeedParams {
   probeSize: u32,
   screenW: f32,
@@ -216,12 +217,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     rad = (emission + bounce) * (1.0 - trans);
   }
 
-  let radV = vec4f(rad, 0.0);
-  let transV = vec4f(trans, 1.0);
-  textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), radV);
-  textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), radV);
-  textureStore(transOut, vec2i(probeIdx * 2, perpIdx), transV);
-  textureStore(transOut, vec2i(probeIdx * 2 + 1, perpIdx), transV);
+  if (MONO != 0u) {
+    let v = vec4f(rad, dot(trans, vec3f(0.333333)));
+    textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), v);
+    textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), v);
+  } else {
+    let radV = vec4f(rad, 0.0);
+    let transV = vec4f(trans, 1.0);
+    textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), radV);
+    textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), radV);
+    textureStore(transOut, vec2i(probeIdx * 2, perpIdx), transV);
+    textureStore(transOut, vec2i(probeIdx * 2 + 1, perpIdx), transV);
+  }
 }
 `;
 
@@ -231,6 +238,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // Follows Yaazarai Shd_Extensions and Amitabha merge_up.
 
 const rayExtendShader = /*wgsl*/ `
+override MONO: u32 = 0u;
 struct ExtendParams {
   probeSize: u32,
   level: u32,
@@ -257,9 +265,11 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
     return RayData(vec3f(0.0), vec3f(1.0));
   }
   let coord = vec2i(probeIdx * prevNumRays + rayIdx, perpIdx);
-  let r = textureLoad(prevRayTex, coord, 0).rgb;
-  let t = textureLoad(prevTransTex, coord, 0).rgb;
-  return RayData(r, t);
+  let r = textureLoad(prevRayTex, coord, 0);
+  if (MONO != 0u) {
+    return RayData(r.rgb, vec3f(r.a));
+  }
+  return RayData(r.rgb, textureLoad(prevTransTex, coord, 0).rgb);
 }
 
 fn overComp(near: RayData, far: RayData) -> RayData {
@@ -296,8 +306,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   );
 
   let coord = vec2i(texelX, perpIdx);
-  textureStore(currRayTex, coord, vec4f((extL.rad + extR.rad) * 0.5, 0.0));
-  textureStore(currTransTex, coord, vec4f((extL.trans + extR.trans) * 0.5, 1.0));
+  let avgRad = (extL.rad + extR.rad) * 0.5;
+  let avgTrans = (extL.trans + extR.trans) * 0.5;
+  if (MONO != 0u) {
+    textureStore(currRayTex, coord, vec4f(avgRad, dot(avgTrans, vec3f(0.333333))));
+  } else {
+    textureStore(currRayTex, coord, vec4f(avgRad, 0.0));
+    textureStore(currTransTex, coord, vec4f(avgTrans, 1.0));
+  }
 }
 `;
 
@@ -308,6 +324,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // near-probe cone; odd probes do a direct over-composite.
 
 const coneMergeShader = /*wgsl*/ `
+override MONO: u32 = 0u;
 struct MergeParams {
   probeSize: u32,
   numCones: u32,
@@ -334,10 +351,11 @@ fn loadRay(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
     return RayData(vec3f(0.0), vec3f(1.0));
   }
   let coord = vec2i(probeIdx * i32(params.numRays) + rayIdx, perpIdx);
-  return RayData(
-    textureLoad(rayTex, coord, 0).rgb,
-    textureLoad(rayTransTex, coord, 0).rgb,
-  );
+  let r = textureLoad(rayTex, coord, 0);
+  if (MONO != 0u) {
+    return RayData(r.rgb, vec3f(r.a));
+  }
+  return RayData(r.rgb, textureLoad(rayTransTex, coord, 0).rgb);
 }
 
 fn loadMerge(texX: i32, perpIdx: i32) -> vec3f {
@@ -743,6 +761,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   @property({ type: Number, reflect: true }) probeSize = 1024;
   @property({ type: Boolean, reflect: true }) bounces = true;
   @property({ type: Boolean, reflect: true, attribute: 'path-tracing' }) pathTracing = false;
+  @property({ type: Boolean, reflect: true, attribute: 'mono-transmittance' }) monoTransmittance = false;
 
   #canvas!: HTMLCanvasElement;
   #device!: GPUDevice;
@@ -804,11 +823,14 @@ export class FolkHolographicRC extends FolkBaseSet {
   #ptParamsBuffer!: GPUBuffer;
   #ptParamsView!: StructuredView;
 
-  // Pipelines
+  // Pipelines (color + mono variants for ray shaders)
   #bounceComputePipeline!: GPUComputePipeline;
   #raySeedPipeline!: GPUComputePipeline;
+  #raySeedPipelineMono!: GPUComputePipeline;
   #rayExtendPipeline!: GPUComputePipeline;
+  #rayExtendPipelineMono!: GPUComputePipeline;
   #coneMergePipeline!: GPUComputePipeline;
+  #coneMergePipelineMono!: GPUComputePipeline;
   #fluenceAccumPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
@@ -1132,10 +1154,26 @@ export class FolkHolographicRC extends FolkBaseSet {
       primitive: { topology: 'triangle-list' },
     });
 
+    const monoPair = (label: string, code: string): [GPUComputePipeline, GPUComputePipeline] => {
+      const module = device.createShaderModule({ code });
+      const color = device.createComputePipeline({
+        label, layout: 'auto',
+        compute: { module, entryPoint: 'main', constants: { MONO: 0 } },
+      });
+      const sharedLayout = device.createPipelineLayout({
+        bindGroupLayouts: [color.getBindGroupLayout(0)],
+      });
+      const mono = device.createComputePipeline({
+        label: `${label}-mono`, layout: sharedLayout,
+        compute: { module, entryPoint: 'main', constants: { MONO: 1 } },
+      });
+      return [color, mono];
+    };
+
     this.#bounceComputePipeline = computePipeline(device, 'HRC-BounceCompute', bounceComputeShader);
-    this.#raySeedPipeline = computePipeline(device, 'HRC-RaySeed', raySeedShader);
-    this.#rayExtendPipeline = computePipeline(device, 'HRC-RayExtend', rayExtendShader);
-    this.#coneMergePipeline = computePipeline(device, 'HRC-ConeMerge', coneMergeShader);
+    [this.#raySeedPipeline, this.#raySeedPipelineMono] = monoPair('HRC-RaySeed', raySeedShader);
+    [this.#rayExtendPipeline, this.#rayExtendPipelineMono] = monoPair('HRC-RayExtend', rayExtendShader);
+    [this.#coneMergePipeline, this.#coneMergePipelineMono] = monoPair('HRC-ConeMerge', coneMergeShader);
     this.#fluenceAccumPipeline = computePipeline(device, 'HRC-FluenceAccum', fluenceAccumShader);
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
     this.#ptPipeline = computePipeline(device, 'PT-PathTrace', pathTraceShader);
@@ -1491,13 +1529,17 @@ export class FolkHolographicRC extends FolkBaseSet {
     // ── Step 2: HRC cascade processing per direction ──
     const isDebugMode = this.#debugDir > 0 || this.#debugCascadeCount > 0;
     let fluenceResultIdx = 0;
+    const mono = this.monoTransmittance;
+    const seedPL = mono ? this.#raySeedPipelineMono : this.#raySeedPipeline;
+    const extPL = mono ? this.#rayExtendPipelineMono : this.#rayExtendPipeline;
+    const mergePL = mono ? this.#coneMergePipelineMono : this.#coneMergePipeline;
 
     if (!isDebugMode) {
       for (let dir = 0; dir < 4; dir++) {
         // Phase A: Ray Seed
         {
           const pass = encoder.beginComputePass();
-          pass.setPipeline(this.#raySeedPipeline);
+          pass.setPipeline(seedPL);
           pass.setBindGroup(0, this.#seedBindGroups[dir]);
           pass.dispatchWorkgroups(wg, wg);
           pass.end();
@@ -1505,7 +1547,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         // Phase B: Ray Extension (bottom-up)
         for (let level = 1; level < nc; level++) {
           const pass = encoder.beginComputePass();
-          pass.setPipeline(this.#rayExtendPipeline);
+          pass.setPipeline(extPL);
           pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
           pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
           pass.end();
@@ -1514,7 +1556,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         for (let k = 0; k < nc; k++) {
           const level = nc - 1 - k;
           const pass = encoder.beginComputePass();
-          pass.setPipeline(this.#coneMergePipeline);
+          pass.setPipeline(mergePL);
           pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
           pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
           pass.end();
@@ -1541,7 +1583,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
         {
           const pass = encoder.beginComputePass();
-          pass.setPipeline(this.#raySeedPipeline);
+          pass.setPipeline(seedPL);
           pass.setBindGroup(0, this.#seedBindGroups[dir]);
           pass.dispatchWorkgroups(wg, wg);
           pass.end();
@@ -1549,7 +1591,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
         for (let level = 1; level < ec; level++) {
           const pass = encoder.beginComputePass();
-          pass.setPipeline(this.#rayExtendPipeline);
+          pass.setPipeline(extPL);
           pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
           pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
           pass.end();
@@ -1564,7 +1606,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             ? this.#mergeBindGroups[dir][k]
             : bg(
                 device,
-                this.#coneMergePipeline.getBindGroupLayout(0),
+                mergePL.getBindGroupLayout(0),
                 this.#rayTextureViews[level],
                 this.#transTextureViews[level],
                 this.#mergeTextureViews[mergeReadIdx],
@@ -1576,7 +1618,7 @@ export class FolkHolographicRC extends FolkBaseSet {
                 },
               );
           const pass = encoder.beginComputePass();
-          pass.setPipeline(this.#coneMergePipeline);
+          pass.setPipeline(mergePL);
           pass.setBindGroup(0, mergeBG);
           pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
           pass.end();

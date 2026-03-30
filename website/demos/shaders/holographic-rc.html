@@ -141,6 +141,9 @@
       <label style="font-family: monospace; font-size: 11px; color: rgba(255, 255, 255, 0.6); cursor: pointer">
         <input id="pt-toggle" type="checkbox" /> path trace
       </label>
+      <label style="font-family: monospace; font-size: 11px; color: rgba(255, 255, 255, 0.6); cursor: pointer">
+        <input id="mono-toggle" type="checkbox" /> mono trans
+      </label>
     </div>
     <div id="help-text">
       <kbd>←</kbd><kbd>→</kbd> scene &nbsp; <kbd>0</kbd>–<kbd>9</kbd> color &nbsp; <kbd>+</kbd><kbd>−</kbd> size &nbsp;
@@ -225,6 +228,11 @@
       });
       document.getElementById('pt-toggle').addEventListener('change', (e) => {
         hrc.pathTracing = e.target.checked;
+      });
+      const monoToggle = document.getElementById('mono-toggle');
+      monoToggle.checked = hrc.monoTransmittance;
+      monoToggle.addEventListener('change', (e) => {
+        hrc.monoTransmittance = e.target.checked;
       });
 
       function updateMouseRadius() {
