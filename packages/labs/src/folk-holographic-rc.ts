@@ -552,19 +552,24 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let scattering = opacityVal.a;
   let avgOpacity = (opacityVal.r + opacityVal.g + opacityVal.b) / 3.0;
 
-  // For surface pixels (albedo > 0), the fluence AT the surface is ~0 because
-  // probes inside solid geometry have no incoming light. Sample from the nearest
-  // air pixel by checking cardinal neighbors and taking the max.
-  var fluence: vec3f;
-  if (albedo > 0.001 && avgOpacity > 0.5) {
+  // Sample fluence for bounce. For pixels with albedo, check cardinal neighbors
+  // weighted by transparency (blocks wall-interior leak) and average the non-zero
+  // results (physically correct incident fluence, avoids max-bias).
+  var fluence = textureSampleLevel(prevFluence, fluenceSampler, uv, 0.0).rgb;
+  if (albedo > 0.001) {
     let step = 1.0 / screenSize;
-    let f0 = textureSampleLevel(prevFluence, fluenceSampler, uv + vec2f(step.x, 0.0), 0.0).rgb;
-    let f1 = textureSampleLevel(prevFluence, fluenceSampler, uv - vec2f(step.x, 0.0), 0.0).rgb;
-    let f2 = textureSampleLevel(prevFluence, fluenceSampler, uv + vec2f(0.0, step.y), 0.0).rgb;
-    let f3 = textureSampleLevel(prevFluence, fluenceSampler, uv - vec2f(0.0, step.y), 0.0).rgb;
-    fluence = max(max(f0, f1), max(f2, f3));
-  } else {
-    fluence = textureSampleLevel(prevFluence, fluenceSampler, uv, 0.0).rgb;
+    let offsets = array<vec2f, 4>(vec2f(1,0), vec2f(-1,0), vec2f(0,1), vec2f(0,-1));
+    var sum = vec3f(0.0);
+    var weight = 0.0;
+    for (var d = 0; d < 4; d++) {
+      let npos = vec2i(px + i32(offsets[d].x), py + i32(offsets[d].y));
+      let nop = textureLoad(opacityTex, npos, 0);
+      let ntrans = 1.0 - (nop.r + nop.g + nop.b) / 3.0;
+      let nf = textureSampleLevel(prevFluence, fluenceSampler, uv + offsets[d] * step, 0.0).rgb * ntrans;
+      let lum = dot(nf, vec3f(0.2126, 0.7152, 0.0722));
+      if (lum > 0.001) { sum += nf; weight += 1.0; }
+    }
+    if (weight > 0.0) { fluence = sum / weight; }
   }
 
   const TWO_PI = 6.2831853;
@@ -643,7 +648,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var rayDir = vec2f(cos(angle), sin(angle));
     var throughput = vec3f(1.0);
     var radiance = vec3f(0.0);
-    var lastAirPos = rayPos;
+    var surfaceEntry = rayPos;
+    var inSurface = false;
 
     // Sample the starting pixel (the camera's own position in 2D)
     {
@@ -662,8 +668,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let avgOpacity = (opacity.r + opacity.g + opacity.b) / 3.0;
 
       if (avgOpacity < 0.001) {
-        lastAirPos = rayPos;
+        inSurface = false;
         continue;
+      }
+
+      if (!inSurface) {
+        surfaceEntry = rayPos - rayDir;
+        inSurface = true;
       }
 
       // Accumulate emission and attenuate (standard volumetric transport)
@@ -675,10 +686,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       if (all(throughput < vec3f(0.001))) {
         let albedo = em.a;
         if (albedo > 0.001 && randomFloat(&seed) < albedo) {
-          // Bounce: move back to last air position, pick new direction.
-          // Throughput restored to pre-absorption level (albedo / probability = 1).
           throughput = vec3f(1.0);
-          rayPos = lastAirPos;
+          rayPos = surfaceEntry;
+          inSurface = false;
           let newAngle = randomFloat(&seed) * 6.2831853;
           rayDir = vec2f(cos(newAngle), sin(newAngle));
           continue;
