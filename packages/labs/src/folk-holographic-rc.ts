@@ -812,6 +812,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #bounceTexture!: GPUTexture;
   #bounceTextureView!: GPUTextureView;
   #lastFluenceResultIdx = -1;
+  #fluenceZeros!: Uint8Array<ArrayBuffer>;
 
   // Path tracer accumulation (screen resolution, rgba32float for precision)
   #ptAccumTextures!: GPUTexture[];
@@ -1033,7 +1034,10 @@ export class FolkHolographicRC extends FolkBaseSet {
       ];
     };
     [this.#mergeTextures, this.#mergeTextureViews] = texPair('Merge', ps, ps, 'rgba16float');
-    [this.#fluenceTextures, this.#fluenceTextureViews] = texPair('Fluence', ps, ps, 'rgba16float');
+    const [ft0, fv0] = tex(device, 'Fluence-0', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
+    const [ft1, fv1] = tex(device, 'Fluence-1', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
+    this.#fluenceTextures = [ft0, ft1];
+    this.#fluenceTextureViews = [fv0, fv1];
 
     [this.#bounceTexture, this.#bounceTextureView] = tex(
       device,
@@ -1050,6 +1054,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       { width, height },
     );
     this.#lastFluenceResultIdx = -1;
+    this.#fluenceZeros = new Uint8Array(ps * ps * 8);
 
     this.#seedParamsView = uboView(raySeedShader, 'params');
     this.#extendParamsView = uboView(rayExtendShader, 'params');
@@ -1509,6 +1514,18 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // ── Step 2: HRC cascade processing per direction ──
+    // Clear both fluence textures — the fused level-0 merge writes to fluence
+    // at remapped coords, but edge pixels that no cascade probe maps to (due to
+    // the 1px frustum offset) would retain stale data without this clear.
+    for (const ft of this.#fluenceTextures) {
+      device.queue.writeTexture(
+        { texture: ft },
+        this.#fluenceZeros,
+        { bytesPerRow: ps * 8, rowsPerImage: ps },
+        { width: ps, height: ps },
+      );
+    }
+
     const mono = this.monoTransmittance;
     const seedPL = mono ? this.#raySeedPipelineMono : this.#raySeedPipeline;
     const extPL = mono ? this.#rayExtendPipelineMono : this.#rayExtendPipeline;
