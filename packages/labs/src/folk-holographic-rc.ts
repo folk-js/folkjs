@@ -333,7 +333,11 @@ struct MergeParams {
   nextNumCones: u32,
   isLastLevel: u32,
   aspect: f32,
-  pad0: u32,
+  direction: u32,
+  isFirstDir: u32,
+  pad1: u32,
+  pad2: u32,
+  pad3: u32,
 };
 
 @group(0) @binding(0) var rayTex: texture_2d<f32>;
@@ -341,6 +345,8 @@ struct MergeParams {
 @group(0) @binding(2) var mergeIn: texture_2d<f32>;
 @group(0) @binding(3) var mergeOut: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(4) var<uniform> params: MergeParams;
+@group(0) @binding(5) var fluencePrev: texture_2d<f32>;
+@group(0) @binding(6) var fluenceCurr: texture_storage_2d<rgba16float, write>;
 
 struct RayData { rad: vec3f, trans: vec3f }
 
@@ -413,45 +419,28 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let outX = probeIdx * nc + coneIdx;
   textureStore(mergeOut, vec2i(outX, perpIdx), vec4f(result, 1.0));
-}
-`;
 
-// ── Fluence accumulation shader ──
-// Reads the level-0 merge result and adds it to the running fluence total.
-// Operates at probe resolution. Direction determines coordinate mapping.
-// The 1-pixel offset prevents diagonal sampling overlap between frustums.
-
-const fluenceAccumShader = /*wgsl*/ `
-struct AccumParams {
-  direction: u32,
-  isFirstDir: u32,
-  probeSize: u32,
-  pad: u32,
-};
-@group(0) @binding(0) var cascadeTex: texture_2d<f32>;
-@group(0) @binding(1) var prevFluence: texture_2d<f32>;
-@group(0) @binding(2) var currFluence: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(3) var<uniform> params: AccumParams;
-
-@compute @workgroup_size(16, 16)
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let ps = params.probeSize;
-  if (gid.x >= ps || gid.y >= ps) { return; }
-  var cc: vec2i;
-  switch (params.direction) {
-    case 0u: { cc = vec2i(i32(gid.x) + 1, i32(gid.y)); }
-    case 1u: { cc = vec2i(i32(gid.y) + 1, i32(gid.x)); }
-    case 2u: { cc = vec2i(i32(ps) - i32(gid.x), i32(gid.y)); }
-    case 3u: { cc = vec2i(i32(ps) - i32(gid.y), i32(gid.x)); }
-    default: { cc = vec2i(i32(gid.x) + 1, i32(gid.y)); }
-  }
-  let cv = textureLoad(cascadeTex, cc, 0);
-  let pc = vec2i(gid.xy);
-  if (params.isFirstDir == 1u) {
-    textureStore(currFluence, pc, cv);
-  } else {
-    let prev = textureLoad(prevFluence, pc, 0);
-    textureStore(currFluence, pc, prev + cv);
+  // At level 0 (numCones==1), write directly to fluence accumulation texture.
+  // Remap from cascade-local (probeIdx, perpIdx) to screen-aligned fluence coords.
+  // This is the inverse of the old accum shader's fluence→cascade mapping.
+  if (params.numCones == 1u) {
+    let ps = i32(params.probeSize);
+    var fc: vec2i;
+    switch (params.direction) {
+      case 0u: { fc = vec2i(probeIdx - 1, perpIdx); }
+      case 1u: { fc = vec2i(perpIdx, probeIdx - 1); }
+      case 2u: { fc = vec2i(ps - probeIdx, perpIdx); }
+      case 3u: { fc = vec2i(perpIdx, ps - probeIdx); }
+      default: { fc = vec2i(probeIdx - 1, perpIdx); }
+    }
+    if (fc.x >= 0 && fc.x < ps && fc.y >= 0 && fc.y < ps) {
+      if (params.isFirstDir == 1u) {
+        textureStore(fluenceCurr, fc, vec4f(result, 1.0));
+      } else {
+        let prev = textureLoad(fluencePrev, fc, 0).rgb;
+        textureStore(fluenceCurr, fc, vec4f(prev + result, 1.0));
+      }
+    }
   }
 }
 `;
@@ -813,7 +802,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mergeTextures!: GPUTexture[];
   #mergeTextureViews!: GPUTextureView[];
 
-  // Fluence ping-pong pair (probeSize x probeSize)
+  // Fluence ping-pong pair (probeSize x probeSize).
+  // Could be a single texture with read_write storage access, but Firefox
+  // doesn't support readonly_and_readwrite_storage_textures yet.
   #fluenceTextures!: GPUTexture[];
   #fluenceTextureViews!: GPUTextureView[];
 
@@ -841,15 +832,12 @@ export class FolkHolographicRC extends FolkBaseSet {
   #rayExtendPipelineMono!: GPUComputePipeline;
   #coneMergePipeline!: GPUComputePipeline;
   #coneMergePipelineMono!: GPUComputePipeline;
-  #fluenceAccumPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
   // Pre-created bind groups (recreated on resize)
   #seedBindGroups!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
   #mergeBindGroups!: GPUBindGroup[][]; // [dir][mergeStep k]
-  #mergeResultIdx!: number; // which merge texture holds level-0 result at full cascade count
-  #accumBindGroups!: GPUBindGroup[]; // [dir] for standard 4-dir case
   #blitBindGroups!: GPUBindGroup[]; // [fluenceIdx] for final blit
   #bounceBindGroups!: GPUBindGroup[]; // [fluenceIdx] for bounce compute
 
@@ -863,8 +851,6 @@ export class FolkHolographicRC extends FolkBaseSet {
   #extendParamsView!: StructuredView;
   #mergeParamsBuffer!: GPUBuffer;
   #mergeParamsView!: StructuredView;
-  #accumParamsBuffer!: GPUBuffer;
-  #accumParamsView!: StructuredView;
   #blitParamsBuffer!: GPUBuffer;
   #blitParamsView!: StructuredView;
   #bounceParamsBuffer!: GPUBuffer;
@@ -877,9 +863,6 @@ export class FolkHolographicRC extends FolkBaseSet {
   #animationFrame = 0;
   #isRunning = false;
   #resizing = false;
-
-  #debugDir = 0;
-  #debugCascadeCount = 0;
 
   #smoothedFrameTime = 0;
   #lastFrameTimestamp = 0;
@@ -905,7 +888,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#uploadStaticParams(this.#canvas.width, this.#canvas.height);
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
-    window.addEventListener('keydown', this.#handleKeyDown);
     this.#isRunning = true;
     this.#startAnimationLoop();
     this.requestUpdate();
@@ -917,7 +899,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (this.#animationFrame) cancelAnimationFrame(this.#animationFrame);
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
-    window.removeEventListener('keydown', this.#handleKeyDown);
     this.#destroyResources();
   }
 
@@ -1073,14 +1054,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#seedParamsView = uboView(raySeedShader, 'params');
     this.#extendParamsView = uboView(rayExtendShader, 'params');
     this.#mergeParamsView = uboView(coneMergeShader, 'params');
-    this.#accumParamsView = uboView(fluenceAccumShader, 'params');
     this.#blitParamsView = uboView(blitShader, 'params');
     this.#bounceParamsView = uboView(bounceComputeShader, 'params');
 
     this.#seedParamsBuffer = ubo('SeedParams', 4 * 256);
     this.#extendParamsBuffer = ubo('ExtendParams', Math.max(1, this.#numCascades - 1) * 256);
     this.#mergeParamsBuffer = ubo('MergeParams', 4 * this.#numCascades * 256);
-    this.#accumParamsBuffer = ubo('AccumParams', 4 * 256);
     this.#blitParamsBuffer = ubo('BlitParams', this.#blitParamsView.arrayBuffer.byteLength);
     this.#bounceParamsBuffer = ubo('BounceParams', this.#bounceParamsView.arrayBuffer.byteLength);
 
@@ -1167,14 +1146,16 @@ export class FolkHolographicRC extends FolkBaseSet {
     const monoPair = (label: string, code: string): [GPUComputePipeline, GPUComputePipeline] => {
       const module = device.createShaderModule({ code });
       const color = device.createComputePipeline({
-        label, layout: 'auto',
+        label,
+        layout: 'auto',
         compute: { module, entryPoint: 'main', constants: { MONO: 0 } },
       });
       const sharedLayout = device.createPipelineLayout({
         bindGroupLayouts: [color.getBindGroupLayout(0)],
       });
       const mono = device.createComputePipeline({
-        label: `${label}-mono`, layout: sharedLayout,
+        label: `${label}-mono`,
+        layout: sharedLayout,
         compute: { module, entryPoint: 'main', constants: { MONO: 1 } },
       });
       return [color, mono];
@@ -1184,7 +1165,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     [this.#raySeedPipeline, this.#raySeedPipelineMono] = monoPair('HRC-RaySeed', raySeedShader);
     [this.#rayExtendPipeline, this.#rayExtendPipelineMono] = monoPair('HRC-RayExtend', rayExtendShader);
     [this.#coneMergePipeline, this.#coneMergePipelineMono] = monoPair('HRC-ConeMerge', coneMergeShader);
-    this.#fluenceAccumPipeline = computePipeline(device, 'HRC-FluenceAccum', fluenceAccumShader);
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
     this.#ptPipeline = computePipeline(device, 'PT-PathTrace', pathTraceShader);
     this.#ptBlitPipeline = fullscreenBlit('PT-Blit', ptBlitShader, this.#presentationFormat);
@@ -1198,11 +1178,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     const seedLayout = this.#raySeedPipeline.getBindGroupLayout(0);
     const extLayout = this.#rayExtendPipeline.getBindGroupLayout(0);
     const mergeLayout = this.#coneMergePipeline.getBindGroupLayout(0);
-    const accumLayout = this.#fluenceAccumPipeline.getBindGroupLayout(0);
     const seedPS = this.#seedParamsView.arrayBuffer.byteLength;
     const extPS = this.#extendParamsView.arrayBuffer.byteLength;
     const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
-    const accumPS = this.#accumParamsView.arrayBuffer.byteLength;
 
     this.#seedBindGroups = [0, 1, 2, 3].map((dir) =>
       bg(
@@ -1232,11 +1210,16 @@ export class FolkHolographicRC extends FolkBaseSet {
       );
     }
 
+    // Merge bind groups: include fluence textures for fused level-0 accumulation.
+    // At level 0 (k=nc-1), the shader writes to fluence. Other levels bind fluence but don't access it.
+    // Fluence ping-pong per direction: dir 0 writes [0], dir 1 reads [0] writes [1], etc.
     this.#mergeBindGroups = [];
     for (let dir = 0; dir < 4; dir++) {
       const dirBGs: GPUBindGroup[] = [];
       let readIdx = 1,
         writeIdx = 0;
+      const fluenceReadIdx = dir % 2 === 0 ? 1 : 0;
+      const fluenceWriteIdx = dir % 2 === 0 ? 0 : 1;
       for (let k = 0; k < nc; k++) {
         const level = nc - 1 - k;
         dirBGs.push(
@@ -1248,26 +1231,16 @@ export class FolkHolographicRC extends FolkBaseSet {
             this.#mergeTextureViews[readIdx],
             this.#mergeTextureViews[writeIdx],
             { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
+            this.#fluenceTextureViews[fluenceReadIdx],
+            this.#fluenceTextureViews[fluenceWriteIdx],
           ),
         );
         [readIdx, writeIdx] = [writeIdx, readIdx];
       }
       this.#mergeBindGroups.push(dirBGs);
     }
-    this.#mergeResultIdx = (nc - 1) % 2 === 0 ? 0 : 1;
 
-    const mergeResultView = this.#mergeTextureViews[this.#mergeResultIdx];
-    this.#accumBindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(
-        device,
-        accumLayout,
-        mergeResultView,
-        this.#fluenceTextureViews[dir % 2 === 0 ? 1 : 0],
-        this.#fluenceTextureViews[dir % 2 === 0 ? 0 : 1],
-        { buffer: this.#accumParamsBuffer, offset: dir * 256, size: accumPS },
-      ),
-    );
-
+    // Fluence result after 4 dirs is always in fluence[1]
     this.#blitBindGroups = [0, 1].map((idx) =>
       bg(
         device,
@@ -1307,7 +1280,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#seedParamsBuffer?.destroy();
     this.#extendParamsBuffer?.destroy();
     this.#mergeParamsBuffer?.destroy();
-    this.#accumParamsBuffer?.destroy();
     this.#blitParamsBuffer?.destroy();
     this.#bounceParamsBuffer?.destroy();
   }
@@ -1537,141 +1509,43 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // ── Step 2: HRC cascade processing per direction ──
-    const isDebugMode = this.#debugDir > 0 || this.#debugCascadeCount > 0;
-    let fluenceResultIdx = 0;
     const mono = this.monoTransmittance;
     const seedPL = mono ? this.#raySeedPipelineMono : this.#raySeedPipeline;
     const extPL = mono ? this.#rayExtendPipelineMono : this.#rayExtendPipeline;
     const mergePL = mono ? this.#coneMergePipelineMono : this.#coneMergePipeline;
 
-    if (!isDebugMode) {
-      for (let dir = 0; dir < 4; dir++) {
-        // Phase A: Ray Seed
-        {
-          const pass = encoder.beginComputePass();
-          pass.setPipeline(seedPL);
-          pass.setBindGroup(0, this.#seedBindGroups[dir]);
-          pass.dispatchWorkgroups(wg, wg);
-          pass.end();
-        }
-        // Phase B: Ray Extension (bottom-up)
-        for (let level = 1; level < nc; level++) {
-          const pass = encoder.beginComputePass();
-          pass.setPipeline(extPL);
-          pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
-          pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
-          pass.end();
-        }
-        // Phase C: Cone Merge (top-down)
-        for (let k = 0; k < nc; k++) {
-          const level = nc - 1 - k;
-          const pass = encoder.beginComputePass();
-          pass.setPipeline(mergePL);
-          pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
-          pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
-          pass.end();
-        }
-        // Phase D: Fluence Accumulation
-        {
-          const pass = encoder.beginComputePass();
-          pass.setPipeline(this.#fluenceAccumPipeline);
-          pass.setBindGroup(0, this.#accumBindGroups[dir]);
-          pass.dispatchWorkgroups(wg, wg);
-          pass.end();
-        }
+    for (let dir = 0; dir < 4; dir++) {
+      // Phase A: Ray Seed
+      {
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(seedPL);
+        pass.setBindGroup(0, this.#seedBindGroups[dir]);
+        pass.dispatchWorkgroups(wg, wg);
+        pass.end();
       }
-      fluenceResultIdx = 1;
-    } else {
-      // Debug path: subset of directions/cascades, per-frame bind groups
-      let fluenceReadIdx = 0;
-      let fluenceWriteIdx = 1;
-      let isFirstDir = true;
-
-      for (let dir = 0; dir < 4; dir++) {
-        if (this.#debugDir > 0 && dir !== this.#debugDir - 1) continue;
-        const ec = this.#debugCascadeCount > 0 ? Math.min(this.#debugCascadeCount, nc) : nc;
-
-        {
-          const pass = encoder.beginComputePass();
-          pass.setPipeline(seedPL);
-          pass.setBindGroup(0, this.#seedBindGroups[dir]);
-          pass.dispatchWorkgroups(wg, wg);
-          pass.end();
-        }
-
-        for (let level = 1; level < ec; level++) {
-          const pass = encoder.beginComputePass();
-          pass.setPipeline(extPL);
-          pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
-          pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
-          pass.end();
-        }
-
-        const usePrebuiltMerge = ec === nc;
-        let mergeReadIdx = 1,
-          mergeWriteIdx = 0;
-        for (let k = 0; k < ec; k++) {
-          const level = ec - 1 - k;
-          const mergeBG = usePrebuiltMerge
-            ? this.#mergeBindGroups[dir][k]
-            : bg(
-                device,
-                mergePL.getBindGroupLayout(0),
-                this.#rayTextureViews[level],
-                this.#transTextureViews[level],
-                this.#mergeTextureViews[mergeReadIdx],
-                this.#mergeTextureViews[mergeWriteIdx],
-                {
-                  buffer: this.#mergeParamsBuffer,
-                  offset: (dir * nc + level) * 256,
-                  size: this.#mergeParamsView.arrayBuffer.byteLength,
-                },
-              );
-          const pass = encoder.beginComputePass();
-          pass.setPipeline(mergePL);
-          pass.setBindGroup(0, mergeBG);
-          pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
-          pass.end();
-          [mergeReadIdx, mergeWriteIdx] = [mergeWriteIdx, mergeReadIdx];
-        }
-
-        const mergeResultView = usePrebuiltMerge
-          ? this.#mergeTextureViews[this.#mergeResultIdx]
-          : this.#mergeTextureViews[mergeReadIdx];
-
-        this.#accumParamsView.set({ direction: dir, isFirstDir: isFirstDir ? 1 : 0, probeSize: ps, pad: 0 });
-        device.queue.writeBuffer(this.#accumParamsBuffer, dir * 256, this.#accumParamsView.arrayBuffer);
-
-        if (isFirstDir) {
-          isFirstDir = false;
-          fluenceWriteIdx = 0;
-          fluenceReadIdx = 1;
-        } else {
-          [fluenceWriteIdx, fluenceReadIdx] = [fluenceReadIdx, fluenceWriteIdx];
-        }
-
-        const accumBG = bg(
-          device,
-          this.#fluenceAccumPipeline.getBindGroupLayout(0),
-          mergeResultView,
-          this.#fluenceTextureViews[fluenceReadIdx],
-          this.#fluenceTextureViews[fluenceWriteIdx],
-          { buffer: this.#accumParamsBuffer, offset: dir * 256, size: this.#accumParamsView.arrayBuffer.byteLength },
-        );
-        const accumPass = encoder.beginComputePass();
-        accumPass.setPipeline(this.#fluenceAccumPipeline);
-        accumPass.setBindGroup(0, accumBG);
-        accumPass.dispatchWorkgroups(wg, wg);
-        accumPass.end();
-
-        fluenceResultIdx = fluenceWriteIdx;
+      // Phase B: Ray Extension (bottom-up)
+      for (let level = 1; level < nc; level++) {
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(extPL);
+        pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
+        pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
+        pass.end();
+      }
+      // Phase C: Cone Merge (top-down) — level 0 writes directly to fluence
+      for (let k = 0; k < nc; k++) {
+        const level = nc - 1 - k;
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(mergePL);
+        pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
+        pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
+        pass.end();
       }
     }
 
-    this.#lastFluenceResultIdx = fluenceResultIdx;
+    this.#lastFluenceResultIdx = 1;
 
     // ── Step 3: Final blit ──
-    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroups[fluenceResultIdx]);
+    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroups[1]);
 
     this.#submitAndCapture(device, encoder);
   }
@@ -1818,15 +1692,14 @@ export class FolkHolographicRC extends FolkBaseSet {
           nextNumCones,
           isLastLevel: level === nc - 1 ? 1 : 0,
           aspect,
-          pad0: 0,
+          direction: dir,
+          isFirstDir: dir === 0 ? 1 : 0,
+          pad1: 0,
+          pad2: 0,
+          pad3: 0,
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
       }
-    }
-
-    for (let dir = 0; dir < 4; dir++) {
-      this.#accumParamsView.set({ direction: dir, isFirstDir: dir === 0 ? 1 : 0, probeSize: ps, pad: 0 });
-      device.queue.writeBuffer(this.#accumParamsBuffer, dir * 256, this.#accumParamsView.arrayBuffer);
     }
 
     this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
@@ -1871,27 +1744,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mouseDirty = true;
   };
 
-  #handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'd' || e.key === 'D') {
-      this.#debugDir = (this.#debugDir + 1) % 5;
-      const names = ['All', 'East', 'South', 'West', 'North'];
-      console.log(`HRC debug dir: ${names[this.#debugDir]}`);
-    }
-    if (e.key === '`' || e.key === '~') {
-      const delta = e.shiftKey ? -1 : 1;
-      this.#debugCascadeCount =
-        (((this.#debugCascadeCount + delta) % (this.#numCascades + 1)) + this.#numCascades + 1) %
-        (this.#numCascades + 1);
-      const maxSpacing =
-        this.#debugCascadeCount > 0 ? Math.pow(2, this.#debugCascadeCount - 1) : Math.pow(2, this.#numCascades - 1);
-      const label =
-        this.#debugCascadeCount === 0
-          ? `all (max spacing ${maxSpacing})`
-          : `${this.#debugCascadeCount} (max spacing ${maxSpacing})`;
-      console.log(`HRC cascades: ${label}`);
-    }
-  };
-
   #pendingScreenshot = '';
 
   saveScreenshot(filename = 'hrc-screenshot.png') {
@@ -1917,10 +1769,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       const label = this.pathTracing ? 'PT' : 'PT (frozen)';
       return ` ${label} f${this.#ptFrameIndex} ${spp}spp ${elapsed}s`;
     }
-    const dirNames = ['All', 'E', 'S', 'W', 'N'];
-    const dirLabel = this.#debugDir > 0 ? ` [${dirNames[this.#debugDir]}]` : '';
-    const ccLabel = this.#debugCascadeCount > 0 ? ` C${this.#debugCascadeCount}/${this.#numCascades}` : '';
-    return `${dirLabel}${ccLabel}`;
+    return '';
   }
 
   #updateFrameTiming(now: number) {
