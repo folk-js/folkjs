@@ -510,9 +510,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   const TWO_PI = 6.2831853;
-  let surfaceBounce = fluence * albedo;
-  let volumeScatter = fluence * scattering;
-  let bounce = (surfaceBounce + volumeScatter) / TWO_PI;
+  let reemission = scattering + (1.0 - scattering) * albedo;
+  let bounce = fluence * reemission / TWO_PI;
   textureStore(bounceOut, vec2i(px, py), vec4f(bounce, 0.0));
 }
 `;
@@ -730,6 +729,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseDirty = true;
   #mouseLightColor = { r: 0.8, g: 0.6, b: 0.3 };
   #mouseLightRadius = 10;
+  #mouseLightOpacity = SOLID_OPACITY;
+  #mouseLightAlbedo = 0;
+  #mouseLightScattering = 0;
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
 
@@ -854,6 +856,13 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   setMouseLightRadius(radius: number) {
     this.#mouseLightRadius = radius;
+    this.#mouseDirty = true;
+  }
+
+  setMouseLightMaterial(opacity: number, albedo: number, scattering: number) {
+    this.#mouseLightOpacity = opacity;
+    this.#mouseLightAlbedo = albedo;
+    this.#mouseLightScattering = scattering;
     this.#mouseDirty = true;
   }
 
@@ -1244,13 +1253,16 @@ export class FolkHolographicRC extends FolkBaseSet {
     const ry = (rad / this.#canvas.height) * 2;
     const cx = toClipX(x);
     const cy = toClipY(y);
+    const op = this.#mouseLightOpacity;
+    const al = this.#mouseLightAlbedo;
+    const sc = this.#mouseLightScattering;
     const verts: number[] = [];
     for (let i = 0; i < SEGS; i++) {
       const a0 = (i / SEGS) * Math.PI * 2;
       const a1 = ((i + 1) / SEGS) * Math.PI * 2;
-      verts.push(cx, cy, r, g, b, SOLID_OPACITY, 0, 0);
-      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, SOLID_OPACITY, 0, 0);
-      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, SOLID_OPACITY, 0, 0);
+      verts.push(cx, cy, r, g, b, op, al, sc);
+      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, op, al, sc);
+      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, op, al, sc);
     }
     this.#mouseLightVertexCount = verts.length / 8;
     this.#mouseLightBuffer = uploadVertexData(this.#device, this.#mouseLightBuffer, new Float32Array(verts));
@@ -1277,6 +1289,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#mouseDirty = false;
       this.#updateMouseLightBuffer();
     }
+    this.#updateShapeData();
 
     const { width, height } = this.#canvas;
     const device = this.#device;
