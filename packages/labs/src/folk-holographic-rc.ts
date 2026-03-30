@@ -19,12 +19,11 @@ type Line = [
 ];
 
 // Per-channel opacity for fully solid materials. 1.0 = completely opaque (zero transmittance).
-// The world opacity texture stores per-channel opacity in [0,1], not Beer-Lambert sigma.
-// This gives exact representation of solid/transparent boundaries and intuitive values
-// (0 = transparent, 0.5 = half, 1 = solid). For thick participating media where the
-// exponential falloff exp(-sigma*d) matters, convert at the boundary: opacity ≈ 1-exp(-sigma).
-// The world opacity texture uses rgba16float but could switch to rgba8unorm (256 levels
-// across 0–1) with no meaningful quality loss for practical opacity values.
+// The world opacity texture stores per-channel opacity in [0,1] as rgba8unorm (linear).
+// 256 levels is sufficient for practical opacity values. Linear encoding maximises
+// precision near 0 and 1 (solid/transparent boundaries). A logarithmic or perceptual
+// encoding could give finer control in mid-range opacities for participating media,
+// but would complicate the seed shader's pow() transmittance calculation.
 const SOLID_OPACITY = 1;
 
 function nextPowerOf2(n: number): number {
@@ -182,10 +181,9 @@ struct SeedParams {
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let texelX = i32(gid.x);
+  let probeIdx = i32(gid.x);
   let perpIdx = i32(gid.y);
   let ps = i32(params.probeSize);
-  let probeIdx = texelX / 2;
   if (probeIdx >= ps || perpIdx >= ps) { return; }
 
   let wp = vec2f(params.originX, params.originY)
@@ -203,9 +201,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     rad = (emission + bounce) * (1.0 - trans);
   }
 
-  let coord = vec2i(texelX, perpIdx);
-  textureStore(rayOut, coord, vec4f(rad, 0.0));
-  textureStore(transOut, coord, vec4f(trans, 1.0));
+  let radV = vec4f(rad, 0.0);
+  let transV = vec4f(trans, 1.0);
+  textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), radV);
+  textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), radV);
+  textureStore(transOut, vec2i(probeIdx * 2, perpIdx), transV);
+  textureStore(transOut, vec2i(probeIdx * 2 + 1, perpIdx), transV);
 }
 `;
 
@@ -773,6 +774,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #lineUBO?: GPUBuffer;
   #lineBindGroup?: GPUBindGroup;
   #mousePosition = { x: 0, y: 0 };
+  #mouseDirty = true;
   #mouseLightColor = { r: 0.8, g: 0.6, b: 0.3 };
   #mouseLightRadius = 10;
   #mouseLightBuffer?: GPUBuffer;
@@ -823,6 +825,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   #extendBindGroups!: GPUBindGroup[];
   #mergeBindGroups!: GPUBindGroup[][]; // [dir][mergeStep k]
   #mergeResultIdx!: number; // which merge texture holds level-0 result at full cascade count
+  #accumBindGroups!: GPUBindGroup[]; // [dir] for standard 4-dir case
+  #blitBindGroups!: GPUBindGroup[]; // [fluenceIdx] for final blit
+  #bounceBindGroups!: GPUBindGroup[]; // [fluenceIdx] for bounce compute
 
   // Sampler
   #linearSampler!: GPUSampler;
@@ -915,10 +920,12 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   setMouseLightColor(r: number, g: number, b: number) {
     this.#mouseLightColor = { r, g, b };
+    this.#mouseDirty = true;
   }
 
   setMouseLightRadius(radius: number) {
     this.#mouseLightRadius = radius;
+    this.#mouseDirty = true;
   }
 
   eraseAt(x: number, y: number, radius: number) {
@@ -994,7 +1001,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#opacityTexture = device.createTexture({
       label: 'HRC-Opacity',
       size: { width, height },
-      format: 'rgba16float',
+      format: 'rgba8unorm',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.#opacityTextureView = this.#opacityTexture.createView();
@@ -1148,7 +1155,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       fragment: {
         module: worldModule,
         entryPoint: 'fragment_main',
-        targets: [{ format: 'rgba16float' as GPUTextureFormat }, { format: 'rgba16float' as GPUTextureFormat }],
+        targets: [{ format: 'rgba16float' as GPUTextureFormat }, { format: 'rgba8unorm' as GPUTextureFormat }],
       },
       primitive: { topology: 'triangle-list' },
     });
@@ -1179,7 +1186,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       fragment: {
         module: lineModule,
         entryPoint: 'fragment_main',
-        targets: [{ format: 'rgba16float' as GPUTextureFormat }, { format: 'rgba16float' as GPUTextureFormat }],
+        targets: [{ format: 'rgba16float' as GPUTextureFormat }, { format: 'rgba8unorm' as GPUTextureFormat }],
       },
       primitive: { topology: 'triangle-list' },
     });
@@ -1199,8 +1206,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#coneMergePipeline = createComputePipeline(device, 'HRC-ConeMerge', coneMergeShader);
     this.#fluenceAccumPipeline = createComputePipeline(device, 'HRC-FluenceAccum', fluenceAccumShader);
 
-    this.#createStaticBindGroups();
-
     const blitModule = device.createShaderModule({ code: blitShader });
     this.#renderPipeline = device.createRenderPipeline({
       label: 'HRC-Blit',
@@ -1213,6 +1218,8 @@ export class FolkHolographicRC extends FolkBaseSet {
       },
       primitive: { topology: 'triangle-strip' },
     });
+
+    this.#createStaticBindGroups();
   }
 
   #createStaticBindGroups() {
@@ -1296,6 +1303,52 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#mergeBindGroups.push(dirBGs);
     }
     this.#mergeResultIdx = (nc - 1) % 2 === 0 ? 0 : 1;
+
+    const mergeResultView = this.#mergeTextureViews[this.#mergeResultIdx];
+    const accumParamSize = this.#accumParamsView.arrayBuffer.byteLength;
+    this.#accumBindGroups = [];
+    for (let dir = 0; dir < 4; dir++) {
+      const fluenceReadIdx = dir % 2 === 0 ? 1 : 0;
+      const fluenceWriteIdx = dir % 2 === 0 ? 0 : 1;
+      this.#accumBindGroups.push(
+        device.createBindGroup({
+          layout: this.#fluenceAccumPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: mergeResultView },
+            { binding: 1, resource: this.#fluenceTextureViews[fluenceReadIdx] },
+            { binding: 2, resource: this.#fluenceTextureViews[fluenceWriteIdx] },
+            { binding: 3, resource: { buffer: this.#accumParamsBuffer, offset: dir * 256, size: accumParamSize } },
+          ],
+        }),
+      );
+    }
+
+    this.#blitBindGroups = [0, 1].map((idx) =>
+      device.createBindGroup({
+        layout: this.#renderPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this.#fluenceTextureViews[idx] },
+          { binding: 1, resource: this.#emissionTextureView },
+          { binding: 2, resource: this.#opacityTextureView },
+          { binding: 3, resource: { buffer: this.#blitParamsBuffer } },
+          { binding: 4, resource: this.#linearSampler },
+        ],
+      }),
+    );
+
+    this.#bounceBindGroups = [0, 1].map((idx) =>
+      device.createBindGroup({
+        layout: this.#bounceComputePipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this.#fluenceTextureViews[idx] },
+          { binding: 1, resource: this.#linearSampler },
+          { binding: 2, resource: this.#emissionTextureView },
+          { binding: 3, resource: this.#opacityTextureView },
+          { binding: 4, resource: this.#bounceTextureView },
+          { binding: 5, resource: { buffer: this.#bounceParamsBuffer } },
+        ],
+      }),
+    );
   }
 
   #destroyResources() {
@@ -1468,7 +1521,10 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#lineBufferDirty = false;
       this.#updateLineBuffer();
     }
-    this.#updateMouseLightBuffer();
+    if (this.#mouseDirty) {
+      this.#mouseDirty = false;
+      this.#updateMouseLightBuffer();
+    }
 
     const { width, height } = this.#canvas;
     const device = this.#device;
@@ -1549,156 +1605,166 @@ export class FolkHolographicRC extends FolkBaseSet {
       );
     }
     if (this.bounces && this.#lastFluenceResultIdx >= 0) {
-      const bounceBG = device.createBindGroup({
-        layout: this.#bounceComputePipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.#fluenceTextureViews[this.#lastFluenceResultIdx] },
-          { binding: 1, resource: this.#linearSampler },
-          { binding: 2, resource: this.#emissionTextureView },
-          { binding: 3, resource: this.#opacityTextureView },
-          { binding: 4, resource: this.#bounceTextureView },
-          { binding: 5, resource: { buffer: this.#bounceParamsBuffer } },
-        ],
-      });
       const pass = encoder.beginComputePass();
       pass.setPipeline(this.#bounceComputePipeline);
-      pass.setBindGroup(0, bounceBG);
+      pass.setBindGroup(0, this.#bounceBindGroups[this.#lastFluenceResultIdx]);
       pass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16));
       pass.end();
     }
 
     // ── Step 2: HRC cascade processing per direction ──
-    let fluenceReadIdx = 0;
-    let fluenceWriteIdx = 1;
+    const isDebugMode = this.#debugDir > 0 || this.#debugCascadeCount > 0;
     let fluenceResultIdx = 0;
-    let isFirstDir = true;
 
-    for (let dir = 0; dir < 4; dir++) {
-      if (this.#debugDir > 0 && dir !== this.#debugDir - 1) continue;
+    if (!isDebugMode) {
+      // Standard path: 4 directions, full cascades, pre-created bind groups
+      for (let dir = 0; dir < 4; dir++) {
+        // Phase A: Ray Seed
+        {
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(this.#raySeedPipeline);
+          pass.setBindGroup(0, this.#seedBindGroups[dir]);
+          pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
+          pass.end();
+        }
 
-      const ec = this.#debugCascadeCount > 0 ? Math.min(this.#debugCascadeCount, nc) : nc;
+        // Phase B: Ray Extension (bottom-up)
+        for (let level = 1; level < nc; level++) {
+          const numProbes = ps >> level;
+          const rayWidth = numProbes * ((1 << level) + 1);
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(this.#rayExtendPipeline);
+          pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
+          pass.dispatchWorkgroups(Math.ceil(rayWidth / 16), Math.ceil(ps / 16));
+          pass.end();
+        }
 
-      // Phase A: Ray Seed
-      {
-        const pass = encoder.beginComputePass();
-        pass.setPipeline(this.#raySeedPipeline);
-        pass.setBindGroup(0, this.#seedBindGroups[dir]);
-        pass.dispatchWorkgroups(Math.ceil((ps * 2) / 16), Math.ceil(ps / 16));
-        pass.end();
+        // Phase C: Cone Merge (top-down)
+        for (let k = 0; k < nc; k++) {
+          const level = nc - 1 - k;
+          const flatSize = (ps >> level) * (1 << level);
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(this.#coneMergePipeline);
+          pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
+          pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(flatSize / 16));
+          pass.end();
+        }
+
+        // Phase D: Fluence Accumulation
+        const accumPass = encoder.beginComputePass();
+        accumPass.setPipeline(this.#fluenceAccumPipeline);
+        accumPass.setBindGroup(0, this.#accumBindGroups[dir]);
+        accumPass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
+        accumPass.end();
       }
+      // After 4 dirs starting with write=0, alternating: result is in fluence[1]
+      fluenceResultIdx = 1;
+    } else {
+      // Debug path: subset of directions/cascades, per-frame bind groups
+      let fluenceReadIdx = 0;
+      let fluenceWriteIdx = 1;
+      let isFirstDir = true;
 
-      // Phase B: Ray Extension (bottom-up)
-      for (let level = 1; level < ec; level++) {
-        const interval = 1 << level;
-        const numRays = interval + 1;
-        const numProbes = ps >> level;
-        const rayWidth = numProbes * numRays;
+      for (let dir = 0; dir < 4; dir++) {
+        if (this.#debugDir > 0 && dir !== this.#debugDir - 1) continue;
+        const ec = this.#debugCascadeCount > 0 ? Math.min(this.#debugCascadeCount, nc) : nc;
 
-        const pass = encoder.beginComputePass();
-        pass.setPipeline(this.#rayExtendPipeline);
-        pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
-        pass.dispatchWorkgroups(Math.ceil(rayWidth / 16), Math.ceil(ps / 16));
-        pass.end();
-      }
+        {
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(this.#raySeedPipeline);
+          pass.setBindGroup(0, this.#seedBindGroups[dir]);
+          pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
+          pass.end();
+        }
 
-      // Phase C: Cone Merge (top-down)
-      const usePrebuiltMerge = ec === nc;
-      let mergeReadIdx = 1;
-      let mergeWriteIdx = 0;
-      for (let k = 0; k < ec; k++) {
-        const level = ec - 1 - k;
-        const numCones = 1 << level;
-        const numProbes = ps >> level;
-        const flatSize = numProbes * numCones;
+        for (let level = 1; level < ec; level++) {
+          const numProbes = ps >> level;
+          const rayWidth = numProbes * ((1 << level) + 1);
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(this.#rayExtendPipeline);
+          pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
+          pass.dispatchWorkgroups(Math.ceil(rayWidth / 16), Math.ceil(ps / 16));
+          pass.end();
+        }
 
-        const bg = usePrebuiltMerge
-          ? this.#mergeBindGroups[dir][k]
-          : device.createBindGroup({
-              layout: this.#coneMergePipeline.getBindGroupLayout(0),
-              entries: [
-                { binding: 0, resource: this.#rayTextureViews[level] },
-                { binding: 1, resource: this.#transTextureViews[level] },
-                { binding: 2, resource: this.#mergeTextureViews[mergeReadIdx] },
-                { binding: 3, resource: this.#mergeTextureViews[mergeWriteIdx] },
-                {
-                  binding: 4,
-                  resource: {
-                    buffer: this.#mergeParamsBuffer,
-                    offset: (dir * nc + level) * 256,
-                    size: this.#mergeParamsView.arrayBuffer.byteLength,
+        const usePrebuiltMerge = ec === nc;
+        let mergeReadIdx = 1;
+        let mergeWriteIdx = 0;
+        for (let k = 0; k < ec; k++) {
+          const level = ec - 1 - k;
+          const flatSize = (ps >> level) * (1 << level);
+          const bg = usePrebuiltMerge
+            ? this.#mergeBindGroups[dir][k]
+            : device.createBindGroup({
+                layout: this.#coneMergePipeline.getBindGroupLayout(0),
+                entries: [
+                  { binding: 0, resource: this.#rayTextureViews[level] },
+                  { binding: 1, resource: this.#transTextureViews[level] },
+                  { binding: 2, resource: this.#mergeTextureViews[mergeReadIdx] },
+                  { binding: 3, resource: this.#mergeTextureViews[mergeWriteIdx] },
+                  {
+                    binding: 4,
+                    resource: {
+                      buffer: this.#mergeParamsBuffer,
+                      offset: (dir * nc + level) * 256,
+                      size: this.#mergeParamsView.arrayBuffer.byteLength,
+                    },
                   },
-                },
-              ],
-            });
-        const pass = encoder.beginComputePass();
-        pass.setPipeline(this.#coneMergePipeline);
-        pass.setBindGroup(0, bg);
-        pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(flatSize / 16));
-        pass.end();
+                ],
+              });
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(this.#coneMergePipeline);
+          pass.setBindGroup(0, bg);
+          pass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(flatSize / 16));
+          pass.end();
+          const tmp = mergeReadIdx;
+          mergeReadIdx = mergeWriteIdx;
+          mergeWriteIdx = tmp;
+        }
 
-        const tmp = mergeReadIdx;
-        mergeReadIdx = mergeWriteIdx;
-        mergeWriteIdx = tmp;
-      }
+        const mergeResultView = usePrebuiltMerge
+          ? this.#mergeTextureViews[this.#mergeResultIdx]
+          : this.#mergeTextureViews[mergeReadIdx];
 
-      const mergeResultView = usePrebuiltMerge
-        ? this.#mergeTextureViews[this.#mergeResultIdx]
-        : this.#mergeTextureViews[mergeReadIdx];
+        this.#accumParamsView.set({ direction: dir, isFirstDir: isFirstDir ? 1 : 0, probeSize: ps, pad: 0 });
+        device.queue.writeBuffer(this.#accumParamsBuffer, dir * 256, this.#accumParamsView.arrayBuffer);
 
-      // Phase D: Fluence Accumulation
-      this.#accumParamsView.set({ direction: dir, isFirstDir: isFirstDir ? 1 : 0, probeSize: ps });
-      device.queue.writeBuffer(this.#accumParamsBuffer, dir * 256, this.#accumParamsView.arrayBuffer);
+        if (isFirstDir) {
+          isFirstDir = false;
+          fluenceWriteIdx = 0;
+          fluenceReadIdx = 1;
+        } else {
+          const tmp2 = fluenceWriteIdx;
+          fluenceWriteIdx = fluenceReadIdx;
+          fluenceReadIdx = tmp2;
+        }
 
-      if (isFirstDir) {
-        isFirstDir = false;
-        fluenceWriteIdx = 0;
-        fluenceReadIdx = 1;
-      } else {
-        const tmp2 = fluenceWriteIdx;
-        fluenceWriteIdx = fluenceReadIdx;
-        fluenceReadIdx = tmp2;
-      }
-
-      const accumBG = device.createBindGroup({
-        layout: this.#fluenceAccumPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: mergeResultView },
-          { binding: 1, resource: this.#fluenceTextureViews[fluenceReadIdx] },
-          { binding: 2, resource: this.#fluenceTextureViews[fluenceWriteIdx] },
-          {
-            binding: 3,
-            resource: {
-              buffer: this.#accumParamsBuffer,
-              offset: dir * 256,
-              size: this.#accumParamsView.arrayBuffer.byteLength,
+        const accumBG = device.createBindGroup({
+          layout: this.#fluenceAccumPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: mergeResultView },
+            { binding: 1, resource: this.#fluenceTextureViews[fluenceReadIdx] },
+            { binding: 2, resource: this.#fluenceTextureViews[fluenceWriteIdx] },
+            {
+              binding: 3,
+              resource: { buffer: this.#accumParamsBuffer, offset: dir * 256, size: this.#accumParamsView.arrayBuffer.byteLength },
             },
-          },
-        ],
-      });
-      const accumPass = encoder.beginComputePass();
-      accumPass.setPipeline(this.#fluenceAccumPipeline);
-      accumPass.setBindGroup(0, accumBG);
-      accumPass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
-      accumPass.end();
+          ],
+        });
+        const accumPass = encoder.beginComputePass();
+        accumPass.setPipeline(this.#fluenceAccumPipeline);
+        accumPass.setBindGroup(0, accumBG);
+        accumPass.dispatchWorkgroups(Math.ceil(ps / 16), Math.ceil(ps / 16));
+        accumPass.end();
 
-      fluenceResultIdx = fluenceWriteIdx;
+        fluenceResultIdx = fluenceWriteIdx;
+      }
     }
 
     this.#lastFluenceResultIdx = fluenceResultIdx;
 
     // ── Step 3: Final blit ──
     {
-      const blitBG = device.createBindGroup({
-        layout: this.#renderPipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: this.#fluenceTextureViews[fluenceResultIdx] },
-          { binding: 1, resource: this.#emissionTextureView },
-          { binding: 2, resource: this.#opacityTextureView },
-          { binding: 3, resource: { buffer: this.#blitParamsBuffer } },
-          { binding: 4, resource: this.#linearSampler },
-        ],
-      });
-
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
@@ -1710,7 +1776,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         ],
       });
       pass.setPipeline(this.#renderPipeline);
-      pass.setBindGroup(0, blitBG);
+      pass.setBindGroup(0, this.#blitBindGroups[fluenceResultIdx]);
       pass.setViewport(0, 0, width, height, 0, 1);
       pass.draw(4);
       pass.end();
@@ -1891,9 +1957,8 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
     }
 
-    this.#accumParamsView.set({ direction: 0, isFirstDir: 0, probeSize: ps, pad: 0 });
     for (let dir = 0; dir < 4; dir++) {
-      this.#accumParamsView.set({ direction: dir });
+      this.#accumParamsView.set({ direction: dir, isFirstDir: dir === 0 ? 1 : 0, probeSize: ps, pad: 0 });
       device.queue.writeBuffer(this.#accumParamsBuffer, dir * 256, this.#accumParamsView.arrayBuffer);
     }
 
@@ -1936,6 +2001,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const rect = this.getBoundingClientRect();
     this.#mousePosition.x = e.clientX - rect.left;
     this.#mousePosition.y = e.clientY - rect.top;
+    this.#mouseDirty = true;
   };
 
   #handleKeyDown = (e: KeyboardEvent) => {
