@@ -19,6 +19,7 @@ export class FolkBaseSet extends ReactiveElement {
       position: absolute;
       inset: 0;
       pointer-events: none;
+      overflow: hidden;
     }
 
     ::slotted(*) {
