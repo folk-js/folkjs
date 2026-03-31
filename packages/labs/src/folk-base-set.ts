@@ -20,6 +20,10 @@ export class FolkBaseSet extends ReactiveElement {
       inset: 0;
       pointer-events: none;
       overflow: hidden;
+      scrollbar-width: none;
+    }
+    :host::-webkit-scrollbar {
+      display: none;
     }
 
     ::slotted(*) {
