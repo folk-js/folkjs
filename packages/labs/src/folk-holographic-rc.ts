@@ -24,6 +24,7 @@ function nextPowerOf2(n: number): number {
 
 const TEX_RENDER = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
 const TEX_STORAGE = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING;
+const SKY_CIRCLE_SIZE = 256;
 
 function uboView(shader: string, name: string): StructuredView {
   return makeStructuredView(makeShaderDataDefinitions(shader).uniforms[name]);
@@ -300,7 +301,7 @@ struct MergeParams {
   aspect: f32,
   direction: u32,
   isFirstDir: u32,
-  pad1: u32,
+  skyShift: u32,
   pad2: u32,
   pad3: u32,
 };
@@ -311,6 +312,7 @@ struct MergeParams {
 @group(0) @binding(3) var<uniform> params: MergeParams;
 @group(0) @binding(4) var fluencePrev: texture_2d<f32>;
 @group(0) @binding(5) var fluenceCurr: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(6) var skyPrefixTex: texture_2d<f32>;
 
 struct RayData { rad: vec3f, trans: f32 }
 
@@ -341,6 +343,14 @@ fn angWeight(subCone: u32, numAng: u32) -> f32 {
   return atan2((2.0 * s - N + 2.0) * a, N) - atan2((2.0 * s - N) * a, N);
 }
 
+fn loadSkyFluence(subCone: u32) -> vec3f {
+  let base = subCone << params.skyShift;
+  let end = base + (1u << params.skyShift);
+  let row = i32(params.direction);
+  return textureLoad(skyPrefixTex, vec2i(i32(end), row), 0).rgb
+       - textureLoad(skyPrefixTex, vec2i(i32(base), row), 0).rgb;
+}
+
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let perpIdx = i32(gid.x);
@@ -364,14 +374,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let align = select(1, 2, isEven);
 
     let farX = (probeIdx + align) * nc + i32(subCone);
-    let farCone = loadMerge(farX, perpIdx + perpOff * align);
+    let farPerp = perpIdx + perpOff * align;
+    var farCone: vec3f;
+    if (params.isLastLevel == 1u ||
+        farX < 0 || farX >= i32(params.probeSize) ||
+        farPerp < 0 || farPerp >= i32(params.probeSize)) {
+      farCone = loadSkyFluence(subCone);
+    } else {
+      farCone = textureLoad(mergeIn, vec2i(farX, farPerp), 0).rgb;
+    }
 
     if (isEven) {
       let ext = loadRay(probeIdx + 1, vrayI, perpIdx + perpOff);
       let cRad = ray.rad + ext.rad * ray.trans;
       let cTrans = ray.trans * ext.trans;
       let merged = cRad * cW + farCone * cTrans;
-      let nearCone = loadMerge(probeIdx * nc + i32(subCone), perpIdx);
+      var nearCone: vec3f;
+      if (params.isLastLevel == 1u) {
+        nearCone = loadSkyFluence(subCone);
+      } else {
+        nearCone = loadMerge(probeIdx * nc + i32(subCone), perpIdx);
+      }
       result += (merged + nearCone) * 0.5;
     } else {
       result += ray.rad * cW + farCone * ray.trans;
@@ -539,6 +562,15 @@ struct PTParams {
 @group(0) @binding(2) var accumTex: texture_2d<f32>;
 @group(0) @binding(3) var outTex: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(4) var<uniform> params: PTParams;
+@group(0) @binding(5) var skyTex: texture_2d<f32>;
+
+fn sampleSky(dir: vec2f) -> vec3f {
+  let angle = atan2(dir.y, dir.x);
+  let u = (angle + 3.14159265) / 6.28318530;
+  let skyW = f32(textureDimensions(skyTex, 0).x);
+  let skyI = clamp(i32(u * skyW), 0, i32(skyW) - 1);
+  return textureLoad(skyTex, vec2i(skyI, 0), 0).rgb;
+}
 
 fn pcgHash(v: u32) -> u32 {
   var s = v * 747796405u + 2891336453u;
@@ -599,6 +631,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let opacity = w.a;
 
       if (opacity < 0.001) {
+        let rpx = vec2i(i32(floor(rayPos.x)), i32(floor(rayPos.y)));
+        if (rpx.x < 0 || rpx.y < 0 || rpx.x >= i32(params.screenW) || rpx.y >= i32(params.screenH)) {
+          radiance += throughput * sampleSky(rayDir);
+          break;
+        }
         inSurface = false;
         continue;
       }
@@ -755,6 +792,16 @@ export class FolkHolographicRC extends FolkBaseSet {
   #lastFluenceResultIdx = -1;
   #fluenceZeroBuffer!: GPUBuffer;
 
+  // Sky circle texture (1D radiance from every angle, stored as 2D with height=1)
+  #skyTexture!: GPUTexture;
+  #skyTextureView!: GPUTextureView;
+  #skyCircleData = new Float32Array(SKY_CIRCLE_SIZE * 4);
+
+  // Sky prefix sum texture for O(1) sky integration at any cascade level.
+  // Width = probeSize+1 (prefix sum entries), Height = 4 (one row per direction).
+  #skyPrefixSumTexture!: GPUTexture;
+  #skyPrefixSumTextureView!: GPUTextureView;
+
   // Path tracer accumulation (screen resolution, rgba32float for precision)
   #ptAccumTextures!: GPUTexture[];
   #ptAccumTextureViews!: GPUTextureView[];
@@ -879,6 +926,129 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#lineBufferDirty = true;
   }
 
+  setSkyColor(r: number, g: number, b: number) {
+    for (let i = 0; i < SKY_CIRCLE_SIZE; i++) {
+      this.#skyCircleData[i * 4] = r;
+      this.#skyCircleData[i * 4 + 1] = g;
+      this.#skyCircleData[i * 4 + 2] = b;
+      this.#skyCircleData[i * 4 + 3] = 1;
+    }
+    this.#uploadSkyCircle();
+  }
+
+  setSkyGradient(topColor: [number, number, number], bottomColor: [number, number, number]) {
+    for (let i = 0; i < SKY_CIRCLE_SIZE; i++) {
+      const angle = (i / SKY_CIRCLE_SIZE) * Math.PI * 2 - Math.PI;
+      const t = Math.sin(angle) * 0.5 + 0.5;
+      this.#skyCircleData[i * 4] = topColor[0] * (1 - t) + bottomColor[0] * t;
+      this.#skyCircleData[i * 4 + 1] = topColor[1] * (1 - t) + bottomColor[1] * t;
+      this.#skyCircleData[i * 4 + 2] = topColor[2] * (1 - t) + bottomColor[2] * t;
+      this.#skyCircleData[i * 4 + 3] = 1;
+    }
+    this.#uploadSkyCircle();
+  }
+
+  setSkyCircle(data: Float32Array) {
+    if (data.length !== SKY_CIRCLE_SIZE * 4) {
+      throw new Error(`Sky circle data must have ${SKY_CIRCLE_SIZE * 4} elements (${SKY_CIRCLE_SIZE} RGBA texels)`);
+    }
+    this.#skyCircleData.set(data);
+    this.#uploadSkyCircle();
+  }
+
+  setSkyDirectional(angle: number, color: [number, number, number], angularRadius = 0.05) {
+    const invTwoSigmaSq = 1 / (2 * angularRadius * angularRadius);
+    for (let i = 0; i < SKY_CIRCLE_SIZE; i++) {
+      const texAngle = (i / SKY_CIRCLE_SIZE) * Math.PI * 2 - Math.PI;
+      let delta = texAngle - angle;
+      if (delta > Math.PI) delta -= Math.PI * 2;
+      if (delta < -Math.PI) delta += Math.PI * 2;
+      const intensity = Math.exp(-delta * delta * invTwoSigmaSq);
+      this.#skyCircleData[i * 4] = color[0] * intensity;
+      this.#skyCircleData[i * 4 + 1] = color[1] * intensity;
+      this.#skyCircleData[i * 4 + 2] = color[2] * intensity;
+      this.#skyCircleData[i * 4 + 3] = 1;
+    }
+    this.#uploadSkyCircle();
+  }
+
+  clearSky() {
+    this.#skyCircleData.fill(0);
+    this.#uploadSkyCircle();
+  }
+
+  #uploadSkyCircle() {
+    if (!this.#device || !this.#skyTexture) return;
+    this.#device.queue.writeTexture(
+      { texture: this.#skyTexture },
+      this.#skyCircleData,
+      { bytesPerRow: SKY_CIRCLE_SIZE * 16 },
+      { width: SKY_CIRCLE_SIZE, height: 1 },
+    );
+    this.#computeSkyPrefixSums();
+  }
+
+  #computeSkyPrefixSums() {
+    if (!this.#device || !this.#skyPrefixSumTexture || !this.#canvas) return;
+    const ps = this.#ps;
+    const { width, height } = this.#canvas;
+    const rowLen = ps + 1;
+    const data = new Float32Array(rowLen * 4 * 4);
+
+    for (let dir = 0; dir < 4; dir++) {
+      const [sa, sp] = dirScales(dir, width, height, ps);
+      const aspect = sp / sa;
+      const rowOff = dir * rowLen * 4;
+
+      data[rowOff] = 0;
+      data[rowOff + 1] = 0;
+      data[rowOff + 2] = 0;
+      data[rowOff + 3] = 0;
+
+      for (let s = 0; s < ps; s++) {
+        const N = ps;
+        const slope = (2 * s - N + 1) * aspect / N;
+        let angle: number;
+        switch (dir) {
+          case 0: angle = Math.atan2(slope, 1); break;
+          case 1: angle = Math.atan2(1, slope); break;
+          case 2: angle = Math.atan2(slope, -1); break;
+          default: angle = Math.atan2(-1, slope); break;
+        }
+        const u = (angle + Math.PI) / (Math.PI * 2);
+        const skyIdx = Math.max(0, Math.min(SKY_CIRCLE_SIZE - 1, Math.floor(u * SKY_CIRCLE_SIZE)));
+        const skyR = this.#skyCircleData[skyIdx * 4];
+        const skyG = this.#skyCircleData[skyIdx * 4 + 1];
+        const skyB = this.#skyCircleData[skyIdx * 4 + 2];
+
+        const cW = Math.atan2((2 * s - N + 2) * aspect, N) - Math.atan2((2 * s - N) * aspect, N);
+
+        const prevOff = rowOff + s * 4;
+        const currOff = rowOff + (s + 1) * 4;
+        data[currOff] = data[prevOff] + skyR * cW;
+        data[currOff + 1] = data[prevOff + 1] + skyG * cW;
+        data[currOff + 2] = data[prevOff + 2] + skyB * cW;
+        data[currOff + 3] = 0;
+      }
+    }
+
+    const bytesPerRow = rowLen * 16;
+    const alignedBytesPerRow = Math.ceil(bytesPerRow / 256) * 256;
+    const padded = new Float32Array((alignedBytesPerRow / 4) * 4);
+    for (let dir = 0; dir < 4; dir++) {
+      const srcOff = dir * rowLen * 4;
+      const dstOff = dir * (alignedBytesPerRow / 4);
+      padded.set(data.subarray(srcOff, srcOff + rowLen * 4), dstOff);
+    }
+
+    this.#device.queue.writeTexture(
+      { texture: this.#skyPrefixSumTexture },
+      padded,
+      { bytesPerRow: alignedBytesPerRow, rowsPerImage: 4 },
+      { width: rowLen, height: 4 },
+    );
+  }
+
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
     if (!this.#device) return;
@@ -971,6 +1141,25 @@ export class FolkHolographicRC extends FolkBaseSet {
       { bytesPerRow: width * 8, rowsPerImage: height },
       { width, height },
     );
+    [this.#skyTexture, this.#skyTextureView] = tex(
+      device,
+      'Sky',
+      SKY_CIRCLE_SIZE,
+      1,
+      'rgba32float',
+      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    );
+    this.#uploadSkyCircle();
+
+    [this.#skyPrefixSumTexture, this.#skyPrefixSumTextureView] = tex(
+      device,
+      'SkyPrefixSum',
+      ps + 1,
+      4,
+      'rgba32float',
+      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    );
+
     this.#lastFluenceResultIdx = -1;
     const zeroSize = ps * ps * 8;
     this.#fluenceZeroBuffer = device.createBuffer({ size: zeroSize, usage: GPUBufferUsage.COPY_SRC });
@@ -1090,36 +1279,46 @@ export class FolkHolographicRC extends FolkBaseSet {
     const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
 
     this.#seedBindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(device, seedLayout,
-        this.#worldTextureView, this.#bounceTextureView,
-        this.#rayTextureViews[0],
-        { buffer: this.#seedParamsBuffer, offset: dir * 256, size: seedPS },
-      ),
+      bg(device, seedLayout, this.#worldTextureView, this.#bounceTextureView, this.#rayTextureViews[0], {
+        buffer: this.#seedParamsBuffer,
+        offset: dir * 256,
+        size: seedPS,
+      }),
     );
 
     this.#extendBindGroups = [];
     for (let level = 1; level < nc; level++) {
-      this.#extendBindGroups.push(bg(device, extLayout,
-        this.#rayTextureViews[level - 1],
-        this.#rayTextureViews[level],
-        { buffer: this.#extendParamsBuffer, offset: (level - 1) * 256, size: extPS },
-      ));
+      this.#extendBindGroups.push(
+        bg(device, extLayout, this.#rayTextureViews[level - 1], this.#rayTextureViews[level], {
+          buffer: this.#extendParamsBuffer,
+          offset: (level - 1) * 256,
+          size: extPS,
+        }),
+      );
     }
 
     this.#mergeBindGroups = [];
     for (let dir = 0; dir < 4; dir++) {
       const dirBGs: GPUBindGroup[] = [];
-      let readIdx = 1, writeIdx = 0;
+      let readIdx = 1,
+        writeIdx = 0;
       const fReadIdx = dir % 2 === 0 ? 1 : 0;
       const fWriteIdx = dir % 2 === 0 ? 0 : 1;
       for (let k = 0; k < nc; k++) {
         const level = nc - 1 - k;
-        dirBGs.push(bg(device, mergeLayout,
-          this.#rayTextureViews[level],
-          this.#mergeTextureViews[readIdx], this.#mergeTextureViews[writeIdx],
-          { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
-          this.#fluenceTextureViews[fReadIdx], this.#fluenceTextureViews[fWriteIdx],
-        ));
+        dirBGs.push(
+          bg(
+            device,
+            mergeLayout,
+            this.#rayTextureViews[level],
+            this.#mergeTextureViews[readIdx],
+            this.#mergeTextureViews[writeIdx],
+            { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
+            this.#fluenceTextureViews[fReadIdx],
+            this.#fluenceTextureViews[fWriteIdx],
+            this.#skyPrefixSumTextureView,
+          ),
+        );
         [readIdx, writeIdx] = [writeIdx, readIdx];
       }
       this.#mergeBindGroups.push(dirBGs);
@@ -1158,6 +1357,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#fluenceTextures?.forEach((t) => t.destroy());
     this.#fluenceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
+    this.#skyTexture?.destroy();
+    this.#skyPrefixSumTexture?.destroy();
     this.#ptAccumTextures?.forEach((t) => t.destroy());
     this.#ptParamsBuffer?.destroy();
     this.#seedParamsBuffer?.destroy();
@@ -1312,7 +1513,12 @@ export class FolkHolographicRC extends FolkBaseSet {
             loadOp: 'clear',
             storeOp: 'store',
           },
-          { view: this.#materialTextureView, clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
+          {
+            view: this.#materialTextureView,
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
         ],
       });
       pass.setPipeline(this.#worldRenderPipeline);
@@ -1485,6 +1691,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#ptAccumTextureViews[readIdx],
       this.#ptAccumTextureViews[writeIdx],
       { buffer: this.#ptParamsBuffer },
+      this.#skyTextureView,
     );
 
     const pass = encoder.beginComputePass();
@@ -1564,7 +1771,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           aspect,
           direction: dir,
           isFirstDir: dir === 0 ? 1 : 0,
-          pad1: 0,
+          skyShift: Math.log2(ps / nextNumCones),
           pad2: 0,
           pad3: 0,
         });
@@ -1577,6 +1784,8 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#bounceParamsView.set({ screenW: width, screenH: height, pad0: 0, pad1: 0 });
     device.queue.writeBuffer(this.#bounceParamsBuffer, 0, this.#bounceParamsView.arrayBuffer);
+
+    this.#computeSkyPrefixSums();
   }
 
   // ── Event handlers ──

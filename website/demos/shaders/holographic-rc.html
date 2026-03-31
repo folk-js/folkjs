@@ -43,27 +43,39 @@
       }
       #bar .g { display: flex; align-items: center; gap: 5px; }
       #bar input[type='range'] { width: 72px; }
-      #bar label { cursor: pointer; white-space: nowrap; }
+      #bar label { cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
       #bar .v { width: 28px; text-align: right; color: rgba(255, 255, 255, 0.4); }
       .spacer { flex: 1; }
       #fps { color: rgba(255, 255, 255, 0.4); white-space: nowrap; }
-      #shortcuts {
-        color: rgba(255, 255, 255, 0.3);
-        white-space: nowrap;
-        font-size: 10px;
-        overflow: hidden;
-        min-width: 0;
+      #info-btn {
+        background: none; border: 1px solid rgba(255, 255, 255, 0.15);
+        color: rgba(255, 255, 255, 0.35); cursor: pointer;
+        font: inherit; font-size: 10px; font-weight: bold;
+        width: 18px; height: 18px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        padding: 0; line-height: 1; flex-shrink: 0;
       }
-      #shortcuts kbd {
+      #info-btn:hover { color: rgba(255, 255, 255, 0.7); border-color: rgba(255, 255, 255, 0.3); }
+      #info-popup {
+        position: fixed; bottom: 36px; right: 40px; z-index: 1002;
+        background: rgba(10, 10, 10, 0.92);
+        backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px; padding: 12px 14px;
+        display: none; min-width: 180px;
+        font-size: 11px; line-height: 1.7;
+      }
+      #info-popup.open { display: block; }
+      #info-popup kbd {
         display: inline-block;
         background: rgba(255, 255, 255, 0.08);
         border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 3px;
-        padding: 0 3px;
-        font: inherit;
-        font-size: 9px;
+        padding: 0 4px; margin-right: 2px;
+        font: inherit; font-size: 10px;
       }
-      @container bar (max-width: 900px) { #shortcuts { display: none; } }
+      #info-popup .row { display: flex; justify-content: space-between; gap: 16px; }
+      #info-popup .row span:last-child { color: rgba(255, 255, 255, 0.35); }
       #color-btn {
         width: 18px; height: 18px;
         border-radius: 4px;
@@ -186,6 +198,16 @@
 
     <div id="bar">
       <select id="scene-select"></select>
+      <select id="sky-select">
+        <option value="none">sky: none</option>
+        <option value="overcast">sky: overcast</option>
+        <option value="spectrum">sky: spectrum</option>
+        <option value="iridescent">sky: iridescent</option>
+        <option value="studio">sky: studio</option>
+        <option value="rgb">sky: RGB</option>
+        <option value="sunset">sky: sunset</option>
+        <option value="moonlight">sky: moonlight</option>
+      </select>
       <div class="g">
         <label>exposure</label>
         <input id="exposure-slider" type="range" min="0.1" max="10" step="0.1" value="2" />
@@ -198,20 +220,23 @@
       </div>
       <label><input id="bounces-toggle" type="checkbox" checked /> bounces</label>
       <label><input id="pt-toggle" type="checkbox" /> path trace</label>
-      <span id="shortcuts">
-        <kbd>←</kbd><kbd>→</kbd> scene &nbsp;
-        <kbd>0</kbd>–<kbd>9</kbd> color &nbsp;
-        <kbd>+</kbd><kbd>−</kbd> size &nbsp;
-        <kbd>N</kbd> shape &nbsp;
-        <kbd>⌫</kbd> delete &nbsp;
-        <kbd>C</kbd> clear &nbsp;
-        <kbd>S</kbd> screenshot &nbsp;
-        <kbd>F</kbd> fullscreen
-      </span>
       <div class="spacer"></div>
       <span id="fps"></span>
       <div id="color-btn" title="Material inspector"></div>
+      <button id="info-btn" title="Keyboard shortcuts">?</button>
       <button id="fs-btn" title="Fullscreen">⛶</button>
+    </div>
+
+    <div id="info-popup">
+      <div class="row"><span><kbd>←</kbd> <kbd>→</kbd></span><span>prev / next scene</span></div>
+      <div class="row"><span><kbd>0</kbd>–<kbd>9</kbd></span><span>pen color</span></div>
+      <div class="row"><span><kbd>+</kbd> <kbd>−</kbd></span><span>pen size</span></div>
+      <div class="row"><span><kbd>N</kbd></span><span>new shape</span></div>
+      <div class="row"><span><kbd>⌫</kbd></span><span>delete shape</span></div>
+      <div class="row"><span><kbd>C</kbd></span><span>clear drawing</span></div>
+      <div class="row"><span><kbd>P</kbd></span><span>path trace</span></div>
+      <div class="row"><span><kbd>S</kbd></span><span>screenshot</span></div>
+      <div class="row"><span><kbd>F</kbd></span><span>fullscreen</span></div>
     </div>
 
     <div id="panel">
@@ -270,6 +295,17 @@
         colorBtn.classList.toggle('open', panelOpen);
       }
       colorBtn.addEventListener('click', () => togglePanel());
+
+      // ── Info popup ──
+      const infoPopup = $('info-popup');
+      $('info-btn').addEventListener('click', () => {
+        infoPopup.classList.toggle('open');
+      });
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('#info-popup') && !e.target.closest('#info-btn')) {
+          infoPopup.classList.remove('open');
+        }
+      });
 
       // ── Fullscreen ──
       $('fs-btn').addEventListener('click', () => {
@@ -405,6 +441,107 @@
       hrc.setMouseLightRadius(pen.size / 2);
       syncMouse();
       syncPanel();
+
+      // ── Sky controls ──
+      const skySelect = $('sky-select');
+      function buildSky(fn) {
+        const PI = Math.PI, N = 256, data = new Float32Array(N * 4);
+        function wrap(d) { return d > PI ? d - PI*2 : d < -PI ? d + PI*2 : d; }
+        function spot(angle, sigma, color) {
+          const inv = 1 / (2 * sigma * sigma);
+          for (let i = 0; i < N; i++) {
+            const a = (i / N) * PI * 2 - PI;
+            const w = wrap(a - angle); const g = Math.exp(-(w * w) * inv);
+            data[i*4] += color[0] * g; data[i*4+1] += color[1] * g; data[i*4+2] += color[2] * g;
+          }
+        }
+        function fill(color) {
+          for (let i = 0; i < N; i++) {
+            data[i*4] += color[0]; data[i*4+1] += color[1]; data[i*4+2] += color[2];
+          }
+        }
+        function arc(center, halfWidth, color) {
+          for (let i = 0; i < N; i++) {
+            const a = (i / N) * PI * 2 - PI;
+            const d = Math.abs(wrap(a - center));
+            const t = Math.max(0, 1 - d / halfWidth);
+            data[i*4] += color[0]*t; data[i*4+1] += color[1]*t; data[i*4+2] += color[2]*t;
+          }
+        }
+        function hueRing(intensity, saturation, offset) {
+          for (let i = 0; i < N; i++) {
+            const h = ((i / N) + (offset || 0)) % 1;
+            const s = saturation ?? 1;
+            const k = (n) => (n + h * 6) % 6;
+            const f = (n) => intensity * (1 - s * Math.max(0, Math.min(k(n), 4 - k(n), 1)));
+            data[i*4] += f(0); data[i*4+1] += f(4); data[i*4+2] += f(2);
+          }
+        }
+        function thermal(hot, cold, center, halfWidth) {
+          for (let i = 0; i < N; i++) {
+            const a = (i / N) * PI * 2 - PI;
+            const d = Math.abs(wrap(a - center));
+            const t = Math.max(0, Math.min(1, 1 - d / halfWidth));
+            const s = t * t * (3 - 2 * t);
+            data[i*4] += hot[0]*s + cold[0]*(1-s);
+            data[i*4+1] += hot[1]*s + cold[1]*(1-s);
+            data[i*4+2] += hot[2]*s + cold[2]*(1-s);
+          }
+        }
+        fn({ spot, fill, arc, hueRing, thermal, PI, N, data, wrap });
+        for (let i = 0; i < N; i++) data[i*4+3] = 1;
+        hrc.setSkyCircle(data);
+      }
+
+      function applySky(name) {
+        const PI = Math.PI;
+        switch (name) {
+          case 'none': hrc.clearSky(); break;
+          case 'overcast': hrc.setSkyColor(0.04, 0.045, 0.05); break;
+          case 'spectrum': buildSky(({hueRing}) => {
+            hueRing(1.5, 1, 0);
+          }); break;
+          case 'iridescent': buildSky(({PI, N, data}) => {
+            for (let i = 0; i < N; i++) {
+              const t = i / N;
+              const phase = t * PI * 3;
+              const r = 0.5 + 0.5 * Math.cos(phase);
+              const g = 0.5 + 0.5 * Math.cos(phase + PI * 0.7);
+              const b = 0.5 + 0.5 * Math.cos(phase + PI * 1.4);
+              const brightness = 0.6 + 0.4 * Math.cos(t * PI * 2);
+              data[i*4]   = r * brightness;
+              data[i*4+1] = g * brightness;
+              data[i*4+2] = b * brightness;
+            }
+          }); break;
+          case 'studio': buildSky(({spot, PI}) => {
+            spot(-PI*0.65, 0.08, [2.2, 2.4, 2.8]);
+            spot(-PI*0.35, 0.1, [2.5, 2.2, 1.8]);
+            spot(PI*0.8, 0.12, [2.0, 2.0, 2.3]);
+          }); break;
+          case 'rgb': buildSky(({spot, PI}) => {
+            const s = PI * 2 / 3;
+            spot(-PI/2, 0.04, [4, 0.05, 0.05]);
+            spot(-PI/2 + s, 0.04, [0.05, 4, 0.05]);
+            spot(-PI/2 + s*2, 0.04, [0.05, 0.05, 4]);
+          }); break;
+          case 'sunset': buildSky(({spot, PI, N, data}) => {
+            spot(-PI/8, 0.09, [1.8, 0.5, 0.15]);
+            for (let i = 0; i < N; i++) {
+              const a = (i / N) * PI * 2 - PI;
+              const vert = Math.sin(a) * 0.5 + 0.5;
+              data[i*4]   += 0.08 * (1-vert);
+              data[i*4+1] += 0.03 * (1-vert);
+              data[i*4+2] += 0.06 * vert;
+            }
+          }); break;
+          case 'moonlight': buildSky(({spot, fill, PI}) => {
+            spot(-PI/3, 0.04, [0.4, 0.5, 0.7]);
+            fill([0.002, 0.003, 0.006]);
+          }); break;
+        }
+      }
+      skySelect.addEventListener('change', () => applySky(skySelect.value));
 
       // ── Scene infrastructure ──
       let animationId = null;
@@ -704,9 +841,10 @@
 
       // ── Keyboard ──
       document.addEventListener('keydown', (e) => {
-        if (e.target.closest('#panel') || e.target.closest('#bar')) return;
+        if (e.target instanceof HTMLInputElement && e.target.type === 'text') return;
         const d = e.code.match(/^Digit(\d)$/);
-        if (d) { e.shiftKey ? switchScene(+d[1]) : pickPreset(+d[1]); return; }
+        if (d) { e.preventDefault(); e.target?.blur?.(); e.shiftKey ? switchScene(+d[1]) : pickPreset(+d[1]); return; }
+        let handled = true;
         switch (e.key) {
           case '=': case '+': pen.size = Math.min(50, pen.size+2); sSize.value = pen.size; vSize.textContent = String(pen.size); hrc.setMouseLightRadius(pen.size/2); break;
           case '-': case '_': pen.size = Math.max(2, pen.size-2); sSize.value = pen.size; vSize.textContent = String(pen.size); hrc.setMouseLightRadius(pen.size/2); break;
@@ -737,7 +875,9 @@
               selectShape(null);
             }
             break;
+          default: handled = false;
         }
+        if (handled) { e.preventDefault(); e.target?.blur?.(); }
       });
 
       // ── Drawing ──
