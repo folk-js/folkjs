@@ -210,6 +210,83 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
+// ── HRC Phase A2: Ray Seed Level 1 (direct trace, replaces extend level 1) ──
+
+const raySeedLevel1Shader = /*wgsl*/ `
+struct SeedParams {
+  probeSize: u32,
+  screenW: f32,
+  screenH: f32,
+  pad0: u32,
+  originX: f32,
+  originY: f32,
+  alongAxisX: f32,
+  alongAxisY: f32,
+  perpAxisX: f32,
+  perpAxisY: f32,
+  scaleAlong: f32,
+  scalePerp: f32,
+};
+
+@group(0) @binding(0) var worldTex: texture_2d<f32>;
+@group(0) @binding(1) var bounceTex: texture_2d<f32>;
+@group(0) @binding(2) var rayOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var<uniform> params: SeedParams;
+
+struct RayData { rad: vec3f, trans: f32 }
+
+fn sampleWorld(probeIdx: i32, perpIdx: i32) -> RayData {
+  let along = vec2f(params.alongAxisX, params.alongAxisY);
+  let perp = vec2f(params.perpAxisX, params.perpAxisY);
+  let wp = vec2f(params.originX, params.originY)
+         + along * (f32(probeIdx) + 0.5) * params.scaleAlong
+         + perp * (f32(perpIdx) + 0.5) * params.scalePerp;
+  let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
+  if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
+    return RayData(vec3f(0.0), 1.0);
+  }
+  let world = textureLoad(worldTex, px, 0);
+  let bounce = textureLoad(bounceTex, px, 0).rgb;
+  let trans = pow(1.0 - world.a, params.scaleAlong);
+  let rad = (world.rgb + bounce) * (1.0 - trans);
+  return RayData(rad, trans);
+}
+
+fn overComp(near: RayData, far: RayData) -> RayData {
+  return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
+}
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let texelX = i32(gid.x);
+  let perpIdx = i32(gid.y);
+  let ps = i32(params.probeSize);
+
+  let numRays = 3;
+  let numProbes = ps / 2;
+  let probeIdx = texelX / numRays;
+  let rayIdx = texelX - probeIdx * numRays;
+
+  if (probeIdx >= numProbes || perpIdx >= ps) { return; }
+
+  let lower = rayIdx / 2;
+  let upper = (rayIdx + 1) / 2;
+  let near = sampleWorld(probeIdx * 2, perpIdx);
+
+  let perpOffL = -1 + lower * 2;
+  let farL = sampleWorld(probeIdx * 2 + 1, perpIdx + perpOffL);
+  let extL = overComp(near, farL);
+
+  let perpOffR = -1 + upper * 2;
+  let farR = sampleWorld(probeIdx * 2 + 1, perpIdx + perpOffR);
+  let extR = overComp(near, farR);
+
+  let avgRad = (extL.rad + extR.rad) * 0.5;
+  let avgTrans = (extL.trans + extR.trans) * 0.5;
+  textureStore(rayOut, vec2i(texelX, perpIdx), vec4f(avgRad, avgTrans));
+}
+`;
+
 // ── HRC Phase B: Ray Extension (bottom-up, levels 1..N-1) ──
 // Composes two shorter rays from the previous level into one longer ray.
 // For each output ray, builds two crossed extensions (L→R, R→L) and averages.
@@ -822,12 +899,14 @@ export class FolkHolographicRC extends FolkBaseSet {
   // Pipelines
   #bounceComputePipeline!: GPUComputePipeline;
   #raySeedPipeline!: GPUComputePipeline;
+  #raySeedL1Pipeline!: GPUComputePipeline;
   #rayExtendPipeline!: GPUComputePipeline;
   #coneMergePipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
   // Pre-created bind groups
   #seedBindGroups!: GPUBindGroup[];
+  #seedL1BindGroups!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
   #mergeBindGroups!: GPUBindGroup[][];
   #blitBindGroups!: GPUBindGroup[];
@@ -889,11 +968,14 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #readTimestamps() {
     if (!this.#tsResultBuffer || this.#tsResultBuffer.mapState !== 'unmapped') return;
-    this.#tsResultBuffer.mapAsync(GPUMapMode.READ).then(() => {
-      const times = new BigInt64Array(this.#tsResultBuffer!.getMappedRange());
-      this.#gpuTimeMs = Number(times[1] - times[0]) / 1e6;
-      this.#tsResultBuffer!.unmap();
-    }).catch(() => {});
+    this.#tsResultBuffer
+      .mapAsync(GPUMapMode.READ)
+      .then(() => {
+        const times = new BigInt64Array(this.#tsResultBuffer!.getMappedRange());
+        this.#gpuTimeMs = Number(times[1] - times[0]) / 1e6;
+        this.#tsResultBuffer!.unmap();
+      })
+      .catch(() => {});
   }
 
   override async connectedCallback() {
@@ -1050,13 +1132,21 @@ export class FolkHolographicRC extends FolkBaseSet {
 
       for (let s = 0; s < ps; s++) {
         const N = ps;
-        const slope = (2 * s - N + 1) * aspect / N;
+        const slope = ((2 * s - N + 1) * aspect) / N;
         let angle: number;
         switch (dir) {
-          case 0: angle = Math.atan2(slope, 1); break;
-          case 1: angle = Math.atan2(1, slope); break;
-          case 2: angle = Math.atan2(slope, -1); break;
-          default: angle = Math.atan2(-1, slope); break;
+          case 0:
+            angle = Math.atan2(slope, 1);
+            break;
+          case 1:
+            angle = Math.atan2(1, slope);
+            break;
+          case 2:
+            angle = Math.atan2(slope, -1);
+            break;
+          default:
+            angle = Math.atan2(-1, slope);
+            break;
         }
         const u = (angle + Math.PI) / (Math.PI * 2);
         const skyIdx = Math.max(0, Math.min(SKY_CIRCLE_SIZE - 1, Math.floor(u * SKY_CIRCLE_SIZE)));
@@ -1310,6 +1400,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#bounceComputePipeline = computePipeline(device, 'HRC-BounceCompute', bounceComputeShader);
     this.#raySeedPipeline = computePipeline(device, 'HRC-RaySeed', raySeedShader);
+    this.#raySeedL1Pipeline = computePipeline(device, 'HRC-RaySeedL1', raySeedLevel1Shader);
     this.#rayExtendPipeline = computePipeline(device, 'HRC-RayExtend', rayExtendShader);
     this.#coneMergePipeline = computePipeline(device, 'HRC-ConeMerge', coneMergeShader);
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
@@ -1337,8 +1428,17 @@ export class FolkHolographicRC extends FolkBaseSet {
       }),
     );
 
+    const seedL1Layout = this.#raySeedL1Pipeline.getBindGroupLayout(0);
+    this.#seedL1BindGroups = [0, 1, 2, 3].map((dir) =>
+      bg(device, seedL1Layout, this.#worldTextureView, this.#bounceTextureView, this.#rayTextureViews[1], {
+        buffer: this.#seedParamsBuffer,
+        offset: dir * 256,
+        size: seedPS,
+      }),
+    );
+
     this.#extendBindGroups = [];
-    for (let level = 1; level < nc; level++) {
+    for (let level = 2; level < nc; level++) {
       this.#extendBindGroups.push(
         bg(device, extLayout, this.#rayTextureViews[level - 1], this.#rayTextureViews[level], {
           buffer: this.#extendParamsBuffer,
@@ -1653,10 +1753,17 @@ export class FolkHolographicRC extends FolkBaseSet {
         pass.dispatchWorkgroups(wg, wg);
         pass.end();
       }
-      for (let level = 1; level < nc; level++) {
+      {
+        const pass = encoder.beginComputePass();
+        pass.setPipeline(this.#raySeedL1Pipeline);
+        pass.setBindGroup(0, this.#seedL1BindGroups[dir]);
+        pass.dispatchWorkgroups(Math.ceil(((ps >> 1) * 3) / 16), wg);
+        pass.end();
+      }
+      for (let level = 2; level < nc; level++) {
         const pass = encoder.beginComputePass();
         pass.setPipeline(this.#rayExtendPipeline);
-        pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
+        pass.setBindGroup(0, this.#extendBindGroups[level - 2]);
         pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
         pass.end();
       }
@@ -1690,7 +1797,9 @@ export class FolkHolographicRC extends FolkBaseSet {
           storeOp: 'store' as const,
         },
       ],
-      ...(timestamps && this.#tsQuerySet ? { timestampWrites: { querySet: this.#tsQuerySet, endOfPassWriteIndex: 1 } } : {}),
+      ...(timestamps && this.#tsQuerySet
+        ? { timestampWrites: { querySet: this.#tsQuerySet, endOfPassWriteIndex: 1 } }
+        : {}),
     });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
