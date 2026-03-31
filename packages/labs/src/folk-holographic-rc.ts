@@ -791,6 +791,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #bounceTextureView!: GPUTextureView;
   #lastFluenceResultIdx = -1;
   #fluenceZeroBuffer!: GPUBuffer;
+  #bounceZeroBuffer!: GPUBuffer;
 
   // Sky circle texture (1D radiance from every angle, stored as 2D with height=1)
   #skyTexture!: GPUTexture;
@@ -1178,9 +1179,11 @@ export class FolkHolographicRC extends FolkBaseSet {
       'rgba16float',
       TEX_STORAGE | GPUTextureUsage.COPY_DST,
     );
+    const bounceZeroSize = width * height * 8;
+    this.#bounceZeroBuffer = device.createBuffer({ size: bounceZeroSize, usage: GPUBufferUsage.COPY_SRC });
     device.queue.writeTexture(
       { texture: this.#bounceTexture },
-      new Uint8Array(width * height * 8),
+      new Uint8Array(bounceZeroSize),
       { bytesPerRow: width * 8, rowsPerImage: height },
       { width, height },
     );
@@ -1399,6 +1402,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeTextures?.forEach((t) => t.destroy());
     this.#fluenceTextures?.forEach((t) => t.destroy());
     this.#fluenceZeroBuffer?.destroy();
+    this.#bounceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
     this.#skyTexture?.destroy();
     this.#skyPrefixSumTexture?.destroy();
@@ -1535,7 +1539,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#mouseDirty = false;
       this.#updateMouseLightBuffer();
     }
-    this.#updateShapeData();
 
     const { width, height } = this.#canvas;
     const device = this.#device;
@@ -1612,10 +1615,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     // ── Step 1.5: Bounce compute (reads previous frame's fluence at screen resolution) ──
     if (!this.bounces && this.#lastFluenceResultIdx >= 0) {
       this.#lastFluenceResultIdx = -1;
-      device.queue.writeTexture(
+      encoder.copyBufferToTexture(
+        { buffer: this.#bounceZeroBuffer, bytesPerRow: width * 8, rowsPerImage: height },
         { texture: this.#bounceTexture },
-        new Uint8Array(width * height * 8),
-        { bytesPerRow: width * 8, rowsPerImage: height },
         { width, height },
       );
     }
