@@ -296,7 +296,7 @@ const rayExtendShader = /*wgsl*/ `
 struct ExtendParams {
   probeSize: u32,
   level: u32,
-  pad0: u32,
+  invNumRays: f32,
   pad1: u32,
 };
 
@@ -308,15 +308,14 @@ struct RayData { rad: vec3f, trans: f32 }
 
 fn loadPrev(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
   let prevLevel = params.level - 1u;
-  let prevInterval = i32(1u << prevLevel);
-  let prevNumRays = prevInterval + 1;
   let prevNumProbes = i32(params.probeSize >> prevLevel);
+  let prevNumRays = i32(1u << prevLevel) + 1;
   if (probeIdx < 0 || probeIdx >= prevNumProbes ||
       rayIdx < 0 || rayIdx >= prevNumRays ||
       perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let coord = vec2i(probeIdx * prevNumRays + rayIdx, perpIdx);
+  let coord = vec2i((probeIdx << prevLevel) + probeIdx + rayIdx, perpIdx);
   let r = textureLoad(prevRayTex, coord, 0);
   return RayData(r.rgb, r.a);
 }
@@ -333,7 +332,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let interval = i32(1u << params.level);
   let numRays = interval + 1;
   let numProbes = i32(params.probeSize >> params.level);
-  let probeIdx = texelX / numRays;
+  let probeIdx = i32(floor(f32(texelX) * params.invNumRays));
   let rayIdx = texelX - probeIdx * numRays;
 
   if (probeIdx >= numProbes || perpIdx >= i32(params.probeSize)) { return; }
@@ -380,7 +379,7 @@ struct MergeParams {
   isFirstDir: u32,
   skyShift: u32,
   conesShift: u32,
-  pad3: u32,
+  angWeightBase: u32,
 };
 
 @group(0) @binding(0) var rayTex: texture_2d<f32>;
@@ -390,6 +389,7 @@ struct MergeParams {
 @group(0) @binding(4) var fluencePrev: texture_2d<f32>;
 @group(0) @binding(5) var fluenceCurr: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(6) var skyPrefixTex: texture_2d<f32>;
+@group(0) @binding(7) var<storage, read> angWeights: array<f32>;
 
 struct RayData { rad: vec3f, trans: f32 }
 
@@ -413,11 +413,8 @@ fn loadMerge(texX: i32, perpIdx: i32) -> vec3f {
   return textureLoad(mergeIn, vec2i(texX, perpIdx), 0).rgb;
 }
 
-fn angWeight(subCone: u32, numAng: u32) -> f32 {
-  let N = f32(numAng);
-  let s = f32(subCone);
-  let a = params.aspect;
-  return atan2((2.0 * s - N + 2.0) * a, N) - atan2((2.0 * s - N) * a, N);
+fn angWeight(subCone: u32) -> f32 {
+  return angWeights[params.angWeightBase + subCone];
 }
 
 fn loadSkyFluence(subCone: u32) -> vec3f {
@@ -442,20 +439,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let isEven = (probeIdx % 2 == 0);
   let align = select(1, 2, isEven);
 
-  let N = f32(params.nextNumCones);
-  let a = params.aspect;
-  let base = f32(coneIdx * 2);
-  let ang0 = atan2((2.0 * base - N) * a, N);
-  let ang1 = atan2((2.0 * base - N + 2.0) * a, N);
-  let ang2 = atan2((2.0 * base - N + 4.0) * a, N);
-
   var result = vec3f(0.0);
-  let cWs = array(ang1 - ang0, ang2 - ang1);
 
   for (var side = 0; side < 2; side++) {
     let subCone = u32(coneIdx * 2 + side);
     let vrayI = coneIdx + side;
-    let cW = cWs[side];
+    let cW = angWeight(subCone);
 
     let ray = loadRay(probeIdx, vrayI, perpIdx);
     let perpOff = -nc + vrayI * 2;
@@ -885,6 +874,8 @@ export class FolkHolographicRC extends FolkBaseSet {
   #skyPrefixSumTexture!: GPUTexture;
   #skyPrefixSumTextureView!: GPUTextureView;
 
+  #angWeightBuffer!: GPUBuffer;
+
   // Path tracer accumulation (screen resolution, rgba32float for precision)
   #ptAccumTextures!: GPUTexture[];
   #ptAccumTextureViews!: GPUTextureView[];
@@ -1304,6 +1295,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#lastFluenceResultIdx = -1;
     const zeroSize = ps * ps * 8;
     this.#fluenceZeroBuffer = device.createBuffer({ size: zeroSize, usage: GPUBufferUsage.COPY_SRC });
+
+    const totalAngWeights = 4 * (2 * ps - 2);
+    this.#angWeightBuffer = device.createBuffer({
+      size: totalAngWeights * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
     // GPU buffers are zero-initialized by default in WebGPU
 
     this.#seedParamsView = uboView(raySeedShader, 'params');
@@ -1468,6 +1465,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             this.#fluenceTextureViews[fReadIdx],
             this.#fluenceTextureViews[fWriteIdx],
             this.#skyPrefixSumTextureView,
+            { buffer: this.#angWeightBuffer },
           ),
         );
         [readIdx, writeIdx] = [writeIdx, readIdx];
@@ -1507,6 +1505,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeTextures?.forEach((t) => t.destroy());
     this.#fluenceTextures?.forEach((t) => t.destroy());
     this.#fluenceZeroBuffer?.destroy();
+    this.#angWeightBuffer?.destroy();
     this.#bounceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
     this.#skyTexture?.destroy();
@@ -1914,18 +1913,28 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     for (let level = 1; level < nc; level++) {
-      this.#extendParamsView.set({ probeSize: ps, level, pad0: 0, pad1: 0 });
+      const numRays = (1 << level) + 1;
+      this.#extendParamsView.set({ probeSize: ps, level, invNumRays: 1.0 / numRays, pad1: 0 });
       device.queue.writeBuffer(this.#extendParamsBuffer, (level - 1) * 256, this.#extendParamsView.arrayBuffer);
     }
 
+    const perDir = 2 * ps - 2;
+    const angData = new Float32Array(4 * perDir);
     for (let dir = 0; dir < 4; dir++) {
       const [sa, sp] = dirScales(dir, width, height, ps);
       const aspect = sp / sa;
+      let angOff = dir * perDir;
       for (let level = 0; level < nc; level++) {
         const numCones = 1 << level;
         const numProbes = ps >> level;
         const numRays = numCones + 1;
         const nextNumCones = numCones * 2;
+        const angBase = angOff;
+        for (let s = 0; s < nextNumCones; s++) {
+          const N = nextNumCones;
+          angData[angOff + s] =
+            Math.atan2((2 * s - N + 2) * aspect, N) - Math.atan2((2 * s - N) * aspect, N);
+        }
         this.#mergeParamsView.set({
           probeSize: ps,
           numCones,
@@ -1938,11 +1947,13 @@ export class FolkHolographicRC extends FolkBaseSet {
           isFirstDir: dir === 0 ? 1 : 0,
           skyShift: Math.log2(ps / nextNumCones),
           conesShift: level,
-          pad3: 0,
+          angWeightBase: angBase,
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
+        angOff += nextNumCones;
       }
     }
+    device.queue.writeBuffer(this.#angWeightBuffer, 0, angData);
 
     this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
