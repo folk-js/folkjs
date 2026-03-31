@@ -167,9 +167,9 @@ struct SeedParams {
   probeSize: u32,
   screenW: f32,
   screenH: f32,
-  scaleAlong: f32,
-  tx0: vec4f,
-  tx1: vec4f,
+  probeSpacing: f32,
+  transformX: vec4f,
+  transformY: vec4f,
 };
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
@@ -180,12 +180,12 @@ struct SeedParams {
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let probeIdx = i32(gid.x);
-  let perpIdx = i32(gid.y);
+  let sliceIdx = i32(gid.y);
   let ps = i32(params.probeSize);
-  if (probeIdx >= ps || perpIdx >= ps) { return; }
+  if (probeIdx >= ps || sliceIdx >= ps) { return; }
 
-  let p = vec3f(f32(probeIdx) + 0.5, f32(perpIdx) + 0.5, 1.0);
-  let wp = vec2f(dot(params.tx0.xyz, p), dot(params.tx1.xyz, p));
+  let p = vec3f(f32(probeIdx) + 0.5, f32(sliceIdx) + 0.5, 1.0);
+  let wp = vec2f(dot(params.transformX.xyz, p), dot(params.transformY.xyz, p));
 
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
   var rad = vec3f(0.0);
@@ -193,13 +193,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
     let world = textureLoad(worldTex, px, 0);
     let bounce = textureLoad(bounceTex, px, 0).rgb;
-    trans = pow(1.0 - world.a, params.scaleAlong);
+    trans = pow(1.0 - world.a, params.probeSpacing);
     rad = (world.rgb + bounce) * (1.0 - trans);
   }
 
   let v = vec4f(rad, trans);
-  textureStore(rayOut, vec2i(probeIdx * 2, perpIdx), v);
-  textureStore(rayOut, vec2i(probeIdx * 2 + 1, perpIdx), v);
+  textureStore(rayOut, vec2i(probeIdx * 2, sliceIdx), v);
+  textureStore(rayOut, vec2i(probeIdx * 2 + 1, sliceIdx), v);
 }
 `;
 
@@ -210,9 +210,9 @@ struct SeedParams {
   probeSize: u32,
   screenW: f32,
   screenH: f32,
-  scaleAlong: f32,
-  tx0: vec4f,
-  tx1: vec4f,
+  probeSpacing: f32,
+  transformX: vec4f,
+  transformY: vec4f,
 };
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
@@ -222,28 +222,28 @@ struct SeedParams {
 
 struct RayData { rad: vec3f, trans: f32 }
 
-fn sampleWorld(probeIdx: i32, perpIdx: i32) -> RayData {
-  let p = vec3f(f32(probeIdx) + 0.5, f32(perpIdx) + 0.5, 1.0);
-  let wp = vec2f(dot(params.tx0.xyz, p), dot(params.tx1.xyz, p));
+fn sampleWorld(probeIdx: i32, sliceIdx: i32) -> RayData {
+  let p = vec3f(f32(probeIdx) + 0.5, f32(sliceIdx) + 0.5, 1.0);
+  let wp = vec2f(dot(params.transformX.xyz, p), dot(params.transformY.xyz, p));
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
   if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
     return RayData(vec3f(0.0), 1.0);
   }
   let world = textureLoad(worldTex, px, 0);
   let bounce = textureLoad(bounceTex, px, 0).rgb;
-  let trans = pow(1.0 - world.a, params.scaleAlong);
+  let trans = pow(1.0 - world.a, params.probeSpacing);
   let rad = (world.rgb + bounce) * (1.0 - trans);
   return RayData(rad, trans);
 }
 
-fn overComp(near: RayData, far: RayData) -> RayData {
+fn compositeRay(near: RayData, far: RayData) -> RayData {
   return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
 }
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let texelX = i32(gid.x);
-  let perpIdx = i32(gid.y);
+  let sliceIdx = i32(gid.y);
   let ps = i32(params.probeSize);
 
   let numRays = 3;
@@ -251,23 +251,23 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let probeIdx = texelX / numRays;
   let rayIdx = texelX - probeIdx * numRays;
 
-  if (probeIdx >= numProbes || perpIdx >= ps) { return; }
+  if (probeIdx >= numProbes || sliceIdx >= ps) { return; }
 
   let lower = rayIdx / 2;
   let upper = (rayIdx + 1) / 2;
-  let near = sampleWorld(probeIdx * 2, perpIdx);
+  let near = sampleWorld(probeIdx * 2, sliceIdx);
 
-  let perpOffL = -1 + lower * 2;
-  let farL = sampleWorld(probeIdx * 2 + 1, perpIdx + perpOffL);
-  let extL = overComp(near, farL);
+  let sliceOffA = -1 + lower * 2;
+  let farA = sampleWorld(probeIdx * 2 + 1, sliceIdx + sliceOffA);
+  let crossA = compositeRay(near, farA);
 
-  let perpOffR = -1 + upper * 2;
-  let farR = sampleWorld(probeIdx * 2 + 1, perpIdx + perpOffR);
-  let extR = overComp(near, farR);
+  let sliceOffB = -1 + upper * 2;
+  let farB = sampleWorld(probeIdx * 2 + 1, sliceIdx + sliceOffB);
+  let crossB = compositeRay(near, farB);
 
-  let avgRad = (extL.rad + extR.rad) * 0.5;
-  let avgTrans = (extL.trans + extR.trans) * 0.5;
-  textureStore(rayOut, vec2i(texelX, perpIdx), vec4f(avgRad, avgTrans));
+  let avgRad = (crossA.rad + crossB.rad) * 0.5;
+  let avgTrans = (crossA.trans + crossB.trans) * 0.5;
+  textureStore(rayOut, vec2i(texelX, sliceIdx), vec4f(avgRad, avgTrans));
 }
 `;
 
@@ -290,28 +290,28 @@ struct ExtendParams {
 
 struct RayData { rad: vec3f, trans: f32 }
 
-fn loadPrev(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
+fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let prevLevel = params.level - 1u;
   let prevNumProbes = i32(params.probeSize >> prevLevel);
   let prevNumRays = i32(1u << prevLevel) + 1;
   if (probeIdx < 0 || probeIdx >= prevNumProbes ||
       rayIdx < 0 || rayIdx >= prevNumRays ||
-      perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
+      sliceIdx < 0 || sliceIdx >= i32(params.probeSize)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let coord = vec2i((probeIdx << prevLevel) + probeIdx + rayIdx, perpIdx);
+  let coord = vec2i((probeIdx << prevLevel) + probeIdx + rayIdx, sliceIdx);
   let r = textureLoad(prevRayTex, coord, 0);
   return RayData(r.rgb, r.a);
 }
 
-fn overComp(near: RayData, far: RayData) -> RayData {
+fn compositeRay(near: RayData, far: RayData) -> RayData {
   return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
 }
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let texelX = i32(gid.x);
-  let perpIdx = i32(gid.y);
+  let sliceIdx = i32(gid.y);
 
   let interval = i32(1u << params.level);
   let numRays = interval + 1;
@@ -319,28 +319,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let probeIdx = i32(floor(f32(texelX) * params.invNumRays));
   let rayIdx = texelX - probeIdx * numRays;
 
-  if (probeIdx >= numProbes || perpIdx >= i32(params.probeSize)) { return; }
+  if (probeIdx >= numProbes || sliceIdx >= i32(params.probeSize)) { return; }
 
   let prevInterval = interval / 2;
   let lower = rayIdx / 2;
   let upper = (rayIdx + 1) / 2;
 
-  let perpOffL = -prevInterval + lower * 2;
-  let extL = overComp(
-    loadPrev(probeIdx * 2, lower, perpIdx),
-    loadPrev(probeIdx * 2 + 1, upper, perpIdx + perpOffL),
+  let sliceOffA = -prevInterval + lower * 2;
+  let crossA = compositeRay(
+    loadPrev(probeIdx * 2, lower, sliceIdx),
+    loadPrev(probeIdx * 2 + 1, upper, sliceIdx + sliceOffA),
   );
 
-  let perpOffR = -prevInterval + upper * 2;
-  let extR = overComp(
-    loadPrev(probeIdx * 2, upper, perpIdx),
-    loadPrev(probeIdx * 2 + 1, lower, perpIdx + perpOffR),
+  let sliceOffB = -prevInterval + upper * 2;
+  let crossB = compositeRay(
+    loadPrev(probeIdx * 2, upper, sliceIdx),
+    loadPrev(probeIdx * 2 + 1, lower, sliceIdx + sliceOffB),
   );
 
-  let coord = vec2i(texelX, perpIdx);
-  let avgRad = (extL.rad + extR.rad) * 0.5;
-  let avgTrans = (extL.trans + extR.trans) * 0.5;
-  textureStore(currRayTex, coord, vec4f(avgRad, avgTrans));
+  let avgRad = (crossA.rad + crossB.rad) * 0.5;
+  let avgTrans = (crossA.trans + crossB.trans) * 0.5;
+  textureStore(currRayTex, vec2i(texelX, sliceIdx), vec4f(avgRad, avgTrans));
 }
 `;
 
@@ -377,27 +376,27 @@ struct MergeParams {
 
 struct RayData { rad: vec3f, trans: f32 }
 
-fn loadRay(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
+fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   if (probeIdx < 0 || probeIdx >= i32(params.numProbes) ||
       rayIdx < 0 || rayIdx >= i32(params.numRays) ||
-      perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
+      sliceIdx < 0 || sliceIdx >= i32(params.probeSize)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let coord = vec2i((probeIdx << params.conesShift) + probeIdx + rayIdx, perpIdx);
+  let coord = vec2i((probeIdx << params.conesShift) + probeIdx + rayIdx, sliceIdx);
   let r = textureLoad(rayTex, coord, 0);
   return RayData(r.rgb, r.a);
 }
 
-fn loadMerge(texX: i32, perpIdx: i32) -> vec3f {
+fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
   if (params.isLastLevel == 1u ||
       texX < 0 || texX >= i32(params.probeSize) ||
-      perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
+      sliceIdx < 0 || sliceIdx >= i32(params.probeSize)) {
     return vec3f(0.0);
   }
-  return textureLoad(mergeIn, vec2i(texX, perpIdx), 0).rgb;
+  return textureLoad(mergeIn, vec2i(texX, sliceIdx), 0).rgb;
 }
 
-fn angWeight(subCone: u32) -> f32 {
+fn getAngularWeight(subCone: u32) -> f32 {
   return angWeights[params.angWeightBase + subCone];
 }
 
@@ -411,63 +410,63 @@ fn loadSkyFluence(subCone: u32) -> vec3f {
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let perpIdx = i32(gid.x);
-  let flatIdx = i32(gid.y);
-  let cs = params.conesShift;
-  let nc = i32(1u << cs);
-  let probeIdx = flatIdx >> cs;
-  let coneIdx = flatIdx & (nc - 1);
+  let sliceIdx = i32(gid.x);
+  let probeConeIdx = i32(gid.y);
+  let conesShift = params.conesShift;
+  let numCones = i32(1u << conesShift);
+  let probeIdx = probeConeIdx >> conesShift;
+  let coneIdx = probeConeIdx & (numCones - 1);
 
-  if (probeIdx >= i32(params.numProbes) || perpIdx >= i32(params.probeSize)) { return; }
+  if (probeIdx >= i32(params.numProbes) || sliceIdx >= i32(params.probeSize)) { return; }
 
   let isEven = (probeIdx % 2 == 0);
-  let align = select(1, 2, isEven);
+  let farStep = select(1, 2, isEven);
 
   var result = vec3f(0.0);
 
   for (var side = 0; side < 2; side++) {
     let subCone = u32(coneIdx * 2 + side);
-    let vrayI = coneIdx + side;
-    let cW = angWeight(subCone);
+    let rayIdx = coneIdx + side;
+    let weight = getAngularWeight(subCone);
 
-    let ray = loadRay(probeIdx, vrayI, perpIdx);
-    let perpOff = -nc + vrayI * 2;
+    let ray = loadRay(probeIdx, rayIdx, sliceIdx);
+    let sliceOff = -numCones + rayIdx * 2;
 
-    let farX = ((probeIdx + align) << cs) + i32(subCone);
-    let farPerp = perpIdx + perpOff * align;
+    let farX = ((probeIdx + farStep) << conesShift) + i32(subCone);
+    let farSlice = sliceIdx + sliceOff * farStep;
     var farCone: vec3f;
     if (params.isLastLevel == 1u ||
         farX < 0 || farX >= i32(params.probeSize) ||
-        farPerp < 0 || farPerp >= i32(params.probeSize)) {
+        farSlice < 0 || farSlice >= i32(params.probeSize)) {
       farCone = loadSkyFluence(subCone);
     } else {
-      farCone = textureLoad(mergeIn, vec2i(farX, farPerp), 0).rgb;
+      farCone = textureLoad(mergeIn, vec2i(farX, farSlice), 0).rgb;
     }
 
     if (isEven) {
-      let ext = loadRay(probeIdx + 1, vrayI, perpIdx + perpOff);
+      let ext = loadRay(probeIdx + 1, rayIdx, sliceIdx + sliceOff);
       let cRad = ray.rad + ext.rad * ray.trans;
       let cTrans = ray.trans * ext.trans;
-      let merged = cRad * cW + farCone * cTrans;
-      let nearCone = loadMerge((probeIdx << cs) + i32(subCone), perpIdx);
+      let merged = cRad * weight + farCone * cTrans;
+      let nearCone = loadMerge((probeIdx << conesShift) + i32(subCone), sliceIdx);
       result += (merged + nearCone) * 0.5;
     } else {
-      result += ray.rad * cW + farCone * ray.trans;
+      result += ray.rad * weight + farCone * ray.trans;
     }
   }
 
-  let outX = (probeIdx << cs) + coneIdx;
-  textureStore(mergeOut, vec2i(outX, perpIdx), vec4f(result, 1.0));
+  let outX = (probeIdx << conesShift) + coneIdx;
+  textureStore(mergeOut, vec2i(outX, sliceIdx), vec4f(result, 1.0));
 
   if (params.numCones == 1u) {
     let ps = i32(params.probeSize);
     var fc: vec2i;
     switch (params.direction) {
-      case 0u: { fc = vec2i(probeIdx - 1, perpIdx); }
-      case 1u: { fc = vec2i(perpIdx, probeIdx - 1); }
-      case 2u: { fc = vec2i(ps - probeIdx, perpIdx); }
-      case 3u: { fc = vec2i(perpIdx, ps - probeIdx); }
-      default: { fc = vec2i(probeIdx - 1, perpIdx); }
+      case 0u: { fc = vec2i(probeIdx - 1, sliceIdx); }
+      case 1u: { fc = vec2i(sliceIdx, probeIdx - 1); }
+      case 2u: { fc = vec2i(ps - probeIdx, sliceIdx); }
+      case 3u: { fc = vec2i(sliceIdx, ps - probeIdx); }
+      default: { fc = vec2i(probeIdx - 1, sliceIdx); }
     }
     if (fc.x >= 0 && fc.x < ps && fc.y >= 0 && fc.y < ps) {
       if (params.isFirstDir == 1u) {
@@ -767,18 +766,18 @@ function dirTransform(
   w: number,
   h: number,
   ps: number,
-): { tx0: [number, number, number]; tx1: [number, number, number]; scaleAlong: number; aspect: number } {
+): { transformX: [number, number, number]; transformY: [number, number, number]; probeSpacing: number; aspect: number } {
   const sw = w / ps;
   const sh = h / ps;
   switch (dir) {
     case 0:
-      return { tx0: [sw, 0, 0], tx1: [0, sh, 0], scaleAlong: sw, aspect: sh / sw };
+      return { transformX: [sw, 0, 0], transformY: [0, sh, 0], probeSpacing: sw, aspect: sh / sw };
     case 1:
-      return { tx0: [0, sw, 0], tx1: [sh, 0, 0], scaleAlong: sh, aspect: sw / sh };
+      return { transformX: [0, sw, 0], transformY: [sh, 0, 0], probeSpacing: sh, aspect: sw / sh };
     case 2:
-      return { tx0: [-sw, 0, w], tx1: [0, sh, 0], scaleAlong: sw, aspect: sh / sw };
+      return { transformX: [-sw, 0, w], transformY: [0, sh, 0], probeSpacing: sw, aspect: sh / sw };
     case 3:
-      return { tx0: [0, sw, 0], tx1: [-sh, 0, h], scaleAlong: sh, aspect: sw / sh };
+      return { transformX: [0, sw, 0], transformY: [-sh, 0, h], probeSpacing: sh, aspect: sw / sh };
     default:
       return dirTransform(0, w, h, ps);
   }
@@ -1879,9 +1878,9 @@ export class FolkHolographicRC extends FolkBaseSet {
         probeSize: ps,
         screenW: width,
         screenH: height,
-        scaleAlong: dt.scaleAlong,
-        tx0: [...dt.tx0, 0],
-        tx1: [...dt.tx1, 0],
+        probeSpacing: dt.probeSpacing,
+        transformX: [...dt.transformX, 0],
+        transformY: [...dt.transformY, 0],
       });
       device.queue.writeBuffer(this.#seedParamsBuffer, dir * 256, this.#seedParamsView.arrayBuffer);
     }
