@@ -302,7 +302,7 @@ struct MergeParams {
   direction: u32,
   isFirstDir: u32,
   skyShift: u32,
-  pad2: u32,
+  conesShift: u32,
   pad3: u32,
 };
 
@@ -322,7 +322,7 @@ fn loadRay(probeIdx: i32, rayIdx: i32, perpIdx: i32) -> RayData {
       perpIdx < 0 || perpIdx >= i32(params.probeSize)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let coord = vec2i(probeIdx * i32(params.numRays) + rayIdx, perpIdx);
+  let coord = vec2i((probeIdx << params.conesShift) + probeIdx + rayIdx, perpIdx);
   let r = textureLoad(rayTex, coord, 0);
   return RayData(r.rgb, r.a);
 }
@@ -355,9 +355,10 @@ fn loadSkyFluence(subCone: u32) -> vec3f {
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let perpIdx = i32(gid.x);
   let flatIdx = i32(gid.y);
-  let nc = i32(params.numCones);
-  let probeIdx = flatIdx / nc;
-  let coneIdx = flatIdx - probeIdx * nc;
+  let cs = params.conesShift;
+  let nc = i32(1u << cs);
+  let probeIdx = flatIdx >> cs;
+  let coneIdx = flatIdx & (nc - 1);
 
   if (probeIdx >= i32(params.numProbes) || perpIdx >= i32(params.probeSize)) { return; }
 
@@ -382,7 +383,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ray = loadRay(probeIdx, vrayI, perpIdx);
     let perpOff = -nc + vrayI * 2;
 
-    let farX = (probeIdx + align) * nc + i32(subCone);
+    let farX = ((probeIdx + align) << cs) + i32(subCone);
     let farPerp = perpIdx + perpOff * align;
     var farCone: vec3f;
     if (params.isLastLevel == 1u ||
@@ -398,14 +399,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let cRad = ray.rad + ext.rad * ray.trans;
       let cTrans = ray.trans * ext.trans;
       let merged = cRad * cW + farCone * cTrans;
-      let nearCone = loadMerge(probeIdx * nc + i32(subCone), perpIdx);
+      let nearCone = loadMerge((probeIdx << cs) + i32(subCone), perpIdx);
       result += (merged + nearCone) * 0.5;
     } else {
       result += ray.rad * cW + farCone * ray.trans;
     }
   }
 
-  let outX = probeIdx * nc + coneIdx;
+  let outX = (probeIdx << cs) + coneIdx;
   textureStore(mergeOut, vec2i(outX, perpIdx), vec4f(result, 1.0));
 
   if (params.numCones == 1u) {
@@ -1827,7 +1828,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           direction: dir,
           isFirstDir: dir === 0 ? 1 : 0,
           skyShift: Math.log2(ps / nextNumCones),
-          pad2: 0,
+          conesShift: level,
           pad3: 0,
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
