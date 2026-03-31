@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sand + HRC Lighting</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        background: #111;
+        font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.6);
+      }
+      #canvas-area {
+        flex: 1;
+        position: relative;
+        min-height: 0;
+      }
+      folk-shape {
+        position: absolute;
+        background-color: rgba(255, 255, 255, 0.03);
+        border-radius: 2px;
+      }
+      #bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 5px 12px;
+        background: #0a0a0a;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        flex-shrink: 0;
+        z-index: 1000;
+      }
+      #bar label {
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      #bar .g {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      #bar .v {
+        width: 28px;
+        text-align: right;
+        color: rgba(255, 255, 255, 0.4);
+      }
+      .spacer {
+        flex: 1;
+      }
+      #fps {
+        color: rgba(255, 255, 255, 0.4);
+        white-space: nowrap;
+      }
+      #materials {
+        display: flex;
+        gap: 2px;
+      }
+      #materials button {
+        font: inherit;
+        background: rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.5);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 4px;
+        padding: 2px 6px;
+        cursor: pointer;
+        outline: none;
+        transition: all 0.1s;
+      }
+      #materials button:hover {
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+      #materials button.active {
+        background: rgba(255, 255, 255, 0.15);
+        color: rgba(255, 255, 255, 0.85);
+        border-color: rgba(255, 255, 255, 0.3);
+      }
+      #fs-btn {
+        background: none;
+        border: none;
+        color: rgba(255, 255, 255, 0.35);
+        cursor: pointer;
+        font-size: 14px;
+        padding: 0 2px;
+        line-height: 1;
+      }
+      #fs-btn:hover {
+        color: rgba(255, 255, 255, 0.7);
+      }
+      input[type='range'] {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 20px;
+        background: transparent;
+        outline: none;
+        cursor: pointer;
+        width: 72px;
+      }
+      input[type='range']::-webkit-slider-runnable-track {
+        height: 3px;
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 2px;
+      }
+      input[type='range']::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.5);
+        border: none;
+        margin-top: -4.5px;
+      }
+      input[type='range']::-webkit-slider-thumb:hover {
+        background: rgba(255, 255, 255, 0.75);
+      }
+      input[type='range']::-moz-range-thumb {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.5);
+        border: none;
+      }
+      input[type='range']::-moz-range-track {
+        height: 3px;
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 2px;
+        border: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="canvas-area">
+      <folk-sand-hrc id="sim" exposure="1.5" probe-size="1024" bounces>
+        <folk-shape x="200" y="300" width="80" height="20"></folk-shape>
+        <folk-shape x="400" y="250" width="20" height="80"></folk-shape>
+      </folk-sand-hrc>
+    </div>
+
+    <div id="bar">
+      <div id="materials"></div>
+      <div class="g">
+        <label>exposure</label>
+        <input id="exposure-slider" type="range" min="0.5" max="8" step="0.1" value="1.5" />
+        <span class="v" id="exposure-value">1.5</span>
+      </div>
+      <div class="g">
+        <label>probes</label>
+        <input id="probe-slider" type="range" min="0" max="5" step="1" value="4" />
+        <span class="v" id="probe-value">1024</span>
+      </div>
+      <label><input id="bounces-toggle" type="checkbox" checked /> bounces</label>
+      <select id="sky-select">
+        <option value="off">sky: off</option>
+        <option value="omni">sky: omni</option>
+        <option value="top">sky: top</option>
+      </select>
+      <div class="spacer"></div>
+      <span id="fps"></span>
+      <button id="fs-btn" title="Fullscreen">⛶</button>
+    </div>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-shape';
+      import '@folkjs/labs/standalone/folk-sand-hrc';
+
+      const sim = document.getElementById('sim');
+      const materialsEl = document.getElementById('materials');
+      const exposureSlider = document.getElementById('exposure-slider');
+      const exposureValue = document.getElementById('exposure-value');
+      const probeSlider = document.getElementById('probe-slider');
+      const probeValue = document.getElementById('probe-value');
+
+      const materials = [
+        { key: 0, label: 'Air' },
+        { key: 1, label: 'Smoke' },
+        { key: 2, label: 'Water' },
+        { key: 3, label: 'Lava' },
+        { key: 4, label: 'Sand' },
+        { key: 5, label: 'Stone' },
+        { key: 6, label: 'Wall' },
+      ];
+
+      const buttons = [];
+      materials.forEach((m) => {
+        const btn = document.createElement('button');
+        btn.textContent = `${m.key} ${m.label}`;
+        btn.addEventListener('click', () => selectMaterial(m.key));
+        materialsEl.appendChild(btn);
+        buttons.push(btn);
+      });
+
+      function selectMaterial(key) {
+        buttons.forEach((b, i) => b.classList.toggle('active', materials[i].key === key));
+        sim.setMaterial(key);
+      }
+      selectMaterial(4);
+
+      sim.onMaterialChange = (type) => {
+        buttons.forEach((b, i) => b.classList.toggle('active', materials[i].key === type));
+      };
+
+      exposureSlider.addEventListener('input', () => {
+        const v = Number(exposureSlider.value);
+        sim.exposure = v;
+        exposureValue.textContent = v.toFixed(1);
+      });
+
+      const probeSizes = [64, 128, 256, 512, 1024, 2048];
+      probeSlider.addEventListener('input', () => {
+        const step = Math.round(Number(probeSlider.value));
+        sim.probeSize = probeSizes[step];
+        probeValue.textContent = String(probeSizes[step]);
+      });
+
+      document.getElementById('bounces-toggle').addEventListener('change', (e) => {
+        sim.bounces = e.target.checked;
+      });
+      document.getElementById('sky-select').addEventListener('change', (e) => {
+        const mode = e.target.value;
+        if (mode === 'off') {
+          sim.skyR = 0; sim.skyG = 0; sim.skyB = 0;
+        } else {
+          sim.skyR = 0.15; sim.skyG = 0.2; sim.skyB = 0.35;
+        }
+      });
+
+      document.getElementById('fs-btn').addEventListener('click', () => {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen();
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'f' || e.key === 'F') {
+          if (document.fullscreenElement) document.exitFullscreen();
+          else document.documentElement.requestFullscreen();
+        }
+      });
+
+      const fpsEl = document.getElementById('fps');
+      let lastTime = 0,
+        frameCount = 0,
+        displayFps = 0;
+      (function tick(now) {
+        frameCount++;
+        if (now - lastTime > 500) {
+          displayFps = Math.round(frameCount / ((now - lastTime) / 1000));
+          frameCount = 0;
+          lastTime = now;
+          const { width, height } = sim.resolution;
+          fpsEl.textContent = `${width}×${height}  ${displayFps} fps`;
+        }
+        requestAnimationFrame(tick);
+      })(0);
+    </script>
+  </body>
+</html>
