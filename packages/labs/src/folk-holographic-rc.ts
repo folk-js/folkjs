@@ -731,7 +731,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let w = loadWorld(rayPos);
       let opacity = w.a;
 
-      if (opacity < 0.001) {
+      if (opacity < 1e-6) {
         let rpx = vec2i(i32(floor(rayPos.x)), i32(floor(rayPos.y)));
         if (rpx.x < 0 || rpx.y < 0 || rpx.x >= i32(params.screenW) || rpx.y >= i32(params.screenH)) {
           radiance += throughput * sampleSky(rayDir);
