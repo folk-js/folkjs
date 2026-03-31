@@ -179,8 +179,11 @@ struct SeedParams {
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
 @group(0) @binding(1) var bounceTex: texture_2d<f32>;
-@group(0) @binding(2) var rayOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var<storage, read_write> rayOut: array<vec2u>;
 @group(0) @binding(3) var<uniform> params: SeedParams;
+
+fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
+fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
 @compute @workgroup_size(${WG_SEED[0]}, ${WG_SEED[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -202,9 +205,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     rad = (world.rgb + bounce) * (1.0 - trans);
   }
 
-  let v = vec4f(rad, trans);
-  textureStore(rayOut, vec2i(probeIdx * 2, sliceIdx), v);
-  textureStore(rayOut, vec2i(probeIdx * 2 + 1, sliceIdx), v);
+  let packed = packF16(vec4f(rad, trans));
+  let rayW = ps * 2;
+  rayOut[sliceIdx * rayW + probeIdx * 2] = packed;
+  rayOut[sliceIdx * rayW + probeIdx * 2 + 1] = packed;
 }
 `;
 
@@ -222,8 +226,10 @@ struct SeedParams {
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
 @group(0) @binding(1) var bounceTex: texture_2d<f32>;
-@group(0) @binding(2) var rayOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var<storage, read_write> rayOut: array<vec2u>;
 @group(0) @binding(3) var<uniform> params: SeedParams;
+
+fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 
 struct RayData { rad: vec3f, trans: f32 }
 
@@ -272,7 +278,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let avgRad = (crossA.rad + crossB.rad) * 0.5;
   let avgTrans = (crossA.trans + crossB.trans) * 0.5;
-  textureStore(rayOut, vec2i(texelX, sliceIdx), vec4f(avgRad, avgTrans));
+  let rayW = i32(params.probeCount) / 2 * 3;
+  rayOut[sliceIdx * rayW + texelX] = packF16(vec4f(avgRad, avgTrans));
 }
 `;
 
@@ -286,12 +293,19 @@ struct ExtendParams {
   probeCount: u32,
   level: u32,
   invNumRays: f32,
+  prevRayW: u32,
+  currRayW: u32,
   pad1: u32,
+  pad2: u32,
+  pad3: u32,
 };
 
-@group(0) @binding(0) var prevRayTex: texture_2d<f32>;
-@group(0) @binding(1) var currRayTex: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(0) var<storage, read> prevRay: array<vec2u>;
+@group(0) @binding(1) var<storage, read_write> currRay: array<vec2u>;
 @group(0) @binding(2) var<uniform> params: ExtendParams;
+
+fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
+fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
 struct RayData { rad: vec3f, trans: f32 }
 
@@ -304,8 +318,8 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
       sliceIdx < 0 || sliceIdx >= i32(params.probeCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let coord = vec2i((probeIdx << prevLevel) + probeIdx + rayIdx, sliceIdx);
-  let r = textureLoad(prevRayTex, coord, 0);
+  let idx = sliceIdx * i32(params.prevRayW) + (probeIdx << prevLevel) + probeIdx + rayIdx;
+  let r = unpackF16(prevRay[idx]);
   return RayData(r.rgb, r.a);
 }
 
@@ -344,7 +358,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let avgRad = (crossA.rad + crossB.rad) * 0.5;
   let avgTrans = (crossA.trans + crossB.trans) * 0.5;
-  textureStore(currRayTex, vec2i(texelX, sliceIdx), vec4f(avgRad, avgTrans));
+  currRay[sliceIdx * i32(params.currRayW) + texelX] = packF16(vec4f(avgRad, avgTrans));
 }
 `;
 
@@ -370,9 +384,12 @@ struct MergeParams {
   angWeightBase: u32,
 };
 
-@group(0) @binding(0) var rayTex: texture_2d<f32>;
-@group(0) @binding(1) var mergeIn: texture_2d<f32>;
-@group(0) @binding(2) var mergeOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
+@group(0) @binding(1) var<storage, read> mergeInBuf: array<vec2u>;
+@group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<vec2u>;
+
+fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
+fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 @group(0) @binding(3) var<uniform> params: MergeParams;
 @group(0) @binding(4) var fluencePrev: texture_2d<f32>;
 @group(0) @binding(5) var fluenceCurr: texture_storage_2d<rgba16float, write>;
@@ -387,8 +404,8 @@ fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
       sliceIdx < 0 || sliceIdx >= i32(params.probeCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let coord = vec2i((probeIdx << params.conesShift) + probeIdx + rayIdx, sliceIdx);
-  let r = textureLoad(rayTex, coord, 0);
+  let texX = (probeIdx << params.conesShift) + probeIdx + rayIdx;
+  let r = unpackF16(rayBuf[sliceIdx * i32(params.numProbes * params.numRays) + texX]);
   return RayData(r.rgb, r.a);
 }
 
@@ -398,7 +415,7 @@ fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
       sliceIdx < 0 || sliceIdx >= i32(params.probeCount)) {
     return vec3f(0.0);
   }
-  return textureLoad(mergeIn, vec2i(texX, sliceIdx), 0).rgb;
+  return unpackF16(mergeInBuf[sliceIdx * i32(params.probeCount) + texX]).rgb;
 }
 
 fn getAngularWeight(subCone: u32) -> f32 {
@@ -445,7 +462,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         farSlice < 0 || farSlice >= i32(params.probeCount)) {
       farCone = loadSkyFluence(subCone);
     } else {
-      farCone = textureLoad(mergeIn, vec2i(farX, farSlice), 0).rgb;
+      farCone = unpackF16(mergeInBuf[farSlice * i32(params.probeCount) + farX]).rgb;
     }
 
     if (isEven) {
@@ -461,7 +478,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   let outX = (probeIdx << conesShift) + coneIdx;
-  textureStore(mergeOut, vec2i(outX, sliceIdx), vec4f(result, 1.0));
+  mergeOutBuf[sliceIdx * i32(params.probeCount) + outX] = packF16(vec4f(result, 1.0));
 
   if (params.numCones == 1u) {
     let ps = i32(params.probeCount);
@@ -836,13 +853,12 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
 
-  // Per-level ray textures: radiance rgb + scalar transmittance in alpha (rgba16float)
-  #rayTextures!: GPUTexture[];
-  #rayTextureViews!: GPUTextureView[];
+  // Per-level ray storage buffers: vec4f (rad.rgb + transmittance)
+  #rayBuffers!: GPUBuffer[];
+  #rayWidths!: number[];
 
-  // Merge ping-pong pair (probeCount x probeCount)
-  #mergeTextures!: GPUTexture[];
-  #mergeTextureViews!: GPUTextureView[];
+  // Merge ping-pong storage buffers (probeCount x probeCount)
+  #mergeBuffers!: GPUBuffer[];
 
   // Fluence ping-pong pair (probeCount x probeCount).
   // Could be a single texture with read_write storage access, but Firefox
@@ -1265,19 +1281,19 @@ export class FolkHolographicRC extends FolkBaseSet {
     [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER);
     [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'rg8unorm', TEX_RENDER);
 
-    this.#rayTextures = [];
-    this.#rayTextureViews = [];
+    this.#rayBuffers = [];
+    this.#rayWidths = [];
     for (let i = 0; i < this.#numCascades; i++) {
       const w = (ps >> i) * ((1 << i) + 1);
-      const [rt, rv] = tex(device, `Ray-${i}`, w, ps, 'rgba16float', TEX_STORAGE);
-      this.#rayTextures.push(rt);
-      this.#rayTextureViews.push(rv);
+      this.#rayWidths.push(w);
+      this.#rayBuffers.push(
+        device.createBuffer({ label: `Ray-${i}`, size: w * ps * 8, usage: GPUBufferUsage.STORAGE }),
+      );
     }
 
-    const [mt0, mv0] = tex(device, 'Merge-0', ps, ps, 'rgba16float', TEX_STORAGE);
-    const [mt1, mv1] = tex(device, 'Merge-1', ps, ps, 'rgba16float', TEX_STORAGE);
-    this.#mergeTextures = [mt0, mt1];
-    this.#mergeTextureViews = [mv0, mv1];
+    this.#mergeBuffers = [0, 1].map((i) =>
+      device.createBuffer({ label: `Merge-${i}`, size: ps * ps * 8, usage: GPUBufferUsage.STORAGE }),
+    );
     const [ft0, fv0] = tex(device, 'Fluence-0', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
     const [ft1, fv1] = tex(device, 'Fluence-1', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
     this.#fluenceTextures = [ft0, ft1];
@@ -1444,7 +1460,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
 
     this.#seedBindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(device, seedLayout, this.#worldTextureView, this.#bounceTextureView, this.#rayTextureViews[0], {
+      bg(device, seedLayout, this.#worldTextureView, this.#bounceTextureView, { buffer: this.#rayBuffers[0] }, {
         buffer: this.#seedParamsBuffer,
         offset: dir * 256,
         size: seedPS,
@@ -1453,7 +1469,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const seedL1Layout = this.#raySeedL1Pipeline.getBindGroupLayout(0);
     this.#seedL1BindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(device, seedL1Layout, this.#worldTextureView, this.#bounceTextureView, this.#rayTextureViews[1], {
+      bg(device, seedL1Layout, this.#worldTextureView, this.#bounceTextureView, { buffer: this.#rayBuffers[1] }, {
         buffer: this.#seedParamsBuffer,
         offset: dir * 256,
         size: seedPS,
@@ -1463,7 +1479,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#extendBindGroups = [];
     for (let level = 2; level < nc; level++) {
       this.#extendBindGroups.push(
-        bg(device, extLayout, this.#rayTextureViews[level - 1], this.#rayTextureViews[level], {
+        bg(device, extLayout, { buffer: this.#rayBuffers[level - 1] }, { buffer: this.#rayBuffers[level] }, {
           buffer: this.#extendParamsBuffer,
           offset: (level - 1) * 256,
           size: extPS,
@@ -1484,9 +1500,9 @@ export class FolkHolographicRC extends FolkBaseSet {
           bg(
             device,
             mergeLayout,
-            this.#rayTextureViews[level],
-            this.#mergeTextureViews[readIdx],
-            this.#mergeTextureViews[writeIdx],
+            { buffer: this.#rayBuffers[level] },
+            { buffer: this.#mergeBuffers[readIdx] },
+            { buffer: this.#mergeBuffers[writeIdx] },
             { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
             this.#fluenceTextureViews[fReadIdx],
             this.#fluenceTextureViews[fWriteIdx],
@@ -1527,8 +1543,8 @@ export class FolkHolographicRC extends FolkBaseSet {
   #destroyResources() {
     this.#worldTexture?.destroy();
     this.#materialTexture?.destroy();
-    this.#rayTextures?.forEach((t) => t.destroy());
-    this.#mergeTextures?.forEach((t) => t.destroy());
+    this.#rayBuffers?.forEach((b) => b.destroy());
+    this.#mergeBuffers?.forEach((b) => b.destroy());
     this.#fluenceTextures?.forEach((t) => t.destroy());
     this.#fluenceZeroBuffer?.destroy();
     this.#angWeightBuffer?.destroy();
@@ -1932,7 +1948,9 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     for (let level = 1; level < nc; level++) {
       const numRays = (1 << level) + 1;
-      this.#extendParamsView.set({ probeCount: ps, level, invNumRays: 1.0 / numRays, pad1: 0 });
+      const prevW = (ps >> (level - 1)) * ((1 << (level - 1)) + 1);
+      const currW = (ps >> level) * ((1 << level) + 1);
+      this.#extendParamsView.set({ probeCount: ps, level, invNumRays: 1.0 / numRays, prevRayW: prevW, currRayW: currW, pad1: 0, pad2: 0, pad3: 0 });
       device.queue.writeBuffer(this.#extendParamsBuffer, (level - 1) * 256, this.#extendParamsView.arrayBuffer);
     }
 
