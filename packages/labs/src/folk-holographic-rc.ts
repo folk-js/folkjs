@@ -853,6 +853,43 @@ export class FolkHolographicRC extends FolkBaseSet {
   #smoothedFrameTime = 0;
   #lastFrameTimestamp = 0;
 
+  // GPU timestamp profiling (null when timestamp-query unavailable)
+  #tsQuerySet: GPUQuerySet | null = null;
+  #tsResolveBuffer: GPUBuffer | null = null;
+  #tsResultBuffer: GPUBuffer | null = null;
+  #gpuTimeMs = 0;
+  #jsTimeMs = 0;
+
+  #initTimestampQueries() {
+    const device = this.#device;
+    this.#tsQuerySet = device.createQuerySet({ type: 'timestamp', count: 2 });
+    this.#tsResolveBuffer = device.createBuffer({
+      size: 2 * 8,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    this.#tsResultBuffer = device.createBuffer({
+      size: 2 * 8,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+  }
+
+  #resolveTimestamps(encoder: GPUCommandEncoder) {
+    if (!this.#tsQuerySet || !this.#tsResultBuffer) return;
+    encoder.resolveQuerySet(this.#tsQuerySet, 0, 2, this.#tsResolveBuffer!, 0);
+    if (this.#tsResultBuffer.mapState === 'unmapped') {
+      encoder.copyBufferToBuffer(this.#tsResolveBuffer!, 0, this.#tsResultBuffer, 0, 2 * 8);
+    }
+  }
+
+  #readTimestamps() {
+    if (!this.#tsResultBuffer || this.#tsResultBuffer.mapState !== 'unmapped') return;
+    this.#tsResultBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const times = new BigInt64Array(this.#tsResultBuffer!.getMappedRange());
+      this.#gpuTimeMs = Number(times[1] - times[0]) / 1e6;
+      this.#tsResultBuffer!.unmap();
+    }).catch(() => {});
+  }
+
   override async connectedCallback() {
     super.connectedCallback();
     await this.#initWebGPU();
@@ -1071,7 +1108,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (!navigator.gpu) throw new Error('WebGPU is not supported in this browser.');
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('Failed to get GPU adapter.');
-    this.#device = await adapter.requestDevice();
+    const canTimestamp = adapter.features.has('timestamp-query');
+    this.#device = await adapter.requestDevice({
+      requiredFeatures: canTimestamp ? ['timestamp-query' as GPUFeatureName] : [],
+    });
+    if (canTimestamp) {
+      this.#initTimestampQueries();
+    }
 
     this.#canvas = document.createElement('canvas');
     this.#canvas.width = this.clientWidth || 800;
@@ -1475,7 +1518,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     const render = (now: number) => {
       if (!this.#isRunning) return;
       this.#updateFrameTiming(now);
+      const jsStart = performance.now();
       this.#renderFrame();
+      this.#jsTimeMs = performance.now() - jsStart;
       this.#animationFrame = requestAnimationFrame(render);
     };
     this.#animationFrame = requestAnimationFrame(render);
@@ -1520,6 +1565,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             storeOp: 'store',
           },
         ],
+        ...(this.#tsQuerySet ? { timestampWrites: { querySet: this.#tsQuerySet, beginningOfPassWriteIndex: 0 } } : {}),
       });
       pass.setPipeline(this.#worldRenderPipeline);
       if (this.#shapeDataBuffer && this.#shapeCount > 0) {
@@ -1620,12 +1666,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#lastFluenceResultIdx = 1;
 
     // ── Step 3: Final blit ──
-    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroups[1]);
+    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroups[1], true);
 
+    this.#resolveTimestamps(encoder);
     this.#submitAndCapture(device, encoder);
+    this.#readTimestamps();
   }
 
-  #blitToScreen(encoder: GPUCommandEncoder, pipeline: GPURenderPipeline, bindGroup: GPUBindGroup) {
+  #blitToScreen(encoder: GPUCommandEncoder, pipeline: GPURenderPipeline, bindGroup: GPUBindGroup, timestamps = false) {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -1635,6 +1683,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           storeOp: 'store' as const,
         },
       ],
+      ...(timestamps && this.#tsQuerySet ? { timestampWrites: { querySet: this.#tsQuerySet, endOfPassWriteIndex: 1 } } : {}),
     });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
@@ -1841,6 +1890,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     return { width: this.#canvas?.width ?? 0, height: this.#canvas?.height ?? 0 };
   }
 
+  get gpuTimeMs() {
+    return this.#gpuTimeMs;
+  }
+
+  get jsTimeMs() {
+    return this.#jsTimeMs;
+  }
+
   get debugInfo() {
     if (this.pathTracing || this.#ptShowResult) {
       const spp = this.#ptFrameIndex * 16;
@@ -1848,7 +1905,9 @@ export class FolkHolographicRC extends FolkBaseSet {
       const label = this.pathTracing ? 'PT' : 'PT (frozen)';
       return ` ${label} f${this.#ptFrameIndex} ${spp}spp ${elapsed}s`;
     }
-    return '';
+    if (!this.#tsQuerySet) return '';
+    if (this.#gpuTimeMs <= 0) return ' gpu:...';
+    return ` gpu:${this.#gpuTimeMs.toFixed(1)}ms`;
   }
 
   #updateFrameTiming(now: number) {

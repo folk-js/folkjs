@@ -76,6 +76,22 @@
       }
       #info-popup .row { display: flex; justify-content: space-between; gap: 16px; }
       #info-popup .row span:last-child { color: rgba(255, 255, 255, 0.35); }
+      #fps { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
+      #fps:hover { color: rgba(255, 255, 255, 0.6); }
+      #perf-graph {
+        position: fixed; top: 8px; left: 8px; z-index: 1003;
+        background: rgba(0, 0, 0, 0.8);
+        border-radius: 6px; padding: 0;
+        display: none; flex-direction: column;
+        font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+        font-size: 9px; color: rgba(255,255,255,0.5);
+        pointer-events: none; overflow: hidden;
+      }
+      #perf-graph.open { display: flex; }
+      #perf-graph .perf-stats {
+        display: flex; gap: 12px; padding: 6px 8px 4px;
+        font-size: 10px;
+      }
       #color-btn {
         width: 18px; height: 18px;
         border-radius: 4px;
@@ -221,7 +237,7 @@
       <label><input id="bounces-toggle" type="checkbox" checked /> bounces</label>
       <label><input id="pt-toggle" type="checkbox" /> path trace</label>
       <div class="spacer"></div>
-      <span id="fps"></span>
+      <span id="fps" title="Toggle perf graph"></span>
       <div id="color-btn" title="Material inspector"></div>
       <button id="info-btn" title="Keyboard shortcuts">?</button>
       <button id="fs-btn" title="Fullscreen">⛶</button>
@@ -237,6 +253,15 @@
       <div class="row"><span><kbd>P</kbd></span><span>path trace</span></div>
       <div class="row"><span><kbd>S</kbd></span><span>screenshot</span></div>
       <div class="row"><span><kbd>F</kbd></span><span>fullscreen</span></div>
+    </div>
+
+    <div id="perf-graph">
+      <div class="perf-stats">
+        <span id="perf-fps" style="color:rgba(255,255,255,0.7)"></span>
+        <span id="perf-cpu-val" style="color:rgba(100,200,255,0.9)"></span>
+        <span id="perf-gpu-val" style="color:rgba(255,150,80,0.9)"></span>
+      </div>
+      <canvas id="perf-canvas"></canvas>
     </div>
 
     <div id="panel">
@@ -432,10 +457,31 @@
         probeSlider.value = step;
         probeValue.textContent = probeSizes[step];
       }
-      exposureSlider.addEventListener('input', () => setExposure(Number(exposureSlider.value)));
-      probeSlider.addEventListener('input', () => setProbeSize(Number(probeSlider.value)));
-      setProbeSize(4);
-      $('bounces-toggle').addEventListener('change', (e) => { hrc.bounces = e.target.checked; });
+      const params = new URLSearchParams(location.search);
+      let perfOpen = params.get('perf') === '1';
+
+      function syncURL() {
+        const p = new URLSearchParams();
+        if (currentScene !== 0) p.set('scene', currentScene);
+        if (skySelect.value !== 'none') p.set('sky', skySelect.value);
+        if (hrc.probeSize !== 1024) p.set('probes', hrc.probeSize);
+        if (hrc.exposure !== 2) p.set('exposure', hrc.exposure.toFixed(1));
+        if (!hrc.bounces) p.set('bounces', '0');
+        if (perfOpen) p.set('perf', '1');
+        const qs = p.toString();
+        history.replaceState(null, '', qs ? '?' + qs : location.pathname);
+      }
+
+      exposureSlider.addEventListener('input', () => { setExposure(Number(exposureSlider.value)); syncURL(); });
+      probeSlider.addEventListener('input', () => { setProbeSize(Number(probeSlider.value)); syncURL(); });
+      const initProbe = params.get('probes');
+      if (initProbe) {
+        const idx = probeSizes.indexOf(Number(initProbe));
+        setProbeSize(idx >= 0 ? idx : 4);
+      } else {
+        setProbeSize(4);
+      }
+      $('bounces-toggle').addEventListener('change', (e) => { hrc.bounces = e.target.checked; syncURL(); });
       $('pt-toggle').addEventListener('change', (e) => { hrc.pathTracing = e.target.checked; });
 
       hrc.setMouseLightRadius(pen.size / 2);
@@ -541,7 +587,7 @@
           }); break;
         }
       }
-      skySelect.addEventListener('change', () => applySky(skySelect.value));
+      skySelect.addEventListener('change', () => { applySky(skySelect.value); syncURL(); });
 
       // ── Scene infrastructure ──
       let animationId = null;
@@ -575,6 +621,7 @@
         clearScene();
         scenes[index].fn();
         sceneSelect.value = currentScene;
+        syncURL();
       }
 
       // ── Scene definitions ──
@@ -825,16 +872,119 @@
         sceneSelect.appendChild(o);
       });
       sceneSelect.addEventListener('change', () => switchScene(Number(sceneSelect.value)));
-      switchScene(0);
+      switchScene(params.has('scene') ? Number(params.get('scene')) : 0);
+      if (params.has('sky')) { skySelect.value = params.get('sky'); applySky(skySelect.value); }
+      if (params.has('exposure')) setExposure(Number(params.get('exposure')));
+      if (params.get('bounces') === '0') { hrc.bounces = false; $('bounces-toggle').checked = false; }
 
-      // ── FPS ──
+      // ── FPS + Perf Graph ──
       const fpsEl = $('fps');
+      const perfGraph = $('perf-graph');
+      const perfCanvas = $('perf-canvas');
+      const perfCtx = perfCanvas.getContext('2d');
+      const perfFpsEl = $('perf-fps');
+      const perfCpuEl = $('perf-cpu-val');
+      const perfGpuEl = $('perf-gpu-val');
+      const DPR = window.devicePixelRatio || 1;
+      const GW = 340, GH = 130, ML = 30;
+      const PW = GW - ML, PH = GH;
+      perfCanvas.width = GW * DPR; perfCanvas.height = GH * DPR;
+      perfCanvas.style.width = GW + 'px'; perfCanvas.style.height = GH + 'px';
+      const N_SAMPLES = PW;
+      const cpuSamples = new Float32Array(N_SAMPLES);
+      const gpuSamples = new Float32Array(N_SAMPLES);
+      let sampleIdx = 0, scaleMax = 20;
+      let avgCpu = 0, avgGpu = 0, avgFps = 0;
+      if (perfOpen) perfGraph.classList.add('open');
+
+      fpsEl.addEventListener('click', () => {
+        perfOpen = !perfOpen;
+        perfGraph.classList.toggle('open', perfOpen);
+        syncURL();
+      });
+
+      const TICKS = [2, 4, 8, 16, 32, 64];
+
+      function drawPerfGraph() {
+        const ctx = perfCtx;
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.clearRect(0, 0, GW, GH);
+
+        let dataMax = 1;
+        for (let i = 0; i < N_SAMPLES; i++) {
+          const total = cpuSamples[i] + gpuSamples[i];
+          if (total > dataMax) dataMax = total;
+          if (cpuSamples[i] > dataMax) dataMax = cpuSamples[i];
+        }
+        let ceilTick = TICKS[TICKS.length - 1];
+        for (const t of TICKS) { if (t >= dataMax) { ceilTick = t; break; } }
+        const target = Math.max(ceilTick * 1.1, 8);
+        if (target > scaleMax) scaleMax = target;
+        else scaleMax += (target - scaleMax) * 0.03;
+        const sqrtMax = Math.sqrt(scaleMax);
+        const toY = (ms) => PH - (Math.sqrt(Math.max(0, ms)) / sqrtMax) * PH;
+
+        ctx.fillStyle = 'rgba(255,255,255,0.03)';
+        ctx.fillRect(ML, 0, PW, PH);
+
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        for (const ms of TICKS) {
+          if (ms > scaleMax * 0.98) continue;
+          const y = toY(ms);
+          if (y < 6 || y > PH - 4) continue;
+          const isBudget = ms === 16 || ms === 32;
+          ctx.strokeStyle = isBudget ? 'rgba(100,255,100,0.2)' : 'rgba(255,255,255,0.06)';
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(GW, y); ctx.stroke();
+          ctx.fillStyle = isBudget ? 'rgba(100,255,100,0.5)' : 'rgba(255,255,255,0.25)';
+          ctx.fillText(`${ms}`, ML - 3, y);
+        }
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(ML, 0); ctx.lineTo(ML, PH); ctx.stroke();
+
+        function drawLine(samples, color) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          for (let i = 0; i < N_SAMPLES; i++) {
+            const si = (sampleIdx + i) % N_SAMPLES;
+            const x = ML + i;
+            const y = Math.max(0, Math.min(PH, toY(samples[si])));
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+        drawLine(cpuSamples, 'rgba(100,200,255,0.85)');
+        drawLine(gpuSamples, 'rgba(255,150,80,0.85)');
+      }
+
       let lastFpsUpdate = 0;
       (function tick(now) {
+        const jsMs = hrc.jsTimeMs;
+        const gpuMs = hrc.gpuTimeMs;
+
+        avgCpu += (jsMs - avgCpu) * 0.05;
+        if (gpuMs > 0) avgGpu += (gpuMs - avgGpu) * 0.05;
+        const fps = hrc.fps;
+        if (fps > 0) avgFps += (fps - avgFps) * 0.05;
+
+        cpuSamples[sampleIdx] = jsMs;
+        gpuSamples[sampleIdx] = gpuMs;
+        sampleIdx = (sampleIdx + 1) % N_SAMPLES;
+
         if (now - lastFpsUpdate > 250) {
           lastFpsUpdate = now;
-          const { width, height } = hrc.resolution;
-          fpsEl.textContent = `${width}×${height}  ${hrc.fps}fps  ${hrc.frameTimeMs.toFixed(1)}ms${hrc.debugInfo}`;
+          fpsEl.textContent = `${Math.round(avgFps)} fps`;
+        }
+        if (perfOpen) {
+          drawPerfGraph();
+          perfFpsEl.textContent = `${Math.round(avgFps)} fps`;
+          perfCpuEl.textContent = `js ${avgCpu.toFixed(1)}ms`;
+          perfGpuEl.textContent = avgGpu > 0 ? `gpu ${avgGpu.toFixed(1)}ms` : 'gpu N/A';
         }
         requestAnimationFrame(tick);
       })(0);
