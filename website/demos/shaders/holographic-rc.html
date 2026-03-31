@@ -450,12 +450,12 @@
         exposureSlider.value = v;
         exposureValue.textContent = v.toFixed(1);
       }
-      const probeSizes = [64, 128, 256, 512, 1024, 2048, 4096];
+      const probeCounts = [64, 128, 256, 512, 1024, 2048, 4096];
       function setProbeSize(step) {
-        step = Math.max(0, Math.min(probeSizes.length - 1, Math.round(step)));
-        hrc.probeSize = probeSizes[step];
+        step = Math.max(0, Math.min(probeCounts.length - 1, Math.round(step)));
+        hrc.probeCount = probeCounts[step];
         probeSlider.value = step;
-        probeValue.textContent = probeSizes[step];
+        probeValue.textContent = probeCounts[step];
       }
       const params = new URLSearchParams(location.search);
       let perfOpen = params.get('perf') === '1';
@@ -464,7 +464,7 @@
         const p = new URLSearchParams();
         if (currentScene !== 0) p.set('scene', currentScene);
         if (skySelect.value !== 'none') p.set('sky', skySelect.value);
-        if (hrc.probeSize !== 1024) p.set('probes', hrc.probeSize);
+        if (hrc.probeCount !== 1024) p.set('probes', hrc.probeCount);
         if (hrc.exposure !== 2) p.set('exposure', hrc.exposure.toFixed(1));
         if (!hrc.bounces) p.set('bounces', '0');
         if (perfOpen) p.set('perf', '1');
@@ -476,7 +476,7 @@
       probeSlider.addEventListener('input', () => { setProbeSize(Number(probeSlider.value)); syncURL(); });
       const initProbe = params.get('probes');
       if (initProbe) {
-        const idx = probeSizes.indexOf(Number(initProbe));
+        const idx = probeCounts.indexOf(Number(initProbe));
         setProbeSize(idx >= 0 ? idx : 4);
       } else {
         setProbeSize(4);

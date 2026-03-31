@@ -26,6 +26,11 @@ const TEX_RENDER = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_B
 const TEX_STORAGE = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING;
 const SKY_CIRCLE_SIZE = 256;
 
+const WG_SEED = [16, 16] as const;
+const WG_EXTEND = [16, 16] as const;
+const WG_MERGE = [16, 16] as const;
+const WG_BOUNCE = [16, 16] as const;
+
 function uboView(shader: string, name: string): StructuredView {
   return makeStructuredView(makeShaderDataDefinitions(shader).uniforms[name]);
 }
@@ -164,7 +169,7 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 
 const raySeedShader = /*wgsl*/ `
 struct SeedParams {
-  probeSize: u32,
+  probeCount: u32,
   screenW: f32,
   screenH: f32,
   probeSpacing: f32,
@@ -177,11 +182,11 @@ struct SeedParams {
 @group(0) @binding(2) var rayOut: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(3) var<uniform> params: SeedParams;
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(${WG_SEED[0]}, ${WG_SEED[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let probeIdx = i32(gid.x);
   let sliceIdx = i32(gid.y);
-  let ps = i32(params.probeSize);
+  let ps = i32(params.probeCount);
   if (probeIdx >= ps || sliceIdx >= ps) { return; }
 
   let p = vec3f(f32(probeIdx) + 0.5, f32(sliceIdx) + 0.5, 1.0);
@@ -207,7 +212,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 const raySeedLevel1Shader = /*wgsl*/ `
 struct SeedParams {
-  probeSize: u32,
+  probeCount: u32,
   screenW: f32,
   screenH: f32,
   probeSpacing: f32,
@@ -240,11 +245,11 @@ fn compositeRay(near: RayData, far: RayData) -> RayData {
   return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
 }
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(${WG_SEED[0]}, ${WG_SEED[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let texelX = i32(gid.x);
   let sliceIdx = i32(gid.y);
-  let ps = i32(params.probeSize);
+  let ps = i32(params.probeCount);
 
   let numRays = 3;
   let numProbes = ps / 2;
@@ -278,7 +283,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 const rayExtendShader = /*wgsl*/ `
 struct ExtendParams {
-  probeSize: u32,
+  probeCount: u32,
   level: u32,
   invNumRays: f32,
   pad1: u32,
@@ -292,11 +297,11 @@ struct RayData { rad: vec3f, trans: f32 }
 
 fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let prevLevel = params.level - 1u;
-  let prevNumProbes = i32(params.probeSize >> prevLevel);
+  let prevNumProbes = i32(params.probeCount >> prevLevel);
   let prevNumRays = i32(1u << prevLevel) + 1;
   if (probeIdx < 0 || probeIdx >= prevNumProbes ||
       rayIdx < 0 || rayIdx >= prevNumRays ||
-      sliceIdx < 0 || sliceIdx >= i32(params.probeSize)) {
+      sliceIdx < 0 || sliceIdx >= i32(params.probeCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
   let coord = vec2i((probeIdx << prevLevel) + probeIdx + rayIdx, sliceIdx);
@@ -308,18 +313,18 @@ fn compositeRay(near: RayData, far: RayData) -> RayData {
   return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
 }
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(${WG_EXTEND[0]}, ${WG_EXTEND[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let texelX = i32(gid.x);
   let sliceIdx = i32(gid.y);
 
   let interval = i32(1u << params.level);
   let numRays = interval + 1;
-  let numProbes = i32(params.probeSize >> params.level);
+  let numProbes = i32(params.probeCount >> params.level);
   let probeIdx = i32(floor(f32(texelX) * params.invNumRays));
   let rayIdx = texelX - probeIdx * numRays;
 
-  if (probeIdx >= numProbes || sliceIdx >= i32(params.probeSize)) { return; }
+  if (probeIdx >= numProbes || sliceIdx >= i32(params.probeCount)) { return; }
 
   let prevInterval = interval / 2;
   let lower = rayIdx / 2;
@@ -351,7 +356,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 const coneMergeShader = /*wgsl*/ `
 struct MergeParams {
-  probeSize: u32,
+  probeCount: u32,
   numCones: u32,
   numProbes: u32,
   numRays: u32,
@@ -379,7 +384,7 @@ struct RayData { rad: vec3f, trans: f32 }
 fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   if (probeIdx < 0 || probeIdx >= i32(params.numProbes) ||
       rayIdx < 0 || rayIdx >= i32(params.numRays) ||
-      sliceIdx < 0 || sliceIdx >= i32(params.probeSize)) {
+      sliceIdx < 0 || sliceIdx >= i32(params.probeCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
   let coord = vec2i((probeIdx << params.conesShift) + probeIdx + rayIdx, sliceIdx);
@@ -389,8 +394,8 @@ fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
 
 fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
   if (params.isLastLevel == 1u ||
-      texX < 0 || texX >= i32(params.probeSize) ||
-      sliceIdx < 0 || sliceIdx >= i32(params.probeSize)) {
+      texX < 0 || texX >= i32(params.probeCount) ||
+      sliceIdx < 0 || sliceIdx >= i32(params.probeCount)) {
     return vec3f(0.0);
   }
   return textureLoad(mergeIn, vec2i(texX, sliceIdx), 0).rgb;
@@ -408,7 +413,7 @@ fn loadSkyFluence(subCone: u32) -> vec3f {
        - textureLoad(skyPrefixTex, vec2i(i32(base), row), 0).rgb;
 }
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(${WG_MERGE[0]}, ${WG_MERGE[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let sliceIdx = i32(gid.x);
   let probeConeIdx = i32(gid.y);
@@ -417,7 +422,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let probeIdx = probeConeIdx >> conesShift;
   let coneIdx = probeConeIdx & (numCones - 1);
 
-  if (probeIdx >= i32(params.numProbes) || sliceIdx >= i32(params.probeSize)) { return; }
+  if (probeIdx >= i32(params.numProbes) || sliceIdx >= i32(params.probeCount)) { return; }
 
   let isEven = (probeIdx % 2 == 0);
   let farStep = select(1, 2, isEven);
@@ -436,8 +441,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let farSlice = sliceIdx + sliceOff * farStep;
     var farCone: vec3f;
     if (params.isLastLevel == 1u ||
-        farX < 0 || farX >= i32(params.probeSize) ||
-        farSlice < 0 || farSlice >= i32(params.probeSize)) {
+        farX < 0 || farX >= i32(params.probeCount) ||
+        farSlice < 0 || farSlice >= i32(params.probeCount)) {
       farCone = loadSkyFluence(subCone);
     } else {
       farCone = textureLoad(mergeIn, vec2i(farX, farSlice), 0).rgb;
@@ -459,7 +464,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   textureStore(mergeOut, vec2i(outX, sliceIdx), vec4f(result, 1.0));
 
   if (params.numCones == 1u) {
-    let ps = i32(params.probeSize);
+    let ps = i32(params.probeCount);
     var fc: vec2i;
     switch (params.direction) {
       case 0u: { fc = vec2i(probeIdx - 1, sliceIdx); }
@@ -556,7 +561,7 @@ struct BounceParams {
 @group(0) @binding(4) var bounceOut: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(5) var<uniform> params: BounceParams;
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(${WG_BOUNCE[0]}, ${WG_BOUNCE[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let px = i32(gid.x);
   let py = i32(gid.y);
@@ -766,7 +771,12 @@ function dirTransform(
   w: number,
   h: number,
   ps: number,
-): { transformX: [number, number, number]; transformY: [number, number, number]; probeSpacing: number; aspect: number } {
+): {
+  transformX: [number, number, number];
+  transformY: [number, number, number];
+  probeSpacing: number;
+  aspect: number;
+} {
   const sw = w / ps;
   const sh = h / ps;
   switch (dir) {
@@ -789,7 +799,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   static override tagName = 'folk-holographic-rc';
 
   @property({ type: Number, reflect: true }) exposure = 2.0;
-  @property({ type: Number, reflect: true }) probeSize = 1024;
+  @property({ type: Number, reflect: true }) probeCount = 1024;
   @property({ type: Boolean, reflect: true }) bounces = true;
   @property({ type: Boolean, reflect: true, attribute: 'path-tracing' }) pathTracing = false;
 
@@ -830,11 +840,11 @@ export class FolkHolographicRC extends FolkBaseSet {
   #rayTextures!: GPUTexture[];
   #rayTextureViews!: GPUTextureView[];
 
-  // Merge ping-pong pair (probeSize x probeSize)
+  // Merge ping-pong pair (probeCount x probeCount)
   #mergeTextures!: GPUTexture[];
   #mergeTextureViews!: GPUTextureView[];
 
-  // Fluence ping-pong pair (probeSize x probeSize).
+  // Fluence ping-pong pair (probeCount x probeCount).
   // Could be a single texture with read_write storage access, but Firefox
   // doesn't support readonly_and_readwrite_storage_textures yet.
   #fluenceTextures!: GPUTexture[];
@@ -853,7 +863,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #skyCircleData = new Float32Array(SKY_CIRCLE_SIZE * 4);
 
   // Sky prefix sum texture for O(1) sky integration at any cascade level.
-  // Width = probeSize+1 (prefix sum entries), Height = 4 (one row per direction).
+  // Width = probeCount+1 (prefix sum entries), Height = 4 (one row per direction).
   #skyPrefixSumTexture!: GPUTexture;
   #skyPrefixSumTextureView!: GPUTextureView;
 
@@ -1158,7 +1168,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
     if (!this.#device) return;
-    if (changedProperties.has('probeSize') && changedProperties.get('probeSize') !== undefined) {
+    if (changedProperties.has('probeCount') && changedProperties.get('probeCount') !== undefined) {
       this.#destroyResources();
       this.#initResources();
       this.#createStaticBindGroups();
@@ -1211,7 +1221,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #initResources() {
     const { width, height } = this.#canvas;
     const device = this.#device;
-    const ps = nextPowerOf2(this.probeSize);
+    const ps = nextPowerOf2(this.probeCount);
     this.#ps = ps;
     this.#numCascades = Math.log2(ps);
 
@@ -1630,7 +1640,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     const device = this.#device;
     const ps = this.#ps;
     const nc = this.#numCascades;
-    const wg = Math.ceil(ps / 16);
+    const seedWg = Math.ceil(ps / WG_SEED[0]);
+    const extWgY = Math.ceil(ps / WG_EXTEND[1]);
 
     this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
@@ -1711,7 +1722,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       const pass = encoder.beginComputePass();
       pass.setPipeline(this.#bounceComputePipeline);
       pass.setBindGroup(0, this.#bounceBindGroups[this.#lastFluenceResultIdx]);
-      pass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16));
+      pass.dispatchWorkgroups(Math.ceil(width / WG_BOUNCE[0]), Math.ceil(height / WG_BOUNCE[1]));
       pass.end();
     }
 
@@ -1731,21 +1742,21 @@ export class FolkHolographicRC extends FolkBaseSet {
         const pass = encoder.beginComputePass();
         pass.setPipeline(this.#raySeedPipeline);
         pass.setBindGroup(0, this.#seedBindGroups[dir]);
-        pass.dispatchWorkgroups(wg, wg);
+        pass.dispatchWorkgroups(seedWg, seedWg);
         pass.end();
       }
       {
         const pass = encoder.beginComputePass();
         pass.setPipeline(this.#raySeedL1Pipeline);
         pass.setBindGroup(0, this.#seedL1BindGroups[dir]);
-        pass.dispatchWorkgroups(Math.ceil(((ps >> 1) * 3) / 16), wg);
+        pass.dispatchWorkgroups(Math.ceil(((ps >> 1) * 3) / WG_SEED[0]), seedWg);
         pass.end();
       }
       for (let level = 2; level < nc; level++) {
         const pass = encoder.beginComputePass();
         pass.setPipeline(this.#rayExtendPipeline);
         pass.setBindGroup(0, this.#extendBindGroups[level - 2]);
-        pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / 16), wg);
+        pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / WG_EXTEND[0]), extWgY);
         pass.end();
       }
       for (let k = 0; k < nc; k++) {
@@ -1753,7 +1764,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         const pass = encoder.beginComputePass();
         pass.setPipeline(this.#coneMergePipeline);
         pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
-        pass.dispatchWorkgroups(wg, Math.ceil(((ps >> level) * (1 << level)) / 16));
+        pass.dispatchWorkgroups(Math.ceil(ps / WG_MERGE[0]), Math.ceil(((ps >> level) * (1 << level)) / WG_MERGE[1]));
         pass.end();
       }
     }
@@ -1875,7 +1886,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     for (let dir = 0; dir < 4; dir++) {
       const dt = dirTransform(dir, width, height, ps);
       this.#seedParamsView.set({
-        probeSize: ps,
+        probeCount: ps,
         screenW: width,
         screenH: height,
         probeSpacing: dt.probeSpacing,
@@ -1887,7 +1898,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     for (let level = 1; level < nc; level++) {
       const numRays = (1 << level) + 1;
-      this.#extendParamsView.set({ probeSize: ps, level, invNumRays: 1.0 / numRays, pad1: 0 });
+      this.#extendParamsView.set({ probeCount: ps, level, invNumRays: 1.0 / numRays, pad1: 0 });
       device.queue.writeBuffer(this.#extendParamsBuffer, (level - 1) * 256, this.#extendParamsView.arrayBuffer);
     }
 
@@ -1904,11 +1915,10 @@ export class FolkHolographicRC extends FolkBaseSet {
         const angBase = angOff;
         for (let s = 0; s < nextNumCones; s++) {
           const N = nextNumCones;
-          angData[angOff + s] =
-            Math.atan2((2 * s - N + 2) * dt.aspect, N) - Math.atan2((2 * s - N) * dt.aspect, N);
+          angData[angOff + s] = Math.atan2((2 * s - N + 2) * dt.aspect, N) - Math.atan2((2 * s - N) * dt.aspect, N);
         }
         this.#mergeParamsView.set({
-          probeSize: ps,
+          probeCount: ps,
           numCones,
           numProbes,
           numRays,
