@@ -457,8 +457,8 @@ fn loadSkyFluence(subCone: u32) -> vec3f {
 
 @compute @workgroup_size(${WG_MERGE[0]}, ${WG_MERGE[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let sliceIdx = i32(gid.x);
-  let probeConeIdx = i32(gid.y);
+  let probeConeIdx = i32(gid.x);
+  let sliceIdx = i32(gid.y);
   let conesShift = params.conesShift;
   let numCones = i32(1u << conesShift);
   let probeIdx = probeConeIdx >> conesShift;
@@ -1841,7 +1841,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.merge${level}`) });
         pass.setPipeline(this.#coneMergePipeline);
         pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
-        pass.dispatchWorkgroups(Math.ceil(ps / WG_MERGE[0]), Math.ceil(((ps >> level) * (1 << level)) / WG_MERGE[1]));
+        pass.dispatchWorkgroups(Math.ceil(((ps >> level) * (1 << level)) / WG_MERGE[0]), Math.ceil(ps / WG_MERGE[1]));
         pass.end();
       }
     }
