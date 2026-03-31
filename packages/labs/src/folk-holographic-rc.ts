@@ -385,11 +385,36 @@ struct MergeParams {
 };
 
 @group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
-@group(0) @binding(1) var<storage, read> mergeInBuf: array<vec2u>;
-@group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<vec2u>;
+@group(0) @binding(1) var<storage, read> mergeInBuf: array<u32>;
+@group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<u32>;
 
-fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
+
+fn packRGB9E5(c: vec3f) -> u32 {
+  let maxC = max(c.r, max(c.g, c.b));
+  var exp_shared: i32;
+  var scale: f32;
+  if (maxC < 6.10352e-5) {
+    exp_shared = 0;
+    scale = 0.0;
+  } else {
+    let e = clamp(i32(ceil(log2(maxC))) + 15, 0, 31);
+    exp_shared = e;
+    scale = exp2(f32(-e + 15 + 9));
+  }
+  let r = u32(clamp(c.r * scale, 0.0, 511.0));
+  let g = u32(clamp(c.g * scale, 0.0, 511.0));
+  let b = u32(clamp(c.b * scale, 0.0, 511.0));
+  return r | (g << 9u) | (b << 18u) | (u32(exp_shared) << 27u);
+}
+
+fn unpackRGB9E5(p: u32) -> vec3f {
+  let r = f32(p & 0x1FFu);
+  let g = f32((p >> 9u) & 0x1FFu);
+  let b = f32((p >> 18u) & 0x1FFu);
+  let e = f32((p >> 27u) & 0x1Fu) - 15.0 - 9.0;
+  return vec3f(r, g, b) * exp2(e);
+}
 @group(0) @binding(3) var<uniform> params: MergeParams;
 @group(0) @binding(4) var fluencePrev: texture_2d<f32>;
 @group(0) @binding(5) var fluenceCurr: texture_storage_2d<rgba16float, write>;
@@ -415,7 +440,7 @@ fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
       sliceIdx < 0 || sliceIdx >= i32(params.probeCount)) {
     return vec3f(0.0);
   }
-  return unpackF16(mergeInBuf[sliceIdx * i32(params.probeCount) + texX]).rgb;
+  return unpackRGB9E5(mergeInBuf[sliceIdx * i32(params.probeCount) + texX]);
 }
 
 fn getAngularWeight(subCone: u32) -> f32 {
@@ -462,7 +487,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         farSlice < 0 || farSlice >= i32(params.probeCount)) {
       farCone = loadSkyFluence(subCone);
     } else {
-      farCone = unpackF16(mergeInBuf[farSlice * i32(params.probeCount) + farX]).rgb;
+      farCone = unpackRGB9E5(mergeInBuf[farSlice * i32(params.probeCount) + farX]);
     }
 
     if (isEven) {
@@ -478,7 +503,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   let outX = (probeIdx << conesShift) + coneIdx;
-  mergeOutBuf[sliceIdx * i32(params.probeCount) + outX] = packF16(vec4f(result, 1.0));
+  mergeOutBuf[sliceIdx * i32(params.probeCount) + outX] = packRGB9E5(result);
 
   if (params.numCones == 1u) {
     let ps = i32(params.probeCount);
@@ -1292,7 +1317,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     this.#mergeBuffers = [0, 1].map((i) =>
-      device.createBuffer({ label: `Merge-${i}`, size: ps * ps * 8, usage: GPUBufferUsage.STORAGE }),
+      device.createBuffer({ label: `Merge-${i}`, size: ps * ps * 4, usage: GPUBufferUsage.STORAGE }),
     );
     const [ft0, fv0] = tex(device, 'Fluence-0', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
     const [ft1, fv1] = tex(device, 'Fluence-1', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
