@@ -361,17 +361,26 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   if (probeIdx >= i32(params.numProbes) || perpIdx >= i32(params.probeSize)) { return; }
 
+  let isEven = (probeIdx % 2 == 0);
+  let align = select(1, 2, isEven);
+
+  let N = f32(params.nextNumCones);
+  let a = params.aspect;
+  let base = f32(coneIdx * 2);
+  let ang0 = atan2((2.0 * base - N) * a, N);
+  let ang1 = atan2((2.0 * base - N + 2.0) * a, N);
+  let ang2 = atan2((2.0 * base - N + 4.0) * a, N);
+
   var result = vec3f(0.0);
+  let cWs = array(ang1 - ang0, ang2 - ang1);
 
   for (var side = 0; side < 2; side++) {
     let subCone = u32(coneIdx * 2 + side);
     let vrayI = coneIdx + side;
-    let cW = angWeight(subCone, params.nextNumCones);
+    let cW = cWs[side];
 
     let ray = loadRay(probeIdx, vrayI, perpIdx);
     let perpOff = -nc + vrayI * 2;
-    let isEven = (probeIdx % 2 == 0);
-    let align = select(1, 2, isEven);
 
     let farX = (probeIdx + align) * nc + i32(subCone);
     let farPerp = perpIdx + perpOff * align;
@@ -389,12 +398,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let cRad = ray.rad + ext.rad * ray.trans;
       let cTrans = ray.trans * ext.trans;
       let merged = cRad * cW + farCone * cTrans;
-      var nearCone: vec3f;
-      if (params.isLastLevel == 1u) {
-        nearCone = loadSkyFluence(subCone);
-      } else {
-        nearCone = loadMerge(probeIdx * nc + i32(subCone), perpIdx);
-      }
+      let nearCone = loadMerge(probeIdx * nc + i32(subCone), perpIdx);
       result += (merged + nearCone) * 0.5;
     } else {
       result += ray.rad * cW + farCone * ray.trans;
