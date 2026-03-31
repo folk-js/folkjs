@@ -167,15 +167,9 @@ struct SeedParams {
   probeSize: u32,
   screenW: f32,
   screenH: f32,
-  pad0: u32,
-  originX: f32,
-  originY: f32,
-  alongAxisX: f32,
-  alongAxisY: f32,
-  perpAxisX: f32,
-  perpAxisY: f32,
   scaleAlong: f32,
-  scalePerp: f32,
+  tx0: vec4f,
+  tx1: vec4f,
 };
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
@@ -190,9 +184,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let ps = i32(params.probeSize);
   if (probeIdx >= ps || perpIdx >= ps) { return; }
 
-  let wp = vec2f(params.originX, params.originY)
-         + vec2f(params.alongAxisX, params.alongAxisY) * (f32(probeIdx) + 0.5) * params.scaleAlong
-         + vec2f(params.perpAxisX, params.perpAxisY) * (f32(perpIdx) + 0.5) * params.scalePerp;
+  let p = vec3f(f32(probeIdx) + 0.5, f32(perpIdx) + 0.5, 1.0);
+  let wp = vec2f(dot(params.tx0.xyz, p), dot(params.tx1.xyz, p));
 
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
   var rad = vec3f(0.0);
@@ -217,15 +210,9 @@ struct SeedParams {
   probeSize: u32,
   screenW: f32,
   screenH: f32,
-  pad0: u32,
-  originX: f32,
-  originY: f32,
-  alongAxisX: f32,
-  alongAxisY: f32,
-  perpAxisX: f32,
-  perpAxisY: f32,
   scaleAlong: f32,
-  scalePerp: f32,
+  tx0: vec4f,
+  tx1: vec4f,
 };
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
@@ -236,11 +223,8 @@ struct SeedParams {
 struct RayData { rad: vec3f, trans: f32 }
 
 fn sampleWorld(probeIdx: i32, perpIdx: i32) -> RayData {
-  let along = vec2f(params.alongAxisX, params.alongAxisY);
-  let perp = vec2f(params.perpAxisX, params.perpAxisY);
-  let wp = vec2f(params.originX, params.originY)
-         + along * (f32(probeIdx) + 0.5) * params.scaleAlong
-         + perp * (f32(perpIdx) + 0.5) * params.scalePerp;
+  let p = vec3f(f32(probeIdx) + 0.5, f32(perpIdx) + 0.5, 1.0);
+  let wp = vec2f(dot(params.tx0.xyz, p), dot(params.tx1.xyz, p));
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
   if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
     return RayData(vec3f(0.0), 1.0);
@@ -774,30 +758,30 @@ const ptBlitShader =
 }
 `;
 
-// ── Direction definitions (simplified for square probe grid) ──
+// ── Direction definitions ──
+// Each direction is fully described by a 2x3 transform matrix (probe→world)
+// plus fluence coordinate coefficients and aspect ratio.
 
-const DIR_ALONG: [number, number][] = [
-  [1, 0],
-  [0, 1],
-  [-1, 0],
-  [0, -1],
-];
-const DIR_PERP: [number, number][] = [
-  [0, 1],
-  [1, 0],
-  [0, 1],
-  [1, 0],
-];
-
-function dirOrigin(dir: number, w: number, h: number): [number, number] {
-  if (dir === 2) return [w, 0];
-  if (dir === 3) return [0, h];
-  return [0, 0];
-}
-
-function dirScales(dir: number, w: number, h: number, ps: number): [number, number] {
-  const horiz = dir === 0 || dir === 2;
-  return horiz ? [w / ps, h / ps] : [h / ps, w / ps];
+function dirTransform(
+  dir: number,
+  w: number,
+  h: number,
+  ps: number,
+): { tx0: [number, number, number]; tx1: [number, number, number]; scaleAlong: number; aspect: number } {
+  const sw = w / ps;
+  const sh = h / ps;
+  switch (dir) {
+    case 0:
+      return { tx0: [sw, 0, 0], tx1: [0, sh, 0], scaleAlong: sw, aspect: sh / sw };
+    case 1:
+      return { tx0: [0, sw, 0], tx1: [sh, 0, 0], scaleAlong: sh, aspect: sw / sh };
+    case 2:
+      return { tx0: [-sw, 0, w], tx1: [0, sh, 0], scaleAlong: sw, aspect: sh / sw };
+    case 3:
+      return { tx0: [0, sw, 0], tx1: [-sh, 0, h], scaleAlong: sh, aspect: sw / sh };
+    default:
+      return dirTransform(0, w, h, ps);
+  }
 }
 
 // ── Component ──
@@ -1112,8 +1096,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const data = new Float32Array(rowLen * 4 * 4);
 
     for (let dir = 0; dir < 4; dir++) {
-      const [sa, sp] = dirScales(dir, width, height, ps);
-      const aspect = sp / sa;
+      const { aspect } = dirTransform(dir, width, height, ps);
       const rowOff = dir * rowLen * 4;
 
       data[rowOff] = 0;
@@ -1891,23 +1874,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     const nc = this.#numCascades;
 
     for (let dir = 0; dir < 4; dir++) {
-      const [ox, oy] = dirOrigin(dir, width, height);
-      const [ax, ay] = DIR_ALONG[dir];
-      const [px, py] = DIR_PERP[dir];
-      const [sa, sp] = dirScales(dir, width, height, ps);
+      const dt = dirTransform(dir, width, height, ps);
       this.#seedParamsView.set({
         probeSize: ps,
         screenW: width,
         screenH: height,
-        pad0: 0,
-        originX: ox,
-        originY: oy,
-        alongAxisX: ax,
-        alongAxisY: ay,
-        perpAxisX: px,
-        perpAxisY: py,
-        scaleAlong: sa,
-        scalePerp: sp,
+        scaleAlong: dt.scaleAlong,
+        tx0: [...dt.tx0, 0],
+        tx1: [...dt.tx1, 0],
       });
       device.queue.writeBuffer(this.#seedParamsBuffer, dir * 256, this.#seedParamsView.arrayBuffer);
     }
@@ -1921,8 +1895,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const perDir = 2 * ps - 2;
     const angData = new Float32Array(4 * perDir);
     for (let dir = 0; dir < 4; dir++) {
-      const [sa, sp] = dirScales(dir, width, height, ps);
-      const aspect = sp / sa;
+      const dt = dirTransform(dir, width, height, ps);
       let angOff = dir * perDir;
       for (let level = 0; level < nc; level++) {
         const numCones = 1 << level;
@@ -1933,7 +1906,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         for (let s = 0; s < nextNumCones; s++) {
           const N = nextNumCones;
           angData[angOff + s] =
-            Math.atan2((2 * s - N + 2) * aspect, N) - Math.atan2((2 * s - N) * aspect, N);
+            Math.atan2((2 * s - N + 2) * dt.aspect, N) - Math.atan2((2 * s - N) * dt.aspect, N);
         }
         this.#mergeParamsView.set({
           probeSize: ps,
@@ -1942,12 +1915,12 @@ export class FolkHolographicRC extends FolkBaseSet {
           numRays,
           nextNumCones,
           isLastLevel: level === nc - 1 ? 1 : 0,
-          aspect,
-          direction: dir,
+          aspect: dt.aspect,
           isFirstDir: dir === 0 ? 1 : 0,
           skyShift: Math.log2(ps / nextNumCones),
           conesShift: level,
           angWeightBase: angBase,
+          direction: dir,
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
         angOff += nextNumCones;
