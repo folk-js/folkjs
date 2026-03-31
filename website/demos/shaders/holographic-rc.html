@@ -5,8 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Holographic Radiance Cascade</title>
     <style>
-      *, *::before, *::after { box-sizing: border-box; }
-      html, body { height: 100%; margin: 0; overflow: hidden; }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
       body {
         display: flex;
         flex-direction: column;
@@ -15,9 +24,19 @@
         font-size: 11px;
         color: rgba(255, 255, 255, 0.6);
       }
-      #canvas-area { flex: 1; position: relative; min-height: 0; overflow: hidden; }
-      folk-shape { position: absolute; background-color: transparent; }
-      folk-holographic-rc { overflow: hidden; }
+      #canvas-area {
+        flex: 1;
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+      }
+      folk-shape {
+        position: absolute;
+        background-color: transparent;
+      }
+      folk-holographic-rc {
+        overflow: hidden;
+      }
 
       /* ── Bottom bar ── */
       #bar {
@@ -41,71 +60,152 @@
         cursor: pointer;
         outline: none;
       }
-      #bar .g { display: flex; align-items: center; gap: 5px; }
-      #bar input[type='range'] { width: 72px; }
-      #bar label { cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
-      #bar .v { width: 28px; text-align: right; color: rgba(255, 255, 255, 0.4); }
-      .spacer { flex: 1; }
-      #fps { color: rgba(255, 255, 255, 0.4); white-space: nowrap; }
+      #bar .g {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      #bar input[type='range'] {
+        width: 72px;
+      }
+      #bar label {
+        cursor: pointer;
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      #bar .v {
+        width: 28px;
+        text-align: right;
+        color: rgba(255, 255, 255, 0.4);
+      }
+      .spacer {
+        flex: 1;
+      }
+      #fps {
+        color: rgba(255, 255, 255, 0.4);
+        white-space: nowrap;
+      }
       #info-btn {
-        background: none; border: 1px solid rgba(255, 255, 255, 0.15);
-        color: rgba(255, 255, 255, 0.35); cursor: pointer;
-        font: inherit; font-size: 10px; font-weight: bold;
-        width: 18px; height: 18px; border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        padding: 0; line-height: 1; flex-shrink: 0;
+        background: none;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: rgba(255, 255, 255, 0.35);
+        cursor: pointer;
+        font: inherit;
+        font-size: 10px;
+        font-weight: bold;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+        flex-shrink: 0;
       }
-      #info-btn:hover { color: rgba(255, 255, 255, 0.7); border-color: rgba(255, 255, 255, 0.3); }
+      #info-btn:hover {
+        color: rgba(255, 255, 255, 0.7);
+        border-color: rgba(255, 255, 255, 0.3);
+      }
       #info-popup {
-        position: fixed; bottom: 36px; right: 40px; z-index: 1002;
+        position: fixed;
+        bottom: 36px;
+        right: 40px;
+        z-index: 1002;
         background: rgba(10, 10, 10, 0.92);
-        backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
         border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 8px; padding: 12px 14px;
-        display: none; min-width: 180px;
-        font-size: 11px; line-height: 1.7;
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: none;
+        min-width: 180px;
+        font-size: 11px;
+        line-height: 1.7;
       }
-      #info-popup.open { display: block; }
+      #info-popup.open {
+        display: block;
+      }
       #info-popup kbd {
         display: inline-block;
         background: rgba(255, 255, 255, 0.08);
         border: 1px solid rgba(255, 255, 255, 0.12);
         border-radius: 3px;
-        padding: 0 4px; margin-right: 2px;
-        font: inherit; font-size: 10px;
+        padding: 0 4px;
+        margin-right: 2px;
+        font: inherit;
+        font-size: 10px;
       }
-      #info-popup .row { display: flex; justify-content: space-between; gap: 16px; }
-      #info-popup .row span:last-child { color: rgba(255, 255, 255, 0.35); }
-      #fps { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
-      #fps:hover { color: rgba(255, 255, 255, 0.6); }
+      #info-popup .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      #info-popup .row span:last-child {
+        color: rgba(255, 255, 255, 0.35);
+      }
+      #fps {
+        cursor: pointer;
+        text-decoration: underline;
+        text-decoration-style: dotted;
+        text-underline-offset: 2px;
+      }
+      #fps:hover {
+        color: rgba(255, 255, 255, 0.6);
+      }
       #perf-graph {
-        position: fixed; top: 8px; left: 8px; z-index: 1003;
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        z-index: 1003;
         background: rgba(0, 0, 0, 0.8);
-        border-radius: 6px; padding: 0;
-        display: none; flex-direction: column;
+        border-radius: 6px;
+        padding: 0;
+        display: none;
+        flex-direction: column;
         font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-        font-size: 9px; color: rgba(255,255,255,0.5);
-        pointer-events: none; overflow: hidden;
+        font-size: 9px;
+        color: rgba(255, 255, 255, 0.5);
+        pointer-events: none;
+        overflow: hidden;
       }
-      #perf-graph.open { display: flex; }
+      #perf-graph.open {
+        display: flex;
+      }
       #perf-graph .perf-stats {
-        display: flex; gap: 12px; padding: 6px 8px 4px;
+        display: flex;
+        gap: 12px;
+        padding: 6px 8px 4px;
         font-size: 10px;
       }
       #color-btn {
-        width: 18px; height: 18px;
+        width: 18px;
+        height: 18px;
         border-radius: 4px;
         border: 1.5px solid rgba(255, 255, 255, 0.2);
         cursor: pointer;
         transition: border-color 0.1s;
       }
-      #color-btn:hover { border-color: rgba(255, 255, 255, 0.5); }
-      #color-btn.open { border-color: rgba(255, 255, 255, 0.7); }
-      #fs-btn {
-        background: none; border: none; color: rgba(255, 255, 255, 0.35);
-        cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1;
+      #color-btn:hover {
+        border-color: rgba(255, 255, 255, 0.5);
       }
-      #fs-btn:hover { color: rgba(255, 255, 255, 0.7); }
+      #color-btn.open {
+        border-color: rgba(255, 255, 255, 0.7);
+      }
+      #fs-btn {
+        background: none;
+        border: none;
+        color: rgba(255, 255, 255, 0.35);
+        cursor: pointer;
+        font-size: 14px;
+        padding: 0 2px;
+        line-height: 1;
+      }
+      #fs-btn:hover {
+        color: rgba(255, 255, 255, 0.7);
+      }
 
       /* ── Inspector panel (above bar) ── */
       #panel {
@@ -123,7 +223,9 @@
         user-select: none;
         display: none;
       }
-      #panel.open { display: block; }
+      #panel.open {
+        display: block;
+      }
       #panel-title {
         font-size: 9px;
         color: rgba(255, 255, 255, 0.4);
@@ -139,25 +241,61 @@
         align-items: center;
       }
       .sw {
-        width: 16px; height: 16px;
+        width: 16px;
+        height: 16px;
         border-radius: 4px;
         border: 1.5px solid rgba(255, 255, 255, 0.1);
         cursor: pointer;
         transition: border-color 0.1s;
       }
-      .sw:hover { border-color: rgba(255, 255, 255, 0.4); }
-      .sw.active { border-color: rgba(255, 255, 255, 0.8); }
-      .sw.eraser { background: repeating-conic-gradient(#555 0% 25%, #888 0% 50%) 50% / 8px 8px; }
-      #custom-color {
-        width: 18px; height: 16px; border: none; padding: 0;
-        cursor: pointer; background: none; border-radius: 4px;
+      .sw:hover {
+        border-color: rgba(255, 255, 255, 0.4);
       }
-      #custom-color::-webkit-color-swatch-wrapper { padding: 0; }
-      #custom-color::-webkit-color-swatch { border: 1.5px solid rgba(255,255,255,0.1); border-radius: 4px; }
-      .prow { display: flex; align-items: center; gap: 6px; height: 20px; }
-      .prow label { width: 48px; color: rgba(255, 255, 255, 0.45); flex-shrink: 0; font-size: 10px; }
-      .prow input[type='range'] { flex: 1; min-width: 50px; }
-      .prow .v { width: 28px; text-align: right; color: rgba(255, 255, 255, 0.4); font-size: 10px; flex-shrink: 0; }
+      .sw.active {
+        border-color: rgba(255, 255, 255, 0.8);
+      }
+      .sw.eraser {
+        background: repeating-conic-gradient(#555 0% 25%, #888 0% 50%) 50% / 8px 8px;
+      }
+      #custom-color {
+        width: 18px;
+        height: 16px;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+        background: none;
+        border-radius: 4px;
+      }
+      #custom-color::-webkit-color-swatch-wrapper {
+        padding: 0;
+      }
+      #custom-color::-webkit-color-swatch {
+        border: 1.5px solid rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+      }
+      .prow {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 20px;
+      }
+      .prow label {
+        width: 48px;
+        color: rgba(255, 255, 255, 0.45);
+        flex-shrink: 0;
+        font-size: 10px;
+      }
+      .prow input[type='range'] {
+        flex: 1;
+        min-width: 50px;
+      }
+      .prow .v {
+        width: 28px;
+        text-align: right;
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 10px;
+        flex-shrink: 0;
+      }
 
       /* ── Slider styling ── */
       input[type='range'] {
@@ -244,22 +382,49 @@
     </div>
 
     <div id="info-popup">
-      <div class="row"><span><kbd>←</kbd> <kbd>→</kbd></span><span>prev / next scene</span></div>
-      <div class="row"><span><kbd>0</kbd>–<kbd>9</kbd></span><span>pen color</span></div>
-      <div class="row"><span><kbd>+</kbd> <kbd>−</kbd></span><span>pen size</span></div>
-      <div class="row"><span><kbd>N</kbd></span><span>new shape</span></div>
-      <div class="row"><span><kbd>⌫</kbd></span><span>delete shape</span></div>
-      <div class="row"><span><kbd>C</kbd></span><span>clear drawing</span></div>
-      <div class="row"><span><kbd>P</kbd></span><span>path trace</span></div>
-      <div class="row"><span><kbd>S</kbd></span><span>screenshot</span></div>
-      <div class="row"><span><kbd>F</kbd></span><span>fullscreen</span></div>
+      <div class="row"
+        ><span><kbd>←</kbd> <kbd>→</kbd></span
+        ><span>prev / next scene</span></div
+      >
+      <div class="row"
+        ><span><kbd>0</kbd>–<kbd>9</kbd></span
+        ><span>pen color</span></div
+      >
+      <div class="row"
+        ><span><kbd>+</kbd> <kbd>−</kbd></span
+        ><span>pen size</span></div
+      >
+      <div class="row"
+        ><span><kbd>N</kbd></span
+        ><span>new shape</span></div
+      >
+      <div class="row"
+        ><span><kbd>⌫</kbd></span
+        ><span>delete shape</span></div
+      >
+      <div class="row"
+        ><span><kbd>C</kbd></span
+        ><span>clear drawing</span></div
+      >
+      <div class="row"
+        ><span><kbd>P</kbd></span
+        ><span>path trace</span></div
+      >
+      <div class="row"
+        ><span><kbd>S</kbd></span
+        ><span>screenshot</span></div
+      >
+      <div class="row"
+        ><span><kbd>F</kbd></span
+        ><span>fullscreen</span></div
+      >
     </div>
 
     <div id="perf-graph">
       <div class="perf-stats">
-        <span id="perf-fps" style="color:rgba(255,255,255,0.7)"></span>
-        <span id="perf-cpu-val" style="color:rgba(100,200,255,0.9)"></span>
-        <span id="perf-gpu-val" style="color:rgba(255,150,80,0.9)"></span>
+        <span id="perf-fps" style="color: rgba(255, 255, 255, 0.7)"></span>
+        <span id="perf-cpu-val" style="color: rgba(100, 200, 255, 0.9)"></span>
+        <span id="perf-gpu-val" style="color: rgba(255, 150, 80, 0.9)"></span>
       </div>
       <canvas id="perf-canvas"></canvas>
     </div>
@@ -267,10 +432,34 @@
     <div id="panel">
       <div id="panel-title">Pen</div>
       <div id="swatches"><input type="color" id="custom-color" value="#cccccc" /></div>
-      <div class="prow"><label>opacity</label><input id="p-opacity" type="range" min="0" max="1" step="0.01" value="1" /><span class="v" id="v-opacity">1.00</span></div>
-      <div class="prow"><label>albedo</label><input id="p-albedo" type="range" min="0" max="1" step="0.01" value="0" /><span class="v" id="v-albedo">0.00</span></div>
-      <div class="prow"><label>scatter</label><input id="p-scatter" type="range" min="0" max="1" step="0.01" value="0" /><span class="v" id="v-scatter">0.00</span></div>
-      <div class="prow" id="size-row"><label>size</label><input id="p-size" type="range" min="2" max="50" step="1" value="20" /><span class="v" id="v-size">20</span></div>
+      <div class="prow"
+        ><label>opacity</label><input id="p-opacity" type="range" min="0" max="1" step="0.01" value="1" /><span
+          class="v"
+          id="v-opacity"
+          >1.00</span
+        ></div
+      >
+      <div class="prow"
+        ><label>albedo</label><input id="p-albedo" type="range" min="0" max="1" step="0.01" value="0" /><span
+          class="v"
+          id="v-albedo"
+          >0.00</span
+        ></div
+      >
+      <div class="prow"
+        ><label>scatter</label><input id="p-scatter" type="range" min="0" max="1" step="0.01" value="0" /><span
+          class="v"
+          id="v-scatter"
+          >0.00</span
+        ></div
+      >
+      <div class="prow" id="size-row"
+        ><label>size</label><input id="p-size" type="range" min="2" max="50" step="1" value="20" /><span
+          class="v"
+          id="v-size"
+          >20</span
+        ></div
+      >
     </div>
 
     <script type="module">
@@ -290,27 +479,41 @@
         { name: 'White', css: '#ffffff', rgb: [0.8, 0.8, 0.8] },
       ];
 
-      const toHex = rgb => '#' + rgb.map(c => Math.round(Math.pow(Math.max(0, Math.min(1, c)), 1/2.2) * 255).toString(16).padStart(2, '0')).join('');
-      const fromHex = h => [h.slice(1,3), h.slice(3,5), h.slice(5,7)].map(s => (parseInt(s,16)/255)**2.2);
+      const toHex = (rgb) =>
+        '#' +
+        rgb
+          .map((c) =>
+            Math.round(Math.pow(Math.max(0, Math.min(1, c)), 1 / 2.2) * 255)
+              .toString(16)
+              .padStart(2, '0'),
+          )
+          .join('');
+      const fromHex = (h) => [h.slice(1, 3), h.slice(3, 5), h.slice(5, 7)].map((s) => (parseInt(s, 16) / 255) ** 2.2);
 
       const pen = { color: [0.8, 0.8, 0.8], opacity: 1, albedo: 0, scattering: 0, size: 20, eraser: false };
       let selectedShape = null;
       let panelOpen = false;
 
-      const $ = id => document.getElementById(id);
+      const $ = (id) => document.getElementById(id);
       const hrc = $('hrc');
       const panelEl = $('panel');
       const panelTitle = $('panel-title');
       const swatchesEl = $('swatches');
       const customColor = $('custom-color');
       const colorBtn = $('color-btn');
-      const sOpacity = $('p-opacity'), vOpacity = $('v-opacity');
-      const sAlbedo = $('p-albedo'), vAlbedo = $('v-albedo');
-      const sScatter = $('p-scatter'), vScatter = $('v-scatter');
-      const sSize = $('p-size'), vSize = $('v-size');
+      const sOpacity = $('p-opacity'),
+        vOpacity = $('v-opacity');
+      const sAlbedo = $('p-albedo'),
+        vAlbedo = $('v-albedo');
+      const sScatter = $('p-scatter'),
+        vScatter = $('v-scatter');
+      const sSize = $('p-size'),
+        vSize = $('v-size');
       const sizeRow = $('size-row');
-      const exposureSlider = $('exposure-slider'), exposureValue = $('exposure-value');
-      const probeSlider = $('probe-slider'), probeValue = $('probe-value');
+      const exposureSlider = $('exposure-slider'),
+        exposureValue = $('exposure-value');
+      const probeSlider = $('probe-slider'),
+        probeValue = $('probe-value');
       const sceneSelect = $('scene-select');
 
       // ── Panel toggle ──
@@ -367,15 +570,19 @@
       });
 
       // ── Panel slider wiring ──
-      const f2 = v => v.toFixed(2);
-      const f3 = v => v < 0.1 ? v.toFixed(3) : v.toFixed(2);
+      const f2 = (v) => v.toFixed(2);
+      const f3 = (v) => (v < 0.1 ? v.toFixed(3) : v.toFixed(2));
 
       function wireSlider(slider, valEl, prop, fmt) {
         slider.addEventListener('input', () => {
           const v = Number(slider.value);
           valEl.textContent = fmt(v);
-          if (selectedShape) selectedShape.setAttribute(prop === 'scattering' ? 'data-scattering' : 'data-albedo', String(v));
-          else { pen[prop] = v; syncMouse(); }
+          if (selectedShape)
+            selectedShape.setAttribute(prop === 'scattering' ? 'data-scattering' : 'data-albedo', String(v));
+          else {
+            pen[prop] = v;
+            syncMouse();
+          }
         });
       }
       sOpacity.addEventListener('input', () => {
@@ -383,7 +590,10 @@
         const opacity = raw * raw * raw;
         vOpacity.textContent = f3(opacity);
         if (selectedShape) selectedShape.setAttribute('data-opacity', String(opacity));
-        else { pen.opacity = opacity; syncMouse(); }
+        else {
+          pen.opacity = opacity;
+          syncMouse();
+        }
       });
       wireSlider(sAlbedo, vAlbedo, 'albedo', f2);
       wireSlider(sScatter, vScatter, 'scattering', f2);
@@ -410,10 +620,16 @@
         }
 
         customColor.value = toHex(color);
-        sOpacity.value = Math.cbrt(opacity); vOpacity.textContent = f3(opacity);
-        sAlbedo.value = albedo; vAlbedo.textContent = f2(albedo);
-        sScatter.value = scattering; vScatter.textContent = f2(scattering);
-        if (!shape) { sSize.value = pen.size; vSize.textContent = String(pen.size); }
+        sOpacity.value = Math.cbrt(opacity);
+        vOpacity.textContent = f3(opacity);
+        sAlbedo.value = albedo;
+        vAlbedo.textContent = f2(albedo);
+        sScatter.value = scattering;
+        vScatter.textContent = f2(scattering);
+        if (!shape) {
+          sSize.value = pen.size;
+          vSize.textContent = String(pen.size);
+        }
 
         swatchEls.forEach((el, i) => el.classList.toggle('active', pen.eraser && i === 0));
         colorBtn.style.backgroundColor = pen.eraser ? '' : toHex(shape ? color : pen.color);
@@ -472,8 +688,14 @@
         history.replaceState(null, '', qs ? '?' + qs : location.pathname);
       }
 
-      exposureSlider.addEventListener('input', () => { setExposure(Number(exposureSlider.value)); syncURL(); });
-      probeSlider.addEventListener('input', () => { setProbeSize(Number(probeSlider.value)); syncURL(); });
+      exposureSlider.addEventListener('input', () => {
+        setExposure(Number(exposureSlider.value));
+        syncURL();
+      });
+      probeSlider.addEventListener('input', () => {
+        setProbeSize(Number(probeSlider.value));
+        syncURL();
+      });
       const initProbe = params.get('probes');
       if (initProbe) {
         const idx = probeCounts.indexOf(Number(initProbe));
@@ -481,8 +703,13 @@
       } else {
         setProbeSize(4);
       }
-      $('bounces-toggle').addEventListener('change', (e) => { hrc.bounces = e.target.checked; syncURL(); });
-      $('pt-toggle').addEventListener('change', (e) => { hrc.pathTracing = e.target.checked; });
+      $('bounces-toggle').addEventListener('change', (e) => {
+        hrc.bounces = e.target.checked;
+        syncURL();
+      });
+      $('pt-toggle').addEventListener('change', (e) => {
+        hrc.pathTracing = e.target.checked;
+      });
 
       hrc.setMouseLightRadius(pen.size / 2);
       syncMouse();
@@ -491,19 +718,28 @@
       // ── Sky controls ──
       const skySelect = $('sky-select');
       function buildSky(fn) {
-        const PI = Math.PI, N = 256, data = new Float32Array(N * 4);
-        function wrap(d) { return d > PI ? d - PI*2 : d < -PI ? d + PI*2 : d; }
+        const PI = Math.PI,
+          N = 256,
+          data = new Float32Array(N * 4);
+        function wrap(d) {
+          return d > PI ? d - PI * 2 : d < -PI ? d + PI * 2 : d;
+        }
         function spot(angle, sigma, color) {
           const inv = 1 / (2 * sigma * sigma);
           for (let i = 0; i < N; i++) {
             const a = (i / N) * PI * 2 - PI;
-            const w = wrap(a - angle); const g = Math.exp(-(w * w) * inv);
-            data[i*4] += color[0] * g; data[i*4+1] += color[1] * g; data[i*4+2] += color[2] * g;
+            const w = wrap(a - angle);
+            const g = Math.exp(-(w * w) * inv);
+            data[i * 4] += color[0] * g;
+            data[i * 4 + 1] += color[1] * g;
+            data[i * 4 + 2] += color[2] * g;
           }
         }
         function fill(color) {
           for (let i = 0; i < N; i++) {
-            data[i*4] += color[0]; data[i*4+1] += color[1]; data[i*4+2] += color[2];
+            data[i * 4] += color[0];
+            data[i * 4 + 1] += color[1];
+            data[i * 4 + 2] += color[2];
           }
         }
         function arc(center, halfWidth, color) {
@@ -511,16 +747,20 @@
             const a = (i / N) * PI * 2 - PI;
             const d = Math.abs(wrap(a - center));
             const t = Math.max(0, 1 - d / halfWidth);
-            data[i*4] += color[0]*t; data[i*4+1] += color[1]*t; data[i*4+2] += color[2]*t;
+            data[i * 4] += color[0] * t;
+            data[i * 4 + 1] += color[1] * t;
+            data[i * 4 + 2] += color[2] * t;
           }
         }
         function hueRing(intensity, saturation, offset) {
           for (let i = 0; i < N; i++) {
-            const h = ((i / N) + (offset || 0)) % 1;
+            const h = (i / N + (offset || 0)) % 1;
             const s = saturation ?? 1;
             const k = (n) => (n + h * 6) % 6;
             const f = (n) => intensity * (1 - s * Math.max(0, Math.min(k(n), 4 - k(n), 1)));
-            data[i*4] += f(0); data[i*4+1] += f(4); data[i*4+2] += f(2);
+            data[i * 4] += f(0);
+            data[i * 4 + 1] += f(4);
+            data[i * 4 + 2] += f(2);
           }
         }
         function thermal(hot, cold, center, halfWidth) {
@@ -529,80 +769,104 @@
             const d = Math.abs(wrap(a - center));
             const t = Math.max(0, Math.min(1, 1 - d / halfWidth));
             const s = t * t * (3 - 2 * t);
-            data[i*4] += hot[0]*s + cold[0]*(1-s);
-            data[i*4+1] += hot[1]*s + cold[1]*(1-s);
-            data[i*4+2] += hot[2]*s + cold[2]*(1-s);
+            data[i * 4] += hot[0] * s + cold[0] * (1 - s);
+            data[i * 4 + 1] += hot[1] * s + cold[1] * (1 - s);
+            data[i * 4 + 2] += hot[2] * s + cold[2] * (1 - s);
           }
         }
         fn({ spot, fill, arc, hueRing, thermal, PI, N, data, wrap });
-        for (let i = 0; i < N; i++) data[i*4+3] = 1;
+        for (let i = 0; i < N; i++) data[i * 4 + 3] = 1;
         hrc.setSkyCircle(data);
       }
 
       function applySky(name) {
         const PI = Math.PI;
         switch (name) {
-          case 'none': hrc.clearSky(); break;
-          case 'overcast': hrc.setSkyColor(0.04, 0.045, 0.05); break;
-          case 'spectrum': buildSky(({hueRing}) => {
-            hueRing(1.5, 1, 0);
-          }); break;
-          case 'iridescent': buildSky(({PI, N, data}) => {
-            for (let i = 0; i < N; i++) {
-              const t = i / N;
-              const phase = t * PI * 3;
-              const r = 0.5 + 0.5 * Math.cos(phase);
-              const g = 0.5 + 0.5 * Math.cos(phase + PI * 0.7);
-              const b = 0.5 + 0.5 * Math.cos(phase + PI * 1.4);
-              const brightness = 0.6 + 0.4 * Math.cos(t * PI * 2);
-              data[i*4]   = r * brightness;
-              data[i*4+1] = g * brightness;
-              data[i*4+2] = b * brightness;
-            }
-          }); break;
-          case 'studio': buildSky(({spot, PI}) => {
-            spot(-PI*0.65, 0.08, [2.2, 2.4, 2.8]);
-            spot(-PI*0.35, 0.1, [2.5, 2.2, 1.8]);
-            spot(PI*0.8, 0.12, [2.0, 2.0, 2.3]);
-          }); break;
-          case 'rgb': buildSky(({spot, PI}) => {
-            const s = PI * 2 / 3;
-            spot(-PI/2, 0.04, [4, 0.05, 0.05]);
-            spot(-PI/2 + s, 0.04, [0.05, 4, 0.05]);
-            spot(-PI/2 + s*2, 0.04, [0.05, 0.05, 4]);
-          }); break;
-          case 'sunset': buildSky(({spot, PI, N, data}) => {
-            spot(-PI/8, 0.09, [1.8, 0.5, 0.15]);
-            for (let i = 0; i < N; i++) {
-              const a = (i / N) * PI * 2 - PI;
-              const vert = Math.sin(a) * 0.5 + 0.5;
-              data[i*4]   += 0.08 * (1-vert);
-              data[i*4+1] += 0.03 * (1-vert);
-              data[i*4+2] += 0.06 * vert;
-            }
-          }); break;
-          case 'moonlight': buildSky(({spot, fill, PI}) => {
-            spot(-PI/3, 0.04, [0.4, 0.5, 0.7]);
-            fill([0.002, 0.003, 0.006]);
-          }); break;
+          case 'none':
+            hrc.clearSky();
+            break;
+          case 'overcast':
+            hrc.setSkyColor(0.04, 0.045, 0.05);
+            break;
+          case 'spectrum':
+            buildSky(({ hueRing }) => {
+              hueRing(1.5, 1, 0);
+            });
+            break;
+          case 'iridescent':
+            buildSky(({ PI, N, data }) => {
+              for (let i = 0; i < N; i++) {
+                const t = i / N;
+                const phase = t * PI * 3;
+                const r = 0.5 + 0.5 * Math.cos(phase);
+                const g = 0.5 + 0.5 * Math.cos(phase + PI * 0.7);
+                const b = 0.5 + 0.5 * Math.cos(phase + PI * 1.4);
+                const brightness = 0.6 + 0.4 * Math.cos(t * PI * 2);
+                data[i * 4] = r * brightness;
+                data[i * 4 + 1] = g * brightness;
+                data[i * 4 + 2] = b * brightness;
+              }
+            });
+            break;
+          case 'studio':
+            buildSky(({ spot, PI }) => {
+              spot(-PI * 0.65, 0.08, [2.2, 2.4, 2.8]);
+              spot(-PI * 0.35, 0.1, [2.5, 2.2, 1.8]);
+              spot(PI * 0.8, 0.12, [2.0, 2.0, 2.3]);
+            });
+            break;
+          case 'rgb':
+            buildSky(({ spot, PI }) => {
+              const s = (PI * 2) / 3;
+              spot(-PI / 2, 0.04, [4, 0.05, 0.05]);
+              spot(-PI / 2 + s, 0.04, [0.05, 4, 0.05]);
+              spot(-PI / 2 + s * 2, 0.04, [0.05, 0.05, 4]);
+            });
+            break;
+          case 'sunset':
+            buildSky(({ spot, PI, N, data }) => {
+              spot(-PI / 8, 0.09, [1.8, 0.5, 0.15]);
+              for (let i = 0; i < N; i++) {
+                const a = (i / N) * PI * 2 - PI;
+                const vert = Math.sin(a) * 0.5 + 0.5;
+                data[i * 4] += 0.08 * (1 - vert);
+                data[i * 4 + 1] += 0.03 * (1 - vert);
+                data[i * 4 + 2] += 0.06 * vert;
+              }
+            });
+            break;
+          case 'moonlight':
+            buildSky(({ spot, fill, PI }) => {
+              spot(-PI / 3, 0.04, [0.4, 0.5, 0.7]);
+              fill([0.002, 0.003, 0.006]);
+            });
+            break;
         }
       }
-      skySelect.addEventListener('change', () => { applySky(skySelect.value); syncURL(); });
+      skySelect.addEventListener('change', () => {
+        applySky(skySelect.value);
+        syncURL();
+      });
 
       // ── Scene infrastructure ──
       let animationId = null;
 
       function clearScene() {
-        if (animationId) { cancelAnimationFrame(animationId); animationId = null; }
+        if (animationId) {
+          cancelAnimationFrame(animationId);
+          animationId = null;
+        }
         hrc.clearLines();
-        hrc.querySelectorAll('folk-shape').forEach(s => s.remove());
+        hrc.querySelectorAll('folk-shape').forEach((s) => s.remove());
       }
 
       function addShape(x, y, w, h, colorIdx, opts) {
         const el = document.createElement('folk-shape');
-        el.setAttribute('x', x); el.setAttribute('y', y);
-        el.setAttribute('width', w); el.setAttribute('height', h);
-        if (colorIdx !== undefined) el.setAttribute('data-rgb', (presets[colorIdx]?.rgb ?? [0,0,0]).join(','));
+        el.setAttribute('x', x);
+        el.setAttribute('y', y);
+        el.setAttribute('width', w);
+        el.setAttribute('height', h);
+        if (colorIdx !== undefined) el.setAttribute('data-rgb', (presets[colorIdx]?.rgb ?? [0, 0, 0]).join(','));
         if (opts && typeof opts === 'object') {
           if (opts.opacity !== undefined) el.setAttribute('data-opacity', String(opts.opacity));
           if (opts.albedo !== undefined) el.setAttribute('data-albedo', String(opts.albedo));
@@ -626,8 +890,12 @@
 
       // ── Scene definitions ──
       function loadPinhole() {
-        const W = window.innerWidth, H = hrc.clientHeight, cx = W / 2, cy = H / 2;
-        const barH = 24, barColors = [2,3,4,5,6,7,8];
+        const W = window.innerWidth,
+          H = hrc.clientHeight,
+          cx = W / 2,
+          cy = H / 2;
+        const barH = 24,
+          barColors = [2, 3, 4, 5, 6, 7, 8];
         const startY = cy - (barColors.length * barH) / 2;
         for (let i = 0; i < barColors.length; i++) addShape(cx - 200, startY + i * barH, 16, barH, barColors[i]);
         const py = cy - 12;
@@ -636,113 +904,184 @@
       }
 
       function loadCenterBlock() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
         addShape(cx - 60, cy - 60, 120, 120, 1);
       }
 
       function loadThinWalls() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        [[-80,1],[-20,2],[40,4],[110,8]].forEach(([dy,h]) => addShape(cx-200, cy+dy, 400, h, 1));
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        [
+          [-80, 1],
+          [-20, 2],
+          [40, 4],
+          [110, 8],
+        ].forEach(([dy, h]) => addShape(cx - 200, cy + dy, 400, h, 1));
       }
 
       function loadColorShadows() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        addShape(cx-200, cy-100, 40, 40, 2);
-        addShape(cx-200, cy+60, 40, 40, 7);
-        addShape(cx-40, cy-80, 20, 160, 1);
-        addShape(cx+100, cy-120, 10, 240, 9);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        addShape(cx - 200, cy - 100, 40, 40, 2);
+        addShape(cx - 200, cy + 60, 40, 40, 7);
+        addShape(cx - 40, cy - 80, 20, 160, 1);
+        addShape(cx + 100, cy - 120, 10, 240, 9);
       }
 
       function loadStainedGlass() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, wx = cx - 10;
-        addShape(wx, cy-120, 20, 30, 1);
-        [[-90,2],[-50,5],[-10,7],[30,4]].forEach(([dy,c]) => addShape(wx, cy+dy, 20, 40, c, { opacity: 0.6 }));
-        addShape(wx, cy+70, 20, 30, 1);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          wx = cx - 10;
+        addShape(wx, cy - 120, 20, 30, 1);
+        [
+          [-90, 2],
+          [-50, 5],
+          [-10, 7],
+          [30, 4],
+        ].forEach(([dy, c]) => addShape(wx, cy + dy, 20, 40, c, { opacity: 0.6 }));
+        addShape(wx, cy + 70, 20, 30, 1);
       }
 
       function loadGlowingFog() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        addShape(cx-200, cy-40, 60, 60, 9);
-        [[-80,2],[-10,5],[60,7]].forEach(([dx,c]) => addShape(cx+dx, cy-100, 60, 200, c, { opacity: 0.015, scattering: 0.5 }));
-        addShape(cx+180, cy-40, 40, 80, 1);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        addShape(cx - 200, cy - 40, 60, 60, 9);
+        [
+          [-80, 2],
+          [-10, 5],
+          [60, 7],
+        ].forEach(([dx, c]) => addShape(cx + dx, cy - 100, 60, 200, c, { opacity: 0.015, scattering: 0.5 }));
+        addShape(cx + 180, cy - 40, 40, 80, 1);
       }
 
       function loadFogRoom() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        addShape(cx-250, cy-200, 500, 15, 1);
-        addShape(cx-250, cy+185, 500, 15, 1);
-        addShape(cx-250, cy-200, 15, 400, 1);
-        addShape(cx+235, cy-200, 15, 400, 1);
-        addShape(cx-200, cy-185, 30, 30, 3);
-        addShape(cx+170, cy+155, 30, 30, 6);
-        addShape(cx-100, cy-50, 200, 100, 0, { opacity: 0.01, scattering: 0.99 });
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        addShape(cx - 250, cy - 200, 500, 15, 1);
+        addShape(cx - 250, cy + 185, 500, 15, 1);
+        addShape(cx - 250, cy - 200, 15, 400, 1);
+        addShape(cx + 235, cy - 200, 15, 400, 1);
+        addShape(cx - 200, cy - 185, 30, 30, 3);
+        addShape(cx + 170, cy + 155, 30, 30, 6);
+        addShape(cx - 100, cy - 50, 200, 100, 0, { opacity: 0.01, scattering: 0.99 });
       }
 
       function loadSmoke() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        addShape(cx-30, cy+80, 60, 30, 3);
-        addShape(cx-80, cy-100, 160, 160, 0, { opacity: 0.02, scattering: 0.9 });
-        addShape(cx-200, cy-60, 30, 30, 1);
-        addShape(cx+170, cy-60, 30, 30, 1);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        addShape(cx - 30, cy + 80, 60, 30, 3);
+        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: 0.02, scattering: 0.9 });
+        addShape(cx - 200, cy - 60, 30, 30, 1);
+        addShape(cx + 170, cy - 60, 30, 30, 1);
       }
 
       function loadBounceRoom() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 15;
-        [[cx-250,cy-200,500,t],[cx-250,cy+200-t,500,t],[cx-250,cy-200,t,400],[cx+250-t,cy-200,t,400]].forEach(([x,y,w,h]) => addShape(x,y,w,h,0,{albedo:0.7}));
-        addShape(cx-40, cy-190, 80, 10, 9);
-        addShape(cx-30, cy-30, 60, 60, 1);
-        addShape(cx-248, cy+50, 10, 20, 2);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          t = 15;
+        [
+          [cx - 250, cy - 200, 500, t],
+          [cx - 250, cy + 200 - t, 500, t],
+          [cx - 250, cy - 200, t, 400],
+          [cx + 250 - t, cy - 200, t, 400],
+        ].forEach(([x, y, w, h]) => addShape(x, y, w, h, 0, { albedo: 0.7 }));
+        addShape(cx - 40, cy - 190, 80, 10, 9);
+        addShape(cx - 30, cy - 30, 60, 60, 1);
+        addShape(cx - 248, cy + 50, 10, 20, 2);
       }
 
       function loadBounceMaze() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 20, hi = 0.9, lo = 0.3;
-        [[cx-310,cy-200,300,t],[cx-310,cy+200-t,300,t],[cx-310,cy-200,t,400],[cx-t,cy-200,t,400],[cx-200,cy-70,t,270],[cx-110,cy-200+t,t,200]].forEach(([x,y,w,h]) => addShape(x,y,w,h,0,{albedo:hi}));
-        addShape(cx-300, cy-190, 20, 20, 9);
-        [[cx+10,cy-200,300,t],[cx+10,cy+200-t,300,t],[cx+10,cy-200,t,400],[cx+310-t,cy-200,t,400],[cx+120,cy-70,t,270],[cx+210,cy-200+t,t,200]].forEach(([x,y,w,h]) => addShape(x,y,w,h,0,{albedo:lo}));
-        addShape(cx+20, cy-190, 20, 20, 9);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          t = 20,
+          hi = 0.9,
+          lo = 0.3;
+        [
+          [cx - 310, cy - 200, 300, t],
+          [cx - 310, cy + 200 - t, 300, t],
+          [cx - 310, cy - 200, t, 400],
+          [cx - t, cy - 200, t, 400],
+          [cx - 200, cy - 70, t, 270],
+          [cx - 110, cy - 200 + t, t, 200],
+        ].forEach(([x, y, w, h]) => addShape(x, y, w, h, 0, { albedo: hi }));
+        addShape(cx - 300, cy - 190, 20, 20, 9);
+        [
+          [cx + 10, cy - 200, 300, t],
+          [cx + 10, cy + 200 - t, 300, t],
+          [cx + 10, cy - 200, t, 400],
+          [cx + 310 - t, cy - 200, t, 400],
+          [cx + 120, cy - 70, t, 270],
+          [cx + 210, cy - 200 + t, t, 200],
+        ].forEach(([x, y, w, h]) => addShape(x, y, w, h, 0, { albedo: lo }));
+        addShape(cx + 20, cy - 190, 20, 20, 9);
       }
 
       function loadScattering() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        addShape(cx-250, cy-20, 30, 40, 9);
-        addShape(cx-150, cy-150, 250, 300, 0, { opacity: 0.03, scattering: 1 });
-        addShape(cx-10, cy-60, 20, 120, 1);
-        addShape(cx+150, cy-100, 150, 200, 0, { opacity: 0.03 });
-        addShape(cx+350, cy-20, 30, 40, 9);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        addShape(cx - 250, cy - 20, 30, 40, 9);
+        addShape(cx - 150, cy - 150, 250, 300, 0, { opacity: 0.03, scattering: 1 });
+        addShape(cx - 10, cy - 60, 20, 120, 1);
+        addShape(cx + 150, cy - 100, 150, 200, 0, { opacity: 0.03 });
+        addShape(cx + 350, cy - 20, 30, 40, 9);
       }
 
       function loadMaterials() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, sz = 50, gap = 70;
-        const sx = cx - 3.5 * gap, y = cy - 20;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          sz = 50,
+          gap = 70;
+        const sx = cx - 3.5 * gap,
+          y = cy - 20;
         addShape(sx, y, sz, sz, 3);
-        addShape(sx+gap, y, sz, sz, 1);
-        addShape(sx+gap*2, y, sz, sz, 2, { opacity: 0.6 });
-        addShape(sx+gap*3, y, sz, sz, 0, { opacity: 0.05, scattering: 0.8 });
-        addShape(sx+gap*4, y, sz, sz, 0, { albedo: 0.8 });
-        addShape(sx+gap*5, y, sz, sz, 0, { opacity: 0.3 });
-        addShape(sx+gap*6, y, sz, sz, 5, { opacity: 0.03, scattering: 0.5 });
-        addShape(sx+gap*7, y, sz, sz, 5, { opacity: 0.6 });
-        addShape(cx-30, cy-150, 60, 15, 9);
+        addShape(sx + gap, y, sz, sz, 1);
+        addShape(sx + gap * 2, y, sz, sz, 2, { opacity: 0.6 });
+        addShape(sx + gap * 3, y, sz, sz, 0, { opacity: 0.05, scattering: 0.8 });
+        addShape(sx + gap * 4, y, sz, sz, 0, { albedo: 0.8 });
+        addShape(sx + gap * 5, y, sz, sz, 0, { opacity: 0.3 });
+        addShape(sx + gap * 6, y, sz, sz, 5, { opacity: 0.03, scattering: 0.5 });
+        addShape(sx + gap * 7, y, sz, sz, 5, { opacity: 0.6 });
+        addShape(cx - 30, cy - 150, 60, 15, 9);
       }
 
       function loadFurnaceTest() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, r = 120, t = 20, segs = 32;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          r = 120,
+          t = 20,
+          segs = 32;
         for (let i = 0; i < segs; i++) {
-          const a0 = (i/segs)*Math.PI*2, a1 = ((i+1)/segs)*Math.PI*2;
-          const x0 = cx+Math.cos(a0)*r, y0 = cy+Math.sin(a0)*r, x1 = cx+Math.cos(a1)*r, y1 = cy+Math.sin(a1)*r;
-          addShape(Math.min(x0,x1)-t/2, Math.min(y0,y1)-t/2, Math.max(Math.abs(x1-x0)+t,t), Math.max(Math.abs(y1-y0)+t,t), 3);
+          const a0 = (i / segs) * Math.PI * 2,
+            a1 = ((i + 1) / segs) * Math.PI * 2;
+          const x0 = cx + Math.cos(a0) * r,
+            y0 = cy + Math.sin(a0) * r,
+            x1 = cx + Math.cos(a1) * r,
+            y1 = cy + Math.sin(a1) * r;
+          addShape(
+            Math.min(x0, x1) - t / 2,
+            Math.min(y0, y1) - t / 2,
+            Math.max(Math.abs(x1 - x0) + t, t),
+            Math.max(Math.abs(y1 - y0) + t, t),
+            3,
+          );
         }
       }
 
       function loadColorMix() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        addShape(cx-40, cy-40, 80, 80, 1);
-        const shapes = [addShape(cx-150,cy-120,50,50,2), addShape(cx+100,cy-120,50,50,5), addShape(cx-25,cy+100,50,50,7)];
-        const angles = [-Math.PI*0.75, -Math.PI*0.25, Math.PI*0.5];
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        addShape(cx - 40, cy - 40, 80, 80, 1);
+        const shapes = [
+          addShape(cx - 150, cy - 120, 50, 50, 2),
+          addShape(cx + 100, cy - 120, 50, 50, 5),
+          addShape(cx - 25, cy + 100, 50, 50, 7),
+        ];
+        const angles = [-Math.PI * 0.75, -Math.PI * 0.25, Math.PI * 0.5];
         function animate() {
           const t = performance.now() / 2500;
           shapes.forEach((s, i) => {
-            const r = 140 * (0.5 + 0.5 * Math.sin(t + i * Math.PI * 2 / 3));
+            const r = 140 * (0.5 + 0.5 * Math.sin(t + (i * Math.PI * 2) / 3));
             s.setAttribute('x', cx + Math.cos(angles[i]) * r - 25);
             s.setAttribute('y', cy + Math.sin(angles[i]) * r - 25);
           });
@@ -752,90 +1091,134 @@
       }
 
       function loadAnimatedOrbit() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        addShape(cx-20,cy-180,40,40,2); addShape(cx+140,cy-20,40,40,5);
-        addShape(cx-20,cy+140,40,40,7); addShape(cx-180,cy-20,40,40,4);
-        const block = addShape(cx-30, cy-30, 60, 60, 1);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        addShape(cx - 20, cy - 180, 40, 40, 2);
+        addShape(cx + 140, cy - 20, 40, 40, 5);
+        addShape(cx - 20, cy + 140, 40, 40, 7);
+        addShape(cx - 180, cy - 20, 40, 40, 4);
+        const block = addShape(cx - 30, cy - 30, 60, 60, 1);
         function animate() {
           const t = performance.now() / 2000;
-          block.setAttribute('x', cx+Math.cos(t)*100-30);
-          block.setAttribute('y', cy+Math.sin(t)*100-30);
+          block.setAttribute('x', cx + Math.cos(t) * 100 - 30);
+          block.setAttribute('y', cy + Math.sin(t) * 100 - 30);
           animationId = requestAnimationFrame(animate);
         }
         animate();
       }
 
       function loadAnimatedGate() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        const orange = addShape(cx-250,cy-25,50,50,3);
-        const left = addShape(cx-160,cy-10,140,20,1);
-        const right = addShape(cx+20,cy-10,140,20,1);
-        const cyan = addShape(cx+200,cy-25,50,50,6);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        const orange = addShape(cx - 250, cy - 25, 50, 50, 3);
+        const left = addShape(cx - 160, cy - 10, 140, 20, 1);
+        const right = addShape(cx + 20, cy - 10, 140, 20, 1);
+        const cyan = addShape(cx + 200, cy - 25, 50, 50, 6);
         function animate() {
           const t = performance.now() / 3000;
           const gap = 20 + Math.abs(Math.sin(t)) * 120;
-          left.setAttribute('x', cx-gap/2-140);
-          right.setAttribute('x', cx+gap/2);
-          orange.setAttribute('y', cy-25+Math.sin(t*1.3)*80);
-          cyan.setAttribute('y', cy-25-Math.sin(t*1.3)*80);
+          left.setAttribute('x', cx - gap / 2 - 140);
+          right.setAttribute('x', cx + gap / 2);
+          orange.setAttribute('y', cy - 25 + Math.sin(t * 1.3) * 80);
+          cyan.setAttribute('y', cy - 25 - Math.sin(t * 1.3) * 80);
           animationId = requestAnimationFrame(animate);
         }
         animate();
       }
 
       function loadBreathing() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        const emL = addShape(cx-220,cy-20,40,40,3);
-        const emR = addShape(cx+180,cy-20,40,40,6);
-        const fog = addShape(cx-100,cy-100,200,200,0,{opacity:0.02,scattering:0.8});
-        const wall = addShape(cx-10,cy-80,20,160,0,{albedo:0.5});
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        const emL = addShape(cx - 220, cy - 20, 40, 40, 3);
+        const emR = addShape(cx + 180, cy - 20, 40, 40, 6);
+        const fog = addShape(cx - 100, cy - 100, 200, 200, 0, { opacity: 0.02, scattering: 0.8 });
+        const wall = addShape(cx - 10, cy - 80, 20, 160, 0, { albedo: 0.5 });
         function animate() {
           const t = performance.now() / 2000;
-          fog.setAttribute('data-opacity', (0.01+0.025*(0.5+0.5*Math.sin(t))).toFixed(4));
-          fog.setAttribute('data-scattering', (0.4+0.5*(0.5+0.5*Math.sin(t*1.3))).toFixed(3));
-          const li = 0.3+0.7*(0.5+0.5*Math.sin(t*0.7));
-          emL.setAttribute('data-rgb', [li,li*0.5,li*0.2].map(v=>v.toFixed(3)).join(','));
-          const ri = 0.3+0.7*(0.5+0.5*Math.cos(t*0.7));
-          emR.setAttribute('data-rgb', [ri*0.2,ri*0.7,ri].map(v=>v.toFixed(3)).join(','));
-          wall.setAttribute('data-albedo', (0.3+0.5*(0.5+0.5*Math.sin(t*0.5))).toFixed(3));
+          fog.setAttribute('data-opacity', (0.01 + 0.025 * (0.5 + 0.5 * Math.sin(t))).toFixed(4));
+          fog.setAttribute('data-scattering', (0.4 + 0.5 * (0.5 + 0.5 * Math.sin(t * 1.3))).toFixed(3));
+          const li = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 0.7));
+          emL.setAttribute('data-rgb', [li, li * 0.5, li * 0.2].map((v) => v.toFixed(3)).join(','));
+          const ri = 0.3 + 0.7 * (0.5 + 0.5 * Math.cos(t * 0.7));
+          emR.setAttribute('data-rgb', [ri * 0.2, ri * 0.7, ri].map((v) => v.toFixed(3)).join(','));
+          wall.setAttribute('data-albedo', (0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 0.5))).toFixed(3));
           animationId = requestAnimationFrame(animate);
         }
         animate();
       }
 
       function loadSpectrum() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 15;
-        [[cx-200,cy-150,400,t],[cx-200,cy+150-t,400,t],[cx-200,cy-150,t,300],[cx+200-t,cy-150,t,300]].forEach(([x,y,w,h]) => addShape(x,y,w,h,0,{albedo:0.85}));
-        const emitter = addShape(cx-15, cy-145, 30, 10, 9);
-        addShape(cx-30, cy-30, 60, 60, 1);
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          t = 15;
+        [
+          [cx - 200, cy - 150, 400, t],
+          [cx - 200, cy + 150 - t, 400, t],
+          [cx - 200, cy - 150, t, 300],
+          [cx + 200 - t, cy - 150, t, 300],
+        ].forEach(([x, y, w, h]) => addShape(x, y, w, h, 0, { albedo: 0.85 }));
+        const emitter = addShape(cx - 15, cy - 145, 30, 10, 9);
+        addShape(cx - 30, cy - 30, 60, 60, 1);
         function animate() {
           const time = performance.now() / 3000;
-          emitter.setAttribute('data-rgb', [0.5+0.5*Math.sin(time),0.5+0.5*Math.sin(time+2.094),0.5+0.5*Math.sin(time+4.189)].map(v=>v.toFixed(3)).join(','));
+          emitter.setAttribute(
+            'data-rgb',
+            [0.5 + 0.5 * Math.sin(time), 0.5 + 0.5 * Math.sin(time + 2.094), 0.5 + 0.5 * Math.sin(time + 4.189)]
+              .map((v) => v.toFixed(3))
+              .join(','),
+          );
           animationId = requestAnimationFrame(animate);
         }
         animate();
       }
 
       function loadMaterialCycle() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
-        addShape(cx-180,cy-20,30,40,9);
-        addShape(cx+150,cy-20,30,40,6);
-        const obj = addShape(cx-40,cy-40,80,80,0,{opacity:1,albedo:0,scattering:0});
-        const fog1 = addShape(cx-120,cy-80,80,160,0,{opacity:0.02,scattering:0.6});
-        const fog2 = addShape(cx+40,cy-80,80,160,0,{opacity:0.02,scattering:0.6});
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        addShape(cx - 180, cy - 20, 30, 40, 9);
+        addShape(cx + 150, cy - 20, 30, 40, 6);
+        const obj = addShape(cx - 40, cy - 40, 80, 80, 0, { opacity: 1, albedo: 0, scattering: 0 });
+        const fog1 = addShape(cx - 120, cy - 80, 80, 160, 0, { opacity: 0.02, scattering: 0.6 });
+        const fog2 = addShape(cx + 40, cy - 80, 80, 160, 0, { opacity: 0.02, scattering: 0.6 });
         function animate() {
           const t = performance.now() / 4000;
           const phase = t % 4;
           let opacity, albedo, scatter, r, g, b;
-          if (phase < 1) { opacity=1; albedo=0; scatter=0; const c=0.5+0.5*Math.sin(t*3); r=c; g=c*0.4; b=c*0.2; }
-          else if (phase < 2) { opacity=1; albedo=0.3+0.6*(phase-1); scatter=0; r=0.05; g=0.05; b=0.05; }
-          else if (phase < 3) { opacity=1-0.97*(phase-2); albedo=0; scatter=phase-2; r=0; g=0; b=0; }
-          else { opacity=0.03+0.97*(phase-3); albedo=0; scatter=1-(phase-3); r=0; g=0; b=0; }
-          obj.setAttribute('data-rgb', [r,g,b].map(v=>v.toFixed(3)).join(','));
+          if (phase < 1) {
+            opacity = 1;
+            albedo = 0;
+            scatter = 0;
+            const c = 0.5 + 0.5 * Math.sin(t * 3);
+            r = c;
+            g = c * 0.4;
+            b = c * 0.2;
+          } else if (phase < 2) {
+            opacity = 1;
+            albedo = 0.3 + 0.6 * (phase - 1);
+            scatter = 0;
+            r = 0.05;
+            g = 0.05;
+            b = 0.05;
+          } else if (phase < 3) {
+            opacity = 1 - 0.97 * (phase - 2);
+            albedo = 0;
+            scatter = phase - 2;
+            r = 0;
+            g = 0;
+            b = 0;
+          } else {
+            opacity = 0.03 + 0.97 * (phase - 3);
+            albedo = 0;
+            scatter = 1 - (phase - 3);
+            r = 0;
+            g = 0;
+            b = 0;
+          }
+          obj.setAttribute('data-rgb', [r, g, b].map((v) => v.toFixed(3)).join(','));
           obj.setAttribute('data-opacity', opacity.toFixed(3));
           obj.setAttribute('data-albedo', albedo.toFixed(3));
           obj.setAttribute('data-scattering', scatter.toFixed(3));
-          const fogOp = 0.01+0.015*(0.5+0.5*Math.sin(t*1.5));
+          const fogOp = 0.01 + 0.015 * (0.5 + 0.5 * Math.sin(t * 1.5));
           fog1.setAttribute('data-opacity', fogOp.toFixed(4));
           fog2.setAttribute('data-opacity', fogOp.toFixed(4));
           animationId = requestAnimationFrame(animate);
@@ -868,14 +1251,21 @@
 
       scenes.forEach((s, i) => {
         const o = document.createElement('option');
-        o.value = i; o.textContent = `${i}: ${s.name}`;
+        o.value = i;
+        o.textContent = `${i}: ${s.name}`;
         sceneSelect.appendChild(o);
       });
       sceneSelect.addEventListener('change', () => switchScene(Number(sceneSelect.value)));
       switchScene(params.has('scene') ? Number(params.get('scene')) : 0);
-      if (params.has('sky')) { skySelect.value = params.get('sky'); applySky(skySelect.value); }
+      if (params.has('sky')) {
+        skySelect.value = params.get('sky');
+        applySky(skySelect.value);
+      }
       if (params.has('exposure')) setExposure(Number(params.get('exposure')));
-      if (params.get('bounces') === '0') { hrc.bounces = false; $('bounces-toggle').checked = false; }
+      if (params.get('bounces') === '0') {
+        hrc.bounces = false;
+        $('bounces-toggle').checked = false;
+      }
 
       // ── FPS + Perf Graph ──
       const fpsEl = $('fps');
@@ -886,15 +1276,23 @@
       const perfCpuEl = $('perf-cpu-val');
       const perfGpuEl = $('perf-gpu-val');
       const DPR = window.devicePixelRatio || 1;
-      const GW = 340, GH = 130, ML = 30;
-      const PW = GW - ML, PH = GH;
-      perfCanvas.width = GW * DPR; perfCanvas.height = GH * DPR;
-      perfCanvas.style.width = GW + 'px'; perfCanvas.style.height = GH + 'px';
+      const GW = 340,
+        GH = 130,
+        ML = 30;
+      const PW = GW - ML,
+        PH = GH;
+      perfCanvas.width = GW * DPR;
+      perfCanvas.height = GH * DPR;
+      perfCanvas.style.width = GW + 'px';
+      perfCanvas.style.height = GH + 'px';
       const N_SAMPLES = PW;
       const cpuSamples = new Float32Array(N_SAMPLES);
       const gpuSamples = new Float32Array(N_SAMPLES);
-      let sampleIdx = 0, scaleMax = 20;
-      let avgCpu = 0, avgGpu = 0, avgFps = 0;
+      let sampleIdx = 0,
+        scaleMax = 20;
+      let avgCpu = 0,
+        avgGpu = 0,
+        avgFps = 0;
       if (perfOpen) perfGraph.classList.add('open');
 
       fpsEl.addEventListener('click', () => {
@@ -917,7 +1315,12 @@
           if (cpuSamples[i] > dataMax) dataMax = cpuSamples[i];
         }
         let ceilTick = TICKS[TICKS.length - 1];
-        for (const t of TICKS) { if (t >= dataMax) { ceilTick = t; break; } }
+        for (const t of TICKS) {
+          if (t >= dataMax) {
+            ceilTick = t;
+            break;
+          }
+        }
         const target = Math.max(ceilTick * 1.1, 8);
         if (target > scaleMax) scaleMax = target;
         else scaleMax += (target - scaleMax) * 0.03;
@@ -937,14 +1340,20 @@
           const isBudget = ms === 16 || ms === 32;
           ctx.strokeStyle = isBudget ? 'rgba(100,255,100,0.2)' : 'rgba(255,255,255,0.06)';
           ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(GW, y); ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(ML, y);
+          ctx.lineTo(GW, y);
+          ctx.stroke();
           ctx.fillStyle = isBudget ? 'rgba(100,255,100,0.5)' : 'rgba(255,255,255,0.25)';
           ctx.fillText(`${ms}`, ML - 3, y);
         }
 
         ctx.strokeStyle = 'rgba(255,255,255,0.12)';
         ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(ML, 0); ctx.lineTo(ML, PH); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ML, 0);
+        ctx.lineTo(ML, PH);
+        ctx.stroke();
 
         function drawLine(samples, color) {
           ctx.strokeStyle = color;
@@ -993,25 +1402,79 @@
       document.addEventListener('keydown', (e) => {
         if (e.target instanceof HTMLInputElement && e.target.type === 'text') return;
         const d = e.code.match(/^Digit(\d)$/);
-        if (d) { e.preventDefault(); e.target?.blur?.(); e.shiftKey ? switchScene(+d[1]) : pickPreset(+d[1]); return; }
+        if (d) {
+          e.preventDefault();
+          e.target?.blur?.();
+          e.shiftKey ? switchScene(+d[1]) : pickPreset(+d[1]);
+          return;
+        }
         let handled = true;
         switch (e.key) {
-          case '=': case '+': pen.size = Math.min(50, pen.size+2); sSize.value = pen.size; vSize.textContent = String(pen.size); hrc.setMouseLightRadius(pen.size/2); break;
-          case '-': case '_': pen.size = Math.max(2, pen.size-2); sSize.value = pen.size; vSize.textContent = String(pen.size); hrc.setMouseLightRadius(pen.size/2); break;
-          case 'c': case 'C': hrc.clearLines(); break;
-          case 'p': case 'P': hrc.pathTracing = !hrc.pathTracing; $('pt-toggle').checked = hrc.pathTracing; break;
-          case 's': case 'S': hrc.saveScreenshot(`${hrc.pathTracing ? 'pt' : 'hrc'}-${Date.now()}.png`); break;
-          case 'f': case 'F':
+          case '=':
+          case '+':
+            pen.size = Math.min(50, pen.size + 2);
+            sSize.value = pen.size;
+            vSize.textContent = String(pen.size);
+            hrc.setMouseLightRadius(pen.size / 2);
+            break;
+          case '-':
+          case '_':
+            pen.size = Math.max(2, pen.size - 2);
+            sSize.value = pen.size;
+            vSize.textContent = String(pen.size);
+            hrc.setMouseLightRadius(pen.size / 2);
+            break;
+          case 'c':
+          case 'C':
+            hrc.clearLines();
+            break;
+          case 'p':
+          case 'P':
+            hrc.pathTracing = !hrc.pathTracing;
+            $('pt-toggle').checked = hrc.pathTracing;
+            break;
+          case 's':
+          case 'S':
+            hrc.saveScreenshot(`${hrc.pathTracing ? 'pt' : 'hrc'}-${Date.now()}.png`);
+            break;
+          case 'f':
+          case 'F':
             if (document.fullscreenElement) document.exitFullscreen();
             else document.documentElement.requestFullscreen();
             break;
-          case 'ArrowRight': switchScene((currentScene + 1) % scenes.length); break;
-          case 'ArrowLeft': switchScene((currentScene - 1 + scenes.length) % scenes.length); break;
-          case 'n': case 'N': {
-            const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
+          case 't':
+          case 'T': {
+            const timings = hrc.gpuPassTimings;
+            if (!timings.length) {
+              console.log('No GPU pass timings available');
+              break;
+            }
+            const groups = {};
+            timings.forEach(({ label, ms }) => {
+              const cat = label.replace(/\d+$/, '').replace(/\.[^.]*$/, '');
+              const type = label.includes('.') ? label.split('.')[1].replace(/\d+$/, '') : label;
+              groups[type] = (groups[type] || 0) + ms;
+            });
+            console.log(timings.map(({ label, ms }) => ({ pass: label, ms: ms.toFixed(3) })));
+            console.table(Object.entries(groups).map(([type, ms]) => ({ type, ms: ms.toFixed(2) })));
+            console.log(`Total: ${timings.reduce((s, t) => s + t.ms, 0).toFixed(2)}ms`);
+            break;
+          }
+          case 'ArrowRight':
+            switchScene((currentScene + 1) % scenes.length);
+            break;
+          case 'ArrowLeft':
+            switchScene((currentScene - 1 + scenes.length) % scenes.length);
+            break;
+          case 'n':
+          case 'N': {
+            const cx = window.innerWidth / 2,
+              cy = hrc.clientHeight / 2;
             const el = document.createElement('folk-shape');
-            el.setAttribute('x', cx-30); el.setAttribute('y', cy-30);
-            el.setAttribute('width', 60); el.setAttribute('height', 60);
+            el.setAttribute('x', cx - 30);
+            el.setAttribute('y', cy - 30);
+            el.setAttribute('width', 60);
+            el.setAttribute('height', 60);
             el.setAttribute('data-rgb', pen.color.join(','));
             el.setAttribute('data-opacity', String(pen.opacity));
             el.setAttribute('data-albedo', String(pen.albedo));
@@ -1019,43 +1482,65 @@
             hrc.appendChild(el);
             break;
           }
-          case 'Delete': case 'Backspace':
+          case 'Delete':
+          case 'Backspace':
             if (document.activeElement?.tagName === 'FOLK-SHAPE') {
               document.activeElement.remove();
               selectShape(null);
             }
             break;
-          default: handled = false;
+          default:
+            handled = false;
         }
-        if (handled) { e.preventDefault(); e.target?.blur?.(); }
+        if (handled) {
+          e.preventDefault();
+          e.target?.blur?.();
+        }
       });
 
       // ── Drawing ──
-      let drawing = false, lastX = 0, lastY = 0;
+      let drawing = false,
+        lastX = 0,
+        lastY = 0;
 
       document.addEventListener('pointerdown', (e) => {
         if (e.target.tagName === 'FOLK-SHAPE' || e.target.closest('#panel') || e.target.closest('#bar')) return;
         const rect = hrc.getBoundingClientRect();
         if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
         if (document.activeElement?.tagName === 'FOLK-SHAPE') document.activeElement.blur();
-        drawing = true; lastX = e.clientX; lastY = e.clientY;
+        drawing = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
         e.preventDefault();
       });
 
       document.addEventListener('pointermove', (e) => {
         if (!drawing) return;
-        const dx = e.clientX - lastX, dy = e.clientY - lastY;
-        if (Math.sqrt(dx*dx+dy*dy) >= 4) {
+        const dx = e.clientX - lastX,
+          dy = e.clientY - lastY;
+        if (Math.sqrt(dx * dx + dy * dy) >= 4) {
           if (pen.eraser) hrc.eraseAt(e.clientX, e.clientY, pen.size);
-          else hrc.addLine(lastX, lastY, e.clientX, e.clientY, pen.color, pen.size, pen.opacity, pen.albedo, pen.scattering);
-          lastX = e.clientX; lastY = e.clientY;
+          else
+            hrc.addLine(
+              lastX,
+              lastY,
+              e.clientX,
+              e.clientY,
+              pen.color,
+              pen.size,
+              pen.opacity,
+              pen.albedo,
+              pen.scattering,
+            );
+          lastX = e.clientX;
+          lastY = e.clientY;
         }
       });
 
       document.addEventListener('pointerup', (e) => {
         if (!drawing) return;
         if (pen.eraser) hrc.eraseAt(e.clientX, e.clientY, pen.size);
-        else if (Math.abs(e.clientX-lastX) > 1 || Math.abs(e.clientY-lastY) > 1)
+        else if (Math.abs(e.clientX - lastX) > 1 || Math.abs(e.clientY - lastY) > 1)
           hrc.addLine(lastX, lastY, e.clientX, e.clientY, pen.color, pen.size, pen.opacity, pen.albedo, pen.scattering);
         drawing = false;
       });

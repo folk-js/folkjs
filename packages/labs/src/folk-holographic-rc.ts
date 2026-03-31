@@ -926,37 +926,71 @@ export class FolkHolographicRC extends FolkBaseSet {
   #tsQuerySet: GPUQuerySet | null = null;
   #tsResolveBuffer: GPUBuffer | null = null;
   #tsResultBuffer: GPUBuffer | null = null;
+  #tsNextIdx = 0;
+  #tsPassCount = 0;
   #gpuTimeMs = 0;
   #jsTimeMs = 0;
+  #gpuPassTimings: { label: string; ms: number }[] = [];
+
+  static readonly TS_MAX_PASSES = 96;
 
   #initTimestampQueries() {
     const device = this.#device;
-    this.#tsQuerySet = device.createQuerySet({ type: 'timestamp', count: 2 });
+    const count = FolkHolographicRC.TS_MAX_PASSES * 2;
+    this.#tsQuerySet = device.createQuerySet({ type: 'timestamp', count });
     this.#tsResolveBuffer = device.createBuffer({
-      size: 2 * 8,
+      size: count * 8,
       usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
     });
     this.#tsResultBuffer = device.createBuffer({
-      size: 2 * 8,
+      size: count * 8,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
   }
 
+  #tsLabels: string[] = [];
+
+  #tsBeginFrame() {
+    this.#tsNextIdx = 0;
+    this.#tsLabels = [];
+  }
+
+  #tsPass(label = ''): GPUComputePassTimestampWrites | GPURenderPassTimestampWrites | undefined {
+    if (!this.#tsQuerySet) return undefined;
+    const idx = this.#tsNextIdx;
+    if (idx + 1 >= FolkHolographicRC.TS_MAX_PASSES * 2) return undefined;
+    this.#tsNextIdx = idx + 2;
+    this.#tsLabels.push(label);
+    return { querySet: this.#tsQuerySet, beginningOfPassWriteIndex: idx, endOfPassWriteIndex: idx + 1 };
+  }
+
   #resolveTimestamps(encoder: GPUCommandEncoder) {
     if (!this.#tsQuerySet || !this.#tsResultBuffer) return;
-    encoder.resolveQuerySet(this.#tsQuerySet, 0, 2, this.#tsResolveBuffer!, 0);
+    this.#tsPassCount = this.#tsNextIdx / 2;
+    encoder.resolveQuerySet(this.#tsQuerySet, 0, this.#tsNextIdx, this.#tsResolveBuffer!, 0);
     if (this.#tsResultBuffer.mapState === 'unmapped') {
-      encoder.copyBufferToBuffer(this.#tsResolveBuffer!, 0, this.#tsResultBuffer, 0, 2 * 8);
+      encoder.copyBufferToBuffer(this.#tsResolveBuffer!, 0, this.#tsResultBuffer, 0, this.#tsNextIdx * 8);
     }
   }
 
   #readTimestamps() {
     if (!this.#tsResultBuffer || this.#tsResultBuffer.mapState !== 'unmapped') return;
+    const passCount = this.#tsPassCount;
+    const labels = [...this.#tsLabels];
     this.#tsResultBuffer
       .mapAsync(GPUMapMode.READ)
       .then(() => {
         const times = new BigInt64Array(this.#tsResultBuffer!.getMappedRange());
-        this.#gpuTimeMs = Number(times[1] - times[0]) / 1e6;
+        if (passCount > 0) {
+          this.#gpuTimeMs = Number(times[passCount * 2 - 1] - times[0]) / 1e6;
+        }
+        const passTimings: { label: string; ms: number }[] = [];
+        for (let i = 0; i < passCount; i++) {
+          const start = Number(times[i * 2]);
+          const end = Number(times[i * 2 + 1]);
+          passTimings.push({ label: labels[i] || `pass${i}`, ms: (end - start) / 1e6 });
+        }
+        this.#gpuPassTimings = passTimings;
         this.#tsResultBuffer!.unmap();
       })
       .catch(() => {});
@@ -1647,6 +1681,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
 
     const encoder = device.createCommandEncoder();
+    this.#tsBeginFrame();
 
     // ── Step 1: Render world textures (world + material) ──
     {
@@ -1665,7 +1700,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             storeOp: 'store',
           },
         ],
-        ...(this.#tsQuerySet ? { timestampWrites: { querySet: this.#tsQuerySet, beginningOfPassWriteIndex: 0 } } : {}),
+        timestampWrites: this.#tsPass('world'),
       });
       pass.setPipeline(this.#worldRenderPipeline);
       if (this.#shapeDataBuffer && this.#shapeCount > 0) {
@@ -1719,7 +1754,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       );
     }
     if (this.bounces && this.#lastFluenceResultIdx >= 0) {
-      const pass = encoder.beginComputePass();
+      const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('bounce') });
       pass.setPipeline(this.#bounceComputePipeline);
       pass.setBindGroup(0, this.#bounceBindGroups[this.#lastFluenceResultIdx]);
       pass.dispatchWorkgroups(Math.ceil(width / WG_BOUNCE[0]), Math.ceil(height / WG_BOUNCE[1]));
@@ -1738,22 +1773,23 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     for (let dir = 0; dir < 4; dir++) {
+      const dn = ['E', 'N', 'W', 'S'][dir];
       {
-        const pass = encoder.beginComputePass();
+        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.seed0`) });
         pass.setPipeline(this.#raySeedPipeline);
         pass.setBindGroup(0, this.#seedBindGroups[dir]);
         pass.dispatchWorkgroups(seedWg, seedWg);
         pass.end();
       }
       {
-        const pass = encoder.beginComputePass();
+        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.seed1`) });
         pass.setPipeline(this.#raySeedL1Pipeline);
         pass.setBindGroup(0, this.#seedL1BindGroups[dir]);
         pass.dispatchWorkgroups(Math.ceil(((ps >> 1) * 3) / WG_SEED[0]), seedWg);
         pass.end();
       }
       for (let level = 2; level < nc; level++) {
-        const pass = encoder.beginComputePass();
+        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.ext${level}`) });
         pass.setPipeline(this.#rayExtendPipeline);
         pass.setBindGroup(0, this.#extendBindGroups[level - 2]);
         pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / WG_EXTEND[0]), extWgY);
@@ -1761,7 +1797,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
       for (let k = 0; k < nc; k++) {
         const level = nc - 1 - k;
-        const pass = encoder.beginComputePass();
+        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.merge${level}`) });
         pass.setPipeline(this.#coneMergePipeline);
         pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
         pass.dispatchWorkgroups(Math.ceil(ps / WG_MERGE[0]), Math.ceil(((ps >> level) * (1 << level)) / WG_MERGE[1]));
@@ -1772,14 +1808,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#lastFluenceResultIdx = 1;
 
     // ── Step 3: Final blit ──
-    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroups[1], true);
+    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroups[1], 'blit');
 
     this.#resolveTimestamps(encoder);
     this.#submitAndCapture(device, encoder);
     this.#readTimestamps();
   }
 
-  #blitToScreen(encoder: GPUCommandEncoder, pipeline: GPURenderPipeline, bindGroup: GPUBindGroup, timestamps = false) {
+  #blitToScreen(encoder: GPUCommandEncoder, pipeline: GPURenderPipeline, bindGroup: GPUBindGroup, tsLabel = '') {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -1789,9 +1825,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           storeOp: 'store' as const,
         },
       ],
-      ...(timestamps && this.#tsQuerySet
-        ? { timestampWrites: { querySet: this.#tsQuerySet, endOfPassWriteIndex: 1 } }
-        : {}),
+      ...(tsLabel ? { timestampWrites: this.#tsPass(tsLabel) } : {}),
     });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
@@ -2005,6 +2039,10 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   get jsTimeMs() {
     return this.#jsTimeMs;
+  }
+
+  get gpuPassTimings() {
+    return this.#gpuPassTimings;
   }
 
   get debugInfo() {
