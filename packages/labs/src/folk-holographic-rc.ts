@@ -200,7 +200,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   var trans = 1.0;
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
     let world = textureLoad(worldTex, px, 0);
-    let bounce = textureLoad(bounceTex, px, 0).rgb;
+    let bounce = textureLoad(bounceTex, clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * f32(params.probeCount)), vec2i(0), vec2i(i32(params.probeCount) - 1)), 0).rgb;
     trans = pow(1.0 - world.a, params.probeSpacing);
     rad = (world.rgb + bounce) * (1.0 - trans);
   }
@@ -241,7 +241,7 @@ fn sampleWorld(probeIdx: i32, sliceIdx: i32) -> RayData {
     return RayData(vec3f(0.0), 1.0);
   }
   let world = textureLoad(worldTex, px, 0);
-  let bounce = textureLoad(bounceTex, px, 0).rgb;
+  let bounce = textureLoad(bounceTex, clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * f32(params.probeCount)), vec2i(0), vec2i(i32(params.probeCount) - 1)), 0).rgb;
   let trans = pow(1.0 - world.a, params.probeSpacing);
   let rad = (world.rgb + bounce) * (1.0 - trans);
   return RayData(rad, trans);
@@ -584,59 +584,73 @@ const blitShader =
 `;
 
 // ── Bounce compute shader ──
-// Runs at SCREEN resolution. For each pixel, bilinearly samples the previous
-// frame's fluence (at probe resolution), reads albedo + scattering from the
-// material texture, and writes bounce = fluence * albedo + scatter term.
+// Runs at PROBE resolution. For each probe, determines the surface irradiance
+// by blending between own fluence (for exterior/volume probes) and exterior
+// neighbor fluence (for wall probes). This ensures wall probes get the light
+// arriving at the nearest surface, solving the probe-surface misalignment
+// problem where no probe center lands exactly on the wall surface.
 
 const bounceComputeShader = /*wgsl*/ `
 struct BounceParams {
   screenW: u32,
   screenH: u32,
-  pad0: u32,
+  probeCount: u32,
   pad1: u32,
 };
 
 @group(0) @binding(0) var prevFluence: texture_2d<f32>;
-@group(0) @binding(1) var fluenceSampler: sampler;
-@group(0) @binding(2) var worldTex: texture_2d<f32>;
-@group(0) @binding(3) var materialTex: texture_2d<f32>;
-@group(0) @binding(4) var bounceOut: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(5) var<uniform> params: BounceParams;
+@group(0) @binding(1) var worldTex: texture_2d<f32>;
+@group(0) @binding(2) var materialTex: texture_2d<f32>;
+@group(0) @binding(3) var bounceOut: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var<uniform> params: BounceParams;
 
 @compute @workgroup_size(${WG_BOUNCE[0]}, ${WG_BOUNCE[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let px = i32(gid.x);
-  let py = i32(gid.y);
-  if (px >= i32(params.screenW) || py >= i32(params.screenH)) { return; }
+  let probe = vec2i(i32(gid.x), i32(gid.y));
+  let ps = i32(params.probeCount);
+  if (probe.x >= ps || probe.y >= ps) { return; }
 
-  let screenSize = vec2f(f32(params.screenW), f32(params.screenH));
-  let uv = (vec2f(f32(px), f32(py)) + 0.5) / screenSize;
+  let spacing = vec2f(f32(params.screenW), f32(params.screenH)) / f32(ps);
+  let worldPos = vec2i((vec2f(probe) + 0.5) * spacing);
 
-  let opacity = textureLoad(worldTex, vec2i(px, py), 0).a;
-  let mat = textureLoad(materialTex, vec2i(px, py), 0);
-  let albedo = mat.r;
-  let scattering = mat.g;
-
-  var fluence = textureSampleLevel(prevFluence, fluenceSampler, uv, 0.0).rgb;
-  if (albedo > 0.001) {
-    let step = 1.0 / screenSize;
-    let offsets = array<vec2f, 4>(vec2f(1,0), vec2f(-1,0), vec2f(0,1), vec2f(0,-1));
-    var sum = vec3f(0.0);
-    var weight = 0.0;
-    for (var d = 0; d < 4; d++) {
-      let npos = vec2i(px + i32(offsets[d].x), py + i32(offsets[d].y));
-      let ntrans = 1.0 - textureLoad(worldTex, npos, 0).a;
-      let nf = textureSampleLevel(prevFluence, fluenceSampler, uv + offsets[d] * step, 0.0).rgb * ntrans;
-      let lum = dot(nf, vec3f(0.2126, 0.7152, 0.0722));
-      if (lum > 0.001) { sum += nf; weight += 1.0; }
-    }
-    if (weight > 0.0) { fluence = sum / weight; }
+  let opacity = textureLoad(worldTex, worldPos, 0).a;
+  let mat = textureLoad(materialTex, worldPos, 0);
+  let reemission = mat.g + (1.0 - mat.g) * mat.r;
+  if (reemission < 0.001) {
+    textureStore(bounceOut, probe, vec4f(0.0));
+    return;
   }
 
+  let ownFluence = textureLoad(prevFluence, probe, 0).rgb;
+
+  // Gather fluence from cardinal neighbors, weighted by how exterior they are.
+  // Each neighbor's fluence is averaged with the probe one step further out
+  // to cancel the cascade's period-2 checkerboard (F+δ averaged with F-δ = F).
+  var exteriorFluence = vec3f(0.0);
+  var exteriorWeight = 0.0;
+  let pMax = vec2i(ps - 1);
+  let off = array<vec2i, 4>(vec2i(-1, 0), vec2i(1, 0), vec2i(0, -1), vec2i(0, 1));
+  for (var i = 0; i < 4; i++) {
+    let d = off[i];
+    let ni = clamp(probe + d, vec2i(0), pMax);
+    let ni2 = clamp(probe + d * 2, vec2i(0), pMax);
+    let nOpacity = textureLoad(worldTex, vec2i((vec2f(ni) + 0.5) * spacing), 0).a;
+    let nFluence = (textureLoad(prevFluence, ni, 0).rgb
+                  + textureLoad(prevFluence, ni2, 0).rgb) * 0.5;
+    let w = 1.0 - nOpacity;
+    exteriorFluence += nFluence * w;
+    exteriorWeight += w;
+  }
+  if (exteriorWeight > 0.001) {
+    exteriorFluence /= exteriorWeight;
+  }
+
+  // Continuous blend: exterior probes use own fluence, wall probes use
+  // smoothed exterior neighbors' fluence. Deep interior naturally gets zero.
+  let fluence = ownFluence * (1.0 - opacity) + exteriorFluence * opacity;
+
   const TWO_PI = 6.2831853;
-  let reemission = scattering + (1.0 - scattering) * albedo;
-  let bounce = fluence * reemission / TWO_PI;
-  textureStore(bounceOut, vec2i(px, py), vec4f(bounce, 0.0));
+  textureStore(bounceOut, probe, vec4f(fluence * reemission / TWO_PI, 0.0));
 }
 `;
 
@@ -1327,18 +1341,18 @@ export class FolkHolographicRC extends FolkBaseSet {
     [this.#bounceTexture, this.#bounceTextureView] = tex(
       device,
       'Bounce',
-      width,
-      height,
+      ps,
+      ps,
       'rgba16float',
       TEX_STORAGE | GPUTextureUsage.COPY_DST,
     );
-    const bounceZeroSize = width * height * 8;
+    const bounceZeroSize = ps * ps * 8;
     this.#bounceZeroBuffer = device.createBuffer({ size: bounceZeroSize, usage: GPUBufferUsage.COPY_SRC });
     device.queue.writeTexture(
       { texture: this.#bounceTexture },
       new Uint8Array(bounceZeroSize),
-      { bytesPerRow: width * 8, rowsPerImage: height },
-      { width, height },
+      { bytesPerRow: ps * 8, rowsPerImage: ps },
+      { width: ps, height: ps },
     );
     [this.#skyTexture, this.#skyTextureView] = tex(
       device,
@@ -1556,7 +1570,6 @@ export class FolkHolographicRC extends FolkBaseSet {
         device,
         this.#bounceComputePipeline.getBindGroupLayout(0),
         this.#fluenceTextureViews[idx],
-        this.#linearSampler,
         this.#worldTextureView,
         this.#materialTextureView,
         this.#bounceTextureView,
@@ -1786,20 +1799,20 @@ export class FolkHolographicRC extends FolkBaseSet {
       return;
     }
 
-    // ── Step 1.5: Bounce compute (reads previous frame's fluence at screen resolution) ──
+    // ── Step 1.5: Bounce compute (reads previous frame's fluence at probe resolution) ──
     if (!this.bounces && this.#lastFluenceResultIdx >= 0) {
       this.#lastFluenceResultIdx = -1;
       encoder.copyBufferToTexture(
-        { buffer: this.#bounceZeroBuffer, bytesPerRow: width * 8, rowsPerImage: height },
+        { buffer: this.#bounceZeroBuffer, bytesPerRow: ps * 8, rowsPerImage: ps },
         { texture: this.#bounceTexture },
-        { width, height },
+        { width: ps, height: ps },
       );
     }
     if (this.bounces && this.#lastFluenceResultIdx >= 0) {
       const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('bounce') });
       pass.setPipeline(this.#bounceComputePipeline);
       pass.setBindGroup(0, this.#bounceBindGroups[this.#lastFluenceResultIdx]);
-      pass.dispatchWorkgroups(Math.ceil(width / WG_BOUNCE[0]), Math.ceil(height / WG_BOUNCE[1]));
+      pass.dispatchWorkgroups(Math.ceil(ps / WG_BOUNCE[0]), Math.ceil(ps / WG_BOUNCE[1]));
       pass.end();
     }
 
@@ -2018,7 +2031,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height });
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
 
-    this.#bounceParamsView.set({ screenW: width, screenH: height, pad0: 0, pad1: 0 });
+    this.#bounceParamsView.set({ screenW: width, screenH: height, probeCount: ps, pad1: 0 });
     device.queue.writeBuffer(this.#bounceParamsBuffer, 0, this.#bounceParamsView.arrayBuffer);
 
     this.#computeSkyPrefixSums();
