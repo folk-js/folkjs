@@ -13,7 +13,6 @@ type Line = [
   thickness: number,
   opacity: number,
   albedo: number,
-  scattering: number,
 ];
 
 const SOLID_OPACITY = 1;
@@ -72,8 +71,20 @@ function uploadVertexData(
 }
 
 // ── World-render shaders (shapes, lines, mouse light → world + material) ──
-// MRT: location(0) = world    (rgb = emitted light, a = opacity 0–1)
-//      location(1) = material (r = albedo 0–1, g = scattering 0–1)
+//
+// Two render targets (MRT):
+//   location(0) = world    — rgb: emitted radiance, a: opacity (0–1)
+//   location(1) = material — r: albedo (0–1)
+//
+// Opacity is the per-pixel extinction: fraction of light absorbed or scattered
+// per unit traversal. opacity=1 is a fully opaque solid, opacity=0 is vacuum.
+//
+// Albedo is the single-scattering albedo (ω₀): the fraction of interacted
+// light that is re-emitted rather than absorbed. It unifies surface
+// reflectance and volume scattering into one parameter:
+//   - Opaque surface (opacity=1, albedo=0.8): 80% of light reflects diffusely
+//   - Volume (opacity=0.03, albedo=0.5): each step scatters 1.5% of light
+//   - Absorber (albedo=0): all interacted light is destroyed
 
 const worldRenderShader = /*wgsl*/ `
 struct VertexInput {
@@ -81,14 +92,12 @@ struct VertexInput {
   @location(1) color: vec3f,
   @location(2) opacity: f32,
   @location(3) albedo: f32,
-  @location(4) scattering: f32,
 }
 struct VertexOutput {
   @builtin(position) position: vec4f,
   @location(0) color: vec3f,
   @location(1) opacity: f32,
   @location(2) albedo: f32,
-  @location(3) scattering: f32,
 }
 fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 @vertex fn vertex_main(input: VertexInput) -> VertexOutput {
@@ -97,14 +106,13 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   out.color = input.color;
   out.opacity = input.opacity;
   out.albedo = input.albedo;
-  out.scattering = input.scattering;
   return out;
 }
 struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 @fragment fn fragment_main(in: VertexOutput) -> FragOut {
   var out: FragOut;
   out.world = vec4f(srgbToLinear(in.color), in.opacity);
-  out.material = vec4f(in.albedo, in.scattering, 0.0, 0.0);
+  out.material = vec4f(in.albedo, 0.0, 0.0, 0.0);
   return out;
 }
 `;
@@ -118,7 +126,6 @@ struct VertexOutput {
   @location(3) radius: f32,
   @location(4) opacity: f32,
   @location(5) albedo: f32,
-  @location(6) scattering: f32,
 }
 struct Canvas { width: f32, height: f32 }
 @group(0) @binding(0) var<uniform> canvas: Canvas;
@@ -128,7 +135,6 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   @location(0) p1: vec2f, @location(1) p2: vec2f,
   @location(2) color: vec3f, @location(3) thickness: f32,
   @location(4) opacity: f32, @location(5) albedo: f32,
-  @location(6) scattering: f32,
 ) -> VertexOutput {
   let r = thickness * 0.5;
   let minP = min(p1, p2) - vec2f(r);
@@ -142,7 +148,7 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   var out: VertexOutput;
   out.position = vec4f(clip, 0.0, 1.0);
   out.color = color; out.p1 = p1; out.p2 = p2; out.radius = r;
-  out.opacity = opacity; out.albedo = albedo; out.scattering = scattering;
+  out.opacity = opacity; out.albedo = albedo;
   return out;
 }
 struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
@@ -156,16 +162,16 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
   if (d > 0.0) { discard; }
   var out: FragOut;
   out.world = vec4f(srgbToLinear(in.color), in.opacity);
-  out.material = vec4f(in.albedo, in.scattering, 0.0, 0.0);
+  out.material = vec4f(in.albedo, 0.0, 0.0, 0.0);
   return out;
 }
 `;
 
 // ── HRC Phase A: Ray Seed (cascade 0) ──
-// Samples the world texture at each probe position. World stores emission in
-// rgb and scalar opacity in alpha. Transmittance (packed into ray.a) is
-// compounded over the probe footprint so volumes look consistent at any
-// probe spacing.
+// Samples world + bounce textures at each probe position. Computes per-cell
+// radiance and transmittance using discrete Beer-Lambert: T = (1−α)^spacing.
+// The bounce texture (at probe resolution) provides the diffuse re-emission
+// from the previous frame's fluence, enabling multi-bounce GI over time.
 
 const raySeedShader = /*wgsl*/ `
 struct SeedParams {
@@ -584,11 +590,24 @@ const blitShader =
 `;
 
 // ── Bounce compute shader ──
-// Runs at PROBE resolution. For each probe, determines the surface irradiance
-// by blending between own fluence (for exterior/volume probes) and exterior
-// neighbor fluence (for wall probes). This ensures wall probes get the light
-// arriving at the nearest surface, solving the probe-surface misalignment
-// problem where no probe center lands exactly on the wall surface.
+//
+// Computes diffuse re-emission at probe resolution (ps × ps). Each frame,
+// the previous frame's fluence is read and converted to bounce emission
+// that feeds back into the cascade via the seed shaders.
+//
+// Key design: wall probes (opacity≈1) sample fluence from exterior cardinal
+// neighbors rather than their own position, because the cascade's fluence
+// inside solid objects is zero. This solves the probe-surface misalignment
+// problem where some of the probes used for the interpolation will likely 
+// be inside the object, where no light arrives.
+//
+// The exterior neighbor fluence is averaged with the probe one step further
+// out (ni + ni2) to cancel the cascade's period-2 checkerboard artifact,
+// preventing the bounce feedback loop from amplifying it.
+//
+// The blend `ownFluence * (1-opacity) + exteriorFluence * opacity` is
+// continuous: vacuum probes use their own fluence, wall probes use exterior
+// neighbors', and deep interior probes (no exterior neighbors) get zero.
 
 const bounceComputeShader = /*wgsl*/ `
 struct BounceParams {
@@ -614,20 +633,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let worldPos = vec2i((vec2f(probe) + 0.5) * spacing);
 
   let opacity = textureLoad(worldTex, worldPos, 0).a;
-  let mat = textureLoad(materialTex, worldPos, 0);
-  let reemission = mat.g + (1.0 - mat.g) * mat.r;
-  if (reemission < 0.001) {
+  let albedo = textureLoad(materialTex, worldPos, 0).r;
+  if (albedo < 0.001) {
     textureStore(bounceOut, probe, vec4f(0.0));
     return;
   }
 
   let ownFluence = textureLoad(prevFluence, probe, 0).rgb;
 
-  // Gather fluence from cardinal neighbors, weighted by how exterior they are.
-  // Each neighbor's fluence is averaged with the probe one step further out
-  // to cancel the cascade's period-2 checkerboard (F+δ averaged with F-δ = F).
-  var exteriorFluence = vec3f(0.0);
-  var exteriorWeight = 0.0;
+  // Exterior neighbor fluence, averaged with the probe one step further
+  // out to cancel the cascade's period-2 checkerboard: (F+δ + F-δ)/2 = F.
+  var extFluence = vec3f(0.0);
+  var extWeight = 0.0;
   let pMax = vec2i(ps - 1);
   let off = array<vec2i, 4>(vec2i(-1, 0), vec2i(1, 0), vec2i(0, -1), vec2i(0, 1));
   for (var i = 0; i < 4; i++) {
@@ -638,27 +655,38 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let nFluence = (textureLoad(prevFluence, ni, 0).rgb
                   + textureLoad(prevFluence, ni2, 0).rgb) * 0.5;
     let w = 1.0 - nOpacity;
-    exteriorFluence += nFluence * w;
-    exteriorWeight += w;
+    extFluence += nFluence * w;
+    extWeight += w;
   }
-  if (exteriorWeight > 0.001) {
-    exteriorFluence /= exteriorWeight;
+  if (extWeight > 0.001) {
+    extFluence /= extWeight;
   }
 
-  // Continuous blend: exterior probes use own fluence, wall probes use
-  // smoothed exterior neighbors' fluence. Deep interior naturally gets zero.
-  let fluence = ownFluence * (1.0 - opacity) + exteriorFluence * opacity;
-
+  // Bounce emission = fluence × ω₀ / 2π (isotropic re-emission).
+  let fluence = ownFluence * (1.0 - opacity) + extFluence * opacity;
   const TWO_PI = 6.2831853;
-  textureStore(bounceOut, probe, vec4f(fluence * reemission / TWO_PI, 0.0));
+  textureStore(bounceOut, probe, vec4f(fluence * albedo / TWO_PI, 0.0));
 }
 `;
 
 // ── 2D Path Tracer (ground truth reference) ──
-// Progressive Monte Carlo path tracer operating at screen resolution.
-// Shares the world + material textures with HRC. Each frame adds
-// N samples per pixel and blends with the accumulation buffer. Supports
-// volumetric transport, diffuse bounces (albedo), and scattering.
+//
+// Progressive Monte Carlo path tracer at screen resolution. Each frame adds
+// N stratified samples per pixel, blended into the accumulation buffer.
+//
+// Transport model:
+//   - Emission: radiance += throughput × emission × opacity
+//   - Extinction (bounces off): throughput *= (1 − opacity)
+//   - Extinction (bounces on):  throughput *= (1 − opacity × (1 − ω_vol))
+//     where ω_vol = albedo × (1 − opacity) smoothly transitions from
+//     energy-preserving scatter in volumes to full extinction at surfaces.
+//   - Surface bounce: when throughput < 0.001 (opaque hit), re-emit from
+//     surfaceEntry with probability = albedo (Russian roulette for albedo).
+//   - Volume scatter: redirect ray with probability opacity × albedo.
+//     Only active when bounces are enabled (matches HRC behavior where
+//     scatter requires the frame-to-frame bounce feedback loop).
+//   - Russian roulette: stochastic termination below throughput 0.2 to
+//     prevent deterministic banding in volumes.
 
 const pathTraceShader = /*wgsl*/ `
 struct PTParams {
@@ -706,12 +734,12 @@ fn loadWorld(pos: vec2f) -> vec4f {
   return textureLoad(worldTex, px, 0);
 }
 
-fn loadMaterial(pos: vec2f) -> vec2f {
+fn loadAlbedo(pos: vec2f) -> f32 {
   let px = vec2i(i32(floor(pos.x)), i32(floor(pos.y)));
   if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
-    return vec2f(0.0);
+    return 0.0;
   }
-  return textureLoad(materialTex, px, 0).rg;
+  return textureLoad(materialTex, px, 0).r;
 }
 
 @compute @workgroup_size(8, 8)
@@ -733,7 +761,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var radiance = vec3f(0.0);
     var surfaceEntry = rayPos;
     var inSurface = false;
+    var bounceCount = 0u;
 
+    // Camera pixel: accumulate emission, reduce throughput by opacity.
     {
       let w0 = loadWorld(rayPos);
       radiance += throughput * w0.rgb * w0.a;
@@ -741,6 +771,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     for (var step = 0u; step < 4096u; step++) {
+      // Opaque camera pixels (throughput≈0 before entering any surface)
+      // show emission only, matching HRC blit: emission×α + fluence×(1−α).
+      if (throughput < 1e-6 && !inSurface) { break; }
+
       rayPos += rayDir;
       let w = loadWorld(rayPos);
       let opacity = w.a;
@@ -760,18 +794,27 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         inSurface = true;
       }
 
-      let mat = loadMaterial(rayPos);
-      let scatterCoeff = mat.g;
-
+      let albedo = loadAlbedo(rayPos);
       radiance += throughput * w.rgb * opacity;
-      // Only absorption reduces throughput; scattering preserves energy.
-      let absorption = opacity * (1.0 - scatterCoeff);
-      throughput *= (1.0 - absorption);
 
+      // Extinction model branches on bounce mode:
+      if (params.maxBounces > 0u) {
+        // ω_vol = albedo×(1−opacity): smoothly 0 at surfaces, ≈albedo in
+        // volumes. Throughput drops by absorption only; scatter preserves
+        // energy. Surfaces still fully block (ω_vol=0 → extinction=opacity).
+        let wVol = albedo * (1.0 - opacity);
+        throughput *= (1.0 - opacity * (1.0 - wVol));
+      } else {
+        // Full extinction — matches HRC without bounce feedback.
+        throughput *= (1.0 - opacity);
+      }
+
+      // Surface bounce (throughput≈0 at opaque surfaces).
       if (throughput < 0.001) {
-        let albedo = mat.r;
-        if (albedo > 0.001 && randomFloat(&seed) < albedo) {
+        if (bounceCount < params.maxBounces
+            && albedo > 0.001 && randomFloat(&seed) < albedo) {
           throughput = 1.0;
+          bounceCount++;
           rayPos = surfaceEntry;
           inSurface = false;
           let newAngle = randomFloat(&seed) * 6.2831853;
@@ -781,9 +824,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         break;
       }
 
-      if (scatterCoeff > 0.001) {
-        let scatterProb = opacity * scatterCoeff;
-        if (randomFloat(&seed) < scatterProb) {
+      // Russian roulette for low-throughput volume rays (prevents banding).
+      if (throughput < 0.2) {
+        if (randomFloat(&seed) > throughput * 5.0) { break; }
+        throughput = 0.2;
+      }
+
+      // Volume scatter (only with bounces — HRC needs the feedback loop).
+      if (params.maxBounces > 0u && albedo > 0.001 && opacity < 1.0) {
+        if (randomFloat(&seed) < opacity * albedo) {
           let newAngle = randomFloat(&seed) * 6.2831853;
           rayDir = vec2f(cos(newAngle), sin(newAngle));
         }
@@ -888,7 +937,6 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseLightRadius = 10;
   #mouseLightOpacity = SOLID_OPACITY;
   #mouseLightAlbedo = 0;
-  #mouseLightScattering = 0;
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
 
@@ -1082,10 +1130,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     thickness = 20,
     opacity = SOLID_OPACITY,
     albedo = 0,
-    scattering = 0,
   ) {
     const [r, g, b] = color;
-    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity, albedo, scattering]);
+    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity, albedo]);
     this.#lineBufferDirty = true;
   }
 
@@ -1104,10 +1151,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mouseDirty = true;
   }
 
-  setMouseLightMaterial(opacity: number, albedo: number, scattering: number) {
+  setMouseLightMaterial(opacity: number, albedo: number) {
     this.#mouseLightOpacity = opacity;
     this.#mouseLightAlbedo = albedo;
-    this.#mouseLightScattering = scattering;
     this.#mouseDirty = true;
   }
 
@@ -1318,7 +1364,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       device.createBuffer({ label, size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER);
-    [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'rg8unorm', TEX_RENDER);
+    [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
 
     this.#rayBuffers = [];
     this.#rayWidths = [];
@@ -1406,7 +1452,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #initPipelines() {
     const device = this.#device;
-    const MRT_TARGETS: GPUColorTargetState[] = [{ format: 'rgba16float' }, { format: 'rg8unorm' }];
+    const MRT_TARGETS: GPUColorTargetState[] = [{ format: 'rgba16float' }, { format: 'r8unorm' }];
 
     const attr = (loc: number, off: number, fmt: GPUVertexFormat): GPUVertexAttribute => ({
       shaderLocation: loc,
@@ -1434,13 +1480,12 @@ export class FolkHolographicRC extends FolkBaseSet {
         entryPoint: 'vertex_main',
         buffers: [
           {
-            arrayStride: 32,
+            arrayStride: 28,
             attributes: [
               attr(0, 0, 'float32x2'),
               attr(1, 8, 'float32x3'),
               attr(2, 20, 'float32'),
               attr(3, 24, 'float32'),
-              attr(4, 28, 'float32'),
             ],
           },
         ],
@@ -1458,7 +1503,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         entryPoint: 'vertex_main',
         buffers: [
           {
-            arrayStride: 44,
+            arrayStride: 40,
             stepMode: 'instance',
             attributes: [
               attr(0, 0, 'float32x2'),
@@ -1467,7 +1512,6 @@ export class FolkHolographicRC extends FolkBaseSet {
               attr(3, 28, 'float32'),
               attr(4, 32, 'float32'),
               attr(5, 36, 'float32'),
-              attr(6, 40, 'float32'),
             ],
           },
         ],
@@ -1622,9 +1666,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       const opacity = opacityAttr !== null ? Number(opacityAttr) : SOLID_OPACITY;
       const albedoAttr = element.getAttribute('data-albedo');
       const albedo = albedoAttr !== null ? Number(albedoAttr) : 0;
-      const scatterAttr = element.getAttribute('data-scattering');
-      const scatter = scatterAttr !== null ? Number(scatterAttr) : 0;
-
       // Compute rotated corners around shape center
       const cx = sx + sw / 2;
       const cy = sy + sh / 2;
@@ -1638,7 +1679,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       ].map(([lx, ly]) => [((cx + lx * cos - ly * sin) / cw) * 2 - 1, 1 - ((cy + lx * sin + ly * cos) / ch) * 2]);
 
       const v = (vx: number, vy: number) => {
-        vertices.push(vx, vy, r, g, b, opacity, albedo, scatter);
+        vertices.push(vx, vy, r, g, b, opacity, albedo);
       };
       v(corners[0][0], corners[0][1]); // TL
       v(corners[1][0], corners[1][1]); // TR
@@ -1658,7 +1699,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       return;
     }
     const count = this.#lines.length;
-    const FPL = 11;
+    const FPL = 10;
     if (!this.#lineInstanceBuffer || this.#lineInstanceCapacity < count) {
       this.#lineInstanceBuffer?.destroy();
       this.#lineInstanceCapacity = Math.max(count, 256);
@@ -1687,16 +1728,15 @@ export class FolkHolographicRC extends FolkBaseSet {
     const cy = toClipY(y);
     const op = this.#mouseLightOpacity;
     const al = this.#mouseLightAlbedo;
-    const sc = this.#mouseLightScattering;
     const verts: number[] = [];
     for (let i = 0; i < SEGS; i++) {
       const a0 = (i / SEGS) * Math.PI * 2;
       const a1 = ((i + 1) / SEGS) * Math.PI * 2;
-      verts.push(cx, cy, r, g, b, op, al, sc);
-      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, op, al, sc);
-      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, op, al, sc);
+      verts.push(cx, cy, r, g, b, op, al);
+      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, op, al);
+      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, op, al);
     }
-    this.#mouseLightVertexCount = verts.length / 8;
+    this.#mouseLightVertexCount = verts.length / 7;
     this.#mouseLightBuffer = uploadVertexData(this.#device, this.#mouseLightBuffer, new Float32Array(verts));
   }
 
@@ -1922,7 +1962,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       screenH: height,
       frameIndex: this.#ptFrameIndex,
       samplesPerPixel: 16,
-      maxBounces: 8,
+      maxBounces: this.bounces ? 8 : 0,
       pad0: 0,
       pad1: 0,
       pad2: 0,

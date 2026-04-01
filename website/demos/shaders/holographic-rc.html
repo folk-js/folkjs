@@ -446,13 +446,6 @@
           >0.00</span
         ></div
       >
-      <div class="prow"
-        ><label>scatter</label><input id="p-scatter" type="range" min="0" max="1" step="0.01" value="0" /><span
-          class="v"
-          id="v-scatter"
-          >0.00</span
-        ></div
-      >
       <div class="prow" id="size-row"
         ><label>size</label><input id="p-size" type="range" min="2" max="50" step="1" value="20" /><span
           class="v"
@@ -490,7 +483,7 @@
           .join('');
       const fromHex = (h) => [h.slice(1, 3), h.slice(3, 5), h.slice(5, 7)].map((s) => (parseInt(s, 16) / 255) ** 2.2);
 
-      const pen = { color: [0.8, 0.8, 0.8], opacity: 1, albedo: 0, scattering: 0, size: 20, eraser: false };
+      const pen = { color: [0.8, 0.8, 0.8], opacity: 1, albedo: 0, size: 20, eraser: false };
       let selectedShape = null;
       let panelOpen = false;
 
@@ -505,8 +498,6 @@
         vOpacity = $('v-opacity');
       const sAlbedo = $('p-albedo'),
         vAlbedo = $('v-albedo');
-      const sScatter = $('p-scatter'),
-        vScatter = $('v-scatter');
       const sSize = $('p-size'),
         vSize = $('v-size');
       const sizeRow = $('size-row');
@@ -577,8 +568,7 @@
         slider.addEventListener('input', () => {
           const v = Number(slider.value);
           valEl.textContent = fmt(v);
-          if (selectedShape)
-            selectedShape.setAttribute(prop === 'scattering' ? 'data-scattering' : 'data-albedo', String(v));
+          if (selectedShape) selectedShape.setAttribute('data-' + prop, String(v));
           else {
             pen[prop] = v;
             syncMouse();
@@ -596,7 +586,6 @@
         }
       });
       wireSlider(sAlbedo, vAlbedo, 'albedo', f2);
-      wireSlider(sScatter, vScatter, 'scattering', f2);
       sSize.addEventListener('input', () => {
         pen.size = Number(sSize.value);
         vSize.textContent = String(pen.size);
@@ -608,15 +597,14 @@
         panelTitle.textContent = shape ? 'Shape' : 'Pen';
         sizeRow.style.display = shape ? 'none' : '';
 
-        let color, opacity, albedo, scattering;
+        let color, opacity, albedo;
         if (shape) {
           const rgbAttr = shape.getAttribute('data-rgb');
           color = rgbAttr ? rgbAttr.split(',').map(Number) : [0, 0, 0];
           opacity = Number(shape.getAttribute('data-opacity') ?? 1);
           albedo = Number(shape.getAttribute('data-albedo') ?? 0);
-          scattering = Number(shape.getAttribute('data-scattering') ?? 0);
         } else {
-          ({ color, opacity, albedo, scattering } = pen);
+          ({ color, opacity, albedo } = pen);
         }
 
         customColor.value = toHex(color);
@@ -624,8 +612,6 @@
         vOpacity.textContent = f3(opacity);
         sAlbedo.value = albedo;
         vAlbedo.textContent = f2(albedo);
-        sScatter.value = scattering;
-        vScatter.textContent = f2(scattering);
         if (!shape) {
           sSize.value = pen.size;
           vSize.textContent = String(pen.size);
@@ -648,7 +634,7 @@
       function syncMouse() {
         const [r, g, b] = pen.eraser ? [0, 0, 0] : pen.color;
         hrc.setMouseLightColor(r, g, b);
-        hrc.setMouseLightMaterial(pen.opacity, pen.albedo, pen.scattering);
+        hrc.setMouseLightMaterial(pen.opacity, pen.albedo);
       }
 
       // ── Shape selection ──
@@ -873,7 +859,6 @@
         if (opts && typeof opts === 'object') {
           if (opts.opacity !== undefined) el.setAttribute('data-opacity', String(opts.opacity));
           if (opts.albedo !== undefined) el.setAttribute('data-albedo', String(opts.albedo));
-          if (opts.scattering !== undefined) el.setAttribute('data-scattering', String(opts.scattering));
           if (opts.color) el.setAttribute('data-rgb', opts.color.join(','));
         }
         hrc.appendChild(el);
@@ -954,7 +939,7 @@
           [-80, 2],
           [-10, 5],
           [60, 7],
-        ].forEach(([dx, c]) => addShape(cx + dx, cy - 100, 60, 200, c, { opacity: 0.015, scattering: 0.5 }));
+        ].forEach(([dx, c]) => addShape(cx + dx, cy - 100, 60, 200, c, { opacity: 0.015, albedo: 0.5 }));
         addShape(cx + 180, cy - 40, 40, 80, 1);
       }
 
@@ -967,14 +952,14 @@
         addShape(cx + 235, cy - 200, 15, 400, 1);
         addShape(cx - 200, cy - 185, 30, 30, 3);
         addShape(cx + 170, cy + 155, 30, 30, 6);
-        addShape(cx - 100, cy - 50, 200, 100, 0, { opacity: 0.01, scattering: 0.99 });
+        addShape(cx - 100, cy - 50, 200, 100, 0, { opacity: 0.01, albedo: 0.99 });
       }
 
       function loadSmoke() {
         const cx = window.innerWidth / 2,
           cy = hrc.clientHeight / 2;
         addShape(cx - 30, cy + 80, 60, 30, 3);
-        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: 0.02, scattering: 0.9 });
+        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: 0.02, albedo: 0.9 });
         addShape(cx - 200, cy - 60, 30, 30, 1);
         addShape(cx + 170, cy - 60, 30, 30, 1);
       }
@@ -1024,7 +1009,7 @@
         const cx = window.innerWidth / 2,
           cy = hrc.clientHeight / 2;
         addShape(cx - 250, cy - 20, 30, 40, 9);
-        addShape(cx - 150, cy - 150, 250, 300, 0, { opacity: 0.03, scattering: 1 });
+        addShape(cx - 150, cy - 150, 250, 300, 0, { opacity: 0.03, albedo: 1 });
         addShape(cx - 10, cy - 60, 20, 120, 1);
         addShape(cx + 150, cy - 100, 150, 200, 0, { opacity: 0.03 });
         addShape(cx + 350, cy - 20, 30, 40, 9);
@@ -1040,10 +1025,10 @@
         addShape(sx, y, sz, sz, 3);
         addShape(sx + gap, y, sz, sz, 1);
         addShape(sx + gap * 2, y, sz, sz, 2, { opacity: 0.6 });
-        addShape(sx + gap * 3, y, sz, sz, 0, { opacity: 0.05, scattering: 0.8 });
+        addShape(sx + gap * 3, y, sz, sz, 0, { opacity: 0.05, albedo: 0.8 });
         addShape(sx + gap * 4, y, sz, sz, 0, { albedo: 0.8 });
         addShape(sx + gap * 5, y, sz, sz, 0, { opacity: 0.3 });
-        addShape(sx + gap * 6, y, sz, sz, 5, { opacity: 0.03, scattering: 0.5 });
+        addShape(sx + gap * 6, y, sz, sz, 5, { opacity: 0.03, albedo: 0.5 });
         addShape(sx + gap * 7, y, sz, sz, 5, { opacity: 0.6 });
         addShape(cx - 30, cy - 150, 60, 15, 9);
       }
@@ -1134,12 +1119,12 @@
           cy = hrc.clientHeight / 2;
         const emL = addShape(cx - 220, cy - 20, 40, 40, 3);
         const emR = addShape(cx + 180, cy - 20, 40, 40, 6);
-        const fog = addShape(cx - 100, cy - 100, 200, 200, 0, { opacity: 0.02, scattering: 0.8 });
+        const fog = addShape(cx - 100, cy - 100, 200, 200, 0, { opacity: 0.02, albedo: 0.8 });
         const wall = addShape(cx - 10, cy - 80, 20, 160, 0, { albedo: 0.5 });
         function animate() {
           const t = performance.now() / 2000;
           fog.setAttribute('data-opacity', (0.01 + 0.025 * (0.5 + 0.5 * Math.sin(t))).toFixed(4));
-          fog.setAttribute('data-scattering', (0.4 + 0.5 * (0.5 + 0.5 * Math.sin(t * 1.3))).toFixed(3));
+          fog.setAttribute('data-albedo', (0.4 + 0.5 * (0.5 + 0.5 * Math.sin(t * 1.3))).toFixed(3));
           const li = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 0.7));
           emL.setAttribute('data-rgb', [li, li * 0.5, li * 0.2].map((v) => v.toFixed(3)).join(','));
           const ri = 0.3 + 0.7 * (0.5 + 0.5 * Math.cos(t * 0.7));
@@ -1180,17 +1165,16 @@
           cy = hrc.clientHeight / 2;
         addShape(cx - 180, cy - 20, 30, 40, 9);
         addShape(cx + 150, cy - 20, 30, 40, 6);
-        const obj = addShape(cx - 40, cy - 40, 80, 80, 0, { opacity: 1, albedo: 0, scattering: 0 });
-        const fog1 = addShape(cx - 120, cy - 80, 80, 160, 0, { opacity: 0.02, scattering: 0.6 });
-        const fog2 = addShape(cx + 40, cy - 80, 80, 160, 0, { opacity: 0.02, scattering: 0.6 });
+        const obj = addShape(cx - 40, cy - 40, 80, 80, 0, { opacity: 1, albedo: 0 });
+        const fog1 = addShape(cx - 120, cy - 80, 80, 160, 0, { opacity: 0.02, albedo: 0.6 });
+        const fog2 = addShape(cx + 40, cy - 80, 80, 160, 0, { opacity: 0.02, albedo: 0.6 });
         function animate() {
           const t = performance.now() / 4000;
-          const phase = t % 4;
-          let opacity, albedo, scatter, r, g, b;
+          const phase = t % 3;
+          let opacity, albedo, r, g, b;
           if (phase < 1) {
             opacity = 1;
             albedo = 0;
-            scatter = 0;
             const c = 0.5 + 0.5 * Math.sin(t * 3);
             r = c;
             g = c * 0.4;
@@ -1198,21 +1182,12 @@
           } else if (phase < 2) {
             opacity = 1;
             albedo = 0.3 + 0.6 * (phase - 1);
-            scatter = 0;
             r = 0.05;
             g = 0.05;
             b = 0.05;
-          } else if (phase < 3) {
-            opacity = 1 - 0.97 * (phase - 2);
-            albedo = 0;
-            scatter = phase - 2;
-            r = 0;
-            g = 0;
-            b = 0;
           } else {
-            opacity = 0.03 + 0.97 * (phase - 3);
-            albedo = 0;
-            scatter = 1 - (phase - 3);
+            opacity = 1 - 0.97 * (phase - 2);
+            albedo = phase - 2;
             r = 0;
             g = 0;
             b = 0;
@@ -1220,7 +1195,6 @@
           obj.setAttribute('data-rgb', [r, g, b].map((v) => v.toFixed(3)).join(','));
           obj.setAttribute('data-opacity', opacity.toFixed(3));
           obj.setAttribute('data-albedo', albedo.toFixed(3));
-          obj.setAttribute('data-scattering', scatter.toFixed(3));
           const fogOp = 0.01 + 0.015 * (0.5 + 0.5 * Math.sin(t * 1.5));
           fog1.setAttribute('data-opacity', fogOp.toFixed(4));
           fog2.setAttribute('data-opacity', fogOp.toFixed(4));
@@ -1481,7 +1455,6 @@
             el.setAttribute('data-rgb', pen.color.join(','));
             el.setAttribute('data-opacity', String(pen.opacity));
             el.setAttribute('data-albedo', String(pen.albedo));
-            el.setAttribute('data-scattering', String(pen.scattering));
             hrc.appendChild(el);
             break;
           }
@@ -1524,17 +1497,7 @@
         if (Math.sqrt(dx * dx + dy * dy) >= 4) {
           if (pen.eraser) hrc.eraseAt(e.clientX, e.clientY, pen.size);
           else
-            hrc.addLine(
-              lastX,
-              lastY,
-              e.clientX,
-              e.clientY,
-              pen.color,
-              pen.size,
-              pen.opacity,
-              pen.albedo,
-              pen.scattering,
-            );
+            hrc.addLine(lastX, lastY, e.clientX, e.clientY, pen.color, pen.size, pen.opacity, pen.albedo);
           lastX = e.clientX;
           lastY = e.clientY;
         }
@@ -1544,7 +1507,7 @@
         if (!drawing) return;
         if (pen.eraser) hrc.eraseAt(e.clientX, e.clientY, pen.size);
         else if (Math.abs(e.clientX - lastX) > 1 || Math.abs(e.clientY - lastY) > 1)
-          hrc.addLine(lastX, lastY, e.clientX, e.clientY, pen.color, pen.size, pen.opacity, pen.albedo, pen.scattering);
+          hrc.addLine(lastX, lastY, e.clientX, e.clientY, pen.color, pen.size, pen.opacity, pen.albedo);
         drawing = false;
       });
     </script>
