@@ -636,8 +636,12 @@
       }
 
       function selectShape(shape) {
+        if (selectedShape) selectedShape.style.outline = '';
         selectedShape = shape;
-        if (shape) togglePanel(true);
+        if (shape) {
+          shape.style.outline = '2px solid rgba(100, 180, 255, 0.8)';
+          togglePanel(true);
+        }
         syncPanel();
       }
 
@@ -647,16 +651,15 @@
         hrc.setMouseLightMaterial(pen.opacity, pen.albedo, pen.scattering);
       }
 
-      // ── Shape selection via focus ──
+      // ── Shape selection ──
       hrc.addEventListener('focusin', (e) => {
         if (e.target.tagName === 'FOLK-SHAPE') selectShape(e.target);
       });
-      hrc.addEventListener('focusout', () => {
-        setTimeout(() => {
-          const a = document.activeElement;
-          if (a?.closest('#panel')) return;
-          if (!a || a.tagName !== 'FOLK-SHAPE' || !hrc.contains(a)) selectShape(null);
-        }, 0);
+      document.addEventListener('pointerdown', (e) => {
+        if (!selectedShape) return;
+        if (e.target.closest('#panel') || e.target.closest('#controls')) return;
+        if (e.target.tagName === 'FOLK-SHAPE') return;
+        selectShape(null);
       });
 
       // ── Controls ──

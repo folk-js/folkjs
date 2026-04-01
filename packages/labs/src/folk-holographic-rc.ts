@@ -1702,6 +1702,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   #renderFrame() {
+    this.#updateShapeData();
     if (this.#lineBufferDirty) {
       this.#lineBufferDirty = false;
       this.#updateLineBuffer();
