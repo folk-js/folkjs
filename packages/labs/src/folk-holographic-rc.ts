@@ -634,7 +634,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let opacity = textureLoad(worldTex, worldPos, 0).a;
   let albedo = textureLoad(materialTex, worldPos, 0).r;
-  if (albedo < 0.001) {
+  if (albedo == 0.0) {
     textureStore(bounceOut, probe, vec4f(0.0));
     return;
   }
@@ -714,6 +714,13 @@ fn sampleSky(dir: vec2f) -> vec3f {
   let skyI = clamp(i32(u * skyW), 0, i32(skyW) - 1);
   return textureLoad(skyTex, vec2i(skyI, 0), 0).rgb;
 }
+
+// Surface bounce fires when throughput falls below this (opaque surface hit).
+const BOUNCE_THRESHOLD = 0.001;
+// Russian roulette starts below this throughput to stochastically terminate
+// low-energy volume rays (prevents deterministic banding).
+const RR_THRESHOLD = 0.2;
+const RR_BOOST = 1.0 / RR_THRESHOLD;
 
 fn pcgHash(v: u32) -> u32 {
   var s = v * 747796405u + 2891336453u;
@@ -810,9 +817,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
 
       // Surface bounce (throughput≈0 at opaque surfaces).
-      if (throughput < 0.001) {
+      if (throughput < BOUNCE_THRESHOLD) {
         if (bounceCount < params.maxBounces
-            && albedo > 0.001 && randomFloat(&seed) < albedo) {
+            && albedo > 0.0 && randomFloat(&seed) < albedo) {
           throughput = 1.0;
           bounceCount++;
           rayPos = surfaceEntry;
@@ -825,13 +832,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
 
       // Russian roulette for low-throughput volume rays (prevents banding).
-      if (throughput < 0.2) {
-        if (randomFloat(&seed) > throughput * 5.0) { break; }
-        throughput = 0.2;
+      if (throughput < RR_THRESHOLD) {
+        if (randomFloat(&seed) > throughput * RR_BOOST) { break; }
+        throughput = RR_THRESHOLD;
       }
 
       // Volume scatter (only with bounces — HRC needs the feedback loop).
-      if (params.maxBounces > 0u && albedo > 0.001 && opacity < 1.0) {
+      if (params.maxBounces > 0u && albedo > 0.0 && opacity < 1.0) {
         if (randomFloat(&seed) < opacity * albedo) {
           let newAngle = randomFloat(&seed) * 6.2831853;
           rayDir = vec2f(cos(newAngle), sin(newAngle));
