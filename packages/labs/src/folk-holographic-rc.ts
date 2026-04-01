@@ -218,77 +218,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// ── HRC Phase A2: Ray Seed Level 1 (direct trace, replaces extend level 1) ──
-
-const raySeedLevel1Shader = /*wgsl*/ `
-struct SeedParams {
-  probeCount: u32,
-  screenW: f32,
-  screenH: f32,
-  probeSpacing: f32,
-  transformX: vec4f,
-  transformY: vec4f,
-};
-
-@group(0) @binding(0) var worldTex: texture_2d<f32>;
-@group(0) @binding(1) var bounceTex: texture_2d<f32>;
-@group(0) @binding(2) var<storage, read_write> rayOut: array<vec2u>;
-@group(0) @binding(3) var<uniform> params: SeedParams;
-
-fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
-
-struct RayData { rad: vec3f, trans: f32 }
-
-fn sampleWorld(probeIdx: i32, sliceIdx: i32) -> RayData {
-  let p = vec3f(f32(probeIdx) + 0.5, f32(sliceIdx) + 0.5, 1.0);
-  let wp = vec2f(dot(params.transformX.xyz, p), dot(params.transformY.xyz, p));
-  let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
-  if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
-    return RayData(vec3f(0.0), 1.0);
-  }
-  let world = textureLoad(worldTex, px, 0);
-  let bounce = textureLoad(bounceTex, clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * f32(params.probeCount)), vec2i(0), vec2i(i32(params.probeCount) - 1)), 0).rgb;
-  let trans = pow(1.0 - world.a, params.probeSpacing);
-  let rad = (world.rgb + bounce) * (1.0 - trans);
-  return RayData(rad, trans);
-}
-
-fn compositeRay(near: RayData, far: RayData) -> RayData {
-  return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
-}
-
-@compute @workgroup_size(${WG_SEED[0]}, ${WG_SEED[1]})
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let texelX = i32(gid.x);
-  let sliceIdx = i32(gid.y);
-  let ps = i32(params.probeCount);
-
-  let numRays = 3;
-  let numProbes = ps / 2;
-  let probeIdx = texelX / numRays;
-  let rayIdx = texelX - probeIdx * numRays;
-
-  if (probeIdx >= numProbes || sliceIdx >= ps) { return; }
-
-  let lower = rayIdx / 2;
-  let upper = (rayIdx + 1) / 2;
-  let near = sampleWorld(probeIdx * 2, sliceIdx);
-
-  let sliceOffA = -1 + lower * 2;
-  let farA = sampleWorld(probeIdx * 2 + 1, sliceIdx + sliceOffA);
-  let crossA = compositeRay(near, farA);
-
-  let sliceOffB = -1 + upper * 2;
-  let farB = sampleWorld(probeIdx * 2 + 1, sliceIdx + sliceOffB);
-  let crossB = compositeRay(near, farB);
-
-  let avgRad = (crossA.rad + crossB.rad) * 0.5;
-  let avgTrans = (crossA.trans + crossB.trans) * 0.5;
-  let rayW = i32(params.probeCount) / 2 * 3;
-  rayOut[sliceIdx * rayW + texelX] = packF16(vec4f(avgRad, avgTrans));
-}
-`;
-
 // ── HRC Phase B: Ray Extension (bottom-up, levels 1..N-1) ──
 // Composes two shorter rays from the previous level into one longer ray.
 // For each output ray, builds two crossed extensions (L→R, R→L) and averages.
@@ -993,14 +922,12 @@ export class FolkHolographicRC extends FolkBaseSet {
   // Pipelines
   #bounceComputePipeline!: GPUComputePipeline;
   #raySeedPipeline!: GPUComputePipeline;
-  #raySeedL1Pipeline!: GPUComputePipeline;
   #rayExtendPipeline!: GPUComputePipeline;
   #coneMergePipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
   // Pre-created bind groups
   #seedBindGroups!: GPUBindGroup[];
-  #seedL1BindGroups!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
   #mergeBindGroups!: GPUBindGroup[][];
   #blitBindGroups!: GPUBindGroup[];
@@ -1529,7 +1456,6 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#bounceComputePipeline = computePipeline(device, 'HRC-BounceCompute', bounceComputeShader);
     this.#raySeedPipeline = computePipeline(device, 'HRC-RaySeed', raySeedShader);
-    this.#raySeedL1Pipeline = computePipeline(device, 'HRC-RaySeedL1', raySeedLevel1Shader);
     this.#rayExtendPipeline = computePipeline(device, 'HRC-RayExtend', rayExtendShader);
     this.#coneMergePipeline = computePipeline(device, 'HRC-ConeMerge', coneMergeShader);
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
@@ -1557,17 +1483,8 @@ export class FolkHolographicRC extends FolkBaseSet {
       }),
     );
 
-    const seedL1Layout = this.#raySeedL1Pipeline.getBindGroupLayout(0);
-    this.#seedL1BindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(device, seedL1Layout, this.#worldTextureView, this.#bounceTextureView, { buffer: this.#rayBuffers[1] }, {
-        buffer: this.#seedParamsBuffer,
-        offset: dir * 256,
-        size: seedPS,
-      }),
-    );
-
     this.#extendBindGroups = [];
-    for (let level = 2; level < nc; level++) {
+    for (let level = 1; level < nc; level++) {
       this.#extendBindGroups.push(
         bg(device, extLayout, { buffer: this.#rayBuffers[level - 1] }, { buffer: this.#rayBuffers[level] }, {
           buffer: this.#extendParamsBuffer,
@@ -1874,37 +1791,32 @@ export class FolkHolographicRC extends FolkBaseSet {
       );
     }
 
+    // Each direction is one compute pass (seed → extend → merge). Dispatches
+    // within a pass execute sequentially in WebGPU, so data dependencies are
+    // satisfied. Directions must be separate passes because fluence textures
+    // switch between read/write roles across directions.
     for (let dir = 0; dir < 4; dir++) {
       const dn = ['E', 'N', 'W', 'S'][dir];
-      {
-        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.seed0`) });
-        pass.setPipeline(this.#raySeedPipeline);
-        pass.setBindGroup(0, this.#seedBindGroups[dir]);
-        pass.dispatchWorkgroups(seedWg, seedWg);
-        pass.end();
-      }
-      {
-        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.seed1`) });
-        pass.setPipeline(this.#raySeedL1Pipeline);
-        pass.setBindGroup(0, this.#seedL1BindGroups[dir]);
-        pass.dispatchWorkgroups(Math.ceil(((ps >> 1) * 3) / WG_SEED[0]), seedWg);
-        pass.end();
-      }
-      for (let level = 2; level < nc; level++) {
-        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.ext${level}`) });
-        pass.setPipeline(this.#rayExtendPipeline);
-        pass.setBindGroup(0, this.#extendBindGroups[level - 2]);
+      const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(dn) });
+
+      pass.setPipeline(this.#raySeedPipeline);
+      pass.setBindGroup(0, this.#seedBindGroups[dir]);
+      pass.dispatchWorkgroups(seedWg, seedWg);
+
+      pass.setPipeline(this.#rayExtendPipeline);
+      for (let level = 1; level < nc; level++) {
+        pass.setBindGroup(0, this.#extendBindGroups[level - 1]);
         pass.dispatchWorkgroups(Math.ceil(((ps >> level) * ((1 << level) + 1)) / WG_EXTEND[0]), extWgY);
-        pass.end();
       }
+
+      pass.setPipeline(this.#coneMergePipeline);
       for (let k = 0; k < nc; k++) {
         const level = nc - 1 - k;
-        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}.merge${level}`) });
-        pass.setPipeline(this.#coneMergePipeline);
         pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
         pass.dispatchWorkgroups(Math.ceil(((ps >> level) * (1 << level)) / WG_MERGE[0]), Math.ceil(ps / WG_MERGE[1]));
-        pass.end();
       }
+
+      pass.end();
     }
 
     this.#lastFluenceResultIdx = 1;
