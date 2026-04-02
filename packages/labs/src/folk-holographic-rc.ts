@@ -17,6 +17,8 @@ type Line = [
 
 const SOLID_OPACITY = 1;
 
+const DEBUG_CANVAS: number | null = 64;
+
 function nextPow2(n: number): number {
   let v = 1;
   while (v < n) v *= 2;
@@ -1093,6 +1095,21 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#destroyResources();
   }
 
+  #mapToCanvas(x: number, y: number): [number, number] {
+    const rect = this.#canvas.getBoundingClientRect();
+    if (!DEBUG_CANVAS) return [x - rect.left, y - rect.top];
+    return [
+      (x - rect.left) * (this.#canvas.width / rect.width),
+      (y - rect.top) * (this.#canvas.height / rect.height),
+    ];
+  }
+
+  #scaleToCanvas(v: number): number {
+    if (!DEBUG_CANVAS) return v;
+    const rect = this.#canvas.getBoundingClientRect();
+    return v * (this.#canvas.width / rect.width);
+  }
+
   addLine(
     x1: number,
     y1: number,
@@ -1103,6 +1120,11 @@ export class FolkHolographicRC extends FolkBaseSet {
     opacity = SOLID_OPACITY,
     albedo = 0,
   ) {
+    if (DEBUG_CANVAS) {
+      [x1, y1] = this.#mapToCanvas(x1, y1);
+      [x2, y2] = this.#mapToCanvas(x2, y2);
+      thickness = this.#scaleToCanvas(thickness);
+    }
     const [r, g, b] = color;
     this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity, albedo]);
     this.#lineBufferDirty = true;
@@ -1130,6 +1152,10 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   eraseAt(x: number, y: number, radius: number) {
+    if (DEBUG_CANVAS) {
+      [x, y] = this.#mapToCanvas(x, y);
+      radius = this.#scaleToCanvas(radius);
+    }
     this.#lines = this.#lines.filter((line) => {
       const [x1, y1, x2, y2] = line;
       const dx = x2 - x1;
@@ -1303,15 +1329,35 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     this.#canvas = document.createElement('canvas');
-    this.#canvas.width = this.clientWidth || 800;
-    this.#canvas.height = this.clientHeight || 600;
-    Object.assign(this.#canvas.style, {
-      position: 'absolute',
-      inset: '0',
-      width: '100%',
-      height: '100%',
-      pointerEvents: 'none',
-    });
+    if (DEBUG_CANVAS) {
+      this.#canvas.width = DEBUG_CANVAS;
+      this.#canvas.height = DEBUG_CANVAS;
+    } else {
+      this.#canvas.width = this.clientWidth || 800;
+      this.#canvas.height = this.clientHeight || 600;
+    }
+    if (DEBUG_CANVAS) {
+      const containerW = this.clientWidth || 800;
+      const containerH = this.clientHeight || 600;
+      const displaySize = Math.min(containerW - 64, containerH - 64);
+      Object.assign(this.#canvas.style, {
+        position: 'absolute',
+        left: `${(containerW - displaySize) / 2}px`,
+        top: `${(containerH - displaySize) / 2}px`,
+        width: `${displaySize}px`,
+        height: `${displaySize}px`,
+        pointerEvents: 'none',
+        imageRendering: 'pixelated',
+      });
+    } else {
+      Object.assign(this.#canvas.style, {
+        position: 'absolute',
+        inset: '0',
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+      });
+    }
     this.renderRoot.prepend(this.#canvas);
 
     const context = this.#canvas.getContext('webgpu');
@@ -1331,8 +1377,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     const { width: cw, height: ch } = this.#canvas;
     const maxDim = Math.max(cw, ch);
     const minDim = Math.min(cw, ch);
-    const psX = Math.max(2, this.probeCount);
-    const psY = Math.max(2, ceilDiv(minDim * psX, maxDim));
+    const psX = DEBUG_CANVAS ? DEBUG_CANVAS : Math.max(2, this.probeCount);
+    const psY = DEBUG_CANVAS ? DEBUG_CANVAS : Math.max(2, ceilDiv(minDim * psX, maxDim));
     this.#psX = psX;
     this.#psY = psY;
     this.#numCascades = ceilLog2(psX);
@@ -1641,11 +1687,20 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     elements.forEach((element, index) => {
       const shape = element as HTMLElement & { x: number; y: number; width: number; height: number; rotation: number };
-      const sx = shape.x ?? 0;
-      const sy = shape.y ?? 0;
-      const sw = shape.width ?? 0;
-      const sh = shape.height ?? 0;
+      let sx = shape.x ?? 0;
+      let sy = shape.y ?? 0;
+      let sw = shape.width ?? 0;
+      let sh = shape.height ?? 0;
       const rot = shape.rotation ?? 0;
+
+      if (DEBUG_CANVAS) {
+        const rect = this.#canvas.getBoundingClientRect();
+        const scale = this.#canvas.width / rect.width;
+        sx = (sx - rect.left) * scale;
+        sy = (sy - rect.top) * scale;
+        sw = sw * scale;
+        sh = sh * scale;
+      }
 
       const rgbAttr = element.getAttribute('data-rgb');
       const parts = rgbAttr ? rgbAttr.split(',').map(Number) : [0, 0, 0];
@@ -2122,6 +2177,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   // ── Event handlers ──
 
   #handleResize = async () => {
+    if (DEBUG_CANVAS) return;
     if (this.#resizing) return;
     this.#resizing = true;
     this.#isRunning = false;
@@ -2148,9 +2204,9 @@ export class FolkHolographicRC extends FolkBaseSet {
   };
 
   #handleMouseMove = (e: MouseEvent) => {
-    const rect = this.getBoundingClientRect();
-    this.#mousePosition.x = e.clientX - rect.left;
-    this.#mousePosition.y = e.clientY - rect.top;
+    const [mx, my] = this.#mapToCanvas(e.clientX, e.clientY);
+    this.#mousePosition.x = mx;
+    this.#mousePosition.y = my;
     this.#mouseDirty = true;
   };
 
