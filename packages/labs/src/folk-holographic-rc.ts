@@ -17,7 +17,7 @@ type Line = [
 
 const SOLID_OPACITY = 1;
 
-const DEBUG_CANVAS: number | null = 64;
+const DEBUG_CANVAS: number | null = null;
 
 function nextPow2(n: number): number {
   let v = 1;
@@ -915,6 +915,12 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
 
+  // Pixel-based drawing for DEBUG_CANVAS (Bresenham lines + square brush)
+  #debugPixels: [x: number, y: number, r: number, g: number, b: number, opacity: number, albedo: number][] = [];
+  #debugPixelBuffer?: GPUBuffer;
+  #debugPixelVertexCount = 0;
+  #debugPixelsDirty = false;
+
   // Per-level ray storage buffers: vec4f (rad.rgb + transmittance)
   #rayBuffers!: GPUBuffer[];
 
@@ -1098,10 +1104,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mapToCanvas(x: number, y: number): [number, number] {
     const rect = this.#canvas.getBoundingClientRect();
     if (!DEBUG_CANVAS) return [x - rect.left, y - rect.top];
-    return [
-      (x - rect.left) * (this.#canvas.width / rect.width),
-      (y - rect.top) * (this.#canvas.height / rect.height),
-    ];
+    return [(x - rect.left) * (this.#canvas.width / rect.width), (y - rect.top) * (this.#canvas.height / rect.height)];
   }
 
   #scaleToCanvas(v: number): number {
@@ -1123,16 +1126,73 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (DEBUG_CANVAS) {
       [x1, y1] = this.#mapToCanvas(x1, y1);
       [x2, y2] = this.#mapToCanvas(x2, y2);
-      thickness = this.#scaleToCanvas(thickness);
+      this.#stampLine(
+        Math.floor(x1),
+        Math.floor(y1),
+        Math.floor(x2),
+        Math.floor(y2),
+        color,
+        thickness,
+        opacity,
+        albedo,
+      );
+      return;
     }
     const [r, g, b] = color;
     this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity, albedo]);
     this.#lineBufferDirty = true;
   }
 
+  #stampLine(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    color: [number, number, number],
+    brushSize: number,
+    opacity: number,
+    albedo: number,
+  ) {
+    const [r, g, b] = color;
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    let x = x0,
+      y = y0;
+    const size = DEBUG_CANVAS!;
+    const blo = -Math.floor((brushSize - 1) / 2);
+    const bhi = Math.floor(brushSize / 2);
+    for (;;) {
+      for (let by = blo; by <= bhi; by++) {
+        for (let bx = blo; bx <= bhi; bx++) {
+          const px = x + bx;
+          const py = y + by;
+          if (px >= 0 && py >= 0 && px < size && py < size) {
+            this.#debugPixels.push([px, py, r, g, b, opacity, albedo]);
+          }
+        }
+      }
+      if (x === x1 && y === y1) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        x += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        y += sy;
+      }
+    }
+    this.#debugPixelsDirty = true;
+  }
+
   clearLines() {
     this.#lines = [];
     this.#lineBufferDirty = true;
+    this.#debugPixels = [];
+    this.#debugPixelsDirty = true;
   }
 
   setMouseLightColor(r: number, g: number, b: number) {
@@ -1155,6 +1215,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (DEBUG_CANVAS) {
       [x, y] = this.#mapToCanvas(x, y);
       radius = this.#scaleToCanvas(radius);
+      const r2 = radius * radius;
+      this.#debugPixels = this.#debugPixels.filter(([px, py]) => {
+        const dx = px + 0.5 - x;
+        const dy = py + 0.5 - y;
+        return dx * dx + dy * dy > r2;
+      });
+      this.#debugPixelsDirty = true;
+      return;
     }
     this.#lines = this.#lines.filter((line) => {
       const [x1, y1, x2, y2] = line;
@@ -1736,6 +1804,34 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#shapeDataBuffer = uploadVertexData(this.#device, this.#shapeDataBuffer, new Float32Array(vertices));
   }
 
+  #pixelQuadVerts(px: number, py: number, r: number, g: number, b: number, op: number, al: number, out: number[]) {
+    const w = this.#canvas.width;
+    const h = this.#canvas.height;
+    const x0 = (px / w) * 2 - 1;
+    const y0 = 1 - (py / h) * 2;
+    const x1 = ((px + 1) / w) * 2 - 1;
+    const y1 = 1 - ((py + 1) / h) * 2;
+    out.push(x0, y0, r, g, b, op, al);
+    out.push(x1, y0, r, g, b, op, al);
+    out.push(x0, y1, r, g, b, op, al);
+    out.push(x1, y0, r, g, b, op, al);
+    out.push(x1, y1, r, g, b, op, al);
+    out.push(x0, y1, r, g, b, op, al);
+  }
+
+  #updateDebugPixelBuffer() {
+    if (!this.#device || this.#debugPixels.length === 0) {
+      this.#debugPixelVertexCount = 0;
+      return;
+    }
+    const verts: number[] = [];
+    for (const [px, py, r, g, b, op, al] of this.#debugPixels) {
+      this.#pixelQuadVerts(px, py, r, g, b, op, al, verts);
+    }
+    this.#debugPixelVertexCount = verts.length / 7;
+    this.#debugPixelBuffer = uploadVertexData(this.#device, this.#debugPixelBuffer, new Float32Array(verts));
+  }
+
   #updateLineBuffer() {
     if (!this.#device || this.#lines.length === 0) {
       this.#lineCount = 0;
@@ -1759,26 +1855,46 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #updateMouseLightBuffer() {
     if (!this.#device) return;
-    const SEGS = 12;
-    const { x, y } = this.#mousePosition;
+    let { x, y } = this.#mousePosition;
     const { r, g, b } = this.#mouseLightColor;
-    const rad = this.#mouseLightRadius;
-    const toClipX = (px: number) => (px / this.#canvas.width) * 2 - 1;
-    const toClipY = (py: number) => 1 - (py / this.#canvas.height) * 2;
-    const rx = (rad / this.#canvas.width) * 2;
-    const ry = (rad / this.#canvas.height) * 2;
-    const cx = toClipX(x);
-    const cy = toClipY(y);
     const op = this.#mouseLightOpacity;
     const al = this.#mouseLightAlbedo;
     const verts: number[] = [];
-    for (let i = 0; i < SEGS; i++) {
-      const a0 = (i / SEGS) * Math.PI * 2;
-      const a1 = ((i + 1) / SEGS) * Math.PI * 2;
-      verts.push(cx, cy, r, g, b, op, al);
-      verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, op, al);
-      verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, op, al);
+
+    if (DEBUG_CANVAS) {
+      const cx = Math.floor(x);
+      const cy = Math.floor(y);
+      const bs = Math.max(1, this.#mouseLightRadius * 2);
+      const blo = -Math.floor((bs - 1) / 2);
+      const bhi = Math.floor(bs / 2);
+      const size = DEBUG_CANVAS;
+      for (let by = blo; by <= bhi; by++) {
+        for (let bx = blo; bx <= bhi; bx++) {
+          const px = cx + bx;
+          const py = cy + by;
+          if (px >= 0 && py >= 0 && px < size && py < size) {
+            this.#pixelQuadVerts(px, py, r, g, b, op, al, verts);
+          }
+        }
+      }
+    } else {
+      const SEGS = 12;
+      const rad = this.#mouseLightRadius;
+      const toClipX = (px: number) => (px / this.#canvas.width) * 2 - 1;
+      const toClipY = (py: number) => 1 - (py / this.#canvas.height) * 2;
+      const rx = (rad / this.#canvas.width) * 2;
+      const ry = (rad / this.#canvas.height) * 2;
+      const cx = toClipX(x);
+      const cy = toClipY(y);
+      for (let i = 0; i < SEGS; i++) {
+        const a0 = (i / SEGS) * Math.PI * 2;
+        const a1 = ((i + 1) / SEGS) * Math.PI * 2;
+        verts.push(cx, cy, r, g, b, op, al);
+        verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, op, al);
+        verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, op, al);
+      }
     }
+
     this.#mouseLightVertexCount = verts.length / 7;
     this.#mouseLightBuffer = uploadVertexData(this.#device, this.#mouseLightBuffer, new Float32Array(verts));
   }
@@ -1802,6 +1918,10 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (this.#lineBufferDirty) {
       this.#lineBufferDirty = false;
       this.#updateLineBuffer();
+    }
+    if (this.#debugPixelsDirty) {
+      this.#debugPixelsDirty = false;
+      this.#updateDebugPixelBuffer();
     }
     if (this.#mouseDirty) {
       this.#mouseDirty = false;
@@ -1841,6 +1961,10 @@ export class FolkHolographicRC extends FolkBaseSet {
       if (this.#shapeDataBuffer && this.#shapeCount > 0) {
         pass.setVertexBuffer(0, this.#shapeDataBuffer);
         pass.draw(this.#shapeCount * 6);
+      }
+      if (this.#debugPixelBuffer && this.#debugPixelVertexCount > 0) {
+        pass.setVertexBuffer(0, this.#debugPixelBuffer);
+        pass.draw(this.#debugPixelVertexCount);
       }
       if (this.#lineInstanceBuffer && this.#lineCount > 0) {
         pass.setPipeline(this.#lineRenderPipeline);
