@@ -1,7 +1,10 @@
 accuracy:
 
-- sky artefact at edges visible at low probe sizes (but seems to appear without it too) maybe some off-by-one errors somewhere (very low priority)
-- asymetric non-bounced light in volumes without bounced light (possibly related to aspect ratio math)
+- artefact at edges visible at low probe sizes (but seems to appear without it too) maybe some off-by-one errors somewhere (very low priority) — SOLVED this is because edge probes get 3/4 samples (wont fix atm)
+
+BUGS:
+
+- height > width breaks the math
 
 design:
 
@@ -12,6 +15,6 @@ design:
   - display: blit would need a `reflected = bounceColor × opacity` term using the bounce texture (which already carries RGB). the bounce already stores `fluence × albedo / 2π` — with RGB albedo this naturally becomes `fluence × albedoRGB / 2π`, giving colored bounce for free.
   - the tricky part: how to display opaque surfaces lit by GI. options explored during bounce work: (C) read bounce texture with nearest-neighbor masked by opacity — works but had 1px edge issues. could revisit with better masking. (D) add bounce to world emission before seeding — changes the world texture mid-frame, messy. (E) separate "lit surface" render pass composited on top — cleanest but adds a pass.
 
-perf:
-
-- hmmmmmm what if theres a way to avoid the aspect ratio artefacts entirely? overfit one axis and reduce work AND eliminate all the aspect ratio fuckery for same quality??
+WHY DID I NOT KNOW:
+If you start extensions any lower than c3 you will always have that cross artifact.
+Extensions can't bve entirely physically accurate until c3, because you have to seed in the directional sampling from c0-c2 with raytracing.
