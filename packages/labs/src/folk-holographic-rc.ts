@@ -331,7 +331,8 @@ struct MergeParams {
   numRays: u32,
   nextNumCones: u32,
   isLastLevel: u32,
-  isFirstDir: u32,
+  fluenceW: u32,
+  fluenceStride: u32,
   skyRow: u32,
   skyShift: u32,
   conesShift: u32,
@@ -351,6 +352,7 @@ struct MergeParams {
 @group(0) @binding(1) var<storage, read> mergeInBuf: array<u32>;
 @group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<u32>;
 
+fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
 fn packRGB9E5(c: vec3f) -> u32 {
@@ -379,10 +381,9 @@ fn unpackRGB9E5(p: u32) -> vec3f {
   return vec3f(r, g, b) * exp2(e);
 }
 @group(0) @binding(3) var<uniform> params: MergeParams;
-@group(0) @binding(4) var fluencePrev: texture_2d<f32>;
-@group(0) @binding(5) var fluenceCurr: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(6) var skyPrefixTex: texture_2d<f32>;
-@group(0) @binding(7) var<storage, read> angWeights: array<f32>;
+@group(0) @binding(4) var<storage, read_write> fluenceBuf: array<vec2u>;
+@group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
+@group(0) @binding(6) var<storage, read> angWeights: array<f32>;
 
 struct RayData { rad: vec3f, trans: f32 }
 
@@ -474,14 +475,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       params.fxProbe * probeIdx + params.fxSlice * sliceIdx + params.fxOff,
       params.fyProbe * probeIdx + params.fySlice * sliceIdx + params.fyOff,
     );
-    let fdim = vec2i(textureDimensions(fluenceCurr));
-    if (fc.x >= 0 && fc.x < fdim.x && fc.y >= 0 && fc.y < fdim.y) {
-      if (params.isFirstDir == 1u) {
-        textureStore(fluenceCurr, fc, vec4f(result, 1.0));
-      } else {
-        let prev = textureLoad(fluencePrev, fc, 0).rgb;
-        textureStore(fluenceCurr, fc, vec4f(prev + result, 1.0));
-      }
+    let fw = i32(params.fluenceW);
+    let fStride = i32(params.fluenceStride);
+    let fh = i32(arrayLength(&fluenceBuf)) / fStride;
+    if (fc.x >= 0 && fc.x < fw && fc.y >= 0 && fc.y < fh) {
+      let fi = fc.y * fStride + fc.x;
+      let prev = unpackF16(fluenceBuf[fi]);
+      fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, 1.0));
     }
   }
 }
@@ -856,8 +856,7 @@ function dirTransform(
   h: number,
   ps: number,
 ): { transformX: [number, number, number]; transformY: [number, number, number]; probeSpacing: number } {
-  // Isotropic spacing: s = W/psX = H/psY. Using W/ps since ps = psX.
-  const s = w / ps;
+  const s = Math.max(w, h) / ps;
   switch (dir) {
     case 0: // East: probeIdx→X, sliceIdx→Y
       return { transformX: [s, 0, 0], transformY: [0, s, 0], probeSpacing: s };
@@ -927,17 +926,16 @@ export class FolkHolographicRC extends FolkBaseSet {
   // Merge ping-pong storage buffers (probeCount x probeCount)
   #mergeBuffers!: GPUBuffer[];
 
-  // Fluence ping-pong pair (probeCount x probeCount).
-  // Could be a single texture with read_write storage access, but Firefox
-  // doesn't support readonly_and_readwrite_storage_textures yet.
-  #fluenceTextures!: GPUTexture[];
-  #fluenceTextureViews!: GPUTextureView[];
+  // Fluence SSBO: all 4 directions accumulate into this buffer (no ping-pong).
+  // Copied to a texture after cascade processing for blit/bounce reads.
+  #fluenceBuffer!: GPUBuffer;
+  #fluenceTexture!: GPUTexture;
+  #fluenceTextureView!: GPUTextureView;
 
   // Bounce texture (screen resolution) for diffuse light bounces
   #bounceTexture!: GPUTexture;
   #bounceTextureView!: GPUTextureView;
-  #lastFluenceResultIdx = -1;
-  #fluenceZeroBuffer!: GPUBuffer;
+  #lastFluenceReady = false;
   #bounceZeroBuffer!: GPUBuffer;
 
   // Sky circle texture (1D radiance from every angle, stored as 2D with height=1)
@@ -974,8 +972,8 @@ export class FolkHolographicRC extends FolkBaseSet {
   #seedBindGroups!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
   #mergeBindGroups!: GPUBindGroup[][];
-  #blitBindGroups!: GPUBindGroup[];
-  #bounceBindGroups!: GPUBindGroup[];
+  #blitBindGroup!: GPUBindGroup;
+  #bounceBindGroup!: GPUBindGroup;
 
   // Sampler
   #linearSampler!: GPUSampler;
@@ -997,6 +995,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #psX = 0;
   #psY = 0;
   #mergeStride = 0;
+  #fluenceStride = 0;
 
   #animationFrame = 0;
   #isRunning = false;
@@ -1444,13 +1443,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     const device = this.#device;
     const { width: cw, height: ch } = this.#canvas;
     const maxDim = Math.max(cw, ch);
-    const minDim = Math.min(cw, ch);
-    const psX = DEBUG_CANVAS ? DEBUG_CANVAS : Math.max(2, this.probeCount);
-    const psY = DEBUG_CANVAS ? DEBUG_CANVAS : Math.max(2, ceilDiv(minDim * psX, maxDim));
+    const ps = Math.max(2, this.probeCount);
+    const psX = DEBUG_CANVAS ? DEBUG_CANVAS : Math.max(2, ceilDiv(cw * ps, maxDim));
+    const psY = DEBUG_CANVAS ? DEBUG_CANVAS : Math.max(2, ceilDiv(ch * ps, maxDim));
+    const psMax = Math.max(psX, psY);
     this.#psX = psX;
     this.#psY = psY;
-    this.#numCascades = ceilLog2(psX);
-    const mergeStride = nextPow2(psX);
+    this.#numCascades = ceilLog2(psMax);
+    const mergeStride = nextPow2(psMax);
     this.#mergeStride = mergeStride;
 
     const ubo = (label: string, size: number) =>
@@ -1460,22 +1460,34 @@ export class FolkHolographicRC extends FolkBaseSet {
     [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
 
     // Ray/merge buffers are shared across all 4 directions, sized for worst case.
-    // psX >= psY, so psX determines the max width and max height (sliceCount).
     this.#rayBuffers = [];
     for (let i = 0; i < this.#numCascades; i++) {
-      const w = ceilDiv(psX, 1 << i) * ((1 << i) + 1);
+      const w = ceilDiv(psMax, 1 << i) * ((1 << i) + 1);
       this.#rayBuffers.push(
-        device.createBuffer({ label: `Ray-${i}`, size: w * psX * 8, usage: GPUBufferUsage.STORAGE }),
+        device.createBuffer({ label: `Ray-${i}`, size: w * psMax * 8, usage: GPUBufferUsage.STORAGE }),
       );
     }
 
     this.#mergeBuffers = [0, 1].map((i) =>
-      device.createBuffer({ label: `Merge-${i}`, size: mergeStride * psX * 4, usage: GPUBufferUsage.STORAGE }),
+      device.createBuffer({ label: `Merge-${i}`, size: mergeStride * psMax * 4, usage: GPUBufferUsage.STORAGE }),
     );
-    const [ft0, fv0] = tex(device, 'Fluence-0', psX, psY, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
-    const [ft1, fv1] = tex(device, 'Fluence-1', psX, psY, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
-    this.#fluenceTextures = [ft0, ft1];
-    this.#fluenceTextureViews = [fv0, fv1];
+    const alignedFluenceRow = Math.ceil((psX * 8) / 256) * 256;
+    this.#fluenceBuffer = device.createBuffer({
+      label: 'Fluence-SSBO',
+      size: alignedFluenceRow * psY,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+    this.#fluenceStride = alignedFluenceRow / 8;
+    const [ft, fv] = tex(
+      device,
+      'Fluence',
+      psX,
+      psY,
+      'rgba16float',
+      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    );
+    this.#fluenceTexture = ft;
+    this.#fluenceTextureView = fv;
 
     [this.#bounceTexture, this.#bounceTextureView] = tex(
       device,
@@ -1514,9 +1526,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     );
 
-    this.#lastFluenceResultIdx = -1;
-    const alignedFluenceRow = Math.ceil((psX * 8) / 256) * 256;
-    this.#fluenceZeroBuffer = device.createBuffer({ size: alignedFluenceRow * psY, usage: GPUBufferUsage.COPY_SRC });
+    this.#lastFluenceReady = false;
 
     const totalAngWeights = 4 * (2 * (1 << this.#numCascades) - 2);
     this.#angWeightBuffer = device.createBuffer({
@@ -1677,8 +1687,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       const dirBGs: GPUBindGroup[] = [];
       let readIdx = 1,
         writeIdx = 0;
-      const fReadIdx = dir % 2 === 0 ? 1 : 0;
-      const fWriteIdx = dir % 2 === 0 ? 0 : 1;
       for (let k = 0; k < nc; k++) {
         const level = nc - 1 - k;
         dirBGs.push(
@@ -1689,8 +1697,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             { buffer: this.#mergeBuffers[readIdx] },
             { buffer: this.#mergeBuffers[writeIdx] },
             { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
-            this.#fluenceTextureViews[fReadIdx],
-            this.#fluenceTextureViews[fWriteIdx],
+            { buffer: this.#fluenceBuffer },
             this.#skyPrefixSumTextureView,
             { buffer: this.#angWeightBuffer },
           ),
@@ -1700,27 +1707,23 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#mergeBindGroups.push(dirBGs);
     }
 
-    this.#blitBindGroups = [0, 1].map((idx) =>
-      bg(
-        device,
-        this.#renderPipeline.getBindGroupLayout(0),
-        this.#fluenceTextureViews[idx],
-        this.#worldTextureView,
-        { buffer: this.#blitParamsBuffer },
-        this.#linearSampler,
-      ),
+    this.#blitBindGroup = bg(
+      device,
+      this.#renderPipeline.getBindGroupLayout(0),
+      this.#fluenceTextureView,
+      this.#worldTextureView,
+      { buffer: this.#blitParamsBuffer },
+      this.#linearSampler,
     );
 
-    this.#bounceBindGroups = [0, 1].map((idx) =>
-      bg(
-        device,
-        this.#bounceComputePipeline.getBindGroupLayout(0),
-        this.#fluenceTextureViews[idx],
-        this.#worldTextureView,
-        this.#materialTextureView,
-        this.#bounceTextureView,
-        { buffer: this.#bounceParamsBuffer },
-      ),
+    this.#bounceBindGroup = bg(
+      device,
+      this.#bounceComputePipeline.getBindGroupLayout(0),
+      this.#fluenceTextureView,
+      this.#worldTextureView,
+      this.#materialTextureView,
+      this.#bounceTextureView,
+      { buffer: this.#bounceParamsBuffer },
     );
   }
 
@@ -1729,8 +1732,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#materialTexture?.destroy();
     this.#rayBuffers?.forEach((b) => b.destroy());
     this.#mergeBuffers?.forEach((b) => b.destroy());
-    this.#fluenceTextures?.forEach((t) => t.destroy());
-    this.#fluenceZeroBuffer?.destroy();
+    this.#fluenceBuffer?.destroy();
+    this.#fluenceTexture?.destroy();
     this.#angWeightBuffer?.destroy();
     this.#bounceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
@@ -2004,8 +2007,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // ── Step 1.5: Bounce compute (reads previous frame's fluence at probe resolution) ──
-    if (!this.bounces && this.#lastFluenceResultIdx >= 0) {
-      this.#lastFluenceResultIdx = -1;
+    if (!this.bounces && this.#lastFluenceReady) {
+      this.#lastFluenceReady = false;
       encoder.copyBufferToTexture(
         {
           buffer: this.#bounceZeroBuffer,
@@ -2016,28 +2019,17 @@ export class FolkHolographicRC extends FolkBaseSet {
         { width: this.#psX, height: this.#psY },
       );
     }
-    if (this.bounces && this.#lastFluenceResultIdx >= 0) {
+    if (this.bounces && this.#lastFluenceReady) {
       const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('bounce') });
       pass.setPipeline(this.#bounceComputePipeline);
-      pass.setBindGroup(0, this.#bounceBindGroups[this.#lastFluenceResultIdx]);
+      pass.setBindGroup(0, this.#bounceBindGroup);
       pass.dispatchWorkgroups(Math.ceil(this.#psX / WG_BOUNCE[0]), Math.ceil(this.#psY / WG_BOUNCE[1]));
       pass.end();
     }
 
     // ── Step 2: HRC cascade processing per direction ──
-    // Clear both fluence textures via the encoder (not queue.writeTexture, which
-    // would execute before the bounce pass reads the previous frame's fluence).
-    for (const ft of this.#fluenceTextures) {
-      encoder.copyBufferToTexture(
-        {
-          buffer: this.#fluenceZeroBuffer,
-          bytesPerRow: Math.ceil((this.#psX * 8) / 256) * 256,
-          rowsPerImage: this.#psY,
-        },
-        { texture: ft },
-        { width: this.#psX, height: this.#psY },
-      );
-    }
+    // Zero the fluence SSBO. All 4 directions accumulate into it additively.
+    encoder.clearBuffer(this.#fluenceBuffer);
 
     // Two frustum configs: H (E/W) and V (N/S). Each direction uses its
     // frustum's probe/slice counts for dispatch. Zero waste.
@@ -2079,10 +2071,21 @@ export class FolkHolographicRC extends FolkBaseSet {
       pass.end();
     }
 
-    this.#lastFluenceResultIdx = 1;
+    this.#lastFluenceReady = true;
+
+    // ── Step 2.5: Copy fluence SSBO → texture for blit (bilinear sampling) and bounce ──
+    encoder.copyBufferToTexture(
+      {
+        buffer: this.#fluenceBuffer,
+        bytesPerRow: this.#fluenceStride * 8,
+        rowsPerImage: this.#psY,
+      },
+      { texture: this.#fluenceTexture },
+      { width: this.#psX, height: this.#psY },
+    );
 
     // ── Step 3: Final blit ──
-    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroups[1], 'blit');
+    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroup, 'blit');
 
     this.#resolveTimestamps(encoder);
     this.#submitAndCapture(device, encoder);
@@ -2206,7 +2209,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     // Seed params: per direction (4) — includes transform matrix
     for (let dir = 0; dir < 4; dir++) {
       const f = frustums[dirCfg[dir]];
-      const dt = dirTransform(dir, width, height, psX);
+      const dt = dirTransform(dir, width, height, Math.max(psX, psY));
       this.#seedParamsView.set({
         probeCount: f.pc,
         sliceCount: f.sc,
@@ -2273,7 +2276,8 @@ export class FolkHolographicRC extends FolkBaseSet {
           numRays: numCones + 1,
           nextNumCones,
           isLastLevel: level === f.nc - 1 ? 1 : 0,
-          isFirstDir: dir === 0 ? 1 : 0,
+          fluenceW: psX,
+          fluenceStride: this.#fluenceStride,
           skyShift: Math.log2(f.ms) - Math.log2(nextNumCones),
           conesShift: level,
           angWeightBase: angBase,
