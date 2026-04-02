@@ -364,15 +364,20 @@
       </select>
       <div class="g">
         <label>exposure</label>
-        <input id="exposure-slider" type="range" min="0.1" max="10" step="0.1" value="2" />
+        <input id="exposure-slider" type="range" min="0.1" max="10" step="0.5" value="2" />
         <span class="v" id="exposure-value">2.0</span>
       </div>
       <div class="g">
         <label>probes</label>
-        <input id="probe-slider" type="range" min="0" max="6" step="1" value="4" />
+        <input id="probe-slider" type="range" min="0" max="26" step="1" value="15" />
         <span class="v" id="probe-value">1024</span>
       </div>
       <label><input id="bounces-toggle" type="checkbox" checked /> bounces</label>
+      <select id="debug-select">
+        <option value="0">debug: off</option>
+        <option value="1">debug: probes</option>
+        <option value="2">debug: fluence</option>
+      </select>
       <label><input id="pt-toggle" type="checkbox" /> path trace</label>
       <div class="spacer"></div>
       <span id="fps" title="Toggle perf graph"></span>
@@ -655,12 +660,16 @@
         exposureSlider.value = v;
         exposureValue.textContent = v.toFixed(1);
       }
-      const probeCounts = [64, 128, 256, 512, 1024, 2048, 4096];
-      function setProbeSize(step) {
-        step = Math.max(0, Math.min(probeCounts.length - 1, Math.round(step)));
-        hrc.probeCount = probeCounts[step];
-        probeSlider.value = step;
-        probeValue.textContent = probeCounts[step];
+      const probeCounts = [...new Set([
+        32, 64, 128, 256, 512, 1024, 2048,
+        ...Array.from({ length: 20 }, (_, i) => (i + 1) * 100),
+      ])].sort((a, b) => a - b);
+      function setProbeSize(size) {
+        const idx = probeCounts.indexOf(size);
+        const i = idx >= 0 ? idx : probeCounts.findIndex((v) => v >= size) || probeCounts.length - 1;
+        hrc.probeCount = probeCounts[i];
+        probeSlider.value = i;
+        probeValue.textContent = probeCounts[i];
       }
       const params = new URLSearchParams(location.search);
       let perfOpen = params.get('perf') === '1';
@@ -672,6 +681,7 @@
         if (hrc.probeCount !== 1024) p.set('probes', hrc.probeCount);
         if (hrc.exposure !== 2) p.set('exposure', hrc.exposure.toFixed(1));
         if (!hrc.bounces) p.set('bounces', '0');
+        if (hrc.debugMode > 0) p.set('debug', hrc.debugMode);
         if (perfOpen) p.set('perf', '1');
         const qs = p.toString();
         history.replaceState(null, '', qs ? '?' + qs : location.pathname);
@@ -682,18 +692,18 @@
         syncURL();
       });
       probeSlider.addEventListener('input', () => {
-        setProbeSize(Number(probeSlider.value));
+        setProbeSize(probeCounts[Number(probeSlider.value)]);
         syncURL();
       });
       const initProbe = params.get('probes');
-      if (initProbe) {
-        const idx = probeCounts.indexOf(Number(initProbe));
-        setProbeSize(idx >= 0 ? idx : 4);
-      } else {
-        setProbeSize(4);
-      }
+      setProbeSize(initProbe ? Number(initProbe) : 1024);
       $('bounces-toggle').addEventListener('change', (e) => {
         hrc.bounces = e.target.checked;
+        syncURL();
+      });
+      const debugSelect = $('debug-select');
+      debugSelect.addEventListener('change', () => {
+        hrc.debugMode = Number(debugSelect.value);
         syncURL();
       });
       $('pt-toggle').addEventListener('change', (e) => {
@@ -1242,6 +1252,11 @@
       if (params.get('bounces') === '0') {
         hrc.bounces = false;
         $('bounces-toggle').checked = false;
+      }
+      if (params.has('debug')) {
+        const dm = Number(params.get('debug'));
+        hrc.debugMode = dm;
+        debugSelect.value = dm;
       }
 
       // ── FPS + Perf Graph ──
