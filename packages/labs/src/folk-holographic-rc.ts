@@ -329,14 +329,20 @@ struct MergeParams {
   numRays: u32,
   nextNumCones: u32,
   isLastLevel: u32,
-  direction: u32,
   isFirstDir: u32,
+  skyRow: u32,
   skyShift: u32,
   conesShift: u32,
   angWeightBase: u32,
   sliceCount: u32,
   mergeStride: u32,
   mergeInWidth: u32,
+  fxProbe: i32,
+  fxSlice: i32,
+  fxOff: i32,
+  fyProbe: i32,
+  fySlice: i32,
+  fyOff: i32,
 };
 
 @group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
@@ -406,7 +412,7 @@ fn getAngularWeight(subCone: u32) -> f32 {
 fn loadSkyFluence(subCone: u32) -> vec3f {
   let base = subCone << params.skyShift;
   let end = base + (1u << params.skyShift);
-  let row = i32(params.direction);
+  let row = i32(params.skyRow);
   return textureLoad(skyPrefixTex, vec2i(i32(end), row), 0).rgb
        - textureLoad(skyPrefixTex, vec2i(i32(base), row), 0).rgb;
 }
@@ -462,23 +468,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = packRGB9E5(result);
 
   if (params.numCones == 1u) {
-    let pc = i32(params.probeCount);
-    let sc = i32(params.sliceCount);
-    var fc: vec2i;
-    // E/N: fc uses (probeCount, sliceCount). W/S: reversed probe axis.
-    // The fluence texture is non-square (psX × psY).
-    switch (params.direction) {
-      case 0u: { fc = vec2i(probeIdx - 1, sliceIdx); }
-      case 1u: { fc = vec2i(sliceIdx, probeIdx - 1); }
-      case 2u: { fc = vec2i(pc - probeIdx, sliceIdx); }
-      case 3u: { fc = vec2i(sliceIdx, pc - probeIdx); }
-      default: { fc = vec2i(probeIdx - 1, sliceIdx); }
-    }
-    // E/W: fc.x is probe axis (0..pc-1), fc.y is slice axis (0..sc-1)
-    // N/S: fc.x is slice axis (0..sc-1), fc.y is probe axis (0..pc-1)
-    let limX = select(pc, sc, params.direction == 1u || params.direction == 3u);
-    let limY = select(sc, pc, params.direction == 1u || params.direction == 3u);
-    if (fc.x >= 0 && fc.x < limX && fc.y >= 0 && fc.y < limY) {
+    let fc = vec2i(
+      params.fxProbe * probeIdx + params.fxSlice * sliceIdx + params.fxOff,
+      params.fyProbe * probeIdx + params.fySlice * sliceIdx + params.fyOff,
+    );
+    let fdim = vec2i(textureDimensions(fluenceCurr));
+    if (fc.x >= 0 && fc.x < fdim.x && fc.y >= 0 && fc.y < fdim.y) {
       if (params.isFirstDir == 1u) {
         textureStore(fluenceCurr, fc, vec4f(result, 1.0));
       } else {
@@ -2052,11 +2047,20 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
     }
 
-    // Merge params: per direction (4) — direction/isFirstDir differ per direction
+    // Merge params: per direction (4) — fluence coordinate transform differs per direction
+    // fc = (fxProbe*probeIdx + fxSlice*sliceIdx + fxOff,
+    //        fyProbe*probeIdx + fySlice*sliceIdx + fyOff)
+    const dirFluence = [
+      { fxProbe: 1, fxSlice: 0, fxOff: -1, fyProbe: 0, fySlice: 1, fyOff: 0 },       // E
+      { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: 1, fySlice: 0, fyOff: -1 },       // N
+      { fxProbe: -1, fxSlice: 0, fxOff: psX, fyProbe: 0, fySlice: 1, fyOff: 0 },     // W
+      { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: -1, fySlice: 0, fyOff: psY },     // S
+    ];
     const perDir = 2 * (1 << nc) - 2;
     const angData = new Float32Array(4 * perDir);
     for (let dir = 0; dir < 4; dir++) {
       const f = frustums[dirCfg[dir]];
+      const fl = dirFluence[dir];
       let angOff = dir * perDir;
       for (let level = 0; level < nc; level++) {
         const numCones = 1 << level;
@@ -2072,9 +2076,10 @@ export class FolkHolographicRC extends FolkBaseSet {
           isLastLevel: level === f.nc - 1 ? 1 : 0,
           isFirstDir: dir === 0 ? 1 : 0,
           skyShift: Math.log2(f.ms) - Math.log2(nextNumCones),
-          conesShift: level, angWeightBase: angBase, direction: dir,
+          conesShift: level, angWeightBase: angBase, skyRow: dir,
           sliceCount: f.sc, mergeStride: f.ms,
           mergeInWidth: level < f.nc - 1 ? ceilDiv(f.pc, 1 << (level + 1)) * (1 << (level + 1)) : 0,
+          ...fl,
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
         angOff += nextNumCones;
