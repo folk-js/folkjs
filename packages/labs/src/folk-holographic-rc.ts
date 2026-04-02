@@ -1543,11 +1543,17 @@ export class FolkHolographicRC extends FolkBaseSet {
     for (let cfg = 0; cfg < 2; cfg++) {
       for (let level = 1; level < nc; level++) {
         this.#extendBindGroups.push(
-          bg(device, extLayout, { buffer: this.#rayBuffers[level - 1] }, { buffer: this.#rayBuffers[level] }, {
-            buffer: this.#extendParamsBuffer,
-            offset: (cfg * (nc - 1) + (level - 1)) * 256,
-            size: extPS,
-          }),
+          bg(
+            device,
+            extLayout,
+            { buffer: this.#rayBuffers[level - 1] },
+            { buffer: this.#rayBuffers[level] },
+            {
+              buffer: this.#extendParamsBuffer,
+              offset: (cfg * (nc - 1) + (level - 1)) * 256,
+              size: extPS,
+            },
+          ),
         );
       }
     }
@@ -2023,9 +2029,12 @@ export class FolkHolographicRC extends FolkBaseSet {
       const f = frustums[dirCfg[dir]];
       const dt = dirTransform(dir, width, height, psX);
       this.#seedParamsView.set({
-        probeCount: f.pc, sliceCount: f.sc,
-        screenW: width, screenH: height,
-        probeSpacing: dt.probeSpacing, pad: 0,
+        probeCount: f.pc,
+        sliceCount: f.sc,
+        screenW: width,
+        screenH: height,
+        probeSpacing: dt.probeSpacing,
+        pad: 0,
         transformX: [...dt.transformX, 0],
         transformY: [...dt.transformY, 0],
       });
@@ -2038,12 +2047,20 @@ export class FolkHolographicRC extends FolkBaseSet {
       for (let level = 1; level < nc; level++) {
         const numRays = (1 << level) + 1;
         this.#extendParamsView.set({
-          probeCount: f.pc, level, invNumRays: 1.0 / numRays,
+          probeCount: f.pc,
+          level,
+          invNumRays: 1.0 / numRays,
           prevRayW: ceilDiv(f.pc, 1 << (level - 1)) * ((1 << (level - 1)) + 1),
           currRayW: ceilDiv(f.pc, 1 << level) * numRays,
-          sliceCount: f.sc, pad2: 0, pad3: 0,
+          sliceCount: f.sc,
+          pad2: 0,
+          pad3: 0,
         });
-        device.queue.writeBuffer(this.#extendParamsBuffer, (cfg * (nc - 1) + (level - 1)) * 256, this.#extendParamsView.arrayBuffer);
+        device.queue.writeBuffer(
+          this.#extendParamsBuffer,
+          (cfg * (nc - 1) + (level - 1)) * 256,
+          this.#extendParamsView.arrayBuffer,
+        );
       }
     }
 
@@ -2051,10 +2068,10 @@ export class FolkHolographicRC extends FolkBaseSet {
     // fc = (fxProbe*probeIdx + fxSlice*sliceIdx + fxOff,
     //        fyProbe*probeIdx + fySlice*sliceIdx + fyOff)
     const dirFluence = [
-      { fxProbe: 1, fxSlice: 0, fxOff: -1, fyProbe: 0, fySlice: 1, fyOff: 0 },       // E
-      { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: 1, fySlice: 0, fyOff: -1 },       // N
-      { fxProbe: -1, fxSlice: 0, fxOff: psX, fyProbe: 0, fySlice: 1, fyOff: 0 },     // W
-      { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: -1, fySlice: 0, fyOff: psY },     // S
+      { fxProbe: 1, fxSlice: 0, fxOff: -1, fyProbe: 0, fySlice: 1, fyOff: 0 }, // E
+      { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: 1, fySlice: 0, fyOff: -1 }, // N
+      { fxProbe: -1, fxSlice: 0, fxOff: psX, fyProbe: 0, fySlice: 1, fyOff: 0 }, // W
+      { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: -1, fySlice: 0, fyOff: psY }, // S
     ];
     const perDir = 2 * (1 << nc) - 2;
     const angData = new Float32Array(4 * perDir);
@@ -2071,13 +2088,19 @@ export class FolkHolographicRC extends FolkBaseSet {
           angData[angOff + s] = Math.atan2(2 * s - N + 2, N) - Math.atan2(2 * s - N, N);
         }
         this.#mergeParamsView.set({
-          probeCount: f.pc, numCones, numProbes: ceilDiv(f.pc, 1 << level),
-          numRays: numCones + 1, nextNumCones,
+          probeCount: f.pc,
+          numCones,
+          numProbes: ceilDiv(f.pc, 1 << level),
+          numRays: numCones + 1,
+          nextNumCones,
           isLastLevel: level === f.nc - 1 ? 1 : 0,
           isFirstDir: dir === 0 ? 1 : 0,
           skyShift: Math.log2(f.ms) - Math.log2(nextNumCones),
-          conesShift: level, angWeightBase: angBase, skyRow: dir,
-          sliceCount: f.sc, mergeStride: f.ms,
+          conesShift: level,
+          angWeightBase: angBase,
+          skyRow: dir,
+          sliceCount: f.sc,
+          mergeStride: f.ms,
           mergeInWidth: level < f.nc - 1 ? ceilDiv(f.pc, 1 << (level + 1)) * (1 << (level + 1)) : 0,
           ...fl,
         });
