@@ -192,9 +192,11 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 const raySeedShader = /*wgsl*/ `
 struct SeedParams {
   probeCount: u32,
+  sliceCount: u32,
   screenW: f32,
   screenH: f32,
   probeSpacing: f32,
+  pad: u32,
   transformX: vec4f,
   transformY: vec4f,
 };
@@ -211,8 +213,7 @@ fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16f
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let probeIdx = i32(gid.x);
   let sliceIdx = i32(gid.y);
-  let ps = i32(params.probeCount);
-  if (probeIdx >= ps || sliceIdx >= ps) { return; }
+  if (probeIdx >= i32(params.probeCount) || sliceIdx >= i32(params.sliceCount)) { return; }
 
   let p = vec3f(f32(probeIdx) + 0.5, f32(sliceIdx) + 0.5, 1.0);
   let wp = vec2f(dot(params.transformX.xyz, p), dot(params.transformY.xyz, p));
@@ -222,13 +223,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   var trans = 1.0;
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
     let world = textureLoad(worldTex, px, 0);
-    let bounce = textureLoad(bounceTex, clamp(vec2i(wp / max(params.screenW, params.screenH) * f32(params.probeCount)), vec2i(0), vec2i(i32(params.probeCount) - 1)), 0).rgb;
+    let bdim = vec2i(textureDimensions(bounceTex, 0));
+    let bounce = textureLoad(bounceTex, clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * vec2f(bdim)), vec2i(0), bdim - 1), 0).rgb;
     trans = pow(1.0 - world.a, params.probeSpacing);
     rad = (world.rgb + bounce) * (1.0 - trans);
   }
 
   let packed = packF16(vec4f(rad, trans));
-  let rayW = ps * 2;
+  let rayW = i32(params.probeCount) * 2;
   rayOut[sliceIdx * rayW + probeIdx * 2] = packed;
   rayOut[sliceIdx * rayW + probeIdx * 2 + 1] = packed;
 }
@@ -247,7 +249,7 @@ struct ExtendParams {
   prevRayW: u32,
   currRayW: u32,
   sliceCount: u32,
-  probeLimit: u32,
+  pad2: u32,
   pad3: u32,
 };
 
@@ -333,7 +335,6 @@ struct MergeParams {
   conesShift: u32,
   angWeightBase: u32,
   sliceCount: u32,
-  probeLimit: u32,
   mergeStride: u32,
   mergeInWidth: u32,
 };
@@ -461,16 +462,23 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = packRGB9E5(result);
 
   if (params.numCones == 1u) {
-    let ps = i32(params.probeCount);
+    let pc = i32(params.probeCount);
+    let sc = i32(params.sliceCount);
     var fc: vec2i;
+    // E/N: fc uses (probeCount, sliceCount). W/S: reversed probe axis.
+    // The fluence texture is non-square (psX × psY).
     switch (params.direction) {
       case 0u: { fc = vec2i(probeIdx - 1, sliceIdx); }
       case 1u: { fc = vec2i(sliceIdx, probeIdx - 1); }
-      case 2u: { fc = vec2i(ps - probeIdx, sliceIdx); }
-      case 3u: { fc = vec2i(sliceIdx, ps - probeIdx); }
+      case 2u: { fc = vec2i(pc - probeIdx, sliceIdx); }
+      case 3u: { fc = vec2i(sliceIdx, pc - probeIdx); }
       default: { fc = vec2i(probeIdx - 1, sliceIdx); }
     }
-    if (fc.x >= 0 && fc.x < ps && fc.y >= 0 && fc.y < ps) {
+    // E/W: fc.x is probe axis (0..pc-1), fc.y is slice axis (0..sc-1)
+    // N/S: fc.x is slice axis (0..sc-1), fc.y is probe axis (0..pc-1)
+    let limX = select(pc, sc, params.direction == 1u || params.direction == 3u);
+    let limY = select(sc, pc, params.direction == 1u || params.direction == 3u);
+    if (fc.x >= 0 && fc.x < limX && fc.y >= 0 && fc.y < limY) {
       if (params.isFirstDir == 1u) {
         textureStore(fluenceCurr, fc, vec4f(result, 1.0));
       } else {
@@ -529,7 +537,7 @@ const blitShader =
 @group(0) @binding(3) var linearSamp: sampler;
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = pos.xy / max(params.screenW, params.screenH);
+  let uv = pos.xy / vec2f(params.screenW, params.screenH);
   let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
   let world = textureLoad(worldTex, vec2u(pos.xy), 0);
   let emissive = world.rgb * world.a;
@@ -563,7 +571,7 @@ const blitShader =
 // Key design: wall probes (opacity≈1) sample fluence from exterior cardinal
 // neighbors rather than their own position, because the cascade's fluence
 // inside solid objects is zero. This solves the probe-surface misalignment
-// problem where some of the probes used for the interpolation will likely 
+// problem where some of the probes used for the interpolation will likely
 // be inside the object, where no light arrives.
 //
 // The exterior neighbor fluence is averaged with the probe one step further
@@ -578,7 +586,7 @@ const bounceComputeShader = /*wgsl*/ `
 struct BounceParams {
   screenW: u32,
   screenH: u32,
-  probeCount: u32,
+  pad0: u32,
   pad1: u32,
 };
 
@@ -591,10 +599,10 @@ struct BounceParams {
 @compute @workgroup_size(${WG_BOUNCE[0]}, ${WG_BOUNCE[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let probe = vec2i(i32(gid.x), i32(gid.y));
-  let ps = i32(params.probeCount);
-  if (probe.x >= ps || probe.y >= ps) { return; }
+  let pdim = vec2i(textureDimensions(bounceOut));
+  if (probe.x >= pdim.x || probe.y >= pdim.y) { return; }
 
-  let spacing = max(f32(params.screenW), f32(params.screenH)) / f32(ps);
+  let spacing = f32(params.screenW) / f32(pdim.x);
   let worldPos = vec2i((vec2f(probe) + 0.5) * spacing);
 
   let opacity = textureLoad(worldTex, worldPos, 0).a;
@@ -610,7 +618,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   // out to cancel the cascade's period-2 checkerboard: (F+δ + F-δ)/2 = F.
   var extFluence = vec3f(0.0);
   var extWeight = 0.0;
-  let pMax = vec2i(ps - 1);
+  let pMax = pdim - 1;
   let off = array<vec2i, 4>(vec2i(-1, 0), vec2i(1, 0), vec2i(0, -1), vec2i(0, 1));
   for (var i = 0; i < 4; i++) {
     let d = off[i];
@@ -851,17 +859,17 @@ function dirTransform(
   h: number,
   ps: number,
 ): { transformX: [number, number, number]; transformY: [number, number, number]; probeSpacing: number } {
-  const m = Math.max(w, h);
-  const s = m / ps;
+  // Isotropic spacing: s = W/psX = H/psY. Using W/ps since ps = psX.
+  const s = w / ps;
   switch (dir) {
-    case 0:
+    case 0: // East: probeIdx→X, sliceIdx→Y
       return { transformX: [s, 0, 0], transformY: [0, s, 0], probeSpacing: s };
-    case 1:
+    case 1: // North: probeIdx→Y, sliceIdx→X
       return { transformX: [0, s, 0], transformY: [s, 0, 0], probeSpacing: s };
-    case 2:
-      return { transformX: [-s, 0, m], transformY: [0, s, 0], probeSpacing: s };
-    case 3:
-      return { transformX: [0, s, 0], transformY: [-s, 0, m], probeSpacing: s };
+    case 2: // West: probeIdx→X reversed, sliceIdx→Y
+      return { transformX: [-s, 0, w], transformY: [0, s, 0], probeSpacing: s };
+    case 3: // South: probeIdx→Y reversed, sliceIdx→X
+      return { transformX: [0, s, 0], transformY: [-s, 0, h], probeSpacing: s };
     default:
       return dirTransform(0, w, h, ps);
   }
@@ -912,7 +920,6 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   // Per-level ray storage buffers: vec4f (rad.rgb + transmittance)
   #rayBuffers!: GPUBuffer[];
-  #rayWidths!: number[];
 
   // Merge ping-pong storage buffers (probeCount x probeCount)
   #mergeBuffers!: GPUBuffer[];
@@ -984,7 +991,8 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   // Computed
   #numCascades = 0;
-  #ps = 0;
+  #psX = 0;
+  #psY = 0;
   #mergeStride = 0;
 
   #animationFrame = 0;
@@ -1203,7 +1211,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #computeSkyPrefixSums() {
     if (!this.#device || !this.#skyPrefixSumTexture || !this.#canvas) return;
-    const ps = this.#ps;
+    const ps = this.#psX;
     const { width, height } = this.#canvas;
     const ms = this.#mergeStride;
     const rowLen = ms + 1;
@@ -1325,10 +1333,15 @@ export class FolkHolographicRC extends FolkBaseSet {
   #initResources() {
     const { width, height } = this.#canvas;
     const device = this.#device;
-    const ps = Math.max(2, this.probeCount);
-    this.#ps = ps;
-    this.#numCascades = ceilLog2(ps);
-    const mergeStride = nextPow2(ps);
+    const { width: cw, height: ch } = this.#canvas;
+    const maxDim = Math.max(cw, ch);
+    const minDim = Math.min(cw, ch);
+    const psX = Math.max(2, this.probeCount);
+    const psY = Math.max(2, ceilDiv(minDim * psX, maxDim));
+    this.#psX = psX;
+    this.#psY = psY;
+    this.#numCascades = ceilLog2(psX);
+    const mergeStride = nextPow2(psX);
     this.#mergeStride = mergeStride;
 
     const ubo = (label: string, size: number) =>
@@ -1337,43 +1350,41 @@ export class FolkHolographicRC extends FolkBaseSet {
     [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER);
     [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
 
+    // Ray/merge buffers are shared across all 4 directions, sized for worst case.
+    // psX >= psY, so psX determines the max width and max height (sliceCount).
     this.#rayBuffers = [];
-    this.#rayWidths = [];
     for (let i = 0; i < this.#numCascades; i++) {
-      const w = ceilDiv(ps, 1 << i) * ((1 << i) + 1);
-      this.#rayWidths.push(w);
+      const w = ceilDiv(psX, 1 << i) * ((1 << i) + 1);
       this.#rayBuffers.push(
-        device.createBuffer({ label: `Ray-${i}`, size: w * ps * 8, usage: GPUBufferUsage.STORAGE }),
+        device.createBuffer({ label: `Ray-${i}`, size: w * psX * 8, usage: GPUBufferUsage.STORAGE }),
       );
     }
 
-    // Merge buffer stride = nextPow2(ps) because ceil(ps/2^L)*2^L can
-    // exceed ps at higher levels for non-pow2 probe counts.
     this.#mergeBuffers = [0, 1].map((i) =>
-      device.createBuffer({ label: `Merge-${i}`, size: mergeStride * ps * 4, usage: GPUBufferUsage.STORAGE }),
+      device.createBuffer({ label: `Merge-${i}`, size: mergeStride * psX * 4, usage: GPUBufferUsage.STORAGE }),
     );
-    const [ft0, fv0] = tex(device, 'Fluence-0', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
-    const [ft1, fv1] = tex(device, 'Fluence-1', ps, ps, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
+    const [ft0, fv0] = tex(device, 'Fluence-0', psX, psY, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
+    const [ft1, fv1] = tex(device, 'Fluence-1', psX, psY, 'rgba16float', TEX_STORAGE | GPUTextureUsage.COPY_DST);
     this.#fluenceTextures = [ft0, ft1];
     this.#fluenceTextureViews = [fv0, fv1];
 
     [this.#bounceTexture, this.#bounceTextureView] = tex(
       device,
       'Bounce',
-      ps,
-      ps,
+      psX,
+      psY,
       'rgba16float',
       TEX_STORAGE | GPUTextureUsage.COPY_DST,
     );
     // bytesPerRow must be 256-aligned for WebGPU copy operations.
-    const alignedRow = Math.ceil((ps * 8) / 256) * 256;
-    const bounceZeroSize = alignedRow * ps;
+    const alignedBounceRow = Math.ceil((psX * 8) / 256) * 256;
+    const bounceZeroSize = alignedBounceRow * psY;
     this.#bounceZeroBuffer = device.createBuffer({ size: bounceZeroSize, usage: GPUBufferUsage.COPY_SRC });
     device.queue.writeTexture(
       { texture: this.#bounceTexture },
       new Uint8Array(bounceZeroSize),
-      { bytesPerRow: alignedRow, rowsPerImage: ps },
-      { width: ps, height: ps },
+      { bytesPerRow: alignedBounceRow, rowsPerImage: psY },
+      { width: psX, height: psY },
     );
     [this.#skyTexture, this.#skyTextureView] = tex(
       device,
@@ -1395,7 +1406,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     );
 
     this.#lastFluenceResultIdx = -1;
-    this.#fluenceZeroBuffer = device.createBuffer({ size: alignedRow * ps, usage: GPUBufferUsage.COPY_SRC });
+    const alignedFluenceRow = Math.ceil((psX * 8) / 256) * 256;
+    this.#fluenceZeroBuffer = device.createBuffer({ size: alignedFluenceRow * psY, usage: GPUBufferUsage.COPY_SRC });
 
     const totalAngWeights = 4 * (2 * (1 << this.#numCascades) - 2);
     this.#angWeightBuffer = device.createBuffer({
@@ -1411,7 +1423,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#bounceParamsView = uboView(bounceComputeShader, 'params');
 
     this.#seedParamsBuffer = ubo('SeedParams', 4 * 256);
-    this.#extendParamsBuffer = ubo('ExtendParams', 4 * Math.max(1, this.#numCascades - 1) * 256);
+    this.#extendParamsBuffer = ubo('ExtendParams', 2 * Math.max(1, this.#numCascades - 1) * 256);
     this.#mergeParamsBuffer = ubo('MergeParams', 4 * this.#numCascades * 256);
     this.#blitParamsBuffer = ubo('BlitParams', this.#blitParamsView.arrayBuffer.byteLength);
     this.#bounceParamsBuffer = ubo('BounceParams', this.#bounceParamsView.arrayBuffer.byteLength);
@@ -1516,20 +1528,29 @@ export class FolkHolographicRC extends FolkBaseSet {
     const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
 
     this.#seedBindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(device, seedLayout, this.#worldTextureView, this.#bounceTextureView, { buffer: this.#rayBuffers[0] }, {
-        buffer: this.#seedParamsBuffer,
-        offset: dir * 256,
-        size: seedPS,
-      }),
+      bg(
+        device,
+        seedLayout,
+        this.#worldTextureView,
+        this.#bounceTextureView,
+        { buffer: this.#rayBuffers[0] },
+        {
+          buffer: this.#seedParamsBuffer,
+          offset: dir * 256,
+          size: seedPS,
+        },
+      ),
     );
 
+    // Two cascade configs: H (E/W) and V (N/S). Extend params are
+    // identical within each pair, so only 2 × (nc-1) bind groups needed.
     this.#extendBindGroups = [];
-    for (let dir = 0; dir < 4; dir++) {
+    for (let cfg = 0; cfg < 2; cfg++) {
       for (let level = 1; level < nc; level++) {
         this.#extendBindGroups.push(
           bg(device, extLayout, { buffer: this.#rayBuffers[level - 1] }, { buffer: this.#rayBuffers[level] }, {
             buffer: this.#extendParamsBuffer,
-            offset: (dir * (nc - 1) + (level - 1)) * 256,
+            offset: (cfg * (nc - 1) + (level - 1)) * 256,
             size: extPS,
           }),
         );
@@ -1733,9 +1754,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const { width, height } = this.#canvas;
     const device = this.#device;
-    const ps = this.#ps;
     const nc = this.#numCascades;
-    const seedWg = Math.ceil(ps / WG_SEED[0]);
 
     this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height, debugMode: this.debugMode });
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
@@ -1808,16 +1827,20 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (!this.bounces && this.#lastFluenceResultIdx >= 0) {
       this.#lastFluenceResultIdx = -1;
       encoder.copyBufferToTexture(
-        { buffer: this.#bounceZeroBuffer, bytesPerRow: Math.ceil((ps * 8) / 256) * 256, rowsPerImage: ps },
+        {
+          buffer: this.#bounceZeroBuffer,
+          bytesPerRow: Math.ceil((this.#psX * 8) / 256) * 256,
+          rowsPerImage: this.#psY,
+        },
         { texture: this.#bounceTexture },
-        { width: ps, height: ps },
+        { width: this.#psX, height: this.#psY },
       );
     }
     if (this.bounces && this.#lastFluenceResultIdx >= 0) {
       const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('bounce') });
       pass.setPipeline(this.#bounceComputePipeline);
       pass.setBindGroup(0, this.#bounceBindGroups[this.#lastFluenceResultIdx]);
-      pass.dispatchWorkgroups(Math.ceil(ps / WG_BOUNCE[0]), Math.ceil(ps / WG_BOUNCE[1]));
+      pass.dispatchWorkgroups(Math.ceil(this.#psX / WG_BOUNCE[0]), Math.ceil(this.#psY / WG_BOUNCE[1]));
       pass.end();
     }
 
@@ -1826,43 +1849,51 @@ export class FolkHolographicRC extends FolkBaseSet {
     // would execute before the bounce pass reads the previous frame's fluence).
     for (const ft of this.#fluenceTextures) {
       encoder.copyBufferToTexture(
-        { buffer: this.#fluenceZeroBuffer, bytesPerRow: Math.ceil((ps * 8) / 256) * 256, rowsPerImage: ps },
+        {
+          buffer: this.#fluenceZeroBuffer,
+          bytesPerRow: Math.ceil((this.#psX * 8) / 256) * 256,
+          rowsPerImage: this.#psY,
+        },
         { texture: ft },
-        { width: ps, height: ps },
+        { width: this.#psX, height: this.#psY },
       );
     }
 
-    // Each direction is one compute pass (seed → extend → merge). Dispatch
-    // sizes are reduced per direction based on screen coverage:
-    // E/W: fewer slices (Y axis), N/S: fewer probes (X axis).
-    const spacing = Math.max(width, height) / ps;
-    const shortAxis = Math.ceil(Math.min(width, height) / spacing);
-    // Extend beyond shortAxis to cover far-ray reach at the highest cascade
-    // levels. Without this, far rays at screen-center clip to vacuum.
-    const farReach = 1 << Math.max(0, nc - 2);
-    const safeSlices = Math.min(ps, shortAxis + farReach);
-    const dirSlices = [safeSlices, ps, safeSlices, ps];
+    // Two frustum configs: H (E/W) and V (N/S). Each direction uses its
+    // frustum's probe/slice counts for dispatch. Zero waste.
+    const frustums = [
+      { pc: this.#psX, sc: this.#psY },
+      { pc: this.#psY, sc: this.#psX },
+    ];
+    const dirCfg = [0, 1, 0, 1]; // E→H, N→V, W→H, S→V
 
     for (let dir = 0; dir < 4; dir++) {
       const dn = ['E', 'N', 'W', 'S'][dir];
-      const sliceWg = Math.ceil(dirSlices[dir] / WG_EXTEND[1]);
+      const cfg = dirCfg[dir];
+      const { pc, sc } = frustums[cfg];
       const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(dn) });
 
       pass.setPipeline(this.#raySeedPipeline);
       pass.setBindGroup(0, this.#seedBindGroups[dir]);
-      pass.dispatchWorkgroups(seedWg, sliceWg);
+      pass.dispatchWorkgroups(Math.ceil(pc / WG_SEED[0]), Math.ceil(sc / WG_SEED[1]));
 
       pass.setPipeline(this.#rayExtendPipeline);
       for (let level = 1; level < nc; level++) {
-        pass.setBindGroup(0, this.#extendBindGroups[dir * (nc - 1) + (level - 1)]);
-        pass.dispatchWorkgroups(Math.ceil((ceilDiv(ps, 1 << level) * ((1 << level) + 1)) / WG_EXTEND[0]), sliceWg);
+        pass.setBindGroup(0, this.#extendBindGroups[cfg * (nc - 1) + (level - 1)]);
+        pass.dispatchWorkgroups(
+          Math.ceil((ceilDiv(pc, 1 << level) * ((1 << level) + 1)) / WG_EXTEND[0]),
+          Math.ceil(sc / WG_EXTEND[1]),
+        );
       }
 
       pass.setPipeline(this.#coneMergePipeline);
       for (let k = 0; k < nc; k++) {
         const level = nc - 1 - k;
         pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
-        pass.dispatchWorkgroups(Math.ceil((ceilDiv(ps, 1 << level) * (1 << level)) / WG_MERGE[0]), sliceWg);
+        pass.dispatchWorkgroups(
+          Math.ceil((ceilDiv(pc, 1 << level) * (1 << level)) / WG_MERGE[0]),
+          Math.ceil(sc / WG_MERGE[1]),
+        );
       }
 
       pass.end();
@@ -1977,48 +2008,58 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #uploadStaticParams(width: number, height: number) {
     const device = this.#device;
-    const ps = this.#ps;
+    const psX = this.#psX;
+    const psY = this.#psY;
     const nc = this.#numCascades;
 
+    // Per-direction probe/slice counts:
+    // E/W: probes along X (psX), slices along Y (psY)
+    // N/S: probes along Y (psY), slices along X (psX)
+    // Two frustum configurations: Horizontal (E/W) and Vertical (N/S).
+    // Each defines the cascade's active-axis probe count and cross-axis slice count.
+    const frustums = [
+      { pc: psX, sc: psY, nc: ceilLog2(psX), ms: nextPow2(psX) }, // H
+      { pc: psY, sc: psX, nc: ceilLog2(psY), ms: nextPow2(psY) }, // V
+    ];
+    const dirCfg = [0, 1, 0, 1]; // E→H, N→V, W→H, S→V
+
+    // Seed params: per direction (4) — includes transform matrix
     for (let dir = 0; dir < 4; dir++) {
-      const dt = dirTransform(dir, width, height, ps);
+      const f = frustums[dirCfg[dir]];
+      const dt = dirTransform(dir, width, height, psX);
       this.#seedParamsView.set({
-        probeCount: ps,
-        screenW: width,
-        screenH: height,
-        probeSpacing: dt.probeSpacing,
+        probeCount: f.pc, sliceCount: f.sc,
+        screenW: width, screenH: height,
+        probeSpacing: dt.probeSpacing, pad: 0,
         transformX: [...dt.transformX, 0],
         transformY: [...dt.transformY, 0],
       });
       device.queue.writeBuffer(this.#seedParamsBuffer, dir * 256, this.#seedParamsView.arrayBuffer);
     }
 
-    // Extend params: per direction × level. Each direction has a probeLimit
-    const spacing = Math.max(width, height) / ps;
-    const shortAxis = Math.ceil(Math.min(width, height) / spacing);
-    const farReach = 1 << Math.max(0, nc - 2);
-    const safeSlices = Math.min(ps, shortAxis + farReach);
-    const dirSlices = [safeSlices, ps, safeSlices, ps];
-    for (let dir = 0; dir < 4; dir++) {
+    // Extend params: per frustum (2) — cascade structure is identical within H/V pair
+    for (let cfg = 0; cfg < 2; cfg++) {
+      const f = frustums[cfg];
       for (let level = 1; level < nc; level++) {
         const numRays = (1 << level) + 1;
-        const prevW = ceilDiv(ps, 1 << (level - 1)) * ((1 << (level - 1)) + 1);
-        const currW = ceilDiv(ps, 1 << level) * numRays;
-        this.#extendParamsView.set({ probeCount: ps, level, invNumRays: 1.0 / numRays, prevRayW: prevW, currRayW: currW, sliceCount: dirSlices[dir], probeLimit: ps, pad3: 0 });
-        device.queue.writeBuffer(this.#extendParamsBuffer, (dir * (nc - 1) + (level - 1)) * 256, this.#extendParamsView.arrayBuffer);
+        this.#extendParamsView.set({
+          probeCount: f.pc, level, invNumRays: 1.0 / numRays,
+          prevRayW: ceilDiv(f.pc, 1 << (level - 1)) * ((1 << (level - 1)) + 1),
+          currRayW: ceilDiv(f.pc, 1 << level) * numRays,
+          sliceCount: f.sc, pad2: 0, pad3: 0,
+        });
+        device.queue.writeBuffer(this.#extendParamsBuffer, (cfg * (nc - 1) + (level - 1)) * 256, this.#extendParamsView.arrayBuffer);
       }
     }
 
-    const ms = this.#mergeStride;
+    // Merge params: per direction (4) — direction/isFirstDir differ per direction
     const perDir = 2 * (1 << nc) - 2;
     const angData = new Float32Array(4 * perDir);
     for (let dir = 0; dir < 4; dir++) {
-      const dt = dirTransform(dir, width, height, ps);
+      const f = frustums[dirCfg[dir]];
       let angOff = dir * perDir;
       for (let level = 0; level < nc; level++) {
         const numCones = 1 << level;
-        const numProbes = ceilDiv(ps, 1 << level);
-        const numRays = numCones + 1;
         const nextNumCones = numCones * 2;
         const angBase = angOff;
         for (let s = 0; s < nextNumCones; s++) {
@@ -2026,21 +2067,14 @@ export class FolkHolographicRC extends FolkBaseSet {
           angData[angOff + s] = Math.atan2(2 * s - N + 2, N) - Math.atan2(2 * s - N, N);
         }
         this.#mergeParamsView.set({
-          probeCount: ps,
-          numCones,
-          numProbes,
-          numRays,
-          nextNumCones,
-          isLastLevel: level === nc - 1 ? 1 : 0,
+          probeCount: f.pc, numCones, numProbes: ceilDiv(f.pc, 1 << level),
+          numRays: numCones + 1, nextNumCones,
+          isLastLevel: level === f.nc - 1 ? 1 : 0,
           isFirstDir: dir === 0 ? 1 : 0,
-          skyShift: Math.log2(ms) - Math.log2(nextNumCones),
-          conesShift: level,
-          angWeightBase: angBase,
-          direction: dir,
-          sliceCount: dirSlices[dir],
-          probeLimit: ps,
-          mergeStride: ms,
-          mergeInWidth: level < nc - 1 ? ceilDiv(ps, 1 << (level + 1)) * (1 << (level + 1)) : 0,
+          skyShift: Math.log2(f.ms) - Math.log2(nextNumCones),
+          conesShift: level, angWeightBase: angBase, direction: dir,
+          sliceCount: f.sc, mergeStride: f.ms,
+          mergeInWidth: level < f.nc - 1 ? ceilDiv(f.pc, 1 << (level + 1)) * (1 << (level + 1)) : 0,
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
         angOff += nextNumCones;
@@ -2051,7 +2085,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height, debugMode: this.debugMode });
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
 
-    this.#bounceParamsView.set({ screenW: width, screenH: height, probeCount: ps, pad1: 0 });
+    this.#bounceParamsView.set({ screenW: width, screenH: height, pad0: 0, pad1: 0 });
     device.queue.writeBuffer(this.#bounceParamsBuffer, 0, this.#bounceParamsView.arrayBuffer);
 
     this.#computeSkyPrefixSums();
