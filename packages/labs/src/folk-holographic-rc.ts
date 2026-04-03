@@ -228,35 +228,38 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let wp = vec2f(dot(params.transformX.xyz, p), dot(params.transformY.xyz, p));
 
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
-  // Mass law: HF sees the medium as HF_FACTOR times thicker.
-  const HF_FACTOR = 6.0;
+  // Mass law: LF passes through more easily (longer wavelength, less scattering).
+  // Bass leaks through solid walls via BASS_WALL_PERM.
+  const LF_FACTOR = 0.1;
+  const BASS_WALL_PERM = 0.65;
 
   var rad = vec3f(0.0);
   var trans = 1.0;
-  var transHF = 1.0;
-  var acoustic_rad = 0.0;
+  var transLF = 1.0;
   var acoustic_hf = 0.0;
+  var acoustic_lf = 0.0;
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
     let world = textureLoad(worldTex, px, 0);
     let bdim = vec2i(textureDimensions(bounceTex, 0));
     let bounceCoord = clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * vec2f(bdim)), vec2i(0), bdim - 1);
     let bounce = textureLoad(bounceTex, bounceCoord, 0);
     trans = pow(1.0 - world.a, params.probeSpacing);
-    transHF = pow(trans, HF_FACTOR);
+    transLF = max(pow(1.0 - world.a, params.probeSpacing * LF_FACTOR), BASS_WALL_PERM);
     rad = (world.rgb + bounce.rgb) * (1.0 - trans);
     let material = textureLoad(materialTex, px, 0);
     let audioChannel = u32(material.g * 255.0 + 0.5);
     if (audioChannel == 1u) {
-      acoustic_rad = 1.0 - trans;
-      acoustic_hf = 1.0 - transHF;
+      acoustic_hf = 1.0 - trans;
+      acoustic_lf = 1.0 - trans;
     }
-    acoustic_rad += bounce.a * (1.0 - trans);
+    acoustic_hf += bounce.a * (1.0 - trans);
+    acoustic_lf += bounce.a * (1.0 - transLF);
   }
 
   let packed_visual = packF16(vec4f(rad, trans));
-  let packed_acoustic = pack2x16float(vec2f(acoustic_rad, acoustic_hf));
-  let packed_transHF = pack2x16float(vec2f(transHF, 0.0));
-  let entry = vec4u(packed_visual, packed_acoustic, packed_transHF);
+  let packed_acoustic = pack2x16float(vec2f(acoustic_hf, acoustic_lf));
+  let packed_transLF = pack2x16float(vec2f(transLF, 0.0));
+  let entry = vec4u(packed_visual, packed_acoustic, packed_transLF);
   let rayW = i32(params.probeCount) * 2;
   rayOut[sliceIdx * rayW + probeIdx * 2] = entry;
   rayOut[sliceIdx * rayW + probeIdx * 2 + 1] = entry;
@@ -287,7 +290,7 @@ struct ExtendParams {
 fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
-struct RayData { rad: vec3f, trans: f32, transHF: f32, acoustic: f32, acousticHF: f32 }
+struct RayData { rad: vec3f, trans: f32, transLF: f32, acousticHF: f32, acousticLF: f32 }
 
 fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let prevLevel = params.level - 1u;
@@ -310,9 +313,9 @@ fn compositeRay(near: RayData, far: RayData) -> RayData {
   return RayData(
     near.rad + far.rad * near.trans,
     near.trans * far.trans,
-    near.transHF * far.transHF,
-    near.acoustic + far.acoustic * near.trans,
-    near.acousticHF + far.acousticHF * near.transHF,
+    near.transLF * far.transLF,
+    near.acousticHF + far.acousticHF * near.trans,
+    near.acousticLF + far.acousticLF * near.transLF,
   );
 }
 
@@ -347,13 +350,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let avgRad = (crossA.rad + crossB.rad) * 0.5;
   let avgTrans = (crossA.trans + crossB.trans) * 0.5;
-  let avgAcoustic = (crossA.acoustic + crossB.acoustic) * 0.5;
   let avgHF = (crossA.acousticHF + crossB.acousticHF) * 0.5;
-  let avgTransHF = (crossA.transHF + crossB.transHF) * 0.5;
+  let avgLF = (crossA.acousticLF + crossB.acousticLF) * 0.5;
+  let avgTransLF = (crossA.transLF + crossB.transLF) * 0.5;
   let packed_visual = packF16(vec4f(avgRad, avgTrans));
-  let packed_acoustic = pack2x16float(vec2f(avgAcoustic, avgHF));
-  let packed_transHF = pack2x16float(vec2f(avgTransHF, 0.0));
-  currRay[sliceIdx * i32(params.currRayW) + texelX] = vec4u(packed_visual, packed_acoustic, packed_transHF);
+  let packed_acoustic = pack2x16float(vec2f(avgHF, avgLF));
+  let packed_transLF = pack2x16float(vec2f(avgTransLF, 0.0));
+  currRay[sliceIdx * i32(params.currRayW) + texelX] = vec4u(packed_visual, packed_acoustic, packed_transLF);
 }
 `;
 
@@ -386,6 +389,8 @@ struct MergeParams {
   fyProbe: i32,
   fySlice: i32,
   fyOff: i32,
+  listenerFx: f32,
+  listenerFy: f32,
 };
 
 @group(0) @binding(0) var<storage, read> rayBuf: array<vec4u>;
@@ -427,8 +432,8 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 @group(0) @binding(7) var<storage, read_write> hfBuf: array<vec2u>;
 @group(0) @binding(8) var<storage, read_write> panBuf: array<f32>;
 
-struct RayData { rad: vec3f, trans: f32, transHF: f32, acoustic: f32, acousticHF: f32 }
-struct MergeEntry { visual: vec3f, acoustic: f32, acousticHF: f32 }
+struct RayData { rad: vec3f, trans: f32, transLF: f32, acousticHF: f32, acousticLF: f32 }
+struct MergeEntry { visual: vec3f, acousticHF: f32, acousticLF: f32 }
 
 fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let effProbes = i32(params.numProbes);
@@ -440,8 +445,8 @@ fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let texX = (probeIdx << params.conesShift) + probeIdx + rayIdx;
   let entry = rayBuf[sliceIdx * i32(params.numProbes * params.numRays) + texX];
   let r = unpackF16(vec2u(entry.x, entry.y));
-  let a = unpack2x16float(entry.z);
-  let t = unpack2x16float(entry.w);
+  let a = unpack2x16float(entry.z);  // .x = acousticHF, .y = acousticLF
+  let t = unpack2x16float(entry.w);  // .x = transLF
   return RayData(r.rgb, r.a, t.x, a.x, a.y);
 }
 
@@ -452,8 +457,8 @@ fn loadMerge(texX: i32, sliceIdx: i32) -> MergeEntry {
     return MergeEntry(vec3f(0.0), 0.0, 0.0);
   }
   let entry = mergeInBuf[sliceIdx * i32(params.mergeStride) + texX];
-  let ac = unpack2x16float(entry.y);
-  return MergeEntry(unpackRGB9E5(entry.x), ac.x, ac.y);  // .x=acoustic, .y=acousticHF
+  let ac = unpack2x16float(entry.y);  // .x = acousticHF, .y = acousticLF
+  return MergeEntry(unpackRGB9E5(entry.x), ac.x, ac.y);
 }
 
 fn getAngularWeight(subCone: u32) -> f32 {
@@ -483,8 +488,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let farStep = select(1, 2, isEven);
 
   var result = vec3f(0.0);
-  var result_acoustic = 0.0;
   var result_hf = 0.0;
+  var result_lf = 0.0;
 
   for (var side = 0; side < 2; side++) {
     let subCone = u32(coneIdx * 2 + side);
@@ -497,8 +502,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let farX = ((probeIdx + farStep) << conesShift) + i32(subCone);
     let farSlice = sliceIdx + sliceOff * farStep;
     var farCone = vec3f(0.0);
-    var farConeAcoustic = 0.0;
     var farConeHF = 0.0;
+    var farConeLF = 0.0;
     if (params.isLastLevel == 1u ||
         farX < 0 || farX >= i32(params.mergeInWidth) ||
         farSlice < 0 || farSlice >= i32(params.sliceCount)) {
@@ -507,8 +512,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let farEntry = mergeInBuf[farSlice * i32(params.mergeStride) + farX];
       farCone = unpackRGB9E5(farEntry.x);
       let farAc = unpack2x16float(farEntry.y);
-      farConeAcoustic = farAc.x;
-      farConeHF = farAc.y;
+      farConeHF = farAc.x;
+      farConeLF = farAc.y;
     }
 
     if (isEven) {
@@ -519,26 +524,26 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let nearCone = loadMerge((probeIdx << conesShift) + i32(subCone), sliceIdx);
       result += (merged + nearCone.visual) * 0.5;
 
-      let cTransA = ray.trans * ext.trans;
-      let cAcoustic = ray.acoustic + ext.acoustic * ray.trans;
-      let mergedAcoustic = cAcoustic * weight + farConeAcoustic * cTransA;
-      result_acoustic += (mergedAcoustic + nearCone.acoustic) * 0.5;
-
-      let cTransHF = ray.transHF * ext.transHF;
-      let cHF = ray.acousticHF + ext.acousticHF * ray.transHF;
+      let cTransHF = ray.trans * ext.trans;
+      let cHF = ray.acousticHF + ext.acousticHF * ray.trans;
       let mergedHF = cHF * weight + farConeHF * cTransHF;
       result_hf += (mergedHF + nearCone.acousticHF) * 0.5;
+
+      let cTransLF = ray.transLF * ext.transLF;
+      let cLF = ray.acousticLF + ext.acousticLF * ray.transLF;
+      let mergedLF = cLF * weight + farConeLF * cTransLF;
+      result_lf += (mergedLF + nearCone.acousticLF) * 0.5;
     } else {
       result += ray.rad * weight + farCone * ray.trans;
-      result_acoustic += ray.acoustic * weight + farConeAcoustic * ray.trans;
-      result_hf += ray.acousticHF * weight + farConeHF * ray.transHF;
+      result_hf += ray.acousticHF * weight + farConeHF * ray.trans;
+      result_lf += ray.acousticLF * weight + farConeLF * ray.transLF;
     }
   }
 
   let outX = (probeIdx << conesShift) + coneIdx;
   mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = vec2u(
     packRGB9E5(result),
-    pack2x16float(vec2f(result_acoustic, result_hf)),
+    pack2x16float(vec2f(result_hf, result_lf)),
   );
 
   if (params.numCones == 1u) {
@@ -552,12 +557,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     if (fc.x >= 0 && fc.x < fw && fc.y >= 0 && fc.y < fh) {
       let fi = fc.y * fStride + fc.x;
       let prev = unpackF16(fluenceBuf[fi]);
-      fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, prev.a + result_acoustic));
-      let prevHF = unpackF16(hfBuf[fi]);
-      hfBuf[fi] = packF16(vec4f(0.0, 0.0, 0.0, prevHF.a + result_hf));
+      fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, prev.a + result_hf));
+      let prevLF = unpackF16(hfBuf[fi]);
+      hfBuf[fi] = packF16(vec4f(0.0, 0.0, 0.0, prevLF.a + result_lf));
       let panStride = i32(arrayLength(&panBuf)) / fh;
       let pi = fc.y * panStride + fc.x;
-      panBuf[pi] += result_acoustic * f32(params.fxProbe);
+      let pdx = f32(fc.x) + 0.5 - params.listenerFx;
+      let pdy = f32(fc.y) + 0.5 - params.listenerFy;
+      let pdist = max(sqrt(pdx * pdx + pdy * pdy), 1.0);
+      panBuf[pi] += result_lf * pdx / pdist;
     }
   }
 }
@@ -631,21 +639,20 @@ const blitShader =
     let hot = vec3f(1.0, 0.8, 0.2);
     color = vec4f(mix(cool, hot, t), 1.0);
   } else if (dm == 3) {
-    let gain = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).a;
-    let hf = textureSampleLevel(hfTex, linearSamp, uv, 0.0).a;
+    let hf = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).a;
+    let lf = textureSampleLevel(hfTex, linearSamp, uv, 0.0).a;
     let mat = textureLoad(materialTex, vec2u(pos.xy), 0);
     let ch = u32(mat.g * 255.0 + 0.5);
 
     if (ch == 1u) {
       color = vec4f(0.1, 0.9, 0.7, 1.0);
     } else if (ch >= 2u) {
-      let sr = clamp(gain * 2.0, 0.0, 1.0);
-      let sg = clamp((gain - hf) * 2.0, 0.0, 1.0);
+      let sr = clamp(lf * 2.0, 0.0, 1.0);
+      let sg = clamp((lf - hf) * 2.0, 0.0, 1.0);
       color = vec4f(linearToSrgb(vec3f(sr * 0.3, sg * 0.3, 0.6 + sr * 0.4)), 1.0);
     } else {
-      // R = broadband gain, G = HF loss (1 - hf/broad), B = base
-      let r = clamp(gain * 2.0, 0.0, 1.0);
-      let g = clamp((gain - hf) * 2.0, 0.0, 1.0);
+      let r = clamp(lf * 2.0, 0.0, 1.0);
+      let g = clamp((lf - hf) * 2.0, 0.0, 1.0);
       color = vec4f(linearToSrgb(vec3f(r, g, 0.03)), 1.0);
     }
   }
@@ -1720,7 +1727,11 @@ export class FolkHolographicRC extends FolkBaseSet {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     [this.#panTexture, this.#panTextureView] = tex(
-      device, 'Pan', psX, psY, 'r32float',
+      device,
+      'Pan',
+      psX,
+      psY,
+      'r32float',
       GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     );
 
@@ -2315,6 +2326,22 @@ export class FolkHolographicRC extends FolkBaseSet {
       pass.end();
     }
 
+    // Update listener position in merge params for pan
+    {
+      const spacing = Math.max(width, height) / Math.max(this.#psX, this.#psY);
+      const lfx = this.#mousePosition.x / spacing;
+      const lfy = this.#mousePosition.y / spacing;
+      const nc = this.#numCascades;
+      const viewSize = this.#mergeParamsView.arrayBuffer.byteLength;
+      const listenerOffset = viewSize - 8;
+      const listenerData = new Float32Array([lfx, lfy]);
+      for (let dir = 0; dir < 4; dir++) {
+        for (let level = 0; level < nc; level++) {
+          device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256 + listenerOffset, listenerData);
+        }
+      }
+    }
+
     // ── Step 2: HRC cascade processing per direction ──
     // Zero the fluence SSBO. All 4 directions accumulate into it additively.
     encoder.clearBuffer(this.#fluenceBuffer);
@@ -2421,14 +2448,13 @@ export class FolkHolographicRC extends FolkBaseSet {
           const listenerPerimeter = 2 * Math.PI * this.#mouseLightRadius;
           if (listenerPerimeter > 0) {
             for (let i = 2; i < 256; i++) {
-              const rawGain = this.#channelGains[i];
-              this.#channelGains[i] = rawGain / listenerPerimeter;
-              const rawHF = raw[i + 256] / 65536.0 / listenerPerimeter;
-              this.#channelSlopes[i] = rawGain > 0.001 ? Math.min(rawHF / (rawGain / listenerPerimeter), 1.0) : 1.0;
+              const rawHF = raw[i] / 65536.0;
+              const rawLF = raw[i + 256] / 65536.0;
+              this.#channelGains[i] = rawLF / listenerPerimeter;
+              this.#channelSlopes[i] = rawLF > 0.001 ? Math.min(rawHF / rawLF, 1.0) : 1.0;
               const panPos = raw[i + 512] / 65536.0;
               const panNeg = raw[i + 768] / 65536.0;
-              const normalizedGain = rawGain / listenerPerimeter;
-              this.#channelPans[i] = normalizedGain > 0.001 ? Math.max(-1, Math.min(1, (panPos - panNeg) / (normalizedGain * listenerPerimeter))) : 0;
+              this.#channelPans[i] = rawLF > 0.001 ? Math.max(-1, Math.min(1, (panPos - panNeg) / rawLF)) : 0;
             }
           }
           this.#channelGainsReadback.unmap();
@@ -2631,6 +2657,8 @@ export class FolkHolographicRC extends FolkBaseSet {
           mergeStride: f.ms,
           mergeInWidth: level < f.nc - 1 ? ceilDiv(f.pc, 1 << (level + 1)) * (1 << (level + 1)) : 0,
           ...fl,
+          listenerFx: this.#mousePosition.x / (Math.max(width, height) / Math.max(psX, psY)),
+          listenerFy: this.#mousePosition.y / (Math.max(width, height) / Math.max(psX, psY)),
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
         angOff += nextNumCones;
