@@ -27,13 +27,13 @@ Two acoustic radiance channels propagate through the cascade with different tran
 
 This models the **mass law**: high-frequency sound interacts strongly with all media (like light), while low-frequency sound passes through more easily due to longer wavelengths.
 
-| Scenario | HF trans | LF trans | What you hear |
-|----------|---------|---------|---------------|
-| Air | 1.0 | 1.0 | Full spectrum |
-| Light volume (0.05) | 0.91 | 0.99 | Gradual treble rolloff |
-| Dense volume (0.5) | 0.25 | 0.88 | Muffled, bass-heavy |
-| Thin wall (0.97) | ~0 | 0.52 | Faint bass only |
-| Solid wall (1.0) | 0 | 0.60 | Bass rumble through wall |
+| Scenario            | HF trans | LF trans | What you hear            |
+| ------------------- | -------- | -------- | ------------------------ |
+| Air                 | 1.0      | 1.0      | Full spectrum            |
+| Light volume (0.05) | 0.91     | 0.99     | Gradual treble rolloff   |
+| Dense volume (0.5)  | 0.25     | 0.88     | Muffled, bass-heavy      |
+| Thin wall (0.97)    | ~0       | 0.52     | Faint bass only          |
+| Solid wall (1.0)    | 0        | 0.60     | Bass rumble through wall |
 
 At readout: **gain = LF** (the louder component), **spectral tilt = HF/LF** ratio → lowpass cutoff frequency.
 
@@ -71,6 +71,7 @@ This enables sound around corners, through L-corridors, and in enclosed rooms. M
 ### 3.1 Ray buffer
 
 `vec4u` = 16 bytes (same as vec3u due to WGSL alignment — the 4th u32 was wasted padding):
+
 - u32[0-1]: `packF16(R, G, B, trans)` — visual radiance + transmittance
 - u32[2]: `pack2x16float(acousticHF, acousticLF)` — two acoustic channels
 - u32[3]: `pack2x16float(transLF, 0)` — LF transmittance (HF uses visual trans)
@@ -104,6 +105,7 @@ Separate `rgba16float` probe-resolution buffer for acousticLF. Uses identical `p
 ## 4. Gather Pass
 
 A compute pass at **screen resolution**. For each pixel with channel ID >= 2:
+
 1. Read HF fluence, LF fluence, and pan at the probe position
 2. Multiply each by `(1-trans)` — surface absorption (identical to visual light absorption)
 3. `atomicAdd` into per-channel accumulators
@@ -151,6 +153,7 @@ The two acoustic channels must use **identical** sampling methods and storage pr
 ### The LF/HF flip
 
 The initial model had broadband (shares visual trans) + HF (extra attenuation). This was backwards. The correct physical model: HF shares visual trans (high frequencies interact with media like light), LF gets its own more-permissive trans (bass passes through). This gives:
+
 - No spurious treble cut in direct view (HF = visual, ratio = 1)
 - Bass leaks through solid walls (transLF has wall permeability)
 - Bounced sound retains full spectrum (both channels receive bounce energy)
@@ -158,7 +161,37 @@ The initial model had broadband (shares visual trans) + HF (extra attenuation). 
 
 ---
 
-## 7. Future Extensions
+## 7. Cost Baseline (vs main HRC)
+
+### Memory overhead (~15.6MB at 1024 probes, 1920×1080)
+
+| Buffer                   | Main HRC                                 | With Resonance Cascades          | Delta                 |
+| ------------------------ | ---------------------------------------- | -------------------------------- | --------------------- |
+| Ray buffers (×10 levels) | vec2u (16B stride due to vec3 alignment) | vec4u (16B stride)               | **+0** (uses padding) |
+| Merge buffers (×2)       | u32 per entry (~8MB)                     | vec2u per entry (~16MB)          | **+8MB**              |
+| LF buffer + texture      | —                                        | vec2u + rgba16float at probe res | +4.5MB                |
+| Pan buffer + texture     | —                                        | f32 + r32float at probe res      | +2.3MB                |
+| Material texture         | r8unorm                                  | rg8unorm                         | +2MB (screen res)     |
+| Channel accumulators     | —                                        | 2 × 4KB (accumulator + readback) | +8KB                  |
+
+### Bandwidth overhead (per frame)
+
+| Operation                        | Impact                                                               |
+| -------------------------------- | -------------------------------------------------------------------- |
+| **Merge read/write** (dominates) | **+100%** — u32→vec2u doubles merge bandwidth                        |
+| Ray read/write                   | +0% — vec4u uses same 16B stride as vec3u padding                    |
+| Seed                             | +material texture read (negligible)                                  |
+| Buffer clears                    | +2 (LF + pan buffers)                                                |
+| Buffer→texture copies            | +2 (LF + pan)                                                        |
+| **Gather pass**                  | **New screen-resolution dispatch** (reads 4 textures, atomic writes) |
+
+### Estimated total overhead
+
+- **Cascade time: +50-80%** (dominated by merge bandwidth doubling)
+- **Gather pass: +5-10%** (one screen-res dispatch, comparable to blit)
+- **ALU: negligible** (bandwidth-bound pipeline)
+
+## 8. Future Extensions
 
 ### Improved stereo pan
 
