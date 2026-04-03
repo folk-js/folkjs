@@ -1268,6 +1268,36 @@
         hrc.debugMode = 3; debugSelect.value = '3';
       }
 
+      function loadAcousticLCorridor() {
+        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 12, w = 100;
+        // L-shaped corridor: sound bounces around the corner
+        // Horizontal segment: top inner wall stops at corner, bottom outer continues
+        addShape(cx - 200, cy, 200, t, 0, { albedo: 0.7 });
+        addShape(cx - 200, cy + w, 200 + w + t, t, 0, { albedo: 0.7 });
+        // Vertical segment: left inner wall stops at corner, right outer continues
+        addShape(cx, cy - 200, t, 200, 0, { albedo: 0.7 });
+        addShape(cx + w, cy - 200, t, 200 + w + t, 0, { albedo: 0.7 });
+        // Source at top of vertical segment
+        addAudioToShape(addShape(cx + 30, cy - 170, 40, 40, 3));
+        hrc.debugMode = 3; debugSelect.value = '3';
+        hrc.bounces = true; $('bounces-toggle').checked = true;
+      }
+
+      function loadAcousticReflectiveRoom() {
+        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 12;
+        // Enclosed room with reflective walls (high albedo)
+        addShape(cx - 200, cy - 150, 400, t, 0, { albedo: 0.85 });
+        addShape(cx - 200, cy + 150, 400, t, 0, { albedo: 0.85 });
+        addShape(cx - 200, cy - 150, t, 312, 0, { albedo: 0.85 });
+        addShape(cx + 200, cy - 150, t, 312, 0, { albedo: 0.85 });
+        // Source in corner
+        addAudioToShape(addShape(cx - 170, cy - 120, 30, 30, 3));
+        // Absorber panel in the middle of the room (low albedo) — listen around it
+        addShape(cx - 30, cy - 60, t, 120, 0, { albedo: 0.1 });
+        hrc.debugMode = 3; debugSelect.value = '3';
+        hrc.bounces = true; $('bounces-toggle').checked = true;
+      }
+
       // ── Scene list ──
       const scenes = [
         { name: 'Pinhole', fn: loadPinhole },
@@ -1294,6 +1324,8 @@
         { name: 'Acoustic: corridor', fn: loadAcousticCorridor },
         { name: 'Acoustic: volume', fn: loadAcousticVolume },
         { name: 'Acoustic: two rooms', fn: loadAcousticTwoRooms },
+        { name: 'Acoustic: L-corridor', fn: loadAcousticLCorridor },
+        { name: 'Acoustic: reflective room', fn: loadAcousticReflectiveRoom },
       ];
 
       scenes.forEach((s, i) => {
@@ -1626,8 +1658,9 @@
 
         const mediaSource = ctx.createMediaElementSource(video);
         const biquad = ctx.createBiquadFilter();
-        biquad.type = 'highshelf';
-        biquad.frequency.value = 2000;
+        biquad.type = 'lowpass';
+        biquad.frequency.value = 20000;
+        biquad.Q.value = 0.7;
         biquad.gain.value = 0;
         const gainNode = ctx.createGain();
         gainNode.gain.value = 0;
@@ -1711,12 +1744,12 @@
           const hfRatio = hrc.getChannelHFRatio(src.channelId);
           const g = Math.min(gain, 1.0);
           src.gainNode.gain.value = g;
-          const shelfDb = (hfRatio - 1.0) * 18.0;
-          src.biquad.gain.value = Math.max(shelfDb, -18);
+          const cutoff = 200 + Math.pow(Math.min(hfRatio, 1.0), 0.5) * 19800;
+          src.biquad.frequency.value = cutoff;
           src.lastGain = g;
           const color = channelColors[chIdx % channelColors.length];
           const bar = '█'.repeat(Math.round(g * 10)).padEnd(10, '░');
-          debugHTML += `<div style="display:flex;gap:6px;align-items:center"><span style="color:${color}">ch${src.channelId}</span><span style="color:${color}">${bar}</span><span>${g.toFixed(2)}</span><span style="color:rgba(255,255,255,0.35)">${shelfDb.toFixed(1)}dB</span></div>`;
+          debugHTML += `<div style="display:flex;gap:6px;align-items:center"><span style="color:${color}">ch${src.channelId}</span><span style="color:${color}">${bar}</span><span>${g.toFixed(2)}</span><span style="color:rgba(255,255,255,0.35)">${Math.round(cutoff)}Hz</span></div>`;
 
           if (!gainHistories.has(src.channelId)) gainHistories.set(src.channelId, { samples: new Float32Array(GAIN_HISTORY), color });
           const hist = gainHistories.get(src.channelId);

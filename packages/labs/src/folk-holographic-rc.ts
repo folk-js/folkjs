@@ -40,7 +40,6 @@ function ceilDiv(n: number, d: number): number {
   return Math.ceil(n / d);
 }
 
-
 const TEX_RENDER = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
 const TEX_STORAGE = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING;
 const SKY_CIRCLE_SIZE = 256;
@@ -230,7 +229,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
   // Mass law: HF sees the medium as HF_FACTOR times thicker.
-  const HF_FACTOR = 3.0;
+  const HF_FACTOR = 6.0;
 
   var rad = vec3f(0.0);
   var trans = 1.0;
@@ -240,16 +239,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
     let world = textureLoad(worldTex, px, 0);
     let bdim = vec2i(textureDimensions(bounceTex, 0));
-    let bounce = textureLoad(bounceTex, clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * vec2f(bdim)), vec2i(0), bdim - 1), 0).rgb;
+    let bounceCoord = clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * vec2f(bdim)), vec2i(0), bdim - 1);
+    let bounce = textureLoad(bounceTex, bounceCoord, 0);
     trans = pow(1.0 - world.a, params.probeSpacing);
     transHF = pow(trans, HF_FACTOR);
-    rad = (world.rgb + bounce) * (1.0 - trans);
+    rad = (world.rgb + bounce.rgb) * (1.0 - trans);
     let material = textureLoad(materialTex, px, 0);
     let audioChannel = u32(material.g * 255.0 + 0.5);
     if (audioChannel == 1u) {
       acoustic_rad = 1.0 - trans;
       acoustic_hf = 1.0 - transHF;
     }
+    acoustic_rad += bounce.a * (1.0 - trans);
   }
 
   let packed_visual = packF16(vec4f(rad, trans));
@@ -286,8 +287,6 @@ struct ExtendParams {
 fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
-const WALL_PERM = 0.02;
-
 struct RayData { rad: vec3f, trans: f32, transHF: f32, acoustic: f32, acousticHF: f32 }
 
 fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
@@ -308,14 +307,12 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
 }
 
 fn compositeRay(near: RayData, far: RayData) -> RayData {
-  let aTrans = max(near.trans, WALL_PERM);
-  let aTransHF = max(near.transHF, WALL_PERM);
   return RayData(
     near.rad + far.rad * near.trans,
     near.trans * far.trans,
     near.transHF * far.transHF,
-    near.acoustic + far.acoustic * aTrans,
-    near.acousticHF + far.acousticHF * aTransHF,
+    near.acoustic + far.acoustic * near.trans,
+    near.acousticHF + far.acousticHF * near.transHF,
   );
 }
 
@@ -429,8 +426,6 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 @group(0) @binding(6) var<storage, read> angWeights: array<f32>;
 @group(0) @binding(7) var<storage, read_write> hfBuf: array<vec2u>;
 
-const WALL_PERM = 0.02;
-
 struct RayData { rad: vec3f, trans: f32, transHF: f32, acoustic: f32, acousticHF: f32 }
 struct MergeEntry { visual: vec3f, acoustic: f32, acousticHF: f32 }
 
@@ -523,25 +518,19 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let nearCone = loadMerge((probeIdx << conesShift) + i32(subCone), sliceIdx);
       result += (merged + nearCone.visual) * 0.5;
 
-      let aTransNear = max(ray.trans, WALL_PERM);
-      let aTransExt = max(ext.trans, WALL_PERM);
-      let hfTransNear = max(ray.transHF, WALL_PERM);
-      let hfTransExt = max(ext.transHF, WALL_PERM);
-      let cTransA = aTransNear * aTransExt;
-      let cAcoustic = ray.acoustic + ext.acoustic * aTransNear;
+      let cTransA = ray.trans * ext.trans;
+      let cAcoustic = ray.acoustic + ext.acoustic * ray.trans;
       let mergedAcoustic = cAcoustic * weight + farConeAcoustic * cTransA;
       result_acoustic += (mergedAcoustic + nearCone.acoustic) * 0.5;
 
-      let cTransHF = hfTransNear * hfTransExt;
-      let cHF = ray.acousticHF + ext.acousticHF * hfTransNear;
+      let cTransHF = ray.transHF * ext.transHF;
+      let cHF = ray.acousticHF + ext.acousticHF * ray.transHF;
       let mergedHF = cHF * weight + farConeHF * cTransHF;
       result_hf += (mergedHF + nearCone.acousticHF) * 0.5;
     } else {
-      let aTrans = max(ray.trans, WALL_PERM);
-      let hfTrans = max(ray.transHF, WALL_PERM);
       result += ray.rad * weight + farCone * ray.trans;
-      result_acoustic += ray.acoustic * weight + farConeAcoustic * aTrans;
-      result_hf += ray.acousticHF * weight + farConeHF * hfTrans;
+      result_acoustic += ray.acoustic * weight + farConeAcoustic * ray.trans;
+      result_hf += ray.acousticHF * weight + farConeHF * ray.transHF;
     }
   }
 
@@ -710,11 +699,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     return;
   }
 
-  let ownFluence = textureLoad(prevFluence, probe, 0).rgb;
+  let ownFluenceRGB = textureLoad(prevFluence, probe, 0).rgb;
+  let ownFluenceA = textureLoad(prevFluence, probe, 0).a;
 
-  // Exterior neighbor fluence, averaged with the probe one step further
-  // out to cancel the cascade's period-2 checkerboard: (F+δ + F-δ)/2 = F.
-  var extFluence = vec3f(0.0);
+  var extFluenceRGB = vec3f(0.0);
+  var extFluenceA = 0.0;
   var extWeight = 0.0;
   let pMax = pdim - 1;
   let off = array<vec2i, 4>(vec2i(-1, 0), vec2i(1, 0), vec2i(0, -1), vec2i(0, 1));
@@ -723,20 +712,24 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let ni = clamp(probe + d, vec2i(0), pMax);
     let ni2 = clamp(probe + d * 2, vec2i(0), pMax);
     let nOpacity = textureLoad(worldTex, vec2i((vec2f(ni) + 0.5) * spacing), 0).a;
-    let nFluence = (textureLoad(prevFluence, ni, 0).rgb
-                  + textureLoad(prevFluence, ni2, 0).rgb) * 0.5;
+    let nFluenceRGB = (textureLoad(prevFluence, ni, 0).rgb
+                     + textureLoad(prevFluence, ni2, 0).rgb) * 0.5;
+    let nFluenceA = (textureLoad(prevFluence, ni, 0).a
+                   + textureLoad(prevFluence, ni2, 0).a) * 0.5;
     let w = 1.0 - nOpacity;
-    extFluence += nFluence * w;
+    extFluenceRGB += nFluenceRGB * w;
+    extFluenceA += nFluenceA * w;
     extWeight += w;
   }
   if (extWeight > 0.001) {
-    extFluence /= extWeight;
+    extFluenceRGB /= extWeight;
+    extFluenceA /= extWeight;
   }
 
-  // Bounce emission = fluence × ω₀ / 2π (isotropic re-emission).
-  let fluence = ownFluence * (1.0 - opacity) + extFluence * opacity;
+  let fluenceRGB = ownFluenceRGB * (1.0 - opacity) + extFluenceRGB * opacity;
+  let fluenceA = ownFluenceA * (1.0 - opacity) + extFluenceA * opacity;
   const TWO_PI = 6.2831853;
-  textureStore(bounceOut, probe, vec4f(fluence * albedo / TWO_PI, 0.0));
+  textureStore(bounceOut, probe, vec4f(fluenceRGB * albedo / TWO_PI, fluenceA * albedo / TWO_PI));
 }
 `;
 
@@ -1474,7 +1467,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     return this.#channelSlopes;
   }
 
-
   #uploadSkyCircle() {
     if (!this.#device || !this.#skyTexture) return;
     this.#device.queue.writeTexture(
@@ -1684,7 +1676,11 @@ export class FolkHolographicRC extends FolkBaseSet {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     [this.#slopeTexture, this.#slopeTextureView] = tex(
-      device, 'HF', psX, psY, 'rgba16float',
+      device,
+      'HF',
+      psX,
+      psY,
+      'rgba16float',
       GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     );
 
@@ -2044,7 +2040,17 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#shapeDataBuffer = uploadVertexData(this.#device, this.#shapeDataBuffer, new Float32Array(vertices));
   }
 
-  #pixelQuadVerts(px: number, py: number, r: number, g: number, b: number, op: number, al: number, ch: number, out: number[]) {
+  #pixelQuadVerts(
+    px: number,
+    py: number,
+    r: number,
+    g: number,
+    b: number,
+    op: number,
+    al: number,
+    ch: number,
+    out: number[],
+  ) {
     const w = this.#canvas.width;
     const h = this.#canvas.height;
     const x0 = (px / w) * 2 - 1;
