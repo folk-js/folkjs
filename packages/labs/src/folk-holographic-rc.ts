@@ -2273,6 +2273,10 @@ export class FolkHolographicRC extends FolkBaseSet {
         .then(() => {
           const raw = new Uint32Array(this.#channelGainsReadback.getMappedRange());
           for (let i = 0; i < 256; i++) this.#channelGains[i] = raw[i] / 65536.0;
+          const listenerPerimeter = 2 * Math.PI * this.#mouseLightRadius;
+          if (listenerPerimeter > 0) {
+            for (let i = 2; i < 256; i++) this.#channelGains[i] /= listenerPerimeter;
+          }
           this.#channelGainsReadback.unmap();
         })
         .catch(() => {});
