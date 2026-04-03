@@ -431,7 +431,7 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 @group(0) @binding(4) var<storage, read_write> fluenceBuf: array<vec2u>;
 @group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
 @group(0) @binding(6) var<storage, read> angWeights: array<f32>;
-@group(0) @binding(7) var<storage, read_write> hfBuf: array<vec2u>;
+@group(0) @binding(7) var<storage, read_write> lfBuf: array<u32>;
 @group(0) @binding(8) var<storage, read_write> panBuf: array<f32>;
 
 struct RayData { rad: vec3f, trans: f32, transLF: f32, acousticHF: f32, acousticLF: f32 }
@@ -560,8 +560,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let fi = fc.y * fStride + fc.x;
       let prev = unpackF16(fluenceBuf[fi]);
       fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, prev.a + result_hf));
-      let prevLF = unpackF16(hfBuf[fi]);
-      hfBuf[fi] = packF16(vec4f(0.0, 0.0, 0.0, prevLF.a + result_lf));
+      let lfStride = i32(arrayLength(&lfBuf)) / fh;
+      let li = fc.y * lfStride + fc.x;
+      let prevLF = unpack2x16float(lfBuf[li]).x;
+      lfBuf[li] = pack2x16float(vec2f(prevLF + result_lf, 0.0));
       let panStride = i32(arrayLength(&panBuf)) / fh;
       let pi = fc.y * panStride + fc.x;
       let pdx = f32(fc.x) + 0.5 - params.listenerFx;
@@ -642,7 +644,7 @@ const blitShader =
     color = vec4f(mix(cool, hot, t), 1.0);
   } else if (dm == 3) {
     let hf = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).a;
-    let lf = textureSampleLevel(hfTex, linearSamp, uv, 0.0).a;
+    let lf = textureSampleLevel(hfTex, linearSamp, uv, 0.0).r;
     let mat = textureLoad(materialTex, vec2u(pos.xy), 0);
     let ch = u32(mat.g * 255.0 + 0.5);
 
@@ -788,7 +790,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let fcoord = clamp(vec2i(uv * fdim), vec2i(0), vec2i(fdim) - 1);
 
   let broad = textureLoad(fluenceTex, fcoord, 0).a;
-  let hf = textureLoad(hfTex, fcoord, 0).a;
+  let hf = textureLoad(hfTex, fcoord, 0).r;
 
   let broadContrib = broad * absorption;
   let hfContrib = hf * absorption;
@@ -1708,17 +1710,18 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
 
+    const alignedLFRow = Math.ceil((psX * 4) / 256) * 256;
     this.#slopeBuffer = device.createBuffer({
-      label: 'HF-SSBO',
-      size: alignedFluenceRow * psY,
+      label: 'LF-SSBO',
+      size: alignedLFRow * psY,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     [this.#slopeTexture, this.#slopeTextureView] = tex(
       device,
-      'HF',
+      'LF',
       psX,
       psY,
-      'rgba16float',
+      'rg16float',
       GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     );
 
@@ -2402,15 +2405,14 @@ export class FolkHolographicRC extends FolkBaseSet {
       { texture: this.#fluenceTexture },
       { width: this.#psX, height: this.#psY },
     );
-    encoder.copyBufferToTexture(
-      {
-        buffer: this.#slopeBuffer,
-        bytesPerRow: this.#fluenceStride * 8,
-        rowsPerImage: this.#psY,
-      },
-      { texture: this.#slopeTexture },
-      { width: this.#psX, height: this.#psY },
-    );
+    {
+      const alignedLFRow = Math.ceil((this.#psX * 4) / 256) * 256;
+      encoder.copyBufferToTexture(
+        { buffer: this.#slopeBuffer, bytesPerRow: alignedLFRow, rowsPerImage: this.#psY },
+        { texture: this.#slopeTexture },
+        { width: this.#psX, height: this.#psY },
+      );
+    }
 
     {
       const alignedPanRow = Math.ceil((this.#psX * 4) / 256) * 256;
