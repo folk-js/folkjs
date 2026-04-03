@@ -1708,12 +1708,15 @@
         audioSources.forEach((src) => {
           hasAudio = true;
           const gain = hrc.getChannelGain(src.channelId);
+          const slope = hrc.getChannelSlope(src.channelId);
           const g = Math.min(gain, 1.0);
           src.gainNode.gain.value = g;
+          src.biquad.gain.value = slope * 6.02;
           src.lastGain = g;
           const color = channelColors[chIdx % channelColors.length];
           const bar = '█'.repeat(Math.round(g * 10)).padEnd(10, '░');
-          debugHTML += `<div style="display:flex;gap:6px;align-items:center"><span style="color:${color}">ch${src.channelId}</span><span style="color:${color}">${bar}</span><span>${g.toFixed(2)}</span></div>`;
+          const slopeDb = (slope * 6.02).toFixed(1);
+          debugHTML += `<div style="display:flex;gap:6px;align-items:center"><span style="color:${color}">ch${src.channelId}</span><span style="color:${color}">${bar}</span><span>${g.toFixed(2)}</span><span style="color:rgba(255,255,255,0.35)">${slopeDb}dB</span></div>`;
 
           if (!gainHistories.has(src.channelId)) gainHistories.set(src.channelId, { samples: new Float32Array(GAIN_HISTORY), color });
           const hist = gainHistories.get(src.channelId);

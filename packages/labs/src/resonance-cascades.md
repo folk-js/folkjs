@@ -119,11 +119,18 @@ One i8 value per probe: signed pan position [-127, +127]. At 1024² probes: 1MB.
 
 Written during the level-0 merge write. Each direction contributes its acoustic result weighted by a sign: E = +1, W = -1, N and S = 0 (for X-axis stereo pan). Normalized at readout by dividing by acoustic_gain.
 
-### 3.5 Material texture (future, for area sources)
+### 3.5 Material texture (implemented)
 
-Current: `r8unorm` → albedo only.
+Extended to `rg8unorm`. R = albedo (existing). G = audio channel ID:
+- 0 = no audio role
+- 1 = listener (the mouse light / brush)
+- 2–255 = audio source channels
 
-Future: extend to `rgba8unorm`. R = albedo (existing). G = acoustic source type ID (0–255). B = acoustic emission intensity. A = reserved. This enables area sources without any cascade changes — the gather pass reads from fluence, not from the cascade.
+The channel ID is written per-pixel via the MRT fragment shader. Every pixel of a shape tagged as an audio source carries the channel ID, enabling the gather pass to correctly sum contributions from the shape's entire surface.
+
+### 3.6 Slope buffer (new)
+
+One `f32` per probe at probe resolution. Stores the gain-weighted slope (`acoustic * slope`) accumulated from all 4 directions. Written at merge level 0 alongside the fluence. Copied to an `r32float` texture for the gather pass to sample.
 
 ---
 
@@ -184,23 +191,19 @@ No changes. Reads visual fluence RGB and world texture. Ignores acoustic data.
 
 ## 5. Readout
 
-### 5.1 Point sources
+### 5.1 Gather pass (implemented)
 
-For any sound source at probe position P:
+A gather compute pass at **screen resolution**. For each pixel:
+1. Read channel ID from material texture
+2. If channel >= 2 (source): read acoustic fluence alpha and slope at that probe position
+3. Multiply by `(1-trans)` — the surface absorption, identical to how visual light is absorbed
+4. `atomicAdd` into per-channel accumulator (gain and slope_weight separately)
 
-```
-gain  = acousticFluence[P]                    // 0 = fully occluded, continuous
-pan   = panBuffer[P] / 127.0                  // [-1, +1], reflects indirect paths
-slope = slopeBuffer[P]  (or derived)          // spectral tilt
-```
+This models sound reception at the shape's **surface**, not its center. Edge pixels contribute (they see the listener's acoustic field and have opacity). Interior pixels of opaque shapes contribute nothing (acoustic field is blocked by outer layers). Air pixels contribute nothing (no opacity to absorb).
 
-O(1) per source. Any number of sources, any number of audio channels. The cascade does not know about sources.
+Gain is normalized by the listener's perimeter (`2 * pi * radius`) to give listener-size-independent attenuation with correct 1/r distance falloff. Slope is normalized by gain to give the gain-weighted average spectral tilt.
 
-### 5.2 Area sources (Phase 5)
-
-A gather compute pass at probe resolution. Each emitting probe reads its own `acousticFluence` value, multiplies by emission intensity, atomically adds into per-type bins. One dispatch, all types, every frame. Channel-independent.
-
-Point sources and area sources are the same operation at different scales. A point source is a single-pixel area source.
+All sources are area sources. A point source is a single-pixel area source.
 
 ### 5.3 Spectral reconstruction
 
@@ -275,19 +278,15 @@ Resonance Cascades could also run as a fully separate cascade with no visual GI,
 
 With bounces enabled, separate the acoustic channel into direct (R-like) and bounced (G-like) components. The ratio gives wet/dry per probe at zero additional GPU cost.
 
-### 8.2 Area sources
-
-Material texture encodes type ID (0–255) and emission intensity. Gather pass sums fluence × emission per type. One dispatch, all types, every frame, without need for separate query step.
-
-### 8.3 Per-material acoustic properties
+### 8.2 Per-material acoustic properties
 
 Override global mass_scale per surface via material texture channel. Custom slope values for materials that deviate from the mass law.
 
-### 8.4 Decay rate estimation
+### 8.3 Decay rate estimation
 
 Compare frame-to-frame bounce convergence to estimate reverberant decay rate. Feeds into algorithmic reverb tail length.
 
-### 8.5 Multiple listeners
+### 8.4 Multiple listeners
 
 Each listener occupies one acoustic radiance channel. Two listeners = two channels in the same pass (sacrifice a visual color channel or widen further). Four listeners would need a second pass.
 
@@ -295,23 +294,17 @@ Each listener occupies one acoustic radiance channel. Two listeners = two channe
 
 ## 9. Build Plan
 
-### Phase 0: Test Harness
+### Phase 0: Test Harness — DONE
 
-Fork HRC into acoustic test page. Predefined scenes: open field, single wall, wall with doorway, L-corridor, two rooms, thin pillar, volumetric obstacle. Moveable listener and source.
-
-Notes:
-
-- source can be brush/mouse to start, listener size can correspond to brush size. Shapes can be equipped with audio emitter UI (we have at least one sound file that we can play, we can also use simple sources like white/blue noise and sine waves)
-- We should have a visual mode toggle for audio that, instead of reading RGB fluence, visualises the acoustic values for emitter pixels (can start with gain as red, for example, later can extend to slope and pan)
-- we might want to do audio integration at this stage instead of later.
+Acoustic test scenes (open field, doorway, corridor, volumetric, two rooms). Listener = mouse brush (channel 1 in material texture). Shapes equipped with audio emitter UI (Feather.mov via Web Audio). Acoustic debug visualization (debug mode 3) showing listener (cyan), sources (yellow), gain field (blue-orange heatmap). Audio debug panel with per-channel gain/slope bars and rolling graph.
 
 ### Phase 1: FDTD Ground Truth
 
 2D wave solver on same world texture. Gaussian pulse → FFT → |H(f)|. Directional measurement. Pressure field visualization. Validates: free-field falloff, rigid reflection, slit diffraction.
 
-### Phase 2: Resonance Cascade Integration
+### Phase 2: Resonance Cascade Integration — DONE
 
-Widen ray payload to vec3u. Add acoustic_rad + slope to seed/extend. Carry acoustic through merge. Write acoustic_gain to fluence alpha. Write pan to i8 buffer. Listener position as seed uniform. Readback pipeline. Acoustic heatmap visualization.
+Ray payload widened to `vec3u` (16 bytes per element due to WGSL alignment). Acoustic_rad + slope in seed/extend. Acoustic + slope_weight carried through merge via second f16. Acoustic_gain in fluence alpha. Slope_weight in separate probe-resolution buffer. Listener emits via `(1-trans)` at channel-1 pixels in material texture — identical to visual light emission. Gather pass at screen resolution sums `fluence * (1-trans)` per channel with atomics. Gain normalized by listener perimeter for correct 1/r falloff.
 
 ### Phase 3: Comparison & Validation
 

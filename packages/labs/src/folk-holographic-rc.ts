@@ -415,9 +415,10 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 @group(0) @binding(4) var<storage, read_write> fluenceBuf: array<vec2u>;
 @group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
 @group(0) @binding(6) var<storage, read> angWeights: array<f32>;
+@group(0) @binding(7) var<storage, read_write> slopeBuf: array<f32>;
 
 struct RayData { rad: vec3f, trans: f32, acoustic: f32, slope: f32 }
-struct MergeEntry { visual: vec3f, acoustic: f32 }
+struct MergeEntry { visual: vec3f, acoustic: f32, slopeW: f32 }
 
 fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let effProbes = i32(params.numProbes);
@@ -437,10 +438,11 @@ fn loadMerge(texX: i32, sliceIdx: i32) -> MergeEntry {
   if (params.isLastLevel == 1u ||
       texX < 0 || texX >= i32(params.mergeInWidth) ||
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
-    return MergeEntry(vec3f(0.0), 0.0);
+    return MergeEntry(vec3f(0.0), 0.0, 0.0);
   }
   let entry = mergeInBuf[sliceIdx * i32(params.mergeStride) + texX];
-  return MergeEntry(unpackRGB9E5(entry.x), unpack2x16float(entry.y).x);
+  let ac = unpack2x16float(entry.y);
+  return MergeEntry(unpackRGB9E5(entry.x), ac.x, ac.y);
 }
 
 fn getAngularWeight(subCone: u32) -> f32 {
@@ -471,6 +473,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   var result = vec3f(0.0);
   var result_acoustic = 0.0;
+  var result_slope_w = 0.0;
 
   for (var side = 0; side < 2; side++) {
     let subCone = u32(coneIdx * 2 + side);
@@ -484,6 +487,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let farSlice = sliceIdx + sliceOff * farStep;
     var farCone = vec3f(0.0);
     var farConeAcoustic = 0.0;
+    var farConeSlopeW = 0.0;
     if (params.isLastLevel == 1u ||
         farX < 0 || farX >= i32(params.mergeInWidth) ||
         farSlice < 0 || farSlice >= i32(params.sliceCount)) {
@@ -491,7 +495,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     } else {
       let farEntry = mergeInBuf[farSlice * i32(params.mergeStride) + farX];
       farCone = unpackRGB9E5(farEntry.x);
-      farConeAcoustic = unpack2x16float(farEntry.y).x;
+      let farAc = unpack2x16float(farEntry.y);
+      farConeAcoustic = farAc.x;
+      farConeSlopeW = farAc.y;
     }
 
     if (isEven) {
@@ -505,16 +511,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let cAcoustic = ray.acoustic + ext.acoustic * ray.trans;
       let mergedAcoustic = cAcoustic * weight + farConeAcoustic * cTrans;
       result_acoustic += (mergedAcoustic + nearCone.acoustic) * 0.5;
+
+      let cSlopeW = ray.acoustic * ray.slope + ext.acoustic * ext.slope * ray.trans;
+      let mergedSlopeW = cSlopeW * weight + farConeSlopeW * cTrans;
+      result_slope_w += (mergedSlopeW + nearCone.slopeW) * 0.5;
     } else {
       result += ray.rad * weight + farCone * ray.trans;
       result_acoustic += ray.acoustic * weight + farConeAcoustic * ray.trans;
+      result_slope_w += ray.acoustic * ray.slope * weight + farConeSlopeW * ray.trans;
     }
   }
 
   let outX = (probeIdx << conesShift) + coneIdx;
   mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = vec2u(
     packRGB9E5(result),
-    pack2x16float(vec2f(result_acoustic, 0.0)),
+    pack2x16float(vec2f(result_acoustic, result_slope_w)),
   );
 
   if (params.numCones == 1u) {
@@ -529,6 +540,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let fi = fc.y * fStride + fc.x;
       let prev = unpackF16(fluenceBuf[fi]);
       fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, prev.a + result_acoustic));
+      let slopeStride = i32(arrayLength(&slopeBuf)) / fh;
+      let si = fc.y * slopeStride + fc.x;
+      slopeBuf[si] += result_slope_w;
     }
   }
 }
@@ -580,6 +594,7 @@ const blitShader =
 @group(0) @binding(2) var<uniform> params: BlitParams;
 @group(0) @binding(3) var linearSamp: sampler;
 @group(0) @binding(4) var materialTex: texture_2d<f32>;
+@group(0) @binding(5) var slopeTex: texture_2d<f32>;
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = pos.xy / vec2f(params.screenW, params.screenH);
@@ -602,18 +617,22 @@ const blitShader =
     color = vec4f(mix(cool, hot, t), 1.0);
   } else if (dm == 3) {
     let gain = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).a;
+    let fdim = vec2f(textureDimensions(fluenceTex, 0));
+    let fcoord = vec2i(uv * fdim);
+    let slopeW = textureLoad(slopeTex, clamp(fcoord, vec2i(0), vec2i(fdim) - 1), 0).r;
+    let slope = select(0.0, slopeW / gain, gain > 0.001);
     let mat = textureLoad(materialTex, vec2u(pos.xy), 0);
     let ch = u32(mat.g * 255.0 + 0.5);
+
     if (ch == 1u) {
       color = vec4f(0.1, 0.9, 0.7, 1.0);
     } else if (ch >= 2u) {
-      let g = clamp(gain * 3.0, 0.15, 1.0);
-      color = vec4f(g, g * 0.8, 0.1, 1.0);
+      color = vec4f(0.2, 0.4, 1.0, 1.0);
     } else {
-      let at = clamp(gain * 2.0, 0.0, 1.0);
-      let cold = vec3f(0.0, 0.05, 0.2);
-      let hot = vec3f(1.0, 0.3, 0.05);
-      color = vec4f(linearToSrgb(mix(cold, hot, at)), 1.0);
+      // R = acoustic gain, G = spectral slope (treble cut), B = base
+      let r = clamp(gain * 2.0, 0.0, 1.0);
+      let g = clamp(-slope * 0.3, 0.0, 1.0);
+      color = vec4f(linearToSrgb(vec3f(r, g, 0.03)), 1.0);
     }
   }
   return color;
@@ -718,8 +737,9 @@ struct GatherParams {
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
 @group(0) @binding(1) var materialTex: texture_2d<f32>;
 @group(0) @binding(2) var fluenceTex: texture_2d<f32>;
-@group(0) @binding(3) var<storage, read_write> channelGains: array<atomic<u32>, 256>;
+@group(0) @binding(3) var<storage, read_write> channelData: array<atomic<u32>, 512>;
 @group(0) @binding(4) var<uniform> params: GatherParams;
+@group(0) @binding(5) var slopeTex: texture_2d<f32>;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -744,7 +764,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let contribution = acousticGain * absorption;
   if (contribution > 0.0) {
     let fixed = u32(clamp(contribution * 65536.0, 0.0, 4294967295.0));
-    atomicAdd(&channelGains[ch], fixed);
+    atomicAdd(&channelData[ch], fixed);
+    let slopeVal = textureLoad(slopeTex, fcoord, 0).r;
+    let slopeContrib = slopeVal * absorption;
+    let sFixed = u32(clamp(abs(slopeContrib) * 65536.0, 0.0, 4294967295.0));
+    if (slopeContrib < 0.0) {
+      atomicAdd(&channelData[ch + 256u], sFixed);
+    }
   }
 }
 `;
@@ -1114,6 +1140,11 @@ export class FolkHolographicRC extends FolkBaseSet {
   #smoothedFrameTime = 0;
   #lastFrameTimestamp = 0;
 
+  // Acoustic slope at probe resolution
+  #slopeBuffer!: GPUBuffer;
+  #slopeTexture!: GPUTexture;
+  #slopeTextureView!: GPUTextureView;
+
   // Acoustic gather
   #gatherPipeline!: GPUComputePipeline;
   #gatherBindGroup!: GPUBindGroup;
@@ -1122,6 +1153,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #channelGainsBuffer!: GPUBuffer;
   #channelGainsReadback!: GPUBuffer;
   #channelGains = new Float32Array(256);
+  #channelSlopes = new Float32Array(256);
 
   // GPU timestamp profiling (null when timestamp-query unavailable)
   #tsQuerySet: GPUQuerySet | null = null;
@@ -1410,8 +1442,17 @@ export class FolkHolographicRC extends FolkBaseSet {
     return this.#channelGains[channelId];
   }
 
+  getChannelSlope(channelId: number): number {
+    if (channelId < 2 || channelId > 255) return 0;
+    return this.#channelSlopes[channelId];
+  }
+
   get channelGains(): Float32Array {
     return this.#channelGains;
+  }
+
+  get channelSlopes(): Float32Array {
+    return this.#channelSlopes;
   }
 
 
@@ -1618,14 +1659,25 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
 
+    const alignedSlopeRow = Math.ceil((psX * 4) / 256) * 256;
+    this.#slopeBuffer = device.createBuffer({
+      label: 'Slope-SSBO',
+      size: alignedSlopeRow * psY,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+    [this.#slopeTexture, this.#slopeTextureView] = tex(
+      device, 'Slope', psX, psY, 'r32float',
+      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    );
+
     this.#channelGainsBuffer = device.createBuffer({
-      label: 'ChannelGains',
-      size: 256 * 4,
+      label: 'ChannelData',
+      size: 512 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     this.#channelGainsReadback = device.createBuffer({
-      label: 'ChannelGains-Readback',
-      size: 256 * 4,
+      label: 'ChannelData-Readback',
+      size: 512 * 4,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
@@ -1846,6 +1898,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             { buffer: this.#fluenceBuffer },
             this.#skyPrefixSumTextureView,
             { buffer: this.#angWeightBuffer },
+            { buffer: this.#slopeBuffer },
           ),
         );
         [readIdx, writeIdx] = [writeIdx, readIdx];
@@ -1861,6 +1914,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       { buffer: this.#blitParamsBuffer },
       this.#linearSampler,
       this.#materialTextureView,
+      this.#slopeTextureView,
     );
 
     this.#bounceBindGroup = bg(
@@ -1881,6 +1935,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#fluenceTextureView,
       { buffer: this.#channelGainsBuffer },
       { buffer: this.#gatherParamsBuffer },
+      this.#slopeTextureView,
     );
   }
 
@@ -1891,6 +1946,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeBuffers?.forEach((b) => b.destroy());
     this.#fluenceBuffer?.destroy();
     this.#fluenceTexture?.destroy();
+    this.#slopeBuffer?.destroy();
+    this.#slopeTexture?.destroy();
     this.#channelGainsBuffer?.destroy();
     this.#channelGainsReadback?.destroy();
     this.#angWeightBuffer?.destroy();
@@ -2193,6 +2250,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     // ── Step 2: HRC cascade processing per direction ──
     // Zero the fluence SSBO. All 4 directions accumulate into it additively.
     encoder.clearBuffer(this.#fluenceBuffer);
+    encoder.clearBuffer(this.#slopeBuffer);
 
     // Two frustum configs: H (E/W) and V (N/S). Each direction uses its
     // frustum's probe/slice counts for dispatch. Zero waste.
@@ -2236,7 +2294,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#lastFluenceReady = true;
 
-    // ── Step 2.5: Copy fluence SSBO → texture for blit (bilinear sampling) and bounce ──
+    // ── Step 2.5: Copy fluence + slope SSBOs → textures ──
     encoder.copyBufferToTexture(
       {
         buffer: this.#fluenceBuffer,
@@ -2246,6 +2304,14 @@ export class FolkHolographicRC extends FolkBaseSet {
       { texture: this.#fluenceTexture },
       { width: this.#psX, height: this.#psY },
     );
+    {
+      const alignedSlopeRow = Math.ceil((this.#psX * 4) / 256) * 256;
+      encoder.copyBufferToTexture(
+        { buffer: this.#slopeBuffer, bytesPerRow: alignedSlopeRow, rowsPerImage: this.#psY },
+        { texture: this.#slopeTexture },
+        { width: this.#psX, height: this.#psY },
+      );
+    }
 
     // ── Step 2.75: Acoustic gather pass ──
     encoder.clearBuffer(this.#channelGainsBuffer);
@@ -2257,7 +2323,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       pass.end();
     }
     if (this.#channelGainsReadback.mapState === 'unmapped') {
-      encoder.copyBufferToBuffer(this.#channelGainsBuffer, 0, this.#channelGainsReadback, 0, 256 * 4);
+      encoder.copyBufferToBuffer(this.#channelGainsBuffer, 0, this.#channelGainsReadback, 0, 512 * 4);
     }
 
     // ── Step 3: Final blit ──
@@ -2275,7 +2341,12 @@ export class FolkHolographicRC extends FolkBaseSet {
           for (let i = 0; i < 256; i++) this.#channelGains[i] = raw[i] / 65536.0;
           const listenerPerimeter = 2 * Math.PI * this.#mouseLightRadius;
           if (listenerPerimeter > 0) {
-            for (let i = 2; i < 256; i++) this.#channelGains[i] /= listenerPerimeter;
+            for (let i = 2; i < 256; i++) {
+              const rawGain = this.#channelGains[i];
+              this.#channelGains[i] = rawGain / listenerPerimeter;
+              const rawSlopeW = raw[i + 256] / 65536.0;
+              this.#channelSlopes[i] = rawGain > 0.001 ? -(rawSlopeW / rawGain) : 0;
+            }
           }
           this.#channelGainsReadback.unmap();
         })
