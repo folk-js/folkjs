@@ -1746,10 +1746,13 @@
           src.gainNode.gain.value = g;
           const cutoff = 200 + Math.pow(Math.min(hfRatio, 1.0), 0.5) * 19800;
           src.biquad.frequency.value = cutoff;
+          const pan = hrc.getChannelPan(src.channelId);
+          src.panner.pan.value = Math.max(-1, Math.min(1, pan));
           src.lastGain = g;
           const color = channelColors[chIdx % channelColors.length];
           const bar = '█'.repeat(Math.round(g * 10)).padEnd(10, '░');
-          debugHTML += `<div style="display:flex;gap:6px;align-items:center"><span style="color:${color}">ch${src.channelId}</span><span style="color:${color}">${bar}</span><span>${g.toFixed(2)}</span><span style="color:rgba(255,255,255,0.35)">${Math.round(cutoff)}Hz</span></div>`;
+          const panStr = pan >= 0 ? `R${pan.toFixed(2)}` : `L${(-pan).toFixed(2)}`;
+          debugHTML += `<div style="display:flex;gap:6px;align-items:center"><span style="color:${color}">ch${src.channelId}</span><span style="color:${color}">${bar}</span><span>${g.toFixed(2)}</span><span style="color:rgba(255,255,255,0.35)">${Math.round(cutoff)}Hz</span><span style="color:rgba(255,255,255,0.25)">${panStr}</span></div>`;
 
           if (!gainHistories.has(src.channelId)) gainHistories.set(src.channelId, { samples: new Float32Array(GAIN_HISTORY), color });
           const hist = gainHistories.get(src.channelId);

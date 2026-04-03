@@ -124,9 +124,15 @@ Key behaviors to note:
 
 ### 3.1 Ray buffer (widened, implemented)
 
-`vec3u` = 16 bytes (due to WGSL vec3 alignment) → `packF16(R, G, B, trans)` + `pack2x16float(acoustic, acousticHF)`
+`vec4u` = 16 bytes → `packF16(R, G, B, trans)` + `pack2x16float(acoustic, acousticHF)` + `pack2x16float(transHF, 0)`
 
-Two acoustic f16 values: broadband acoustic radiance (the listener's propagating signal) and high-frequency acoustic radiance (mass-law-attenuated). Both compose identically via over-composite. The ratio `acousticHF / acoustic` gives the spectral tilt at readout.
+Two acoustic f16 values: broadband acoustic radiance (the listener's propagating signal) and high-frequency acoustic radiance (mass-law-attenuated). A separate HF transmittance `transHF = pow(trans, HF_FACTOR)` is computed per-cell at the seed and composed multiplicatively through the extend. Both acoustic channels compose identically via over-composite, using their respective transmittance. The ratio `acousticHF / acoustic` gives the spectral tilt at readout.
+
+### 3.7 Pan buffer (implemented)
+
+One `f32` per probe at probe resolution. Stores the direction-weighted acoustic gain: `result_acoustic * fxProbe` where `fxProbe` is +1 (East), -1 (West), 0 (North/South). Accumulated from all 4 directions at merge level 0. The gather reads it and accumulates positive/negative contributions per channel. Readback normalizes by gain to give pan in [-1, +1].
+
+**Limitation:** Pan uses the cascade's 4-direction structure for directional information. East/West give clear left/right panning. North/South contribute zero, meaning sources directly above/below always pan center. For indirect paths (bounces), the pan reflects the direction of the FINAL leg of the path, not the entire path. Multi-bounce paths that change direction lose their original directional information. A more accurate approach would require propagating pan-weighted acoustic as a separate over-composable channel through the cascade, which is architecturally possible but not yet implemented.
 
 ### 3.2 Merge buffer (widened, implemented)
 
@@ -247,7 +253,7 @@ hfRatio  → lowshelf EQ: (hfRatio - 1) × 18 dB at 2kHz
              hfRatio = 1.0: flat response (open air)
              hfRatio = 0.5: -9dB treble cut (moderate volume traversal)
              hfRatio = 0.0: -18dB treble cut (dense volume or wall)
-pan      → stereo panner [-1, +1] (future, requires directional gather)
+pan      → stereo panner [-1, +1] (implemented, direction-based)
 ```
 
 ---

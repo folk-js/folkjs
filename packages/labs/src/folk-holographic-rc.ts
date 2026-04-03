@@ -425,6 +425,7 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 @group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
 @group(0) @binding(6) var<storage, read> angWeights: array<f32>;
 @group(0) @binding(7) var<storage, read_write> hfBuf: array<vec2u>;
+@group(0) @binding(8) var<storage, read_write> panBuf: array<f32>;
 
 struct RayData { rad: vec3f, trans: f32, transHF: f32, acoustic: f32, acousticHF: f32 }
 struct MergeEntry { visual: vec3f, acoustic: f32, acousticHF: f32 }
@@ -554,6 +555,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, prev.a + result_acoustic));
       let prevHF = unpackF16(hfBuf[fi]);
       hfBuf[fi] = packF16(vec4f(0.0, 0.0, 0.0, prevHF.a + result_hf));
+      let panStride = i32(arrayLength(&panBuf)) / fh;
+      let pi = fc.y * panStride + fc.x;
+      panBuf[pi] += result_acoustic * f32(params.fxProbe);
     }
   }
 }
@@ -729,7 +733,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let fluenceRGB = ownFluenceRGB * (1.0 - opacity) + extFluenceRGB * opacity;
   let fluenceA = ownFluenceA * (1.0 - opacity) + extFluenceA * opacity;
   const TWO_PI = 6.2831853;
-  textureStore(bounceOut, probe, vec4f(fluenceRGB * albedo / TWO_PI, fluenceA * albedo / TWO_PI));
+  let fluenceBounce = fluenceA * albedo / TWO_PI;
+  textureStore(bounceOut, probe, vec4f(fluenceRGB * albedo / TWO_PI, fluenceBounce));
 }
 `;
 
@@ -750,9 +755,10 @@ struct GatherParams {
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
 @group(0) @binding(1) var materialTex: texture_2d<f32>;
 @group(0) @binding(2) var fluenceTex: texture_2d<f32>;
-@group(0) @binding(3) var<storage, read_write> channelData: array<atomic<u32>, 512>;
+@group(0) @binding(3) var<storage, read_write> channelData: array<atomic<u32>, 1024>;
 @group(0) @binding(4) var<uniform> params: GatherParams;
 @group(0) @binding(5) var hfTex: texture_2d<f32>;
+@group(0) @binding(6) var panTex: texture_2d<f32>;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -783,6 +789,14 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   }
   if (hfContrib > 0.0) {
     atomicAdd(&channelData[ch + 256u], u32(clamp(hfContrib * 65536.0, 0.0, 4294967295.0)));
+  }
+
+  let panVal = textureLoad(panTex, fcoord, 0).r;
+  let panContrib = panVal * absorption;
+  if (panContrib > 0.0) {
+    atomicAdd(&channelData[ch + 512u], u32(clamp(panContrib * 65536.0, 0.0, 4294967295.0)));
+  } else if (panContrib < 0.0) {
+    atomicAdd(&channelData[ch + 768u], u32(clamp(-panContrib * 65536.0, 0.0, 4294967295.0)));
   }
 }
 `;
@@ -1157,6 +1171,11 @@ export class FolkHolographicRC extends FolkBaseSet {
   #slopeTexture!: GPUTexture;
   #slopeTextureView!: GPUTextureView;
 
+  // Acoustic pan
+  #panBuffer!: GPUBuffer;
+  #panTexture!: GPUTexture;
+  #panTextureView!: GPUTextureView;
+
   // Acoustic gather
   #gatherPipeline!: GPUComputePipeline;
   #gatherBindGroup!: GPUBindGroup;
@@ -1166,6 +1185,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #channelGainsReadback!: GPUBuffer;
   #channelGains = new Float32Array(256);
   #channelSlopes = new Float32Array(256);
+  #channelPans = new Float32Array(256);
 
   // GPU timestamp profiling (null when timestamp-query unavailable)
   #tsQuerySet: GPUQuerySet | null = null;
@@ -1467,6 +1487,15 @@ export class FolkHolographicRC extends FolkBaseSet {
     return this.#channelSlopes;
   }
 
+  getChannelPan(channelId: number): number {
+    if (channelId < 2 || channelId > 255) return 0;
+    return this.#channelPans[channelId];
+  }
+
+  get channelPans(): Float32Array {
+    return this.#channelPans;
+  }
+
   #uploadSkyCircle() {
     if (!this.#device || !this.#skyTexture) return;
     this.#device.queue.writeTexture(
@@ -1684,14 +1713,25 @@ export class FolkHolographicRC extends FolkBaseSet {
       GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     );
 
+    const alignedPanRow = Math.ceil((psX * 4) / 256) * 256;
+    this.#panBuffer = device.createBuffer({
+      label: 'Pan-SSBO',
+      size: alignedPanRow * psY,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+    [this.#panTexture, this.#panTextureView] = tex(
+      device, 'Pan', psX, psY, 'r32float',
+      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    );
+
     this.#channelGainsBuffer = device.createBuffer({
       label: 'ChannelData',
-      size: 512 * 4,
+      size: 1024 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     this.#channelGainsReadback = device.createBuffer({
       label: 'ChannelData-Readback',
-      size: 512 * 4,
+      size: 1024 * 4,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
@@ -1913,6 +1953,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             this.#skyPrefixSumTextureView,
             { buffer: this.#angWeightBuffer },
             { buffer: this.#slopeBuffer },
+            { buffer: this.#panBuffer },
           ),
         );
         [readIdx, writeIdx] = [writeIdx, readIdx];
@@ -1950,6 +1991,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       { buffer: this.#channelGainsBuffer },
       { buffer: this.#gatherParamsBuffer },
       this.#slopeTextureView,
+      this.#panTextureView,
     );
   }
 
@@ -1962,6 +2004,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#fluenceTexture?.destroy();
     this.#slopeBuffer?.destroy();
     this.#slopeTexture?.destroy();
+    this.#panBuffer?.destroy();
+    this.#panTexture?.destroy();
     this.#channelGainsBuffer?.destroy();
     this.#channelGainsReadback?.destroy();
     this.#angWeightBuffer?.destroy();
@@ -2275,6 +2319,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     // Zero the fluence SSBO. All 4 directions accumulate into it additively.
     encoder.clearBuffer(this.#fluenceBuffer);
     encoder.clearBuffer(this.#slopeBuffer);
+    encoder.clearBuffer(this.#panBuffer);
 
     // Two frustum configs: H (E/W) and V (N/S). Each direction uses its
     // frustum's probe/slice counts for dispatch. Zero waste.
@@ -2338,6 +2383,15 @@ export class FolkHolographicRC extends FolkBaseSet {
       { width: this.#psX, height: this.#psY },
     );
 
+    {
+      const alignedPanRow = Math.ceil((this.#psX * 4) / 256) * 256;
+      encoder.copyBufferToTexture(
+        { buffer: this.#panBuffer, bytesPerRow: alignedPanRow, rowsPerImage: this.#psY },
+        { texture: this.#panTexture },
+        { width: this.#psX, height: this.#psY },
+      );
+    }
+
     // ── Step 2.75: Acoustic gather pass ──
     encoder.clearBuffer(this.#channelGainsBuffer);
     {
@@ -2348,7 +2402,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       pass.end();
     }
     if (this.#channelGainsReadback.mapState === 'unmapped') {
-      encoder.copyBufferToBuffer(this.#channelGainsBuffer, 0, this.#channelGainsReadback, 0, 512 * 4);
+      encoder.copyBufferToBuffer(this.#channelGainsBuffer, 0, this.#channelGainsReadback, 0, 1024 * 4);
     }
 
     // ── Step 3: Final blit ──
@@ -2371,6 +2425,10 @@ export class FolkHolographicRC extends FolkBaseSet {
               this.#channelGains[i] = rawGain / listenerPerimeter;
               const rawHF = raw[i + 256] / 65536.0 / listenerPerimeter;
               this.#channelSlopes[i] = rawGain > 0.001 ? Math.min(rawHF / (rawGain / listenerPerimeter), 1.0) : 1.0;
+              const panPos = raw[i + 512] / 65536.0;
+              const panNeg = raw[i + 768] / 65536.0;
+              const normalizedGain = rawGain / listenerPerimeter;
+              this.#channelPans[i] = normalizedGain > 0.001 ? Math.max(-1, Math.min(1, (panPos - panNeg) / (normalizedGain * listenerPerimeter))) : 0;
             }
           }
           this.#channelGainsReadback.unmap();
