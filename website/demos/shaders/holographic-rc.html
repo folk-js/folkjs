@@ -380,7 +380,19 @@
         <option value="3">debug: acoustic</option>
       </select>
       <label><input id="pt-toggle" type="checkbox" /> path trace</label>
-      <button id="sound-test" style="font:inherit;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);border:1px solid rgba(255,255,255,0.1);border-radius:4px;padding:2px 8px;cursor:pointer">&#9835; test</button>
+      <button
+        id="sound-test"
+        style="
+          font: inherit;
+          background: rgba(255, 255, 255, 0.08);
+          color: rgba(255, 255, 255, 0.7);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 4px;
+          padding: 2px 8px;
+          cursor: pointer;
+        "
+        >&#9835; test</button
+      >
       <div class="spacer"></div>
       <span id="fps" title="Toggle perf graph"></span>
       <div id="color-btn" title="Material inspector"></div>
@@ -460,9 +472,9 @@
           >2</span
         ></div
       >
-      <div class="prow" id="audio-row" style="display:none"
-        ><label>audio</label><input id="p-audio" type="checkbox" style="margin:0" /></div
-      >
+      <div class="prow" id="audio-row" style="display: none"
+        ><label>audio</label><input id="p-audio" type="checkbox" style="margin: 0"
+      /></div>
     </div>
 
     <script type="module">
@@ -602,7 +614,7 @@
         hrc.setMouseLightRadius(pen.size / 2);
       });
 
-      let syncPanel = function() {
+      let syncPanel = function () {
         const shape = selectedShape;
         panelTitle.textContent = shape ? 'Shape' : 'Pen';
         sizeRow.style.display = shape ? 'none' : '';
@@ -629,7 +641,7 @@
 
         swatchEls.forEach((el, i) => el.classList.toggle('active', pen.eraser && i === 0));
         colorBtn.style.backgroundColor = pen.eraser ? '' : toHex(shape ? color : pen.color);
-      }
+      };
 
       function selectShape(shape) {
         if (selectedShape) selectedShape.style.outline = '';
@@ -1224,39 +1236,50 @@
       let addAudioToShape = (shape) => shape;
 
       function loadAcousticOpen() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
         addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3; debugSelect.value = '3';
+        hrc.debugMode = 3;
+        debugSelect.value = '3';
       }
 
       function loadAcousticDoorway() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
         addShape(cx, cy - 200, 10, 170, 1);
         addShape(cx, cy + 30, 10, 170, 1);
         addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3; debugSelect.value = '3';
+        hrc.debugMode = 3;
+        debugSelect.value = '3';
       }
 
       function loadAcousticCorridor() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 10;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          t = 10;
         addShape(cx - 200, cy - 80, 400, t, 1);
         addShape(cx - 200, cy + 80, 400, t, 1);
         addShape(cx - 200, cy - 80, t, 170, 1);
         addShape(cx + 200, cy - 80, t, 40, 1);
         addShape(cx + 200, cy + 40, t, 50, 1);
         addAudioToShape(addShape(cx + 250, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3; debugSelect.value = '3';
+        hrc.debugMode = 3;
+        debugSelect.value = '3';
       }
 
       function loadAcousticVolume() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
         addShape(cx - 50, cy - 100, 100, 200, 0, { opacity: 0.05, albedo: 0.3 });
         addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3; debugSelect.value = '3';
+        hrc.debugMode = 3;
+        debugSelect.value = '3';
       }
 
       function loadAcousticTwoRooms() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 10;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          t = 10;
         addShape(cx - 250, cy - 150, 500, t, 1);
         addShape(cx - 250, cy + 150, 500, t, 1);
         addShape(cx - 250, cy - 150, t, 310, 1);
@@ -1265,11 +1288,15 @@
         addShape(cx, cy + 30, t, 130, 1);
         addAudioToShape(addShape(cx - 200, cy, 30, 30, 2));
         addAudioToShape(addShape(cx + 150, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3; debugSelect.value = '3';
+        hrc.debugMode = 3;
+        debugSelect.value = '3';
       }
 
       function loadAcousticLCorridor() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 12, w = 100;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          t = 12,
+          w = 100;
         // L-shaped corridor: sound bounces around the corner
         // Horizontal segment: top inner wall stops at corner, bottom outer continues
         addShape(cx - 200, cy, 200, t, 0, { albedo: 0.7 });
@@ -1279,12 +1306,16 @@
         addShape(cx + w, cy - 200, t, 200 + w + t, 0, { albedo: 0.7 });
         // Source at top of vertical segment
         addAudioToShape(addShape(cx + 30, cy - 170, 40, 40, 3));
-        hrc.debugMode = 3; debugSelect.value = '3';
-        hrc.bounces = true; $('bounces-toggle').checked = true;
+        hrc.debugMode = 3;
+        debugSelect.value = '3';
+        hrc.bounces = true;
+        $('bounces-toggle').checked = true;
       }
 
       function loadAcousticReflectiveRoom() {
-        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 12;
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          t = 12;
         // Enclosed room with reflective walls (high albedo)
         addShape(cx - 200, cy - 150, 400, t, 0, { albedo: 0.85 });
         addShape(cx - 200, cy + 150, 400, t, 0, { albedo: 0.85 });
@@ -1294,8 +1325,10 @@
         addAudioToShape(addShape(cx - 170, cy - 120, 30, 30, 3));
         // Absorber panel in the middle of the room (low albedo) — listen around it
         addShape(cx - 30, cy - 60, t, 120, 0, { albedo: 0.1 });
-        hrc.debugMode = 3; debugSelect.value = '3';
-        hrc.bounces = true; $('bounces-toggle').checked = true;
+        hrc.debugMode = 3;
+        debugSelect.value = '3';
+        hrc.bounces = true;
+        $('bounces-toggle').checked = true;
       }
 
       // ── Scene list ──
@@ -1667,7 +1700,13 @@
         const panner = ctx.createStereoPanner();
         panner.pan.value = 0;
 
-        mediaSource.connect(biquad).connect(gainNode).connect(panner).connect(ctx.destination);
+        const compressor = ctx.createDynamicsCompressor();
+        compressor.threshold.value = -24;
+        compressor.knee.value = 12;
+        compressor.ratio.value = 12;
+        compressor.attack.value = 0.003;
+        compressor.release.value = 0.1;
+        mediaSource.connect(biquad).connect(gainNode).connect(compressor).connect(panner).connect(ctx.destination);
         video.play().catch(() => {});
 
         const src = { video, gainNode, biquad, panner, shape, channelId: chId, lastGain: 0 };
@@ -1691,7 +1730,10 @@
       }
 
       onSceneClear = clearAllAudio;
-      addAudioToShape = (shape) => { createShapeAudio(shape); return shape; };
+      addAudioToShape = (shape) => {
+        createShapeAudio(shape);
+        return shape;
+      };
 
       pAudio.addEventListener('change', () => {
         if (!selectedShape) return;
@@ -1700,7 +1742,7 @@
       });
 
       const origSyncPanel = syncPanel;
-      syncPanel = function() {
+      syncPanel = function () {
         origSyncPanel();
         audioRow.style.display = selectedShape ? '' : 'none';
         pAudio.checked = selectedShape ? audioSources.has(selectedShape) : false;
@@ -1709,15 +1751,25 @@
       // ── Audio debug panel with gain graph ──
       const audioDebug = document.createElement('div');
       Object.assign(audioDebug.style, {
-        position: 'fixed', top: '8px', right: '8px', zIndex: '1003',
-        background: 'rgba(0,0,0,0.8)', borderRadius: '6px', padding: '8px 10px',
+        position: 'fixed',
+        top: '8px',
+        right: '8px',
+        zIndex: '1003',
+        background: 'rgba(0,0,0,0.8)',
+        borderRadius: '6px',
+        padding: '8px 10px',
         fontFamily: "'SF Mono','Cascadia Code','Fira Code',monospace",
-        fontSize: '10px', color: 'rgba(255,255,255,0.6)', pointerEvents: 'none',
-        minWidth: '180px', display: 'none', overflow: 'hidden',
+        fontSize: '10px',
+        color: 'rgba(255,255,255,0.6)',
+        pointerEvents: 'none',
+        minWidth: '180px',
+        display: 'none',
+        overflow: 'hidden',
       });
       document.body.appendChild(audioDebug);
       const audioGraphCanvas = document.createElement('canvas');
-      const AGW = 160, AGH = 50;
+      const AGW = 160,
+        AGH = 50;
       const adpr = window.devicePixelRatio || 1;
       audioGraphCanvas.width = AGW * adpr;
       audioGraphCanvas.height = AGH * adpr;
@@ -1730,8 +1782,12 @@
       let gainHistIdx = 0;
 
       const channelColors = [
-        'rgba(255,180,60,0.9)', 'rgba(100,200,255,0.9)', 'rgba(180,100,255,0.9)',
-        'rgba(100,255,150,0.9)', 'rgba(255,100,150,0.9)', 'rgba(255,255,100,0.9)',
+        'rgba(255,180,60,0.9)',
+        'rgba(100,200,255,0.9)',
+        'rgba(180,100,255,0.9)',
+        'rgba(100,255,150,0.9)',
+        'rgba(255,100,150,0.9)',
+        'rgba(255,255,100,0.9)',
       ];
 
       (function audioTick() {
@@ -1742,19 +1798,22 @@
           hasAudio = true;
           const gain = hrc.getChannelGain(src.channelId);
           const hfRatio = hrc.getChannelHFRatio(src.channelId);
+          const now = audioCtx.currentTime;
+          const smooth = 0.05;
           const g = Math.min(gain, 1.0);
-          src.gainNode.gain.value = g;
+          src.gainNode.gain.setTargetAtTime(g, now, smooth);
           const cutoff = 200 + Math.pow(Math.min(hfRatio, 1.0), 0.5) * 19800;
-          src.biquad.frequency.value = cutoff;
-          const pan = hrc.getChannelPan(src.channelId);
-          src.panner.pan.value = Math.max(-1, Math.min(1, pan));
+          src.biquad.frequency.setTargetAtTime(cutoff, now, smooth);
+          const pan = Math.max(-1, Math.min(1, hrc.getChannelPan(src.channelId)));
+          src.panner.pan.setTargetAtTime(pan, now, smooth);
           src.lastGain = g;
           const color = channelColors[chIdx % channelColors.length];
           const bar = '█'.repeat(Math.round(g * 10)).padEnd(10, '░');
           const panStr = pan >= 0 ? `R${pan.toFixed(2)}` : `L${(-pan).toFixed(2)}`;
           debugHTML += `<div style="display:flex;gap:6px;align-items:center"><span style="color:${color}">ch${src.channelId}</span><span style="color:${color}">${bar}</span><span>${g.toFixed(2)}</span><span style="color:rgba(255,255,255,0.35)">${Math.round(cutoff)}Hz</span><span style="color:rgba(255,255,255,0.25)">${panStr}</span></div>`;
 
-          if (!gainHistories.has(src.channelId)) gainHistories.set(src.channelId, { samples: new Float32Array(GAIN_HISTORY), color });
+          if (!gainHistories.has(src.channelId))
+            gainHistories.set(src.channelId, { samples: new Float32Array(GAIN_HISTORY), color });
           const hist = gainHistories.get(src.channelId);
           hist.samples[gainHistIdx % GAIN_HISTORY] = g;
           hist.color = color;
@@ -1767,15 +1826,18 @@
 
         audioDebug.style.display = hasAudio ? 'block' : 'none';
         if (hasAudio) {
-          const statsDiv = audioDebug.querySelector('.audio-stats') || (() => {
-            const d = document.createElement('div');
-            d.className = 'audio-stats';
-            audioDebug.innerHTML = '';
-            audioDebug.appendChild(d);
-            audioDebug.appendChild(audioGraphCanvas);
-            return d;
-          })();
-          statsDiv.innerHTML = `<div style="color:rgba(255,255,255,0.35);font-size:9px;margin-bottom:2px">AUDIO</div>` + debugHTML;
+          const statsDiv =
+            audioDebug.querySelector('.audio-stats') ||
+            (() => {
+              const d = document.createElement('div');
+              d.className = 'audio-stats';
+              audioDebug.innerHTML = '';
+              audioDebug.appendChild(d);
+              audioDebug.appendChild(audioGraphCanvas);
+              return d;
+            })();
+          statsDiv.innerHTML =
+            `<div style="color:rgba(255,255,255,0.35);font-size:9px;margin-bottom:2px">AUDIO</div>` + debugHTML;
 
           agCtx.setTransform(adpr, 0, 0, adpr, 0, 0);
           agCtx.clearRect(0, 0, AGW, AGH);
