@@ -6,364 +6,184 @@
 
 ## 1. What This Is
 
-Resonance Cascades extends HRC's existing cascade pass to compute acoustic attenuation alongside visual global illumination. By treating the listener as an acoustic emitter and widening the ray payload, we obtain a per-probe attenuation field that any number of sound sources can query via simple lookup — with zero additional cascade dispatches and no per-channel scaling.
+Resonance Cascades extends HRC's existing cascade pass to compute acoustic attenuation alongside visual global illumination. By treating the listener as an acoustic emitter and widening the ray payload, we obtain a per-probe attenuation field that any number of sound sources can query via a gather pass — with zero additional cascade dispatches.
 
-The output is per-source, per-frame control data (gain, spectral tilt, stereo pan) that drives a standard audio DSP chain.
+The output is per-source, per-frame control data (gain, spectral tilt, stereo pan) that drives a Web Audio DSP chain: `source → lowpass filter → gain → compressor → panner → output`.
 
 ---
 
-## 2. Core Idea
+## 2. Core Ideas
 
 ### 2.1 The listener is an emitter
 
-The cascade computes fluence at every probe from whatever is emitting. For visual GI, every light source emits. For audio, only the listener emits — with intensity 1.0 in the acoustic radiance channel, and 0.0 at every other probe.
+The listener (mouse cursor) is rendered as a shape in the world texture with channel ID 1 in the material texture. The seed shader emits acoustic radiance at channel-1 pixels via `(1-trans)` — identical to how visual light emits from surfaces. The cascade propagates this signal outward. At every probe P, the resulting acoustic fluence equals the fraction of the listener's signal that reaches P. By reciprocity, this IS the gain for any sound source at P.
 
-The cascade propagates this signal outward through the scene using the same seed, extend, and merge machinery. Walls block it. Doorways let it fan through with correct angular spread (from the merge's even/odd interpolation). Volumetrics partially attenuate it. At every probe P, the resulting acoustic fluence equals the fraction of the listener's signal that reaches P via all available paths.
+### 2.2 Two acoustic channels: HF and LF
 
-By reciprocity, this equals how much sound from P would reach the listener. `acoustic_fluence[P]` IS the gain coefficient for any sound source at P.
+Two acoustic radiance channels propagate through the cascade with different transmittance:
 
-### 2.2 Why this is mathematically correct
+- **HF (high frequency):** shares visual `trans`. Blocked by walls (trans=0). Attenuated by volumes same as light.
+- **LF (low frequency):** uses its own `transLF = max(pow(1-opacity, spacing × LF_FACTOR), BASS_WALL_PERM)`. Bass sees volumes as thinner (`LF_FACTOR=0.1`) and leaks through solid walls (`BASS_WALL_PERM=0.6`).
 
-The cascade computes a path integral: emission × transmittance, summed over all directions and distances, composed hierarchically via the over-composite `rad_combined = rad_near + rad_far × trans_near`, with spatial alignment corrected by the merge's even/odd probe interpolation and crossed extensions.
+This models the **mass law**: high-frequency sound interacts strongly with all media (like light), while low-frequency sound passes through more easily due to longer wavelengths.
 
-For a single emitter (the listener), the fluence at probe P represents the total energy from the listener reaching P through all unobstructed air paths. This is exactly the geometric-regime acoustic attenuation: the sum of all transmission paths weighted by their individual transmittances. Every aspect of HRC — the hierarchical composition, the aperture spreading through openings, the spatial interpolation — operates identically whether the emitted signal represents light or sound.
+| Scenario | HF trans | LF trans | What you hear |
+|----------|---------|---------|---------------|
+| Air | 1.0 | 1.0 | Full spectrum |
+| Light volume (0.05) | 0.91 | 0.99 | Gradual treble rolloff |
+| Dense volume (0.5) | 0.25 | 0.88 | Muffled, bass-heavy |
+| Thin wall (0.97) | ~0 | 0.52 | Faint bass only |
+| Solid wall (1.0) | 0 | 0.60 | Bass rumble through wall |
 
-### 2.3 The cascade is listener-independent in structure
+At readout: **gain = LF** (the louder component), **spectral tilt = HF/LF** ratio → lowpass cutoff frequency.
 
-The seed, extend, and merge dispatches are unchanged. The listener position enters only as a uniform in the seed shader: one probe gets `acoustic_rad = 1.0`, all others get `acoustic_rad = 0.0`. If the listener moves, only the seed uniform changes. No rebinding, no reallocation.
+### 2.3 Merge-compatible properties
 
-Multiple listeners (split-screen, multiplayer) would require additional acoustic channels, not additional cascade passes. Each listener occupies one radiance channel.
+For a value to propagate correctly through the cascade's hierarchical merge, it must behave like a **radiance** — satisfying two properties:
 
-### 2.4 What this does NOT model
+1. **Over-composability:** composes as `combined = near + far × near_transmittance`
+2. **Linearity:** weighted sums give correct totals under angular averaging
 
-- **Wave interference.** No constructive/destructive superposition.
-- **Room modes.** No standing wave resonances.
+Path properties like spectral slope (a cumulative exponent) fail both requirements. We learned this the hard way: slope produced directional artifacts in the merge because it doesn't compose like radiance. The solution was the two-channel approach — both HF and LF are radiances with different propagation parameters. The spectral information is recovered from their RATIO at readout, not carried as a separate non-radiance value.
+
+### 2.4 Acoustic bounces
+
+The bounce shader (which drives multi-bounce visual GI) also handles acoustic reflections:
+
+- Reads previous frame's fluence alpha (broadband acoustic) at each wall probe
+- Re-emits `fluence × albedo / 2π` into the bounce texture alpha
+- The seed reads bounce alpha and adds it to BOTH acoustic channels
+- Each bounce loses 30% of HF energy (`BOUNCE_HF_LOSS = 0.7`), modeling frequency-dependent surface absorption
+
+This enables sound around corners, through L-corridors, and in enclosed rooms. Multi-bounce sound progressively warms (loses treble) — matching real room acoustics where reverberant sound is always bassier than direct sound.
+
+### 2.5 What this does NOT model
+
+- **Wave interference / room modes.** No constructive/destructive superposition or standing waves.
 - **Impulse response timing.** We compute how much energy arrives, not when.
-- **True diffraction.** Sound wrapping around obstacles follows the cascade's penumbra structure, which is qualitatively plausible but quantitatively approximate.
-- **Reflections** (without bounces). Without the bounce loop, sound propagates only through air paths — through doorways, through gaps, through volumetrics. It does NOT wrap around corners or reflect off surfaces. With bounces enabled, reflected energy naturally accumulates over frames and contributes additional gain.
-
-### 2.5 Merge-compatible properties
-
-For a value to propagate correctly through the cascade's hierarchical merge, it must satisfy two properties:
-
-**Over-composability.** The value must compose as `combined = near + far × near_transmittance`. This means it represents "an amount of something arriving from a direction" — you can add what's in front to what's behind (attenuated by transparency). Radiance-like quantities satisfy this. Path properties (like cumulative spectral tilt or total path length) do not.
-
-**Linearity (superposition).** When the merge sums contributions from different angles (angular weighting) or averages adjacent probes (even/odd interpolation), the result must equal the correct total. This requires linear scaling: `w_A × value_A + w_B × value_B` gives the correct combined value. Radiance is linear. Products of independent quantities, ratios, and nonlinear functions introduce cross-term errors under averaging.
-
-**In one sentence:** a value flows correctly through the cascade if and only if it behaves like a radiance — it represents "how much of X arrives" and satisfies both over-composability and linear superposition.
-
-This is why `acousticHF` (high-frequency acoustic radiance) works: it IS a radiance with different propagation parameters. And why `slope` (a path-integral exponent) failed: it is neither over-composable nor linear under angular averaging. The spectral tilt is instead recovered from the RATIO of two correctly-propagated radiance channels at readout.
-
-### 2.6 Mass law via two-channel acoustic radiance (implemented)
-
-Frequency-dependent attenuation is modeled by propagating TWO acoustic channels with different transmittance, computed per-cell at the seed:
-
-- **Broadband** (`acoustic`): uses `trans = pow(1 - opacity, spacing)` — same as visual
-- **High-frequency** (`acousticHF`): uses `transHF = pow(trans, HF_FACTOR)` — equivalent to `pow(1 - opacity, spacing × HF_FACTOR)`
-
-Both channels emit the same value at the listener (`1 - trans`). The spectral difference arises entirely from the different transmittance during propagation. `transHF` is a separate field in the ray buffer (4th u32, using existing padding — zero extra memory), composed multiplicatively through the extend and used for the HF channel's over-composite in the merge.
-
-`HF_FACTOR` (default 3.0) controls how much more opaque volumes appear to high frequencies. This approximates the mass law (`TL ∝ f²`): `TL_HF = HF_FACTOR × TL_broad` in dB.
-
-**Wall permeability:** Both acoustic channels use the same `max(trans, WALL_PERM)` floor (WALL_PERM = 0.02). Solid walls pass a tiny amount of bass. The same floor for both channels avoids spectral artifacts at wall boundaries. Visual channels still use raw `trans = 0`.
-
-**Important implementation note:** The broadband and HF channels must use identical sampling methods everywhere (both `textureSampleLevel` in the blit, both `packF16`-precision storage). Any precision or interpolation mismatch produces directional artifacts in the ratio.
-
-**Current limitations:**
-- Only opacity drives spectral attenuation. Albedo is not used for acoustic (it only drives visual bounce/scatter).
-- Acoustic does not participate in the bounce system. Sound is direct-path only — no reflections off walls. Bounce-derived reverb is a future extension.
-- The highshelf EQ is a first approximation. The mass law predicts additive TL increase with frequency; our model gives multiplicative. For thin volumes, these are equivalent. For thick volumes, ours is more aggressive.
-
----
-
-## Volumetric Acoustics
-
-### How existing HRC volume parameters drive audio
-
-HRC already models volumetric media with two parameters per pixel: opacity (extinction per step) and albedo (fraction of extinguished energy that is scattered vs absorbed). These same values, with no additional data, produce physically correct volumetric audio behavior.
-
-**Opacity** controls how much energy is removed from the forward path. The seed computes `trans = pow(1 - opacity, spacing)`, which compounds per-pixel extinction over the probe footprint. This is Beer-Lambert attenuation — identical physics for light and sound propagating through a participating medium.
-
-**Albedo** controls what happens to the removed energy. The bounce shader reads `fluence × albedo` and re-emits it isotropically. For audio, this means scattered sound energy re-enters the cascade and can reach probes that the direct path cannot — sound diffusing through a scattering medium.
-
-**Slope** adds frequency dependence to the extinction. In the seed, slope is computed from opacity:
-
-```wgsl
-if (world.a > 0.0 && world.a < 1.0) {
-    slope = -2.0 * world.a * params.probeSpacing;
-}
-```
-
-This models the physical relationship where volumetric scatterers (leaves, raindrops, bodies in a crowd) are small relative to bass wavelengths and large relative to treble wavelengths. Low frequencies pass through with less attenuation; high frequencies are more strongly scattered or absorbed. The `-2.0` coefficient corresponds to the Rayleigh-regime f^(-2) dependence. Slope accumulates additively through the extend shader, so traversing more volume produces a steeper tilt.
-
-For solid walls (opacity = 1.0), slope is irrelevant: transmittance is zero and the acoustic signal is dead regardless of frequency.
-
-### Expected behavior for different combinations
-
-| Opacity | Albedo | Analog               | Direct sound         | Scattered sound          | Spectral effect      |
-| ------- | ------ | -------------------- | -------------------- | ------------------------ | -------------------- |
-| 0.0     | —      | Air                  | Full                 | None                     | Flat                 |
-| 0.05    | 0.0    | Thin absorber        | Slightly reduced     | None                     | Mild treble loss     |
-| 0.05    | 0.8    | Light fog            | Slightly reduced     | Diffuse glow of sound    | Mild treble loss     |
-| 0.2     | 0.3    | Foliage              | Noticeably reduced   | Some diffuse scatter     | Moderate treble loss |
-| 0.2     | 0.0    | Acoustic foam (thin) | Noticeably reduced   | None (absorbed)          | Moderate treble loss |
-| 0.5     | 0.5    | Dense hedge          | Heavily attenuated   | Moderate diffuse scatter | Strong treble loss   |
-| 0.5     | 0.0    | Heavy absorber       | Heavily attenuated   | None                     | Strong treble loss   |
-| 1.0     | —      | Solid wall           | Zero (fully blocked) | Via bounce off surface   | N/A (signal dead)    |
-
-Key behaviors to note:
-
-- **High opacity, zero albedo** (acoustic foam, absorbers): sound is removed and destroyed. No scattering, no bounce. The space behind it is quiet.
-- **High opacity, high albedo** (dense reflective medium): sound is removed from the direct path but scattered diffusely. The probe behind it receives less direct sound but may receive scattered energy from the bounce loop — similar to hearing muffled sound through a thick curtain where some energy leaks diffusely.
-- **Low opacity, high albedo** (fog, light rain): minimal direct attenuation but significant scattering over distance. Sound becomes harder to localize as the direct-to-scattered ratio decreases. The gain remains high but the pan becomes less defined (scattered energy arrives from many directions).
-- **Zero albedo everywhere** (or bounces disabled): no scattering at all. Sound propagates only through air paths and apertures. Volumes only attenuate; they never redirect.
+- **True diffraction.** Sound wrapping around obstacles follows the cascade's penumbra structure — qualitatively plausible, quantitatively approximate.
+- **Per-material acoustic properties.** All surfaces use the same mass law parameters. Custom absorption/reflection per material would require extending the material texture.
 
 ---
 
 ## 3. Data Layout
 
-### 3.1 Ray buffer (widened, implemented)
+### 3.1 Ray buffer
 
-`vec4u` = 16 bytes → `packF16(R, G, B, trans)` + `pack2x16float(acoustic, acousticHF)` + `pack2x16float(transHF, 0)`
+`vec4u` = 16 bytes (same as vec3u due to WGSL alignment — the 4th u32 was wasted padding):
+- u32[0-1]: `packF16(R, G, B, trans)` — visual radiance + transmittance
+- u32[2]: `pack2x16float(acousticHF, acousticLF)` — two acoustic channels
+- u32[3]: `pack2x16float(transLF, 0)` — LF transmittance (HF uses visual trans)
 
-Two acoustic f16 values: broadband acoustic radiance (the listener's propagating signal) and high-frequency acoustic radiance (mass-law-attenuated). A separate HF transmittance `transHF = pow(trans, HF_FACTOR)` is computed per-cell at the seed and composed multiplicatively through the extend. Both acoustic channels compose identically via over-composite, using their respective transmittance. The ratio `acousticHF / acoustic` gives the spectral tilt at readout.
+### 3.2 Merge buffer
 
-### 3.7 Pan buffer (implemented)
+`vec2u` = 8 bytes: `packRGB9E5(visual)` + `pack2x16float(acousticHF, acousticLF)`.
 
-One `f32` per probe at probe resolution. Stores the direction-weighted acoustic gain: `result_acoustic * fxProbe` where `fxProbe` is +1 (East), -1 (West), 0 (North/South). Accumulated from all 4 directions at merge level 0. The gather reads it and accumulates positive/negative contributions per channel. Readback normalizes by gain to give pan in [-1, +1].
+### 3.3 Fluence buffer
 
-**Limitation:** Pan uses the cascade's 4-direction structure for directional information. East/West give clear left/right panning. North/South contribute zero, meaning sources directly above/below always pan center. For indirect paths (bounces), the pan reflects the direction of the FINAL leg of the path, not the entire path. Multi-bounce paths that change direction lose their original directional information. A more accurate approach would require propagating pan-weighted acoustic as a separate over-composable channel through the cascade, which is architecturally possible but not yet implemented.
+`packF16(R, G, B, acousticHF)`. HF in alpha (shares visual precision path).
 
-### 3.2 Merge buffer (widened, implemented)
+### 3.4 LF buffer
 
-`vec2u` = 8 bytes → `packRGB9E5(visual)` + `pack2x16float(acoustic, acousticHF)`. Both acoustic channels flow through the merge identically to R, G, B.
+Separate `rgba16float` probe-resolution buffer for acousticLF. Uses identical `packF16` precision path as fluence to avoid ratio artifacts from precision mismatch.
 
-### 3.3 Fluence buffer + HF buffer (implemented)
+### 3.5 Pan buffer
 
-Fluence: `packF16(R, G, B, acoustic_gain)`. HF: separate `r32float` probe-resolution buffer for `acousticHF` gain. Both written at merge level 0, accumulated across 4 directions.
+`f32` per probe. Stores `result_lf × cos(angle_to_listener)` accumulated from all 4 directions. The gather splits positive/negative contributions per channel.
 
-### 3.4 Pan buffer (new, small)
+### 3.6 Material texture
 
-One i8 value per probe: signed pan position [-127, +127]. At 1024² probes: 1MB.
+`rg8unorm`. R = albedo, G = audio channel ID (0=none, 1=listener, 2-255=sources). Written per-pixel via MRT.
 
-Written during the level-0 merge write. Each direction contributes its acoustic result weighted by a sign: E = +1, W = -1, N and S = 0 (for X-axis stereo pan). Normalized at readout by dividing by acoustic_gain.
+### 3.7 Channel accumulator
 
-### 3.5 Material texture (implemented)
-
-Extended to `rg8unorm`. R = albedo (existing). G = audio channel ID:
-- 0 = no audio role
-- 1 = listener (the mouse light / brush)
-- 2–255 = audio source channels
-
-The channel ID is written per-pixel via the MRT fragment shader. Every pixel of a shape tagged as an audio source carries the channel ID, enabling the gather pass to correctly sum contributions from the shape's entire surface.
-
-### 3.6 Slope buffer (new)
-
-One `f32` per probe at probe resolution. Stores the gain-weighted slope (`acoustic * slope`) accumulated from all 4 directions. Written at merge level 0 alongside the fluence. Copied to an `r32float` texture for the gather pass to sample.
+1024 `u32` entries (atomic): channels 0-255 = HF gain, 256-511 = LF gain, 512-767 = pan positive, 768-1023 = pan negative.
 
 ---
 
-## 4. Shader Changes
+## 4. Gather Pass
 
-### 4.1 Seed
+A compute pass at **screen resolution**. For each pixel with channel ID >= 2:
+1. Read HF fluence, LF fluence, and pan at the probe position
+2. Multiply each by `(1-trans)` — surface absorption (identical to visual light absorption)
+3. `atomicAdd` into per-channel accumulators
 
-```wgsl
-// Existing visual computation (unchanged)
-let trans = pow(1.0 - world.a, params.probeSpacing);
-let rad = (world.rgb + bounce) * (1.0 - trans);
-
-// Acoustic: listener probe emits 1.0, all others emit 0.0
-let is_listener = (probeIdx == params.listenerProbeIdx
-                && sliceIdx == params.listenerSliceIdx);
-let acoustic_rad = select(0.0, 1.0, is_listener) * (1.0 - trans);
-
-// Spectral slope from opacity via mass law
-var slope = 0.0;
-if (world.a > 0.0 && world.a < 1.0) {
-    slope = -2.0 * world.a * params.probeSpacing;
-}
-// Solid walls: slope irrelevant (trans = 0, signal is dead)
-```
-
-### 4.2 Extend
-
-Two additional operations per composition:
-
-```wgsl
-// Existing (unchanged)
-let combined_rad = near.rad + far.rad * near.trans;
-let combined_trans = near.trans * far.trans;
-
-// New
-let combined_acoustic = near.acoustic + far.acoustic * near.trans;
-let combined_slope = near.slope + far.slope;
-```
-
-One multiply-add (acoustic, same pattern as visual radiance) and one addition (slope). Bandwidth-bound shader; ALU cost is invisible.
-
-Slope composition is additive because it represents a power-law exponent: `T(f) = T_ref × (f/f_ref)^slope`. Serial transmission multiplies T values, which adds exponents.
-
-### 4.3 Merge
-
-No logic changes. acoustic_rad is a fourth radiance component that flows through the merge identically to R, G, or B. The merge's even/odd probe handling, cone weighting, angular weights, far-cone composition — all per-component operations that apply to acoustic_rad without modification.
-
-At level 0, the merge writes:
-
-- acoustic_gain to fluence buffer alpha
-- sign-weighted acoustic contribution to the i8 pan buffer
-
-### 4.4 Blit
-
-No changes. Reads visual fluence RGB and world texture. Ignores acoustic data.
+This models sound reception at the shape's **surface**. Edge pixels contribute (exposed to the acoustic field). Interior pixels contribute nothing (field blocked by outer layers). Every pixel of a source shape participates, not just the center.
 
 ---
 
 ## 5. Readout
 
-### 5.1 Gather pass (implemented)
-
-A gather compute pass at **screen resolution**. For each pixel:
-1. Read channel ID from material texture
-2. If channel >= 2 (source): read acoustic fluence alpha and slope at that probe position
-3. Multiply by `(1-trans)` — the surface absorption, identical to how visual light is absorbed
-4. `atomicAdd` into per-channel accumulator (gain and slope_weight separately)
-
-This models sound reception at the shape's **surface**, not its center. Edge pixels contribute (they see the listener's acoustic field and have opacity). Interior pixels of opaque shapes contribute nothing (acoustic field is blocked by outer layers). Air pixels contribute nothing (no opacity to absorb).
-
-Gain is normalized by the listener's perimeter (`2 * pi * radius`) to give listener-size-independent attenuation with correct 1/r distance falloff. Slope is normalized by gain to give the gain-weighted average spectral tilt.
-
-All sources are area sources. A point source is a single-pixel area source.
-
-### 5.2 Spectral tilt from HF ratio (implemented)
-
-The gather accumulates both broadband and HF gains per channel. The ratio gives the spectral tilt:
+### Per-channel values
 
 ```
-hfRatio = hfGain / broadGain    // 1.0 = flat (open air), <1.0 = treble cut
-shelfDb = (hfRatio - 1.0) * 18  // maps to lowshelf EQ gain in dB
+gain      = LF_gathered / listener_perimeter     // 0..~1, with pow(g, 0.4) curve for dynamics
+hfRatio   = HF_gathered / LF_gathered            // 1.0 = flat, <1.0 = treble cut
+pan       = (pan_pos - pan_neg) / LF_gathered    // [-1, +1]
 ```
 
-This replaces the original slope-based spectral reconstruction. The slope approach (`T(f) = gain × (f/f_ref)^slope`) offered continuous spectrum reconstruction from one number, but slope is a path property that does not satisfy the cascade's merge-compatible requirements (see §2.5). The two-channel ratio approach gives correct multi-path composition at the cost of discrete (two-band) rather than continuous frequency resolution.
-
-### 5.3 Audio DSP mapping (implemented)
+### Audio DSP chain
 
 ```
-gain     → channel volume (linear gain)
-hfRatio  → lowshelf EQ: (hfRatio - 1) × 18 dB at 2kHz
-             hfRatio = 1.0: flat response (open air)
-             hfRatio = 0.5: -9dB treble cut (moderate volume traversal)
-             hfRatio = 0.0: -18dB treble cut (dense volume or wall)
-pan      → stereo panner [-1, +1] (implemented, direction-based)
+source (Feather.mov) → lowpass biquad → gain node → compressor/limiter → stereo panner → output
 ```
 
----
-
-## 6. Cost
-
-### 6.1 Integrated overhead (single cascade pass)
-
-| Resource              | Current HRC     | With Resonance Cascades | Overhead              |
-| --------------------- | --------------- | ----------------------- | --------------------- |
-| Ray entry             | 8 bytes (vec2u) | 12 bytes (vec3u)        | +50% ray bandwidth    |
-| Merge entry           | 4 bytes (u32)   | 8 bytes (2×u32)         | +100% merge bandwidth |
-| Fluence entry         | 8 bytes         | 8 bytes (use alpha)     | 0%                    |
-| Pan buffer            | —               | 1 byte per probe        | ~1MB at 1024²         |
-| Additional dispatches | 0               | 0                       | 0                     |
-| ALU (seed)            | —               | ~5 instructions         | negligible            |
-| ALU (extend)          | —               | 2 instructions          | negligible            |
-| ALU (merge)           | —               | 0 (per-component)       | negligible            |
-
-The dominant overhead is bandwidth: +50% on ray buffers, +100% on merge buffers. These are the bottleneck in the current bandwidth-bound pipeline. Estimated impact: +30–60% of current cascade time. Needs profiling.
-
-### 6.2 Readback
-
-Acoustic fluence + pan: ~5MB at 1024² (4 bytes fluence alpha + 1 byte pan per probe). Staging buffer with one-frame latency (~16ms, inaudible). For few sources, copy only relevant probe values.
-
-### 6.3 Standalone mode (noted)
-
-Resonance Cascades could also run as a fully separate cascade with no visual GI, at whatever probe resolution is appropriate for audio. The architecture is identical; it simply wouldn't carry RGB radiance. This is a separate product, not the integrated approach described here.
+- **Lowpass cutoff** = `200 + sqrt(hfRatio) × 19800` Hz. Open air → 20kHz (flat). Through wall → 200Hz (bass only).
+- **Gain** = `pow(min(gain, 1.0), 0.4)` — power curve compresses dynamic range so quiet signals (behind walls) remain audible.
+- **Pan** = geometric direction from listener to source probe, gain-weighted across source pixels.
+- **Compressor** at -3dB threshold, 20:1 ratio — acts as limiter to prevent clipping from hot bass content.
+- **Smoothing** via `setTargetAtTime` (50ms time constant) on all parameters to prevent clicks from frame-to-frame changes.
 
 ---
 
-## 7. Accuracy
+## 6. Lessons Learned
 
-### Exact (to probe resolution)
+### Slope doesn't work in a cascade
 
-- **Binary occlusion.** Walls fully block. Gaps wider than one probe spacing are resolved.
-- **Aperture propagation.** Energy fans through openings with correct angular spread from the merge's spatial interpolation.
-- **Gain composition.** The over-composite correctly accumulates the listener's signal along all available paths.
-- **Multi-path summation.** Multiple paths (e.g. two doorways) sum correctly.
-- **Pan accuracy.** Reflects the true directional distribution of arriving energy, including indirect paths.
+The original design used an additive "slope" value (spectral tilt exponent) propagated through the cascade. This failed because slope is a **path property** (accumulated along a ray), not a **field quantity** (amount arriving from a direction). It doesn't satisfy over-composability or linearity. Every attempt — additive composition, gain-weighted products, over-composite — produced directional artifacts in the merge.
 
-### Approximate
+The fix: two radiance channels with different transmittance. Both satisfy merge-compatible properties. The spectral information is recovered from their ratio at readout.
 
-- **Spectral slope.** Additive composition assumes power-law transmission. Non-monotonic materials are approximated by their average tilt.
-- **Penumbra as diffraction proxy.** Qualitatively plausible, quantitatively approximate.
+### Precision matching is critical
 
----
+The two acoustic channels must use **identical** sampling methods and storage precision everywhere. The original artifacts that plagued the HF channel for days turned out to be `textureSampleLevel` (bilinear) vs `textureLoad` (point sampling) on different textures containing the same data. Even f16 vs f32 storage precision creates visible ratio artifacts.
 
-## 8. Future Extensions (speculative)
+### The LF/HF flip
 
-### 8.1 Bounce-derived reverb
-
-With bounces enabled, separate the acoustic channel into direct (R-like) and bounced (G-like) components. The ratio gives wet/dry per probe at zero additional GPU cost.
-
-### 8.2 Per-material acoustic properties
-
-Override global mass_scale per surface via material texture channel. Custom slope values for materials that deviate from the mass law.
-
-### 8.3 Decay rate estimation
-
-Compare frame-to-frame bounce convergence to estimate reverberant decay rate. Feeds into algorithmic reverb tail length.
-
-### 8.4 Multiple listeners
-
-Each listener occupies one acoustic radiance channel. Two listeners = two channels in the same pass (sacrifice a visual color channel or widen further). Four listeners would need a second pass.
+The initial model had broadband (shares visual trans) + HF (extra attenuation). This was backwards. The correct physical model: HF shares visual trans (high frequencies interact with media like light), LF gets its own more-permissive trans (bass passes through). This gives:
+- No spurious treble cut in direct view (HF = visual, ratio = 1)
+- Bass leaks through solid walls (transLF has wall permeability)
+- Bounced sound retains full spectrum (both channels receive bounce energy)
+- Smooth degradation around corners (bass persists when HF is blocked)
 
 ---
 
-## 9. Build Plan
+## 7. Future Extensions
 
-### Phase 0: Test Harness — DONE
+### Improved stereo pan
 
-Acoustic test scenes (open field, doorway, corridor, volumetric, two rooms). Listener = mouse brush (channel 1 in material texture). Shapes equipped with audio emitter UI (Feather.mov via Web Audio). Acoustic debug visualization (debug mode 3) showing listener (cyan), sources (yellow), gain field (blue-orange heatmap). Audio debug panel with per-channel gain/slope bars and rolling graph.
+Current pan uses geometric direction from listener to probe. This works for direct paths but not for multi-bounce indirect paths (sound arriving from a corridor to the left still pans based on geometric source position). A proper solution would propagate pan-weighted acoustic as a separate over-composable channel.
 
-### Phase 1: FDTD Ground Truth
+### Per-material acoustic properties
 
-2D wave solver on same world texture. Gaussian pulse → FFT → |H(f)|. Directional measurement. Pressure field visualization. Validates: free-field falloff, rigid reflection, slit diffraction.
+Extend material texture to carry per-surface acoustic parameters (absorption coefficient, mass). Currently all surfaces use the same global LF_FACTOR and BASS_WALL_PERM.
 
-### Phase 2: Resonance Cascade Integration — DONE
+### Multiple listeners
 
-Ray payload widened to `vec3u` (16 bytes per element due to WGSL alignment). Acoustic_rad + slope in seed/extend. Acoustic + slope_weight carried through merge via second f16. Acoustic_gain in fluence alpha. Slope_weight in separate probe-resolution buffer. Listener emits via `(1-trans)` at channel-1 pixels in material texture — identical to visual light emission. Gather pass at screen resolution sums `fluence * (1-trans)` per channel with atomics. Gain normalized by listener perimeter for correct 1/r falloff.
+Each listener occupies one acoustic channel pair (HF + LF). Two listeners would need 4 acoustic f16 values in the ray buffer, or a separate cascade pass.
 
-### Phase 3: Comparison & Validation
+### Decay rate estimation
 
-**Go/no-go gate.** Cascade vs FDTD across all test scenes.
-
-Metrics: broadband attenuation error (<6 dB target), spectral shape, pan accuracy (<30° target), aperture spreading (qualitative).
-
-| Scene       | Expected                                        |
-| ----------- | ----------------------------------------------- |
-| Open field  | Exact                                           |
-| Single wall | Exact occlusion, correct pan                    |
-| Doorway     | Good aperture spread, pan shifts toward opening |
-| L-corridor  | Exact with bounces                              |
-| Thin pillar | Poor (penumbra ≠ diffraction)                   |
-| Volumetric  | Good frequency-dependent attenuation            |
-
-### Phase 4: Audio Integration
-
-Web Audio: source → tilt EQ (slope) → gain (acoustic_gain) → stereo panner (pan) → output. FDTD convolution for A/B. Demo: walls, sources, moving listener, real-time audio.
+Compare frame-to-frame bounce convergence to estimate reverberant decay rate. Could feed into algorithmic reverb tail length.
 
 ---
 
-## 10. References
+## 8. References
 
 - Freeman, Sannikov, Margel. "Holographic Radiance Cascades for 2D Global Illumination." arXiv:2505.02041 (2025).
 - Sannikov. "Radiance Cascades: A Novel Approach to Calculating Global Illumination." (2023).
 - Yaazarai. Volumetric HRC. github.com/Yaazarai/Volumetric-HRC.
 - m4xc. "Fundamentals of Radiance Cascades." m4xc.dev (2024).
 - Raghuvanshi et al. Project Triton / Project Acoustics, Microsoft Research.
-- GPUVerb. GPU-accelerated 2D FDTD. github.com/GPUVerb/GPUVerb.
 - Valve. Steam Audio. valvesoftware.github.io/steam-audio.
 - Cremer, Müller. "Principles and Applications of Room Acoustics."
