@@ -646,7 +646,9 @@ const blitShader =
     if (ch == 1u) {
       color = vec4f(0.1, 0.9, 0.7, 1.0);
     } else if (ch >= 2u) {
-      color = vec4f(0.2, 0.4, 1.0, 1.0);
+      let sr = clamp(gain * 2.0, 0.0, 1.0);
+      let sg = clamp((gain - hf) * 2.0, 0.0, 1.0);
+      color = vec4f(linearToSrgb(vec3f(sr * 0.3, sg * 0.3, 0.6 + sr * 0.4)), 1.0);
     } else {
       // R = broadband gain, G = HF loss (1 - hf/broad), B = base
       let r = clamp(gain * 2.0, 0.0, 1.0);

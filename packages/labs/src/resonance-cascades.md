@@ -54,16 +54,25 @@ For a value to propagate correctly through the cascade's hierarchical merge, it 
 
 This is why `acousticHF` (high-frequency acoustic radiance) works: it IS a radiance with different propagation parameters. And why `slope` (a path-integral exponent) failed: it is neither over-composable nor linear under angular averaging. The spectral tilt is instead recovered from the RATIO of two correctly-propagated radiance channels at readout.
 
-### 2.6 Mass law via two-channel acoustic radiance
+### 2.6 Mass law via two-channel acoustic radiance (implemented)
 
-Frequency-dependent attenuation is modeled by propagating TWO acoustic channels with different effective opacity:
+Frequency-dependent attenuation is modeled by propagating TWO acoustic channels with different transmittance, computed per-cell at the seed:
 
 - **Broadband** (`acoustic`): uses `trans = pow(1 - opacity, spacing)` — same as visual
-- **High-frequency** (`acousticHF`): uses `trans_hf = pow(1 - opacity, spacing × HF_FACTOR)` — the medium is effectively `HF_FACTOR` times thicker for high frequencies
+- **High-frequency** (`acousticHF`): uses `transHF = pow(trans, HF_FACTOR)` — equivalent to `pow(1 - opacity, spacing × HF_FACTOR)`
 
-This models the **mass law**: high-frequency sound waves interact with media as if the medium were thicker, because shorter wavelengths scatter/absorb more. The `HF_FACTOR` (default 3.0) determines the frequency ratio: `f_hf / f_ref = sqrt(HF_FACTOR)`.
+Both channels emit the same value at the listener (`1 - trans`). The spectral difference arises entirely from the different transmittance during propagation. `transHF` is a separate field in the ray buffer (4th u32, using existing padding — zero extra memory), composed multiplicatively through the extend and used for the HF channel's over-composite in the merge.
 
-**Wall permeability:** Both acoustic channels use `max(trans, WALL_PERM)` instead of raw `trans` in the over-composite. This gives solid walls (opacity=1) a tiny nonzero transmittance for bass (`WALL_PERM = 0.02`) and an even tinier one for treble (`WALL_PERM_HF = WALL_PERM^HF_FACTOR ≈ 0.000008`). Bass leaks through walls; treble does not. Visual channels still use raw `trans = 0` for full opacity.
+`HF_FACTOR` (default 3.0) controls how much more opaque volumes appear to high frequencies. This approximates the mass law (`TL ∝ f²`): `TL_HF = HF_FACTOR × TL_broad` in dB.
+
+**Wall permeability:** Both acoustic channels use the same `max(trans, WALL_PERM)` floor (WALL_PERM = 0.02). Solid walls pass a tiny amount of bass. The same floor for both channels avoids spectral artifacts at wall boundaries. Visual channels still use raw `trans = 0`.
+
+**Important implementation note:** The broadband and HF channels must use identical sampling methods everywhere (both `textureSampleLevel` in the blit, both `packF16`-precision storage). Any precision or interpolation mismatch produces directional artifacts in the ratio.
+
+**Current limitations:**
+- Only opacity drives spectral attenuation. Albedo is not used for acoustic (it only drives visual bounce/scatter).
+- Acoustic does not participate in the bounce system. Sound is direct-path only — no reflections off walls. Bounce-derived reverb is a future extension.
+- The highshelf EQ is a first approximation. The mass law predicts additive TL increase with frequency; our model gives multiplicative. For thin volumes, these are equivalent. For thick volumes, ours is more aggressive.
 
 ---
 
