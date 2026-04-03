@@ -13,6 +13,7 @@ type Line = [
   thickness: number,
   opacity: number,
   albedo: number,
+  channelId: number,
 ];
 
 const SOLID_OPACITY = 1;
@@ -37,6 +38,15 @@ function ceilLog2(n: number): number {
 
 function ceilDiv(n: number, d: number): number {
   return Math.ceil(n / d);
+}
+
+function f16ToFloat(h: number): number {
+  const sign = (h >> 15) & 1;
+  const exp = (h >> 10) & 0x1f;
+  const frac = h & 0x3ff;
+  if (exp === 0) return (sign ? -1 : 1) * 2 ** -14 * (frac / 1024);
+  if (exp === 31) return frac === 0 ? (sign ? -Infinity : Infinity) : NaN;
+  return (sign ? -1 : 1) * 2 ** (exp - 15) * (1 + frac / 1024);
 }
 
 const TEX_RENDER = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
@@ -110,12 +120,14 @@ struct VertexInput {
   @location(1) color: vec3f,
   @location(2) opacity: f32,
   @location(3) albedo: f32,
+  @location(4) channelId: f32,
 }
 struct VertexOutput {
   @builtin(position) position: vec4f,
   @location(0) color: vec3f,
   @location(1) opacity: f32,
   @location(2) albedo: f32,
+  @location(3) channelId: f32,
 }
 fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 @vertex fn vertex_main(input: VertexInput) -> VertexOutput {
@@ -124,13 +136,14 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   out.color = input.color;
   out.opacity = input.opacity;
   out.albedo = input.albedo;
+  out.channelId = input.channelId;
   return out;
 }
 struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 @fragment fn fragment_main(in: VertexOutput) -> FragOut {
   var out: FragOut;
   out.world = vec4f(srgbToLinear(in.color), in.opacity);
-  out.material = vec4f(in.albedo, 0.0, 0.0, 0.0);
+  out.material = vec4f(in.albedo, in.channelId / 255.0, 0.0, 0.0);
   return out;
 }
 `;
@@ -144,6 +157,7 @@ struct VertexOutput {
   @location(3) radius: f32,
   @location(4) opacity: f32,
   @location(5) albedo: f32,
+  @location(6) channelId: f32,
 }
 struct Canvas { width: f32, height: f32 }
 @group(0) @binding(0) var<uniform> canvas: Canvas;
@@ -153,6 +167,7 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   @location(0) p1: vec2f, @location(1) p2: vec2f,
   @location(2) color: vec3f, @location(3) thickness: f32,
   @location(4) opacity: f32, @location(5) albedo: f32,
+  @location(6) channelId: f32,
 ) -> VertexOutput {
   let r = thickness * 0.5;
   let minP = min(p1, p2) - vec2f(r);
@@ -166,7 +181,7 @@ fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
   var out: VertexOutput;
   out.position = vec4f(clip, 0.0, 1.0);
   out.color = color; out.p1 = p1; out.p2 = p2; out.radius = r;
-  out.opacity = opacity; out.albedo = albedo;
+  out.opacity = opacity; out.albedo = albedo; out.channelId = channelId;
   return out;
 }
 struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
@@ -180,7 +195,7 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
   if (d > 0.0) { discard; }
   var out: FragOut;
   out.world = vec4f(srgbToLinear(in.color), in.opacity);
-  out.material = vec4f(in.albedo, 0.0, 0.0, 0.0);
+  out.material = vec4f(in.albedo, in.channelId / 255.0, 0.0, 0.0);
   return out;
 }
 `;
@@ -205,8 +220,9 @@ struct SeedParams {
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
 @group(0) @binding(1) var bounceTex: texture_2d<f32>;
-@group(0) @binding(2) var<storage, read_write> rayOut: array<vec2u>;
+@group(0) @binding(2) var<storage, read_write> rayOut: array<vec3u>;
 @group(0) @binding(3) var<uniform> params: SeedParams;
+@group(0) @binding(4) var materialTex: texture_2d<f32>;
 
 fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
@@ -223,18 +239,30 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
   var rad = vec3f(0.0);
   var trans = 1.0;
+  var slope = 0.0;
+  var acoustic_rad = 0.0;
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
     let world = textureLoad(worldTex, px, 0);
     let bdim = vec2i(textureDimensions(bounceTex, 0));
     let bounce = textureLoad(bounceTex, clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * vec2f(bdim)), vec2i(0), bdim - 1), 0).rgb;
     trans = pow(1.0 - world.a, params.probeSpacing);
     rad = (world.rgb + bounce) * (1.0 - trans);
+    if (world.a > 0.0 && world.a < 1.0) {
+      slope = -2.0 * world.a * params.probeSpacing;
+    }
+    let material = textureLoad(materialTex, px, 0);
+    let audioChannel = u32(material.g * 255.0 + 0.5);
+    if (audioChannel == 255u) {
+      acoustic_rad = 1.0 - trans;
+    }
   }
 
-  let packed = packF16(vec4f(rad, trans));
+  let packed_visual = packF16(vec4f(rad, trans));
+  let packed_acoustic = pack2x16float(vec2f(acoustic_rad, slope));
+  let entry = vec3u(packed_visual, packed_acoustic);
   let rayW = i32(params.probeCount) * 2;
-  rayOut[sliceIdx * rayW + probeIdx * 2] = packed;
-  rayOut[sliceIdx * rayW + probeIdx * 2 + 1] = packed;
+  rayOut[sliceIdx * rayW + probeIdx * 2] = entry;
+  rayOut[sliceIdx * rayW + probeIdx * 2 + 1] = entry;
 }
 `;
 
@@ -255,14 +283,14 @@ struct ExtendParams {
   pad3: u32,
 };
 
-@group(0) @binding(0) var<storage, read> prevRay: array<vec2u>;
-@group(0) @binding(1) var<storage, read_write> currRay: array<vec2u>;
+@group(0) @binding(0) var<storage, read> prevRay: array<vec3u>;
+@group(0) @binding(1) var<storage, read_write> currRay: array<vec3u>;
 @group(0) @binding(2) var<uniform> params: ExtendParams;
 
 fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
-struct RayData { rad: vec3f, trans: f32 }
+struct RayData { rad: vec3f, trans: f32, acoustic: f32, slope: f32 }
 
 fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let prevLevel = params.level - 1u;
@@ -271,15 +299,22 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   if (probeIdx < 0 || probeIdx >= prevNumProbes ||
       rayIdx < 0 || rayIdx >= prevNumRays ||
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
-    return RayData(vec3f(0.0), 1.0);
+    return RayData(vec3f(0.0), 1.0, 0.0, 0.0);
   }
   let idx = sliceIdx * i32(params.prevRayW) + (probeIdx << prevLevel) + probeIdx + rayIdx;
-  let r = unpackF16(prevRay[idx]);
-  return RayData(r.rgb, r.a);
+  let entry = prevRay[idx];
+  let r = unpackF16(vec2u(entry.x, entry.y));
+  let a = unpack2x16float(entry.z);
+  return RayData(r.rgb, r.a, a.x, a.y);
 }
 
 fn compositeRay(near: RayData, far: RayData) -> RayData {
-  return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
+  return RayData(
+    near.rad + far.rad * near.trans,
+    near.trans * far.trans,
+    near.acoustic + far.acoustic * near.trans,
+    near.slope + far.slope,
+  );
 }
 
 @compute @workgroup_size(${WG_EXTEND[0]}, ${WG_EXTEND[1]})
@@ -313,7 +348,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let avgRad = (crossA.rad + crossB.rad) * 0.5;
   let avgTrans = (crossA.trans + crossB.trans) * 0.5;
-  currRay[sliceIdx * i32(params.currRayW) + texelX] = packF16(vec4f(avgRad, avgTrans));
+  let avgAcoustic = (crossA.acoustic + crossB.acoustic) * 0.5;
+  let avgSlope = (crossA.slope + crossB.slope) * 0.5;
+  let packed_visual = packF16(vec4f(avgRad, avgTrans));
+  let packed_acoustic = pack2x16float(vec2f(avgAcoustic, avgSlope));
+  currRay[sliceIdx * i32(params.currRayW) + texelX] = vec3u(packed_visual, packed_acoustic);
 }
 `;
 
@@ -348,9 +387,9 @@ struct MergeParams {
   fyOff: i32,
 };
 
-@group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
-@group(0) @binding(1) var<storage, read> mergeInBuf: array<u32>;
-@group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<u32>;
+@group(0) @binding(0) var<storage, read> rayBuf: array<vec3u>;
+@group(0) @binding(1) var<storage, read> mergeInBuf: array<vec2u>;
+@group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<vec2u>;
 
 fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
@@ -385,27 +424,31 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 @group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
 @group(0) @binding(6) var<storage, read> angWeights: array<f32>;
 
-struct RayData { rad: vec3f, trans: f32 }
+struct RayData { rad: vec3f, trans: f32, acoustic: f32, slope: f32 }
+struct MergeEntry { visual: vec3f, acoustic: f32 }
 
 fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let effProbes = i32(params.numProbes);
   if (probeIdx < 0 || probeIdx >= effProbes ||
       rayIdx < 0 || rayIdx >= i32(params.numRays) ||
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
-    return RayData(vec3f(0.0), 1.0);
+    return RayData(vec3f(0.0), 1.0, 0.0, 0.0);
   }
   let texX = (probeIdx << params.conesShift) + probeIdx + rayIdx;
-  let r = unpackF16(rayBuf[sliceIdx * i32(params.numProbes * params.numRays) + texX]);
-  return RayData(r.rgb, r.a);
+  let entry = rayBuf[sliceIdx * i32(params.numProbes * params.numRays) + texX];
+  let r = unpackF16(vec2u(entry.x, entry.y));
+  let a = unpack2x16float(entry.z);
+  return RayData(r.rgb, r.a, a.x, a.y);
 }
 
-fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
+fn loadMerge(texX: i32, sliceIdx: i32) -> MergeEntry {
   if (params.isLastLevel == 1u ||
       texX < 0 || texX >= i32(params.mergeInWidth) ||
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
-    return vec3f(0.0);
+    return MergeEntry(vec3f(0.0), 0.0);
   }
-  return unpackRGB9E5(mergeInBuf[sliceIdx * i32(params.mergeStride) + texX]);
+  let entry = mergeInBuf[sliceIdx * i32(params.mergeStride) + texX];
+  return MergeEntry(unpackRGB9E5(entry.x), unpack2x16float(entry.y).x);
 }
 
 fn getAngularWeight(subCone: u32) -> f32 {
@@ -435,6 +478,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let farStep = select(1, 2, isEven);
 
   var result = vec3f(0.0);
+  var result_acoustic = 0.0;
 
   for (var side = 0; side < 2; side++) {
     let subCone = u32(coneIdx * 2 + side);
@@ -446,13 +490,16 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     let farX = ((probeIdx + farStep) << conesShift) + i32(subCone);
     let farSlice = sliceIdx + sliceOff * farStep;
-    var farCone: vec3f;
+    var farCone = vec3f(0.0);
+    var farConeAcoustic = 0.0;
     if (params.isLastLevel == 1u ||
         farX < 0 || farX >= i32(params.mergeInWidth) ||
         farSlice < 0 || farSlice >= i32(params.sliceCount)) {
       farCone = loadSkyFluence(subCone);
     } else {
-      farCone = unpackRGB9E5(mergeInBuf[farSlice * i32(params.mergeStride) + farX]);
+      let farEntry = mergeInBuf[farSlice * i32(params.mergeStride) + farX];
+      farCone = unpackRGB9E5(farEntry.x);
+      farConeAcoustic = unpack2x16float(farEntry.y).x;
     }
 
     if (isEven) {
@@ -461,14 +508,22 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let cTrans = ray.trans * ext.trans;
       let merged = cRad * weight + farCone * cTrans;
       let nearCone = loadMerge((probeIdx << conesShift) + i32(subCone), sliceIdx);
-      result += (merged + nearCone) * 0.5;
+      result += (merged + nearCone.visual) * 0.5;
+
+      let cAcoustic = ray.acoustic + ext.acoustic * ray.trans;
+      let mergedAcoustic = cAcoustic * weight + farConeAcoustic * cTrans;
+      result_acoustic += (mergedAcoustic + nearCone.acoustic) * 0.5;
     } else {
       result += ray.rad * weight + farCone * ray.trans;
+      result_acoustic += ray.acoustic * weight + farConeAcoustic * ray.trans;
     }
   }
 
   let outX = (probeIdx << conesShift) + coneIdx;
-  mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = packRGB9E5(result);
+  mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = vec2u(
+    packRGB9E5(result),
+    pack2x16float(vec2f(result_acoustic, 0.0)),
+  );
 
   if (params.numCones == 1u) {
     let fc = vec2i(
@@ -481,7 +536,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     if (fc.x >= 0 && fc.x < fw && fc.y >= 0 && fc.y < fh) {
       let fi = fc.y * fStride + fc.x;
       let prev = unpackF16(fluenceBuf[fi]);
-      fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, 1.0));
+      fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, prev.a + result_acoustic));
     }
   }
 }
@@ -532,6 +587,7 @@ const blitShader =
 @group(0) @binding(1) var worldTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: BlitParams;
 @group(0) @binding(3) var linearSamp: sampler;
+@group(0) @binding(4) var materialTex: texture_2d<f32>;
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = pos.xy / vec2f(params.screenW, params.screenH);
@@ -542,18 +598,31 @@ const blitShader =
   var color = tonemapAndDither((emissive + indirect) * params.exposure, vec2u(pos.xy));
   let dm = i32(params.debugMode);
   if (dm == 1) {
-    // Probes: orange dots at probe centers
     let probeCoord = uv * vec2f(textureDimensions(fluenceTex, 0));
     if (length(fract(probeCoord) - 0.5) < 0.15) {
       color = vec4f(1.0, 0.3, 0.1, 1.0);
     }
   } else if (dm == 2) {
-    // Fluence heatmap: log-scale magnitude
     let mag = dot(fluence, vec3f(0.2126, 0.7152, 0.0722));
     let t = clamp(log2(mag + 1.0) * 0.3, 0.0, 1.0);
     let cool = vec3f(0.0, 0.1, 0.3);
     let hot = vec3f(1.0, 0.8, 0.2);
     color = vec4f(mix(cool, hot, t), 1.0);
+  } else if (dm == 3) {
+    let gain = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).a;
+    let mat = textureLoad(materialTex, vec2u(pos.xy), 0);
+    let ch = u32(mat.g * 255.0 + 0.5);
+    if (ch == 255u) {
+      color = vec4f(0.1, 0.9, 0.7, 1.0);
+    } else if (ch > 0u) {
+      let g = clamp(gain * 3.0, 0.15, 1.0);
+      color = vec4f(g, g * 0.8, 0.1, 1.0);
+    } else {
+      let at = clamp(gain * 2.0, 0.0, 1.0);
+      let cold = vec3f(0.0, 0.05, 0.2);
+      let hot = vec3f(1.0, 0.3, 0.05);
+      color = vec4f(linearToSrgb(mix(cold, hot, at)), 1.0);
+    }
   }
   return color;
 }
@@ -1004,6 +1073,10 @@ export class FolkHolographicRC extends FolkBaseSet {
   #smoothedFrameTime = 0;
   #lastFrameTimestamp = 0;
 
+  // Acoustic readback
+  #acousticReadbackBuffer!: GPUBuffer;
+  #acousticData: Uint32Array | null = null;
+
   // GPU timestamp profiling (null when timestamp-query unavailable)
   #tsQuerySet: GPUQuerySet | null = null;
   #tsResolveBuffer: GPUBuffer | null = null;
@@ -1138,7 +1211,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       return;
     }
     const [r, g, b] = color;
-    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity, albedo]);
+    this.#lines.push([x1, y1, x2, y2, r, g, b, thickness, opacity, albedo, 0]);
     this.#lineBufferDirty = true;
   }
 
@@ -1285,6 +1358,19 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#skyCircleData.fill(0);
     this.#uploadSkyCircle();
   }
+
+  getAcousticGain(sourceX: number, sourceY: number): number {
+    if (!this.#acousticData) return 0;
+    const spacing = Math.max(this.#canvas.width, this.#canvas.height) / Math.max(this.#psX, this.#psY);
+    const probeX = Math.floor(sourceX / spacing);
+    const probeY = Math.floor(sourceY / spacing);
+    if (probeX < 0 || probeX >= this.#psX || probeY < 0 || probeY >= this.#psY) return 0;
+    const idx = probeY * this.#fluenceStride + probeX;
+    const secondU32 = this.#acousticData[idx * 2 + 1];
+    const f16bits = (secondU32 >> 16) & 0xffff;
+    return f16ToFloat(f16bits);
+  }
+
 
   #uploadSkyCircle() {
     if (!this.#device || !this.#skyTexture) return;
@@ -1457,19 +1543,19 @@ export class FolkHolographicRC extends FolkBaseSet {
       device.createBuffer({ label, size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER);
-    [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
+    [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'rg8unorm', TEX_RENDER);
 
     // Ray/merge buffers are shared across all 4 directions, sized for worst case.
     this.#rayBuffers = [];
     for (let i = 0; i < this.#numCascades; i++) {
       const w = ceilDiv(psMax, 1 << i) * ((1 << i) + 1);
       this.#rayBuffers.push(
-        device.createBuffer({ label: `Ray-${i}`, size: w * psMax * 8, usage: GPUBufferUsage.STORAGE }),
+        device.createBuffer({ label: `Ray-${i}`, size: w * psMax * 16, usage: GPUBufferUsage.STORAGE }),
       );
     }
 
     this.#mergeBuffers = [0, 1].map((i) =>
-      device.createBuffer({ label: `Merge-${i}`, size: mergeStride * psMax * 4, usage: GPUBufferUsage.STORAGE }),
+      device.createBuffer({ label: `Merge-${i}`, size: mergeStride * psMax * 8, usage: GPUBufferUsage.STORAGE }),
     );
     const alignedFluenceRow = Math.ceil((psX * 8) / 256) * 256;
     this.#fluenceBuffer = device.createBuffer({
@@ -1488,6 +1574,12 @@ export class FolkHolographicRC extends FolkBaseSet {
     );
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
+
+    this.#acousticReadbackBuffer = device.createBuffer({
+      label: 'Acoustic-Readback',
+      size: alignedFluenceRow * psY,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
 
     [this.#bounceTexture, this.#bounceTextureView] = tex(
       device,
@@ -1557,7 +1649,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #initPipelines() {
     const device = this.#device;
-    const MRT_TARGETS: GPUColorTargetState[] = [{ format: 'rgba16float' }, { format: 'r8unorm' }];
+    const MRT_TARGETS: GPUColorTargetState[] = [{ format: 'rgba16float' }, { format: 'rg8unorm' }];
 
     const attr = (loc: number, off: number, fmt: GPUVertexFormat): GPUVertexAttribute => ({
       shaderLocation: loc,
@@ -1585,12 +1677,13 @@ export class FolkHolographicRC extends FolkBaseSet {
         entryPoint: 'vertex_main',
         buffers: [
           {
-            arrayStride: 28,
+            arrayStride: 32,
             attributes: [
               attr(0, 0, 'float32x2'),
               attr(1, 8, 'float32x3'),
               attr(2, 20, 'float32'),
               attr(3, 24, 'float32'),
+              attr(4, 28, 'float32'),
             ],
           },
         ],
@@ -1608,7 +1701,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         entryPoint: 'vertex_main',
         buffers: [
           {
-            arrayStride: 40,
+            arrayStride: 44,
             stepMode: 'instance',
             attributes: [
               attr(0, 0, 'float32x2'),
@@ -1617,6 +1710,7 @@ export class FolkHolographicRC extends FolkBaseSet {
               attr(3, 28, 'float32'),
               attr(4, 32, 'float32'),
               attr(5, 36, 'float32'),
+              attr(6, 40, 'float32'),
             ],
           },
         ],
@@ -1658,6 +1752,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           offset: dir * 256,
           size: seedPS,
         },
+        this.#materialTextureView,
       ),
     );
 
@@ -1714,6 +1809,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#worldTextureView,
       { buffer: this.#blitParamsBuffer },
       this.#linearSampler,
+      this.#materialTextureView,
     );
 
     this.#bounceBindGroup = bg(
@@ -1734,6 +1830,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeBuffers?.forEach((b) => b.destroy());
     this.#fluenceBuffer?.destroy();
     this.#fluenceTexture?.destroy();
+    this.#acousticReadbackBuffer?.destroy();
     this.#angWeightBuffer?.destroy();
     this.#bounceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
@@ -1780,6 +1877,8 @@ export class FolkHolographicRC extends FolkBaseSet {
       const opacity = opacityAttr !== null ? Number(opacityAttr) : SOLID_OPACITY;
       const albedoAttr = element.getAttribute('data-albedo');
       const albedo = albedoAttr !== null ? Number(albedoAttr) : 0;
+      const channelAttr = element.getAttribute('data-audio-channel');
+      const channelId = channelAttr !== null ? Number(channelAttr) : 0;
       // Compute rotated corners around shape center
       const cx = sx + sw / 2;
       const cy = sy + sh / 2;
@@ -1793,7 +1892,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       ].map(([lx, ly]) => [((cx + lx * cos - ly * sin) / cw) * 2 - 1, 1 - ((cy + lx * sin + ly * cos) / ch) * 2]);
 
       const v = (vx: number, vy: number) => {
-        vertices.push(vx, vy, r, g, b, opacity, albedo);
+        vertices.push(vx, vy, r, g, b, opacity, albedo, channelId);
       };
       v(corners[0][0], corners[0][1]); // TL
       v(corners[1][0], corners[1][1]); // TR
@@ -1807,19 +1906,19 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#shapeDataBuffer = uploadVertexData(this.#device, this.#shapeDataBuffer, new Float32Array(vertices));
   }
 
-  #pixelQuadVerts(px: number, py: number, r: number, g: number, b: number, op: number, al: number, out: number[]) {
+  #pixelQuadVerts(px: number, py: number, r: number, g: number, b: number, op: number, al: number, ch: number, out: number[]) {
     const w = this.#canvas.width;
     const h = this.#canvas.height;
     const x0 = (px / w) * 2 - 1;
     const y0 = 1 - (py / h) * 2;
     const x1 = ((px + 1) / w) * 2 - 1;
     const y1 = 1 - ((py + 1) / h) * 2;
-    out.push(x0, y0, r, g, b, op, al);
-    out.push(x1, y0, r, g, b, op, al);
-    out.push(x0, y1, r, g, b, op, al);
-    out.push(x1, y0, r, g, b, op, al);
-    out.push(x1, y1, r, g, b, op, al);
-    out.push(x0, y1, r, g, b, op, al);
+    out.push(x0, y0, r, g, b, op, al, ch);
+    out.push(x1, y0, r, g, b, op, al, ch);
+    out.push(x0, y1, r, g, b, op, al, ch);
+    out.push(x1, y0, r, g, b, op, al, ch);
+    out.push(x1, y1, r, g, b, op, al, ch);
+    out.push(x0, y1, r, g, b, op, al, ch);
   }
 
   #updateDebugPixelBuffer() {
@@ -1829,9 +1928,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
     const verts: number[] = [];
     for (const [px, py, r, g, b, op, al] of this.#debugPixels) {
-      this.#pixelQuadVerts(px, py, r, g, b, op, al, verts);
+      this.#pixelQuadVerts(px, py, r, g, b, op, al, 0, verts);
     }
-    this.#debugPixelVertexCount = verts.length / 7;
+    this.#debugPixelVertexCount = verts.length / 8;
     this.#debugPixelBuffer = uploadVertexData(this.#device, this.#debugPixelBuffer, new Float32Array(verts));
   }
 
@@ -1841,7 +1940,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       return;
     }
     const count = this.#lines.length;
-    const FPL = 10;
+    const FPL = 11;
     if (!this.#lineInstanceBuffer || this.#lineInstanceCapacity < count) {
       this.#lineInstanceBuffer?.destroy();
       this.#lineInstanceCapacity = Math.max(count, 256);
@@ -1864,6 +1963,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const al = this.#mouseLightAlbedo;
     const verts: number[] = [];
 
+    const ch = 255;
     if (DEBUG_CANVAS) {
       const cx = Math.floor(x);
       const cy = Math.floor(y);
@@ -1876,7 +1976,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           const px = cx + bx;
           const py = cy + by;
           if (px >= 0 && py >= 0 && px < size && py < size) {
-            this.#pixelQuadVerts(px, py, r, g, b, op, al, verts);
+            this.#pixelQuadVerts(px, py, r, g, b, op, al, ch, verts);
           }
         }
       }
@@ -1892,13 +1992,13 @@ export class FolkHolographicRC extends FolkBaseSet {
       for (let i = 0; i < SEGS; i++) {
         const a0 = (i / SEGS) * Math.PI * 2;
         const a1 = ((i + 1) / SEGS) * Math.PI * 2;
-        verts.push(cx, cy, r, g, b, op, al);
-        verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, op, al);
-        verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, op, al);
+        verts.push(cx, cy, r, g, b, op, al, ch);
+        verts.push(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, r, g, b, op, al, ch);
+        verts.push(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, r, g, b, op, al, ch);
       }
     }
 
-    this.#mouseLightVertexCount = verts.length / 7;
+    this.#mouseLightVertexCount = verts.length / 8;
     this.#mouseLightBuffer = uploadVertexData(this.#device, this.#mouseLightBuffer, new Float32Array(verts));
   }
 
@@ -2084,12 +2184,27 @@ export class FolkHolographicRC extends FolkBaseSet {
       { width: this.#psX, height: this.#psY },
     );
 
+    // ── Step 2.75: Copy fluence to readback buffer for acoustic gain queries ──
+    if (this.#acousticReadbackBuffer.mapState === 'unmapped') {
+      encoder.copyBufferToBuffer(this.#fluenceBuffer, 0, this.#acousticReadbackBuffer, 0, this.#fluenceBuffer.size);
+    }
+
     // ── Step 3: Final blit ──
     this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroup, 'blit');
 
     this.#resolveTimestamps(encoder);
     this.#submitAndCapture(device, encoder);
     this.#readTimestamps();
+
+    if (this.#acousticReadbackBuffer.mapState === 'unmapped') {
+      this.#acousticReadbackBuffer
+        .mapAsync(GPUMapMode.READ)
+        .then(() => {
+          this.#acousticData = new Uint32Array(new Uint32Array(this.#acousticReadbackBuffer.getMappedRange()));
+          this.#acousticReadbackBuffer.unmap();
+        })
+        .catch(() => {});
+    }
   }
 
   #blitToScreen(encoder: GPUCommandEncoder, pipeline: GPURenderPipeline, bindGroup: GPUBindGroup, tsLabel = '') {

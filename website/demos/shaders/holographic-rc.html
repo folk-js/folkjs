@@ -377,8 +377,10 @@
         <option value="0">debug: off</option>
         <option value="1">debug: probes</option>
         <option value="2">debug: fluence</option>
+        <option value="3">debug: acoustic</option>
       </select>
       <label><input id="pt-toggle" type="checkbox" /> path trace</label>
+      <button id="sound-test" style="font:inherit;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);border:1px solid rgba(255,255,255,0.1);border-radius:4px;padding:2px 8px;cursor:pointer">&#9835; test</button>
       <div class="spacer"></div>
       <span id="fps" title="Toggle perf graph"></span>
       <div id="color-btn" title="Material inspector"></div>
@@ -457,6 +459,9 @@
           id="v-size"
           >2</span
         ></div
+      >
+      <div class="prow" id="audio-row" style="display:none"
+        ><label>audio</label><input id="p-audio" type="checkbox" style="margin:0" /></div
       >
     </div>
 
@@ -597,7 +602,7 @@
         hrc.setMouseLightRadius(pen.size / 2);
       });
 
-      function syncPanel() {
+      let syncPanel = function() {
         const shape = selectedShape;
         panelTitle.textContent = shape ? 'Shape' : 'Pen';
         sizeRow.style.display = shape ? 'none' : '';
@@ -848,12 +853,14 @@
 
       // ── Scene infrastructure ──
       let animationId = null;
+      let onSceneClear = () => {};
 
       function clearScene() {
         if (animationId) {
           cancelAnimationFrame(animationId);
           animationId = null;
         }
+        onSceneClear();
         hrc.clearLines();
         hrc.querySelectorAll('folk-shape').forEach((s) => s.remove());
       }
@@ -1212,6 +1219,55 @@
         animate();
       }
 
+      const audioRow = $('audio-row');
+      const pAudio = $('p-audio');
+      let addAudioToShape = (shape) => shape;
+
+      function loadAcousticOpen() {
+        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
+        addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
+        hrc.debugMode = 3; debugSelect.value = '3';
+      }
+
+      function loadAcousticDoorway() {
+        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
+        addShape(cx, cy - 200, 10, 170, 1);
+        addShape(cx, cy + 30, 10, 170, 1);
+        addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
+        hrc.debugMode = 3; debugSelect.value = '3';
+      }
+
+      function loadAcousticCorridor() {
+        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 10;
+        addShape(cx - 200, cy - 80, 400, t, 1);
+        addShape(cx - 200, cy + 80, 400, t, 1);
+        addShape(cx - 200, cy - 80, t, 170, 1);
+        addShape(cx + 200, cy - 80, t, 40, 1);
+        addShape(cx + 200, cy + 40, t, 50, 1);
+        addAudioToShape(addShape(cx + 250, cy - 20, 40, 40, 3));
+        hrc.debugMode = 3; debugSelect.value = '3';
+      }
+
+      function loadAcousticVolume() {
+        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2;
+        addShape(cx - 50, cy - 100, 100, 200, 0, { opacity: 0.05, albedo: 0.3 });
+        addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
+        hrc.debugMode = 3; debugSelect.value = '3';
+      }
+
+      function loadAcousticTwoRooms() {
+        const cx = window.innerWidth / 2, cy = hrc.clientHeight / 2, t = 10;
+        addShape(cx - 250, cy - 150, 500, t, 1);
+        addShape(cx - 250, cy + 150, 500, t, 1);
+        addShape(cx - 250, cy - 150, t, 310, 1);
+        addShape(cx + 250, cy - 150, t, 310, 1);
+        addShape(cx, cy - 150, t, 120, 1);
+        addShape(cx, cy + 30, t, 130, 1);
+        addAudioToShape(addShape(cx - 200, cy, 30, 30, 2));
+        addAudioToShape(addShape(cx + 150, cy - 20, 40, 40, 3));
+        hrc.debugMode = 3; debugSelect.value = '3';
+      }
+
       // ── Scene list ──
       const scenes = [
         { name: 'Pinhole', fn: loadPinhole },
@@ -1233,6 +1289,11 @@
         { name: 'Breathing', fn: loadBreathing },
         { name: 'Spectrum', fn: loadSpectrum },
         { name: 'Material cycle', fn: loadMaterialCycle },
+        { name: 'Acoustic: open', fn: loadAcousticOpen },
+        { name: 'Acoustic: doorway', fn: loadAcousticDoorway },
+        { name: 'Acoustic: corridor', fn: loadAcousticCorridor },
+        { name: 'Acoustic: volume', fn: loadAcousticVolume },
+        { name: 'Acoustic: two rooms', fn: loadAcousticTwoRooms },
       ];
 
       scenes.forEach((s, i) => {
@@ -1523,6 +1584,184 @@
           hrc.addLine(lastX, lastY, e.clientX, e.clientY, pen.color, pen.size, pen.opacity, pen.albedo);
         drawing = false;
       });
+
+      // ── Sound test ──
+      let audioCtx = null;
+      function ensureAudioCtx() {
+        if (!audioCtx) audioCtx = new AudioContext();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        return audioCtx;
+      }
+
+      $('sound-test').addEventListener('click', () => {
+        const ctx = ensureAudioCtx();
+        const osc = ctx.createOscillator();
+        osc.frequency.value = 440;
+        osc.type = 'sine';
+        const g = ctx.createGain();
+        g.gain.value = 0.15;
+        g.gain.setTargetAtTime(0, ctx.currentTime + 0.15, 0.05);
+        osc.connect(g).connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      });
+
+      // ── Per-shape audio sources ──
+      const audioSources = new Map();
+      let nextChannelId = 1;
+
+      function createShapeAudio(shape) {
+        if (audioSources.has(shape)) return audioSources.get(shape);
+        const chId = nextChannelId++;
+        if (nextChannelId > 254) nextChannelId = 1;
+        shape.setAttribute('data-audio-channel', String(chId));
+
+        const ctx = ensureAudioCtx();
+        const video = document.createElement('video');
+        video.src = '/Feather.mov';
+        video.loop = true;
+        video.crossOrigin = 'anonymous';
+        video.style.display = 'none';
+        document.body.appendChild(video);
+
+        const mediaSource = ctx.createMediaElementSource(video);
+        const biquad = ctx.createBiquadFilter();
+        biquad.type = 'lowshelf';
+        biquad.frequency.value = 2000;
+        biquad.gain.value = 0;
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 0;
+        const panner = ctx.createStereoPanner();
+        panner.pan.value = 0;
+
+        mediaSource.connect(biquad).connect(gainNode).connect(panner).connect(ctx.destination);
+        video.play().catch(() => {});
+
+        const src = { video, gainNode, biquad, panner, shape, channelId: chId, lastGain: 0 };
+        audioSources.set(shape, src);
+        return src;
+      }
+
+      function removeShapeAudio(shape) {
+        const src = audioSources.get(shape);
+        if (!src) return;
+        shape.removeAttribute('data-audio-channel');
+        src.video.pause();
+        src.video.remove();
+        src.gainNode.disconnect();
+        audioSources.delete(shape);
+      }
+
+      function clearAllAudio() {
+        audioSources.forEach((src, shape) => removeShapeAudio(shape));
+        nextChannelId = 1;
+      }
+
+      onSceneClear = clearAllAudio;
+      addAudioToShape = (shape) => { createShapeAudio(shape); return shape; };
+
+      pAudio.addEventListener('change', () => {
+        if (!selectedShape) return;
+        if (pAudio.checked) createShapeAudio(selectedShape);
+        else removeShapeAudio(selectedShape);
+      });
+
+      const origSyncPanel = syncPanel;
+      syncPanel = function() {
+        origSyncPanel();
+        audioRow.style.display = selectedShape ? '' : 'none';
+        pAudio.checked = selectedShape ? audioSources.has(selectedShape) : false;
+      };
+
+      // ── Audio debug panel with gain graph ──
+      const audioDebug = document.createElement('div');
+      Object.assign(audioDebug.style, {
+        position: 'fixed', top: '8px', right: '8px', zIndex: '1003',
+        background: 'rgba(0,0,0,0.8)', borderRadius: '6px', padding: '8px 10px',
+        fontFamily: "'SF Mono','Cascadia Code','Fira Code',monospace",
+        fontSize: '10px', color: 'rgba(255,255,255,0.6)', pointerEvents: 'none',
+        minWidth: '180px', display: 'none', overflow: 'hidden',
+      });
+      document.body.appendChild(audioDebug);
+      const audioGraphCanvas = document.createElement('canvas');
+      const AGW = 160, AGH = 50;
+      const adpr = window.devicePixelRatio || 1;
+      audioGraphCanvas.width = AGW * adpr;
+      audioGraphCanvas.height = AGH * adpr;
+      audioGraphCanvas.style.width = AGW + 'px';
+      audioGraphCanvas.style.height = AGH + 'px';
+      audioGraphCanvas.style.marginTop = '4px';
+      const agCtx = audioGraphCanvas.getContext('2d');
+      const GAIN_HISTORY = AGW;
+      const gainHistories = new Map();
+      let gainHistIdx = 0;
+
+      const channelColors = [
+        'rgba(255,180,60,0.9)', 'rgba(100,200,255,0.9)', 'rgba(180,100,255,0.9)',
+        'rgba(100,255,150,0.9)', 'rgba(255,100,150,0.9)', 'rgba(255,255,100,0.9)',
+      ];
+
+      (function audioTick() {
+        let hasAudio = false;
+        let debugHTML = '';
+        let chIdx = 0;
+        audioSources.forEach((src) => {
+          hasAudio = true;
+          const shape = src.shape;
+          const sx = Number(shape.getAttribute('x') ?? 0);
+          const sy = Number(shape.getAttribute('y') ?? 0);
+          const sw = Number(shape.getAttribute('width') ?? 0);
+          const sh = Number(shape.getAttribute('height') ?? 0);
+          const gain = hrc.getAcousticGain(sx + sw / 2, sy + sh / 2);
+          const g = Math.min(gain * 2.0, 1.0);
+          src.gainNode.gain.value = g;
+          src.lastGain = g;
+          const color = channelColors[chIdx % channelColors.length];
+          const bar = '█'.repeat(Math.round(g * 10)).padEnd(10, '░');
+          debugHTML += `<div style="display:flex;gap:6px;align-items:center"><span style="color:${color}">ch${src.channelId}</span><span style="color:${color}">${bar}</span><span>${g.toFixed(2)}</span></div>`;
+
+          if (!gainHistories.has(src.channelId)) gainHistories.set(src.channelId, { samples: new Float32Array(GAIN_HISTORY), color });
+          const hist = gainHistories.get(src.channelId);
+          hist.samples[gainHistIdx % GAIN_HISTORY] = g;
+          hist.color = color;
+          chIdx++;
+        });
+
+        for (const [id] of gainHistories) {
+          if (![...audioSources.values()].some((s) => s.channelId === id)) gainHistories.delete(id);
+        }
+
+        audioDebug.style.display = hasAudio ? 'block' : 'none';
+        if (hasAudio) {
+          const statsDiv = audioDebug.querySelector('.audio-stats') || (() => {
+            const d = document.createElement('div');
+            d.className = 'audio-stats';
+            audioDebug.innerHTML = '';
+            audioDebug.appendChild(d);
+            audioDebug.appendChild(audioGraphCanvas);
+            return d;
+          })();
+          statsDiv.innerHTML = `<div style="color:rgba(255,255,255,0.35);font-size:9px;margin-bottom:2px">AUDIO</div>` + debugHTML;
+
+          agCtx.setTransform(adpr, 0, 0, adpr, 0, 0);
+          agCtx.clearRect(0, 0, AGW, AGH);
+          agCtx.fillStyle = 'rgba(255,255,255,0.03)';
+          agCtx.fillRect(0, 0, AGW, AGH);
+          gainHistories.forEach((hist) => {
+            agCtx.strokeStyle = hist.color;
+            agCtx.lineWidth = 1.2;
+            agCtx.beginPath();
+            for (let i = 0; i < GAIN_HISTORY; i++) {
+              const si = (gainHistIdx + 1 + i) % GAIN_HISTORY;
+              const y = AGH - hist.samples[si] * AGH;
+              i === 0 ? agCtx.moveTo(i, y) : agCtx.lineTo(i, y);
+            }
+            agCtx.stroke();
+          });
+        }
+        gainHistIdx++;
+        requestAnimationFrame(audioTick);
+      })();
     </script>
   </body>
 </html>
