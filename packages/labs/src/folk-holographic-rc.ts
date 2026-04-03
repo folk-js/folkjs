@@ -40,14 +40,6 @@ function ceilDiv(n: number, d: number): number {
   return Math.ceil(n / d);
 }
 
-function f16ToFloat(h: number): number {
-  const sign = (h >> 15) & 1;
-  const exp = (h >> 10) & 0x1f;
-  const frac = h & 0x3ff;
-  if (exp === 0) return (sign ? -1 : 1) * 2 ** -14 * (frac / 1024);
-  if (exp === 31) return frac === 0 ? (sign ? -Infinity : Infinity) : NaN;
-  return (sign ? -1 : 1) * 2 ** (exp - 15) * (1 + frac / 1024);
-}
 
 const TEX_RENDER = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
 const TEX_STORAGE = GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING;
@@ -252,7 +244,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
     let material = textureLoad(materialTex, px, 0);
     let audioChannel = u32(material.g * 255.0 + 0.5);
-    if (audioChannel == 255u) {
+    if (audioChannel == 1u) {
       acoustic_rad = 1.0 - trans;
     }
   }
@@ -612,9 +604,9 @@ const blitShader =
     let gain = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).a;
     let mat = textureLoad(materialTex, vec2u(pos.xy), 0);
     let ch = u32(mat.g * 255.0 + 0.5);
-    if (ch == 255u) {
+    if (ch == 1u) {
       color = vec4f(0.1, 0.9, 0.7, 1.0);
-    } else if (ch > 0u) {
+    } else if (ch >= 2u) {
       let g = clamp(gain * 3.0, 0.15, 1.0);
       color = vec4f(g, g * 0.8, 0.1, 1.0);
     } else {
@@ -705,6 +697,55 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let fluence = ownFluence * (1.0 - opacity) + extFluence * opacity;
   const TWO_PI = 6.2831853;
   textureStore(bounceOut, probe, vec4f(fluence * albedo / TWO_PI, 0.0));
+}
+`;
+
+// ── Acoustic gather pass ──
+// For each screen pixel with a source channel ID (>=2), reads the acoustic
+// fluence at that position, multiplies by (1-trans) to get the surface
+// absorption, and atomically accumulates into a per-channel gain buffer.
+// This correctly models sound reception at the shape's surface rather than
+// its center -- identical to how shapes absorb light.
+
+const acousticGatherShader = /*wgsl*/ `
+struct GatherParams {
+  screenW: u32,
+  screenH: u32,
+  probeSpacing: f32,
+  pad: u32,
+};
+
+@group(0) @binding(0) var worldTex: texture_2d<f32>;
+@group(0) @binding(1) var materialTex: texture_2d<f32>;
+@group(0) @binding(2) var fluenceTex: texture_2d<f32>;
+@group(0) @binding(3) var<storage, read_write> channelGains: array<atomic<u32>, 256>;
+@group(0) @binding(4) var<uniform> params: GatherParams;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let px = vec2i(i32(gid.x), i32(gid.y));
+  if (px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) { return; }
+
+  let mat = textureLoad(materialTex, px, 0);
+  let ch = u32(mat.g * 255.0 + 0.5);
+  if (ch < 2u) { return; }
+
+  let world = textureLoad(worldTex, px, 0);
+  let trans = pow(1.0 - world.a, params.probeSpacing);
+  let absorption = 1.0 - trans;
+  if (absorption < 0.001) { return; }
+
+  let fdim = vec2f(textureDimensions(fluenceTex, 0));
+  let uv = (vec2f(px) + 0.5) / vec2f(f32(params.screenW), f32(params.screenH));
+  let fcoord = clamp(vec2i(uv * fdim), vec2i(0), vec2i(fdim) - 1);
+  let fluence = textureLoad(fluenceTex, fcoord, 0);
+  let acousticGain = fluence.a;
+
+  let contribution = acousticGain * absorption;
+  if (contribution > 0.0) {
+    let fixed = u32(clamp(contribution * 65536.0, 0.0, 4294967295.0));
+    atomicAdd(&channelGains[ch], fixed);
+  }
 }
 `;
 
@@ -1073,9 +1114,14 @@ export class FolkHolographicRC extends FolkBaseSet {
   #smoothedFrameTime = 0;
   #lastFrameTimestamp = 0;
 
-  // Acoustic readback
-  #acousticReadbackBuffer!: GPUBuffer;
-  #acousticData: Uint32Array | null = null;
+  // Acoustic gather
+  #gatherPipeline!: GPUComputePipeline;
+  #gatherBindGroup!: GPUBindGroup;
+  #gatherParamsBuffer!: GPUBuffer;
+  #gatherParamsView!: StructuredView;
+  #channelGainsBuffer!: GPUBuffer;
+  #channelGainsReadback!: GPUBuffer;
+  #channelGains = new Float32Array(256);
 
   // GPU timestamp profiling (null when timestamp-query unavailable)
   #tsQuerySet: GPUQuerySet | null = null;
@@ -1359,16 +1405,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#uploadSkyCircle();
   }
 
-  getAcousticGain(sourceX: number, sourceY: number): number {
-    if (!this.#acousticData) return 0;
-    const spacing = Math.max(this.#canvas.width, this.#canvas.height) / Math.max(this.#psX, this.#psY);
-    const probeX = Math.floor(sourceX / spacing);
-    const probeY = Math.floor(sourceY / spacing);
-    if (probeX < 0 || probeX >= this.#psX || probeY < 0 || probeY >= this.#psY) return 0;
-    const idx = probeY * this.#fluenceStride + probeX;
-    const secondU32 = this.#acousticData[idx * 2 + 1];
-    const f16bits = (secondU32 >> 16) & 0xffff;
-    return f16ToFloat(f16bits);
+  getChannelGain(channelId: number): number {
+    if (channelId < 2 || channelId > 255) return 0;
+    return this.#channelGains[channelId];
+  }
+
+  get channelGains(): Float32Array {
+    return this.#channelGains;
   }
 
 
@@ -1575,9 +1618,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
 
-    this.#acousticReadbackBuffer = device.createBuffer({
-      label: 'Acoustic-Readback',
-      size: alignedFluenceRow * psY,
+    this.#channelGainsBuffer = device.createBuffer({
+      label: 'ChannelGains',
+      size: 256 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+    this.#channelGainsReadback = device.createBuffer({
+      label: 'ChannelGains-Readback',
+      size: 256 * 4,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
@@ -1632,12 +1680,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeParamsView = uboView(coneMergeShader, 'params');
     this.#blitParamsView = uboView(blitShader, 'params');
     this.#bounceParamsView = uboView(bounceComputeShader, 'params');
+    this.#gatherParamsView = uboView(acousticGatherShader, 'params');
 
     this.#seedParamsBuffer = ubo('SeedParams', 4 * 256);
     this.#extendParamsBuffer = ubo('ExtendParams', 2 * Math.max(1, this.#numCascades - 1) * 256);
     this.#mergeParamsBuffer = ubo('MergeParams', 4 * this.#numCascades * 256);
     this.#blitParamsBuffer = ubo('BlitParams', this.#blitParamsView.arrayBuffer.byteLength);
     this.#bounceParamsBuffer = ubo('BounceParams', this.#bounceParamsView.arrayBuffer.byteLength);
+    this.#gatherParamsBuffer = ubo('GatherParams', this.#gatherParamsView.arrayBuffer.byteLength);
 
     const [ptA0, ptV0] = tex(device, 'PT-Accum-0', width, height, 'rgba32float', TEX_STORAGE);
     const [ptA1, ptV1] = tex(device, 'PT-Accum-1', width, height, 'rgba32float', TEX_STORAGE);
@@ -1726,6 +1776,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
     this.#ptPipeline = computePipeline(device, 'PT-PathTrace', pathTraceShader);
     this.#ptBlitPipeline = fullscreenBlit('PT-Blit', ptBlitShader, this.#presentationFormat);
+    this.#gatherPipeline = computePipeline(device, 'AcousticGather', acousticGatherShader);
 
     this.#createStaticBindGroups();
   }
@@ -1821,6 +1872,16 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#bounceTextureView,
       { buffer: this.#bounceParamsBuffer },
     );
+
+    this.#gatherBindGroup = bg(
+      device,
+      this.#gatherPipeline.getBindGroupLayout(0),
+      this.#worldTextureView,
+      this.#materialTextureView,
+      this.#fluenceTextureView,
+      { buffer: this.#channelGainsBuffer },
+      { buffer: this.#gatherParamsBuffer },
+    );
   }
 
   #destroyResources() {
@@ -1830,7 +1891,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeBuffers?.forEach((b) => b.destroy());
     this.#fluenceBuffer?.destroy();
     this.#fluenceTexture?.destroy();
-    this.#acousticReadbackBuffer?.destroy();
+    this.#channelGainsBuffer?.destroy();
+    this.#channelGainsReadback?.destroy();
     this.#angWeightBuffer?.destroy();
     this.#bounceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
@@ -1842,6 +1904,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#extendParamsBuffer?.destroy();
     this.#mergeParamsBuffer?.destroy();
     this.#blitParamsBuffer?.destroy();
+    this.#gatherParamsBuffer?.destroy();
     this.#bounceParamsBuffer?.destroy();
   }
 
@@ -1963,7 +2026,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const al = this.#mouseLightAlbedo;
     const verts: number[] = [];
 
-    const ch = 255;
+    const ch = 1;
     if (DEBUG_CANVAS) {
       const cx = Math.floor(x);
       const cy = Math.floor(y);
@@ -2184,9 +2247,17 @@ export class FolkHolographicRC extends FolkBaseSet {
       { width: this.#psX, height: this.#psY },
     );
 
-    // ── Step 2.75: Copy fluence to readback buffer for acoustic gain queries ──
-    if (this.#acousticReadbackBuffer.mapState === 'unmapped') {
-      encoder.copyBufferToBuffer(this.#fluenceBuffer, 0, this.#acousticReadbackBuffer, 0, this.#fluenceBuffer.size);
+    // ── Step 2.75: Acoustic gather pass ──
+    encoder.clearBuffer(this.#channelGainsBuffer);
+    {
+      const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('gather') });
+      pass.setPipeline(this.#gatherPipeline);
+      pass.setBindGroup(0, this.#gatherBindGroup);
+      pass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16));
+      pass.end();
+    }
+    if (this.#channelGainsReadback.mapState === 'unmapped') {
+      encoder.copyBufferToBuffer(this.#channelGainsBuffer, 0, this.#channelGainsReadback, 0, 256 * 4);
     }
 
     // ── Step 3: Final blit ──
@@ -2196,12 +2267,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#submitAndCapture(device, encoder);
     this.#readTimestamps();
 
-    if (this.#acousticReadbackBuffer.mapState === 'unmapped') {
-      this.#acousticReadbackBuffer
+    if (this.#channelGainsReadback.mapState === 'unmapped') {
+      this.#channelGainsReadback
         .mapAsync(GPUMapMode.READ)
         .then(() => {
-          this.#acousticData = new Uint32Array(new Uint32Array(this.#acousticReadbackBuffer.getMappedRange()));
-          this.#acousticReadbackBuffer.unmap();
+          const raw = new Uint32Array(this.#channelGainsReadback.getMappedRange());
+          for (let i = 0; i < 256; i++) this.#channelGains[i] = raw[i] / 65536.0;
+          this.#channelGainsReadback.unmap();
         })
         .catch(() => {});
     }
@@ -2413,6 +2485,10 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#bounceParamsView.set({ screenW: width, screenH: height, pad0: 0, pad1: 0 });
     device.queue.writeBuffer(this.#bounceParamsBuffer, 0, this.#bounceParamsView.arrayBuffer);
+
+    const spacing = Math.max(width, height) / Math.max(psX, psY);
+    this.#gatherParamsView.set({ screenW: width, screenH: height, probeSpacing: spacing, pad: 0 });
+    device.queue.writeBuffer(this.#gatherParamsBuffer, 0, this.#gatherParamsView.arrayBuffer);
 
     this.#computeSkyPrefixSums();
   }

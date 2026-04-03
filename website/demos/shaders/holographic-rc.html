@@ -1608,12 +1608,12 @@
 
       // ── Per-shape audio sources ──
       const audioSources = new Map();
-      let nextChannelId = 1;
+      let nextChannelId = 2;
 
       function createShapeAudio(shape) {
         if (audioSources.has(shape)) return audioSources.get(shape);
         const chId = nextChannelId++;
-        if (nextChannelId > 254) nextChannelId = 1;
+        if (nextChannelId > 254) nextChannelId = 2;
         shape.setAttribute('data-audio-channel', String(chId));
 
         const ctx = ensureAudioCtx();
@@ -1654,7 +1654,7 @@
 
       function clearAllAudio() {
         audioSources.forEach((src, shape) => removeShapeAudio(shape));
-        nextChannelId = 1;
+        nextChannelId = 2;
       }
 
       onSceneClear = clearAllAudio;
@@ -1707,13 +1707,8 @@
         let chIdx = 0;
         audioSources.forEach((src) => {
           hasAudio = true;
-          const shape = src.shape;
-          const sx = Number(shape.getAttribute('x') ?? 0);
-          const sy = Number(shape.getAttribute('y') ?? 0);
-          const sw = Number(shape.getAttribute('width') ?? 0);
-          const sh = Number(shape.getAttribute('height') ?? 0);
-          const gain = hrc.getAcousticGain(sx + sw / 2, sy + sh / 2);
-          const g = Math.min(gain * 2.0, 1.0);
+          const gain = hrc.getChannelGain(src.channelId);
+          const g = Math.min(gain, 1.0);
           src.gainNode.gain.value = g;
           src.lastGain = g;
           const color = channelColors[chIdx % channelColors.length];
