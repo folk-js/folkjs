@@ -1700,13 +1700,13 @@
         const panner = ctx.createStereoPanner();
         panner.pan.value = 0;
 
-        const compressor = ctx.createDynamicsCompressor();
-        compressor.threshold.value = -24;
-        compressor.knee.value = 12;
-        compressor.ratio.value = 12;
-        compressor.attack.value = 0.003;
-        compressor.release.value = 0.1;
-        mediaSource.connect(biquad).connect(gainNode).connect(compressor).connect(panner).connect(ctx.destination);
+        const limiter = ctx.createDynamicsCompressor();
+        limiter.threshold.value = -3;
+        limiter.knee.value = 0;
+        limiter.ratio.value = 20;
+        limiter.attack.value = 0.001;
+        limiter.release.value = 0.05;
+        mediaSource.connect(biquad).connect(gainNode).connect(panner).connect(limiter).connect(ctx.destination);
         video.play().catch(() => {});
 
         const src = { video, gainNode, biquad, panner, shape, channelId: chId, lastGain: 0 };
@@ -1800,7 +1800,7 @@
           const hfRatio = hrc.getChannelHFRatio(src.channelId);
           const now = audioCtx.currentTime;
           const smooth = 0.05;
-          const g = Math.min(gain, 1.0);
+          const g = Math.pow(Math.min(gain, 1.0), 0.4);
           src.gainNode.gain.setTargetAtTime(g, now, smooth);
           const cutoff = 200 + Math.pow(Math.min(hfRatio, 1.0), 0.5) * 19800;
           src.biquad.frequency.setTargetAtTime(cutoff, now, smooth);

@@ -252,7 +252,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       acoustic_hf = 1.0 - trans;
       acoustic_lf = 1.0 - trans;
     }
-    acoustic_hf += bounce.a * (1.0 - trans);
+    // Each bounce loses some high end (surface absorption is frequency-dependent)
+    const BOUNCE_HF_LOSS = 0.02;
+    acoustic_hf += bounce.a * BOUNCE_HF_LOSS * (1.0 - trans);
     acoustic_lf += bounce.a * (1.0 - transLF);
   }
 
