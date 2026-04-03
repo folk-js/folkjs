@@ -42,6 +42,31 @@ Multiple listeners (split-screen, multiplayer) would require additional acoustic
 - **True diffraction.** Sound wrapping around obstacles follows the cascade's penumbra structure, which is qualitatively plausible but quantitatively approximate.
 - **Reflections** (without bounces). Without the bounce loop, sound propagates only through air paths — through doorways, through gaps, through volumetrics. It does NOT wrap around corners or reflect off surfaces. With bounces enabled, reflected energy naturally accumulates over frames and contributes additional gain.
 
+### 2.5 Merge-compatible properties
+
+For a value to propagate correctly through the cascade's hierarchical merge, it must satisfy two properties:
+
+**Over-composability.** The value must compose as `combined = near + far × near_transmittance`. This means it represents "an amount of something arriving from a direction" — you can add what's in front to what's behind (attenuated by transparency). Radiance-like quantities satisfy this. Path properties (like cumulative spectral tilt or total path length) do not.
+
+**Linearity (superposition).** When the merge sums contributions from different angles (angular weighting) or averages adjacent probes (even/odd interpolation), the result must equal the correct total. This requires linear scaling: `w_A × value_A + w_B × value_B` gives the correct combined value. Radiance is linear. Products of independent quantities, ratios, and nonlinear functions introduce cross-term errors under averaging.
+
+**In one sentence:** a value flows correctly through the cascade if and only if it behaves like a radiance — it represents "how much of X arrives" and satisfies both over-composability and linear superposition.
+
+This is why `acousticHF` (high-frequency acoustic radiance) works: it IS a radiance with different propagation parameters. And why `slope` (a path-integral exponent) failed: it is neither over-composable nor linear under angular averaging. The spectral tilt is instead recovered from the RATIO of two correctly-propagated radiance channels at readout.
+
+### 2.6 Mass law via two-channel acoustic radiance
+
+Frequency-dependent attenuation is modeled by propagating TWO acoustic channels with different effective opacity:
+
+- **Broadband** (`acoustic`): uses `trans = pow(1 - opacity, spacing)` — same as visual
+- **High-frequency** (`acousticHF`): uses `trans_hf = pow(1 - opacity, spacing × HF_FACTOR)` — the medium is effectively `HF_FACTOR` times thicker for high frequencies
+
+This models the **mass law**: high-frequency sound waves interact with media as if the medium were thicker, because shorter wavelengths scatter/absorb more. The `HF_FACTOR` (default 3.0) determines the frequency ratio: `f_hf / f_ref = sqrt(HF_FACTOR)`.
+
+**Wall permeability:** Both acoustic channels use `max(trans, WALL_PERM)` instead of raw `trans` in the over-composite. This gives solid walls (opacity=1) a tiny nonzero transmittance for bass (`WALL_PERM = 0.02`) and an even tinier one for treble (`WALL_PERM_HF = WALL_PERM^HF_FACTOR ≈ 0.000008`). Bass leaks through walls; treble does not. Visual channels still use raw `trans = 0` for full opacity.
+
+---
+
 ## Volumetric Acoustics
 
 ### How existing HRC volume parameters drive audio
@@ -88,30 +113,19 @@ Key behaviors to note:
 
 ## 3. Data Layout
 
-### 3.1 Ray buffer (widened)
+### 3.1 Ray buffer (widened, implemented)
 
-Current: `vec2u` = 8 bytes → `packF16(R, G, B, trans)`
+`vec3u` = 16 bytes (due to WGSL vec3 alignment) → `packF16(R, G, B, trans)` + `pack2x16float(acoustic, acousticHF)`
 
-Proposed: `vec3u` = 12 bytes → `packF16(R, G, B, trans, acoustic_rad, slope)`
+Two acoustic f16 values: broadband acoustic radiance (the listener's propagating signal) and high-frequency acoustic radiance (mass-law-attenuated). Both compose identically via over-composite. The ratio `acousticHF / acoustic` gives the spectral tilt at readout.
 
-Full RGB visual radiance is preserved unchanged. Two new f16 values: acoustic radiance (the listener's propagating signal) and spectral slope (frequency-dependent attenuation tilt, see §4.2).
+### 3.2 Merge buffer (widened, implemented)
 
-### 3.2 Merge buffer (widened)
+`vec2u` = 8 bytes → `packRGB9E5(visual)` + `pack2x16float(acoustic, acousticHF)`. Both acoustic channels flow through the merge identically to R, G, B.
 
-Current: `u32` = 4 bytes → `packRGB9E5(visual_result)`
+### 3.3 Fluence buffer + HF buffer (implemented)
 
-Needs to carry acoustic_rad through the merge alongside visual RGB. Options:
-
-- **2×u32 = 8 bytes:** `packRGB9E5(visual)` + `packF16(acoustic, slope)`. Doubles merge buffer size.
-- **Replace RGB9E5 with 4×f16 = 8 bytes:** `packF16(R, G, B, acoustic)`. Uniform precision, same width. Slope carried separately or derived at readout.
-
-Merge operates per-component on radiance. The acoustic channel flows through even/odd interpolation, cone weighting, and far-cone composition identically to R, G, or B. No merge shader logic changes beyond operating on wider data.
-
-### 3.3 Fluence buffer
-
-Current: `vec2u` = 8 bytes → `packF16(R, G, B, 1.0)` with unused alpha.
-
-Proposed: `packF16(R, G, B, acoustic_gain)`. The alpha carries acoustic fluence.
+Fluence: `packF16(R, G, B, acoustic_gain)`. HF: separate `r32float` probe-resolution buffer for `acousticHF` gain. Both written at merge level 0, accumulated across 4 directions.
 
 ### 3.4 Pan buffer (new, small)
 
@@ -205,25 +219,26 @@ Gain is normalized by the listener's perimeter (`2 * pi * radius`) to give liste
 
 All sources are area sources. A point source is a single-pixel area source.
 
-### 5.3 Spectral reconstruction
+### 5.2 Spectral tilt from HF ratio (implemented)
 
-From gain and slope, the attenuation at any frequency is recovered:
-
-```
-T(f) = gain × (f / f_ref) ^ slope
-```
-
-This is infinite-band resolution from two numbers. The power-law model matches the mass law's dominant f^(-2) behavior for most construction materials.
-
-### 5.4 Audio DSP mapping
+The gather accumulates both broadband and HF gains per channel. The ratio gives the spectral tilt:
 
 ```
-gain    → channel volume (linear gain applied to audio signal)
-slope   → tilt EQ (slope × 6.02 ≈ dB/octave)
-            slope = 0: flat response (open air or solid wall)
-            slope = -4: heavy treble loss (dense volumetric traversal)
-pan     → stereo panner [-1, +1]
-            correctly reflects indirect portal paths
+hfRatio = hfGain / broadGain    // 1.0 = flat (open air), <1.0 = treble cut
+shelfDb = (hfRatio - 1.0) * 18  // maps to lowshelf EQ gain in dB
+```
+
+This replaces the original slope-based spectral reconstruction. The slope approach (`T(f) = gain × (f/f_ref)^slope`) offered continuous spectrum reconstruction from one number, but slope is a path property that does not satisfy the cascade's merge-compatible requirements (see §2.5). The two-channel ratio approach gives correct multi-path composition at the cost of discrete (two-band) rather than continuous frequency resolution.
+
+### 5.3 Audio DSP mapping (implemented)
+
+```
+gain     → channel volume (linear gain)
+hfRatio  → lowshelf EQ: (hfRatio - 1) × 18 dB at 2kHz
+             hfRatio = 1.0: flat response (open air)
+             hfRatio = 0.5: -9dB treble cut (moderate volume traversal)
+             hfRatio = 0.0: -18dB treble cut (dense volume or wall)
+pan      → stereo panner [-1, +1] (future, requires directional gather)
 ```
 
 ---

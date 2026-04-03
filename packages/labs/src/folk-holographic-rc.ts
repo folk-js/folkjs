@@ -212,7 +212,7 @@ struct SeedParams {
 
 @group(0) @binding(0) var worldTex: texture_2d<f32>;
 @group(0) @binding(1) var bounceTex: texture_2d<f32>;
-@group(0) @binding(2) var<storage, read_write> rayOut: array<vec3u>;
+@group(0) @binding(2) var<storage, read_write> rayOut: array<vec4u>;
 @group(0) @binding(3) var<uniform> params: SeedParams;
 @group(0) @binding(4) var materialTex: texture_2d<f32>;
 
@@ -229,29 +229,33 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let wp = vec2f(dot(params.transformX.xyz, p), dot(params.transformY.xyz, p));
 
   let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
+  // Mass law: HF sees the medium as HF_FACTOR times thicker.
+  const HF_FACTOR = 3.0;
+
   var rad = vec3f(0.0);
   var trans = 1.0;
-  var slope = 0.0;
+  var transHF = 1.0;
   var acoustic_rad = 0.0;
+  var acoustic_hf = 0.0;
   if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
     let world = textureLoad(worldTex, px, 0);
     let bdim = vec2i(textureDimensions(bounceTex, 0));
     let bounce = textureLoad(bounceTex, clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * vec2f(bdim)), vec2i(0), bdim - 1), 0).rgb;
     trans = pow(1.0 - world.a, params.probeSpacing);
+    transHF = pow(trans, HF_FACTOR);
     rad = (world.rgb + bounce) * (1.0 - trans);
-    if (world.a > 0.0 && world.a < 1.0) {
-      slope = -2.0 * world.a * params.probeSpacing;
-    }
     let material = textureLoad(materialTex, px, 0);
     let audioChannel = u32(material.g * 255.0 + 0.5);
     if (audioChannel == 1u) {
       acoustic_rad = 1.0 - trans;
+      acoustic_hf = 1.0 - transHF;
     }
   }
 
   let packed_visual = packF16(vec4f(rad, trans));
-  let packed_acoustic = pack2x16float(vec2f(acoustic_rad, slope));
-  let entry = vec3u(packed_visual, packed_acoustic);
+  let packed_acoustic = pack2x16float(vec2f(acoustic_rad, acoustic_hf));
+  let packed_transHF = pack2x16float(vec2f(transHF, 0.0));
+  let entry = vec4u(packed_visual, packed_acoustic, packed_transHF);
   let rayW = i32(params.probeCount) * 2;
   rayOut[sliceIdx * rayW + probeIdx * 2] = entry;
   rayOut[sliceIdx * rayW + probeIdx * 2 + 1] = entry;
@@ -275,14 +279,16 @@ struct ExtendParams {
   pad3: u32,
 };
 
-@group(0) @binding(0) var<storage, read> prevRay: array<vec3u>;
-@group(0) @binding(1) var<storage, read_write> currRay: array<vec3u>;
+@group(0) @binding(0) var<storage, read> prevRay: array<vec4u>;
+@group(0) @binding(1) var<storage, read_write> currRay: array<vec4u>;
 @group(0) @binding(2) var<uniform> params: ExtendParams;
 
 fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
 fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
-struct RayData { rad: vec3f, trans: f32, acoustic: f32, slope: f32 }
+const WALL_PERM = 0.02;
+
+struct RayData { rad: vec3f, trans: f32, transHF: f32, acoustic: f32, acousticHF: f32 }
 
 fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let prevLevel = params.level - 1u;
@@ -291,21 +297,25 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   if (probeIdx < 0 || probeIdx >= prevNumProbes ||
       rayIdx < 0 || rayIdx >= prevNumRays ||
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
-    return RayData(vec3f(0.0), 1.0, 0.0, 0.0);
+    return RayData(vec3f(0.0), 1.0, 1.0, 0.0, 0.0);
   }
   let idx = sliceIdx * i32(params.prevRayW) + (probeIdx << prevLevel) + probeIdx + rayIdx;
   let entry = prevRay[idx];
   let r = unpackF16(vec2u(entry.x, entry.y));
   let a = unpack2x16float(entry.z);
-  return RayData(r.rgb, r.a, a.x, a.y);
+  let t = unpack2x16float(entry.w);
+  return RayData(r.rgb, r.a, t.x, a.x, a.y);
 }
 
 fn compositeRay(near: RayData, far: RayData) -> RayData {
+  let aTrans = max(near.trans, WALL_PERM);
+  let aTransHF = max(near.transHF, WALL_PERM);
   return RayData(
     near.rad + far.rad * near.trans,
     near.trans * far.trans,
-    near.acoustic + far.acoustic * near.trans,
-    near.slope + far.slope,
+    near.transHF * far.transHF,
+    near.acoustic + far.acoustic * aTrans,
+    near.acousticHF + far.acousticHF * aTransHF,
   );
 }
 
@@ -341,10 +351,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let avgRad = (crossA.rad + crossB.rad) * 0.5;
   let avgTrans = (crossA.trans + crossB.trans) * 0.5;
   let avgAcoustic = (crossA.acoustic + crossB.acoustic) * 0.5;
-  let avgSlope = (crossA.slope + crossB.slope) * 0.5;
+  let avgHF = (crossA.acousticHF + crossB.acousticHF) * 0.5;
+  let avgTransHF = (crossA.transHF + crossB.transHF) * 0.5;
   let packed_visual = packF16(vec4f(avgRad, avgTrans));
-  let packed_acoustic = pack2x16float(vec2f(avgAcoustic, avgSlope));
-  currRay[sliceIdx * i32(params.currRayW) + texelX] = vec3u(packed_visual, packed_acoustic);
+  let packed_acoustic = pack2x16float(vec2f(avgAcoustic, avgHF));
+  let packed_transHF = pack2x16float(vec2f(avgTransHF, 0.0));
+  currRay[sliceIdx * i32(params.currRayW) + texelX] = vec4u(packed_visual, packed_acoustic, packed_transHF);
 }
 `;
 
@@ -379,7 +391,7 @@ struct MergeParams {
   fyOff: i32,
 };
 
-@group(0) @binding(0) var<storage, read> rayBuf: array<vec3u>;
+@group(0) @binding(0) var<storage, read> rayBuf: array<vec4u>;
 @group(0) @binding(1) var<storage, read> mergeInBuf: array<vec2u>;
 @group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<vec2u>;
 
@@ -415,23 +427,26 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 @group(0) @binding(4) var<storage, read_write> fluenceBuf: array<vec2u>;
 @group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
 @group(0) @binding(6) var<storage, read> angWeights: array<f32>;
-@group(0) @binding(7) var<storage, read_write> slopeBuf: array<f32>;
+@group(0) @binding(7) var<storage, read_write> hfBuf: array<vec2u>;
 
-struct RayData { rad: vec3f, trans: f32, acoustic: f32, slope: f32 }
-struct MergeEntry { visual: vec3f, acoustic: f32, slopeW: f32 }
+const WALL_PERM = 0.02;
+
+struct RayData { rad: vec3f, trans: f32, transHF: f32, acoustic: f32, acousticHF: f32 }
+struct MergeEntry { visual: vec3f, acoustic: f32, acousticHF: f32 }
 
 fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   let effProbes = i32(params.numProbes);
   if (probeIdx < 0 || probeIdx >= effProbes ||
       rayIdx < 0 || rayIdx >= i32(params.numRays) ||
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
-    return RayData(vec3f(0.0), 1.0, 0.0, 0.0);
+    return RayData(vec3f(0.0), 1.0, 1.0, 0.0, 0.0);
   }
   let texX = (probeIdx << params.conesShift) + probeIdx + rayIdx;
   let entry = rayBuf[sliceIdx * i32(params.numProbes * params.numRays) + texX];
   let r = unpackF16(vec2u(entry.x, entry.y));
   let a = unpack2x16float(entry.z);
-  return RayData(r.rgb, r.a, a.x, a.y);
+  let t = unpack2x16float(entry.w);
+  return RayData(r.rgb, r.a, t.x, a.x, a.y);
 }
 
 fn loadMerge(texX: i32, sliceIdx: i32) -> MergeEntry {
@@ -442,7 +457,7 @@ fn loadMerge(texX: i32, sliceIdx: i32) -> MergeEntry {
   }
   let entry = mergeInBuf[sliceIdx * i32(params.mergeStride) + texX];
   let ac = unpack2x16float(entry.y);
-  return MergeEntry(unpackRGB9E5(entry.x), ac.x, ac.y);
+  return MergeEntry(unpackRGB9E5(entry.x), ac.x, ac.y);  // .x=acoustic, .y=acousticHF
 }
 
 fn getAngularWeight(subCone: u32) -> f32 {
@@ -473,7 +488,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   var result = vec3f(0.0);
   var result_acoustic = 0.0;
-  var result_slope_w = 0.0;
+  var result_hf = 0.0;
 
   for (var side = 0; side < 2; side++) {
     let subCone = u32(coneIdx * 2 + side);
@@ -487,7 +502,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let farSlice = sliceIdx + sliceOff * farStep;
     var farCone = vec3f(0.0);
     var farConeAcoustic = 0.0;
-    var farConeSlopeW = 0.0;
+    var farConeHF = 0.0;
     if (params.isLastLevel == 1u ||
         farX < 0 || farX >= i32(params.mergeInWidth) ||
         farSlice < 0 || farSlice >= i32(params.sliceCount)) {
@@ -497,7 +512,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       farCone = unpackRGB9E5(farEntry.x);
       let farAc = unpack2x16float(farEntry.y);
       farConeAcoustic = farAc.x;
-      farConeSlopeW = farAc.y;
+      farConeHF = farAc.y;
     }
 
     if (isEven) {
@@ -508,24 +523,32 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let nearCone = loadMerge((probeIdx << conesShift) + i32(subCone), sliceIdx);
       result += (merged + nearCone.visual) * 0.5;
 
-      let cAcoustic = ray.acoustic + ext.acoustic * ray.trans;
-      let mergedAcoustic = cAcoustic * weight + farConeAcoustic * cTrans;
+      let aTransNear = max(ray.trans, WALL_PERM);
+      let aTransExt = max(ext.trans, WALL_PERM);
+      let hfTransNear = max(ray.transHF, WALL_PERM);
+      let hfTransExt = max(ext.transHF, WALL_PERM);
+      let cTransA = aTransNear * aTransExt;
+      let cAcoustic = ray.acoustic + ext.acoustic * aTransNear;
+      let mergedAcoustic = cAcoustic * weight + farConeAcoustic * cTransA;
       result_acoustic += (mergedAcoustic + nearCone.acoustic) * 0.5;
 
-      let cSlopeW = ray.acoustic * ray.slope + ext.acoustic * ext.slope * ray.trans;
-      let mergedSlopeW = cSlopeW * weight + farConeSlopeW * cTrans;
-      result_slope_w += (mergedSlopeW + nearCone.slopeW) * 0.5;
+      let cTransHF = hfTransNear * hfTransExt;
+      let cHF = ray.acousticHF + ext.acousticHF * hfTransNear;
+      let mergedHF = cHF * weight + farConeHF * cTransHF;
+      result_hf += (mergedHF + nearCone.acousticHF) * 0.5;
     } else {
+      let aTrans = max(ray.trans, WALL_PERM);
+      let hfTrans = max(ray.transHF, WALL_PERM);
       result += ray.rad * weight + farCone * ray.trans;
-      result_acoustic += ray.acoustic * weight + farConeAcoustic * ray.trans;
-      result_slope_w += ray.acoustic * ray.slope * weight + farConeSlopeW * ray.trans;
+      result_acoustic += ray.acoustic * weight + farConeAcoustic * aTrans;
+      result_hf += ray.acousticHF * weight + farConeHF * hfTrans;
     }
   }
 
   let outX = (probeIdx << conesShift) + coneIdx;
   mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = vec2u(
     packRGB9E5(result),
-    pack2x16float(vec2f(result_acoustic, result_slope_w)),
+    pack2x16float(vec2f(result_acoustic, result_hf)),
   );
 
   if (params.numCones == 1u) {
@@ -540,9 +563,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let fi = fc.y * fStride + fc.x;
       let prev = unpackF16(fluenceBuf[fi]);
       fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, prev.a + result_acoustic));
-      let slopeStride = i32(arrayLength(&slopeBuf)) / fh;
-      let si = fc.y * slopeStride + fc.x;
-      slopeBuf[si] += result_slope_w;
+      let prevHF = unpackF16(hfBuf[fi]);
+      hfBuf[fi] = packF16(vec4f(0.0, 0.0, 0.0, prevHF.a + result_hf));
     }
   }
 }
@@ -594,7 +616,7 @@ const blitShader =
 @group(0) @binding(2) var<uniform> params: BlitParams;
 @group(0) @binding(3) var linearSamp: sampler;
 @group(0) @binding(4) var materialTex: texture_2d<f32>;
-@group(0) @binding(5) var slopeTex: texture_2d<f32>;
+@group(0) @binding(5) var hfTex: texture_2d<f32>;
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = pos.xy / vec2f(params.screenW, params.screenH);
@@ -617,10 +639,7 @@ const blitShader =
     color = vec4f(mix(cool, hot, t), 1.0);
   } else if (dm == 3) {
     let gain = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).a;
-    let fdim = vec2f(textureDimensions(fluenceTex, 0));
-    let fcoord = vec2i(uv * fdim);
-    let slopeW = textureLoad(slopeTex, clamp(fcoord, vec2i(0), vec2i(fdim) - 1), 0).r;
-    let slope = select(0.0, slopeW / gain, gain > 0.001);
+    let hf = textureSampleLevel(hfTex, linearSamp, uv, 0.0).a;
     let mat = textureLoad(materialTex, vec2u(pos.xy), 0);
     let ch = u32(mat.g * 255.0 + 0.5);
 
@@ -629,9 +648,9 @@ const blitShader =
     } else if (ch >= 2u) {
       color = vec4f(0.2, 0.4, 1.0, 1.0);
     } else {
-      // R = acoustic gain, G = spectral slope (treble cut), B = base
+      // R = broadband gain, G = HF loss (1 - hf/broad), B = base
       let r = clamp(gain * 2.0, 0.0, 1.0);
-      let g = clamp(-slope * 0.3, 0.0, 1.0);
+      let g = clamp((gain - hf) * 2.0, 0.0, 1.0);
       color = vec4f(linearToSrgb(vec3f(r, g, 0.03)), 1.0);
     }
   }
@@ -720,11 +739,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 `;
 
 // ── Acoustic gather pass ──
-// For each screen pixel with a source channel ID (>=2), reads the acoustic
-// fluence at that position, multiplies by (1-trans) to get the surface
-// absorption, and atomically accumulates into a per-channel gain buffer.
-// This correctly models sound reception at the shape's surface rather than
-// its center -- identical to how shapes absorb light.
+// For each screen pixel with a source channel ID (>=2), reads both broadband
+// and HF acoustic fluence, multiplies by (1-trans) (surface absorption), and
+// atomically accumulates into per-channel bins. The ratio HF/broadband at
+// readout gives the mass-law spectral tilt for each source.
 
 const acousticGatherShader = /*wgsl*/ `
 struct GatherParams {
@@ -739,7 +757,7 @@ struct GatherParams {
 @group(0) @binding(2) var fluenceTex: texture_2d<f32>;
 @group(0) @binding(3) var<storage, read_write> channelData: array<atomic<u32>, 512>;
 @group(0) @binding(4) var<uniform> params: GatherParams;
-@group(0) @binding(5) var slopeTex: texture_2d<f32>;
+@group(0) @binding(5) var hfTex: texture_2d<f32>;
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -758,19 +776,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let fdim = vec2f(textureDimensions(fluenceTex, 0));
   let uv = (vec2f(px) + 0.5) / vec2f(f32(params.screenW), f32(params.screenH));
   let fcoord = clamp(vec2i(uv * fdim), vec2i(0), vec2i(fdim) - 1);
-  let fluence = textureLoad(fluenceTex, fcoord, 0);
-  let acousticGain = fluence.a;
 
-  let contribution = acousticGain * absorption;
-  if (contribution > 0.0) {
-    let fixed = u32(clamp(contribution * 65536.0, 0.0, 4294967295.0));
-    atomicAdd(&channelData[ch], fixed);
-    let slopeVal = textureLoad(slopeTex, fcoord, 0).r;
-    let slopeContrib = slopeVal * absorption;
-    let sFixed = u32(clamp(abs(slopeContrib) * 65536.0, 0.0, 4294967295.0));
-    if (slopeContrib < 0.0) {
-      atomicAdd(&channelData[ch + 256u], sFixed);
-    }
+  let broad = textureLoad(fluenceTex, fcoord, 0).a;
+  let hf = textureLoad(hfTex, fcoord, 0).a;
+
+  let broadContrib = broad * absorption;
+  let hfContrib = hf * absorption;
+
+  if (broadContrib > 0.0) {
+    atomicAdd(&channelData[ch], u32(clamp(broadContrib * 65536.0, 0.0, 4294967295.0)));
+  }
+  if (hfContrib > 0.0) {
+    atomicAdd(&channelData[ch + 256u], u32(clamp(hfContrib * 65536.0, 0.0, 4294967295.0)));
   }
 }
 `;
@@ -1442,8 +1459,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     return this.#channelGains[channelId];
   }
 
-  getChannelSlope(channelId: number): number {
-    if (channelId < 2 || channelId > 255) return 0;
+  getChannelHFRatio(channelId: number): number {
+    if (channelId < 2 || channelId > 255) return 1;
     return this.#channelSlopes[channelId];
   }
 
@@ -1659,14 +1676,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
 
-    const alignedSlopeRow = Math.ceil((psX * 4) / 256) * 256;
     this.#slopeBuffer = device.createBuffer({
-      label: 'Slope-SSBO',
-      size: alignedSlopeRow * psY,
+      label: 'HF-SSBO',
+      size: alignedFluenceRow * psY,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     [this.#slopeTexture, this.#slopeTextureView] = tex(
-      device, 'Slope', psX, psY, 'r32float',
+      device, 'HF', psX, psY, 'rgba16float',
       GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     );
 
@@ -2304,14 +2320,15 @@ export class FolkHolographicRC extends FolkBaseSet {
       { texture: this.#fluenceTexture },
       { width: this.#psX, height: this.#psY },
     );
-    {
-      const alignedSlopeRow = Math.ceil((this.#psX * 4) / 256) * 256;
-      encoder.copyBufferToTexture(
-        { buffer: this.#slopeBuffer, bytesPerRow: alignedSlopeRow, rowsPerImage: this.#psY },
-        { texture: this.#slopeTexture },
-        { width: this.#psX, height: this.#psY },
-      );
-    }
+    encoder.copyBufferToTexture(
+      {
+        buffer: this.#slopeBuffer,
+        bytesPerRow: this.#fluenceStride * 8,
+        rowsPerImage: this.#psY,
+      },
+      { texture: this.#slopeTexture },
+      { width: this.#psX, height: this.#psY },
+    );
 
     // ── Step 2.75: Acoustic gather pass ──
     encoder.clearBuffer(this.#channelGainsBuffer);
@@ -2344,8 +2361,8 @@ export class FolkHolographicRC extends FolkBaseSet {
             for (let i = 2; i < 256; i++) {
               const rawGain = this.#channelGains[i];
               this.#channelGains[i] = rawGain / listenerPerimeter;
-              const rawSlopeW = raw[i + 256] / 65536.0;
-              this.#channelSlopes[i] = rawGain > 0.001 ? -(rawSlopeW / rawGain) : 0;
+              const rawHF = raw[i + 256] / 65536.0 / listenerPerimeter;
+              this.#channelSlopes[i] = rawGain > 0.001 ? Math.min(rawHF / (rawGain / listenerPerimeter), 1.0) : 1.0;
             }
           }
           this.#channelGainsReadback.unmap();
