@@ -1233,63 +1233,44 @@
 
       const audioRow = $('audio-row');
       const pAudio = $('p-audio');
-      let addAudioToShape = (shape) => shape;
+      let addAudioToShape = (shape, type) => shape;
 
-      function loadAcousticOpen() {
+      function loadAcousticPillars() {
         const cx = window.innerWidth / 2,
           cy = hrc.clientHeight / 2;
-        addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3;
-        debugSelect.value = '3';
+        // Scattered pillars of varying materials
+        addShape(cx - 180, cy - 120, 25, 25, 1);
+        addShape(cx - 80, cy + 60, 20, 60, 0, { opacity: 0.5, albedo: 0.3 });
+        addShape(cx + 40, cy - 80, 50, 15, 0, { opacity: 0.8, albedo: 0.6 });
+        addShape(cx + 150, cy + 40, 30, 30, 1);
+        addShape(cx - 30, cy - 160, 80, 12, 0, { opacity: 0.3, albedo: 0.9 });
+        // Fog patch
+        addShape(cx + 60, cy + 80, 120, 100, 0, { opacity: 0.04, albedo: 0.4 });
+        // Two sources: music weaving through pillars, noise behind fog
+        addAudioToShape(addShape(cx - 220, cy, 30, 30, 3), 'music');
+        addAudioToShape(addShape(cx + 130, cy + 120, 25, 25, 6), 'white-noise');
       }
 
-      function loadAcousticDoorway() {
-        const cx = window.innerWidth / 2,
-          cy = hrc.clientHeight / 2;
-        addShape(cx, cy - 200, 10, 170, 1);
-        addShape(cx, cy + 30, 10, 170, 1);
-        addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3;
-        debugSelect.value = '3';
-      }
-
-      function loadAcousticCorridor() {
+      function loadAcousticMaze() {
         const cx = window.innerWidth / 2,
           cy = hrc.clientHeight / 2,
-          t = 10;
-        addShape(cx - 200, cy - 80, 400, t, 1);
-        addShape(cx - 200, cy + 80, 400, t, 1);
-        addShape(cx - 200, cy - 80, t, 170, 1);
-        addShape(cx + 200, cy - 80, t, 40, 1);
-        addShape(cx + 200, cy + 40, t, 50, 1);
-        addAudioToShape(addShape(cx + 250, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3;
-        debugSelect.value = '3';
-      }
-
-      function loadAcousticVolume() {
-        const cx = window.innerWidth / 2,
-          cy = hrc.clientHeight / 2;
-        addShape(cx - 50, cy - 100, 100, 200, 0, { opacity: 0.05, albedo: 0.3 });
-        addAudioToShape(addShape(cx + 200, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3;
-        debugSelect.value = '3';
-      }
-
-      function loadAcousticTwoRooms() {
-        const cx = window.innerWidth / 2,
-          cy = hrc.clientHeight / 2,
-          t = 10;
-        addShape(cx - 250, cy - 150, 500, t, 1);
-        addShape(cx - 250, cy + 150, 500, t, 1);
-        addShape(cx - 250, cy - 150, t, 310, 1);
-        addShape(cx + 250, cy - 150, t, 310, 1);
-        addShape(cx, cy - 150, t, 120, 1);
-        addShape(cx, cy + 30, t, 130, 1);
-        addAudioToShape(addShape(cx - 200, cy, 30, 30, 2));
-        addAudioToShape(addShape(cx + 150, cy - 20, 40, 40, 3));
-        hrc.debugMode = 3;
-        debugSelect.value = '3';
+          t = 8;
+        // Irregular maze with mixed materials
+        addShape(cx - 200, cy - 100, 150, t, 0, { albedo: 0.8 });
+        addShape(cx - 200, cy - 100, t, 200, 0, { albedo: 0.5 });
+        addShape(cx - 50, cy - 40, t, 140, 1);
+        addShape(cx - 50, cy - 40, 120, t, 0, { opacity: 0.7, albedo: 0.4 });
+        addShape(cx + 70, cy - 40, t, 80, 1);
+        addShape(cx + 70, cy + 60, 130, t, 0, { albedo: 0.9 });
+        addShape(cx + 200, cy - 120, t, 240, 0, { albedo: 0.6 });
+        // Volume patches at intersections
+        addShape(cx - 120, cy + 20, 60, 60, 0, { opacity: 0.06, albedo: 0.5 });
+        addShape(cx + 100, cy - 100, 80, 50, 0, { opacity: 0.03, albedo: 0.2 });
+        // Source in one corner with scattering medium above it
+        addAudioToShape(addShape(cx - 170, cy + 60, 25, 25, 3), 'music');
+        addShape(cx - 180, cy + 5, 50, 50, 0, { opacity: 0.03, albedo: 1 });
+        hrc.bounces = true;
+        $('bounces-toggle').checked = true;
       }
 
       function loadAcousticLCorridor() {
@@ -1298,37 +1279,82 @@
           t = 12,
           w = 100;
         // L-shaped corridor: sound bounces around the corner
-        // Horizontal segment: top inner wall stops at corner, bottom outer continues
         addShape(cx - 200, cy, 200, t, 0, { albedo: 0.7 });
         addShape(cx - 200, cy + w, 200 + w + t, t, 0, { albedo: 0.7 });
-        // Vertical segment: left inner wall stops at corner, right outer continues
         addShape(cx, cy - 200, t, 200, 0, { albedo: 0.7 });
         addShape(cx + w, cy - 200, t, 200 + w + t, 0, { albedo: 0.7 });
-        // Source at top of vertical segment
-        addAudioToShape(addShape(cx + 30, cy - 170, 40, 40, 3));
-        hrc.debugMode = 3;
-        debugSelect.value = '3';
+        addAudioToShape(addShape(cx + 30, cy - 170, 40, 40, 3), 'music');
+        // Scattering medium just below the source, near corridor opening
         hrc.bounces = true;
         $('bounces-toggle').checked = true;
       }
 
-      function loadAcousticReflectiveRoom() {
+      function loadAcousticLayered() {
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2;
+        // Layered volumes of increasing density — listen to progressive muffling
+        addShape(cx - 180, cy - 120, 80, 240, 0, { opacity: 0.02, albedo: 0.3 });
+        addShape(cx - 80, cy - 120, 80, 240, 0, { opacity: 0.06, albedo: 0.4 });
+        addShape(cx + 20, cy - 120, 80, 240, 0, { opacity: 0.15, albedo: 0.5 });
+        addShape(cx + 120, cy - 120, 80, 240, 0, { opacity: 0.4, albedo: 0.6 });
+        // Thin wall with gap behind densest layer
+        addShape(cx + 210, cy - 120, 8, 100, 1);
+        addShape(cx + 210, cy + 30, 8, 90, 1);
+        // Source behind everything
+        addAudioToShape(addShape(cx + 240, cy - 15, 30, 30, 3), 'music');
+        // Noise source in front of volumes for comparison
+        addAudioToShape(addShape(cx - 250, cy - 15, 25, 25, 6), 'white-noise');
+      }
+
+      function loadAcousticCanyons() {
         const cx = window.innerWidth / 2,
           cy = hrc.clientHeight / 2,
-          t = 12;
-        // Enclosed room with reflective walls (high albedo)
-        addShape(cx - 200, cy - 150, 400, t, 0, { albedo: 0.85 });
-        addShape(cx - 200, cy + 150, 400, t, 0, { albedo: 0.85 });
-        addShape(cx - 200, cy - 150, t, 312, 0, { albedo: 0.85 });
-        addShape(cx + 200, cy - 150, t, 312, 0, { albedo: 0.85 });
-        // Source in corner
-        addAudioToShape(addShape(cx - 170, cy - 120, 30, 30, 3));
-        // Absorber panel in the middle of the room (low albedo) — listen around it
-        addShape(cx - 30, cy - 60, t, 120, 0, { albedo: 0.1 });
-        hrc.debugMode = 3;
-        debugSelect.value = '3';
+          t = 10;
+        // Narrow winding canyon with reflective walls
+        addShape(cx - 250, cy - 50, 120, t, 0, { albedo: 0.8 });
+        addShape(cx - 250, cy + 50, 180, t, 0, { albedo: 0.8 });
+        addShape(cx - 130, cy - 50, t, 60, 0, { albedo: 0.7 });
+        addShape(cx - 70, cy - 50, 140, t, 0, { albedo: 0.8 });
+        addShape(cx - 70, cy + 10, t, 50, 0, { albedo: 0.7 });
+        addShape(cx - 70, cy + 50, 80, t, 0, { albedo: 0.6 });
+        addShape(cx + 70, cy - 50, t, 110, 0, { albedo: 0.7 });
+        addShape(cx + 70, cy + 50, 130, t, 0, { albedo: 0.8 });
+        addShape(cx + 200, cy - 50, t, 60, 0, { albedo: 0.7 });
+        // Fog in one section of the canyon
+        addShape(cx - 30, cy - 40, 90, 80, 0, { opacity: 0.05, albedo: 0.6 });
+        // Source at far end of canyon
+        addAudioToShape(addShape(cx + 230, cy - 10, 30, 30, 3), 'music');
+        addAudioToShape(addShape(cx - 230, cy - 10, 25, 25, 7), 'pink-noise');
         hrc.bounces = true;
         $('bounces-toggle').checked = true;
+      }
+
+      function loadAcousticAnimated() {
+        const cx = window.innerWidth / 2,
+          cy = hrc.clientHeight / 2,
+          t = 10;
+        // Scattered obstacles with varied materials
+        addShape(cx - 160, cy - 100, 30, 80, 0, { albedo: 0.7 });
+        addShape(cx + 100, cy - 60, 20, 120, 0, { opacity: 0.6, albedo: 0.5 });
+        addShape(cx + 40, cy + 80, 60, 15, 1);
+        // Animated orbiting obstacle
+        const orbiter = addShape(cx, cy, 40, 40, 0, { opacity: 0.8, albedo: 0.4 });
+        // Animated fog that breathes
+        const fog = addShape(cx - 60, cy - 40, 120, 80, 0, { opacity: 0.02, albedo: 0.5 });
+        // Music source
+        addAudioToShape(addShape(cx - 220, cy - 20, 30, 30, 3), 'music');
+        // Noise source on opposite side
+        addAudioToShape(addShape(cx + 200, cy + 60, 25, 25, 6), 'white-noise');
+        hrc.bounces = true;
+        $('bounces-toggle').checked = true;
+        function animate() {
+          const time = performance.now() / 2500;
+          orbiter.setAttribute('x', cx + Math.cos(time) * 120 - 20);
+          orbiter.setAttribute('y', cy + Math.sin(time) * 80 - 20);
+          fog.setAttribute('data-opacity', (0.01 + 0.04 * (0.5 + 0.5 * Math.sin(time * 0.8))).toFixed(4));
+          animationId = requestAnimationFrame(animate);
+        }
+        animate();
       }
 
       // ── Scene list ──
@@ -1352,13 +1378,12 @@
         { name: 'Breathing', fn: loadBreathing },
         { name: 'Spectrum', fn: loadSpectrum },
         { name: 'Material cycle', fn: loadMaterialCycle },
-        { name: 'Acoustic: open', fn: loadAcousticOpen },
-        { name: 'Acoustic: doorway', fn: loadAcousticDoorway },
-        { name: 'Acoustic: corridor', fn: loadAcousticCorridor },
-        { name: 'Acoustic: volume', fn: loadAcousticVolume },
-        { name: 'Acoustic: two rooms', fn: loadAcousticTwoRooms },
+        { name: 'Acoustic: pillars', fn: loadAcousticPillars },
+        { name: 'Acoustic: maze', fn: loadAcousticMaze },
         { name: 'Acoustic: L-corridor', fn: loadAcousticLCorridor },
-        { name: 'Acoustic: reflective room', fn: loadAcousticReflectiveRoom },
+        { name: 'Acoustic: layered volumes', fn: loadAcousticLayered },
+        { name: 'Acoustic: canyons', fn: loadAcousticCanyons },
+        { name: 'Acoustic: animated', fn: loadAcousticAnimated },
       ];
 
       scenes.forEach((s, i) => {
@@ -1675,26 +1700,76 @@
       const audioSources = new Map();
       let nextChannelId = 2;
 
-      function createShapeAudio(shape) {
-        if (audioSources.has(shape)) return audioSources.get(shape);
-        const chId = nextChannelId++;
-        if (nextChannelId > 254) nextChannelId = 2;
-        shape.setAttribute('data-audio-channel', String(chId));
-
-        const ctx = ensureAudioCtx();
+      function createAudioSource(ctx, type) {
+        if (type === 'white-noise' || type === 'pink-noise') {
+          const bufSize = ctx.sampleRate * 2;
+          const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+          const data = buf.getChannelData(0);
+          for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+          if (type === 'pink-noise') {
+            let b0 = 0,
+              b1 = 0,
+              b2 = 0,
+              b3 = 0,
+              b4 = 0,
+              b5 = 0,
+              b6 = 0;
+            for (let i = 0; i < bufSize; i++) {
+              const w = data[i];
+              b0 = 0.99886 * b0 + w * 0.0555179;
+              b1 = 0.99332 * b1 + w * 0.0750759;
+              b2 = 0.969 * b2 + w * 0.153852;
+              b3 = 0.8665 * b3 + w * 0.3104856;
+              b4 = 0.55 * b4 + w * 0.5329522;
+              b5 = -0.7616 * b5 - w * 0.016898;
+              data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+              b6 = w * 0.115926;
+            }
+          }
+          const node = ctx.createBufferSource();
+          node.buffer = buf;
+          node.loop = true;
+          node.start();
+          return { node, cleanup: () => node.stop() };
+        }
+        if (type === 'sine') {
+          const osc = ctx.createOscillator();
+          osc.frequency.value = 220;
+          osc.type = 'sine';
+          osc.start();
+          return { node: osc, cleanup: () => osc.stop() };
+        }
         const video = document.createElement('video');
         video.src = '/Feather.mov';
         video.loop = true;
         video.crossOrigin = 'anonymous';
         video.style.display = 'none';
         document.body.appendChild(video);
+        const node = ctx.createMediaElementSource(video);
+        video.play().catch(() => {});
+        return {
+          node,
+          video,
+          cleanup: () => {
+            video.pause();
+            video.remove();
+          },
+        };
+      }
 
-        const mediaSource = ctx.createMediaElementSource(video);
+      function createShapeAudio(shape, type = 'music') {
+        if (audioSources.has(shape)) return audioSources.get(shape);
+        const chId = nextChannelId++;
+        if (nextChannelId > 254) nextChannelId = 2;
+        shape.setAttribute('data-audio-channel', String(chId));
+
+        const ctx = ensureAudioCtx();
+        const source = createAudioSource(ctx, type);
+
         const biquad = ctx.createBiquadFilter();
         biquad.type = 'lowpass';
         biquad.frequency.value = 20000;
         biquad.Q.value = 0.7;
-        biquad.gain.value = 0;
         const gainNode = ctx.createGain();
         gainNode.gain.value = 0;
         const panner = ctx.createStereoPanner();
@@ -1706,10 +1781,9 @@
         limiter.ratio.value = 20;
         limiter.attack.value = 0.001;
         limiter.release.value = 0.05;
-        mediaSource.connect(biquad).connect(gainNode).connect(panner).connect(limiter).connect(ctx.destination);
-        video.play().catch(() => {});
+        source.node.connect(biquad).connect(gainNode).connect(panner).connect(limiter).connect(ctx.destination);
 
-        const src = { video, gainNode, biquad, panner, shape, channelId: chId, lastGain: 0 };
+        const src = { gainNode, biquad, panner, shape, channelId: chId, lastGain: 0, source };
         audioSources.set(shape, src);
         return src;
       }
@@ -1718,8 +1792,7 @@
         const src = audioSources.get(shape);
         if (!src) return;
         shape.removeAttribute('data-audio-channel');
-        src.video.pause();
-        src.video.remove();
+        src.source.cleanup();
         src.gainNode.disconnect();
         audioSources.delete(shape);
       }
@@ -1730,8 +1803,8 @@
       }
 
       onSceneClear = clearAllAudio;
-      addAudioToShape = (shape) => {
-        createShapeAudio(shape);
+      addAudioToShape = (shape, type) => {
+        createShapeAudio(shape, type);
         return shape;
       };
 
@@ -1800,7 +1873,7 @@
           const hfRatio = hrc.getChannelHFRatio(src.channelId);
           const now = audioCtx.currentTime;
           const smooth = 0.05;
-          const g = Math.pow(Math.min(gain, 1.0), 0.4);
+          const g = Math.pow(Math.min(gain, 1.0), 0.7);
           src.gainNode.gain.setTargetAtTime(g, now, smooth);
           const cutoff = 200 + Math.pow(Math.min(hfRatio, 1.0), 0.5) * 19800;
           src.biquad.frequency.setTargetAtTime(cutoff, now, smooth);
