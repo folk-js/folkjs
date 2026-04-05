@@ -377,6 +377,9 @@
         <option value="0">debug: off</option>
         <option value="1">debug: probes</option>
         <option value="2">debug: fluence</option>
+        <option value="3">debug: flux</option>
+        <option value="4">debug: streamlines</option>
+        <option value="5">debug: iso-fluence</option>
       </select>
       <label><input id="pt-toggle" type="checkbox" /> path trace</label>
       <div class="spacer"></div>
@@ -876,6 +879,7 @@
 
       let currentScene = 0;
       function switchScene(index) {
+        if (index < 0 || index >= scenes.length || isNaN(index)) index = 0;
         currentScene = index;
         document.activeElement?.blur();
         selectShape(null);

@@ -346,6 +346,8 @@ struct MergeParams {
   fyProbe: i32,
   fySlice: i32,
   fyOff: i32,
+  axisX: f32,
+  axisY: f32,
 };
 
 @group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
@@ -384,6 +386,9 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 @group(0) @binding(4) var<storage, read_write> fluenceBuf: array<vec2u>;
 @group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
 @group(0) @binding(6) var<storage, read> angWeights: array<f32>;
+@group(0) @binding(7) var<storage, read_write> fluxBuf: array<vec2u>;
+@group(0) @binding(8) var<storage, read> fluxMergeInBuf: array<u32>;
+@group(0) @binding(9) var<storage, read_write> fluxMergeOutBuf: array<u32>;
 
 struct RayData { rad: vec3f, trans: f32 }
 
@@ -406,6 +411,15 @@ fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
     return vec3f(0.0);
   }
   return unpackRGB9E5(mergeInBuf[sliceIdx * i32(params.mergeStride) + texX]);
+}
+
+fn loadFluxMerge(texX: i32, sliceIdx: i32) -> vec2f {
+  if (params.isLastLevel == 1u ||
+      texX < 0 || texX >= i32(params.mergeInWidth) ||
+      sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
+    return vec2f(0.0);
+  }
+  return unpack2x16float(fluxMergeInBuf[sliceIdx * i32(params.mergeStride) + texX]);
 }
 
 fn getAngularWeight(subCone: u32) -> f32 {
@@ -435,11 +449,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let farStep = select(1, 2, isEven);
 
   var result = vec3f(0.0);
+  var fluxResult = vec2f(0.0);
+
+  let axis = vec2f(params.axisX, params.axisY);
+  let perp = vec2f(abs(axis.y), abs(axis.x));
 
   for (var side = 0; side < 2; side++) {
     let subCone = u32(coneIdx * 2 + side);
     let rayIdx = coneIdx + side;
     let weight = getAngularWeight(subCone);
+
+    let slope = f32(2 * i32(subCone) - i32(params.nextNumCones) + 1) / f32(params.nextNumCones);
+    let fluxDir = -normalize(axis + slope * perp);
 
     let ray = loadRay(probeIdx, rayIdx, sliceIdx);
     let sliceOff = -numCones + rayIdx * 2;
@@ -447,12 +468,15 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let farX = ((probeIdx + farStep) << conesShift) + i32(subCone);
     let farSlice = sliceIdx + sliceOff * farStep;
     var farCone: vec3f;
+    var farFlux: vec2f;
     if (params.isLastLevel == 1u ||
         farX < 0 || farX >= i32(params.mergeInWidth) ||
         farSlice < 0 || farSlice >= i32(params.sliceCount)) {
       farCone = loadSkyFluence(subCone);
+      farFlux = dot(farCone, vec3f(0.2126, 0.7152, 0.0722)) * fluxDir;
     } else {
       farCone = unpackRGB9E5(mergeInBuf[farSlice * i32(params.mergeStride) + farX]);
+      farFlux = unpack2x16float(fluxMergeInBuf[farSlice * i32(params.mergeStride) + farX]);
     }
 
     if (isEven) {
@@ -462,13 +486,22 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let merged = cRad * weight + farCone * cTrans;
       let nearCone = loadMerge((probeIdx << conesShift) + i32(subCone), sliceIdx);
       result += (merged + nearCone) * 0.5;
+
+      let nearLum = dot(cRad, vec3f(0.2126, 0.7152, 0.0722));
+      let mergedFlux = nearLum * weight * fluxDir + farFlux * cTrans;
+      let nearFlux = loadFluxMerge((probeIdx << conesShift) + i32(subCone), sliceIdx);
+      fluxResult += (mergedFlux + nearFlux) * 0.5;
     } else {
       result += ray.rad * weight + farCone * ray.trans;
+      let lum = dot(ray.rad, vec3f(0.2126, 0.7152, 0.0722));
+      fluxResult += lum * weight * fluxDir + farFlux * ray.trans;
     }
   }
 
   let outX = (probeIdx << conesShift) + coneIdx;
-  mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = packRGB9E5(result);
+  let outIdx = sliceIdx * i32(params.mergeStride) + outX;
+  mergeOutBuf[outIdx] = packRGB9E5(result);
+  fluxMergeOutBuf[outIdx] = pack2x16float(fluxResult);
 
   if (params.numCones == 1u) {
     let fc = vec2i(
@@ -482,6 +515,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let fi = fc.y * fStride + fc.x;
       let prev = unpackF16(fluenceBuf[fi]);
       fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, 1.0));
+
+      let prevFlux = unpackF16(fluxBuf[fi]);
+      fluxBuf[fi] = packF16(vec4f(prevFlux.xy + fluxResult, 0.0, 0.0));
     }
   }
 }
@@ -532,6 +568,22 @@ const blitShader =
 @group(0) @binding(1) var worldTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: BlitParams;
 @group(0) @binding(3) var linearSamp: sampler;
+@group(0) @binding(4) var fluxTex: texture_2d<f32>;
+
+fn sdSeg(p: vec2f, a: vec2f, b: vec2f) -> f32 {
+  let pa = p - a;
+  let ba = b - a;
+  return length(pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0));
+}
+
+fn lh(p: vec2f) -> f32 { return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453); }
+fn licNoise(p: vec2f) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(lh(i), lh(i + vec2f(1, 0)), u.x),
+             mix(lh(i + vec2f(0, 1)), lh(i + vec2f(1, 1)), u.x), u.y);
+}
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = pos.xy / vec2f(params.screenW, params.screenH);
@@ -554,6 +606,59 @@ const blitShader =
     let cool = vec3f(0.0, 0.1, 0.3);
     let hot = vec3f(1.0, 0.8, 0.2);
     color = vec4f(mix(cool, hot, t), 1.0);
+  } else if (dm == 3) {
+    color = vec4f(color.rgb * 0.7, 1.0);
+    let gridSize = 24.0;
+    let cellIdx = floor(pos.xy / gridSize);
+    let cellCenter = (cellIdx + 0.5) * gridSize;
+    let fluxUV = cellCenter / vec2f(params.screenW, params.screenH);
+    let flux = textureSampleLevel(fluxTex, linearSamp, fluxUV, 0.0).xy;
+    let cellFluence = dot(textureSampleLevel(fluenceTex, linearSamp, fluxUV, 0.0).rgb, vec3f(0.2126, 0.7152, 0.0722));
+    let fmag = length(flux);
+    if (fmag > 0.0001) {
+      let fdir = flux / fmag;
+      let arrowLen = clamp(sqrt(fmag * params.exposure) * 14.0, 3.0, gridSize * 0.9);
+      let tail = cellCenter - fdir * arrowLen * 0.3;
+      let tip = cellCenter + fdir * arrowLen * 0.7;
+      let dShaft = sdSeg(pos.xy, tail, tip);
+      let headLen = min(arrowLen * 0.35, 5.0);
+      let perp = vec2f(-fdir.y, fdir.x);
+      let h1 = tip - fdir * headLen + perp * headLen * 0.4;
+      let h2 = tip - fdir * headLen - perp * headLen * 0.4;
+      let dArrow = min(dShaft, min(sdSeg(pos.xy, tip, h1), sdSeg(pos.xy, tip, h2)));
+      if (dArrow < 1.2) {
+        let brightness = clamp(sqrt(cellFluence * params.exposure) * 0.7, 0.15, 1.0);
+        color = vec4f(vec3f(1.0, 0.6, 0.1) * brightness, 1.0);
+      }
+    }
+  } else if (dm == 4 || dm == 5) {
+    let perpendicular = (dm == 5);
+    var licSum = 0.0;
+    var licW = 0.0;
+    for (var dir = 0; dir < 2; dir++) {
+      var p = pos.xy;
+      let sgn = select(-1.0, 1.0, dir == 0);
+      for (var i = 0; i < 30; i++) {
+        let fuv = p / vec2f(params.screenW, params.screenH);
+        let f = textureSampleLevel(fluxTex, linearSamp, fuv, 0.0).xy;
+        let fm = length(f);
+        if (fm < 1e-6) { break; }
+        let n = fract(sin(dot(floor(p), vec2f(127.1, 311.7))) * 43758.5453);
+        let w = exp(-f32(i) * 0.04);
+        licSum += n * w;
+        licW += w;
+        let fd = f / fm;
+        let step = select(fd, vec2f(-fd.y, fd.x), perpendicular);
+        p += step * sgn * 2.0;
+      }
+    }
+    let lic = select(0.5, licSum / licW, licW > 0.0);
+    let licSharp = smoothstep(0.35, 0.65, lic);
+    let fluxMag = length(textureSampleLevel(fluxTex, linearSamp, uv, 0.0).xy);
+    let intensity = clamp(sqrt(fluxMag * params.exposure) * 1.5, 0.05, 1.0);
+    let streamline = licSharp * intensity;
+    let tint = select(vec3f(1.0, 0.9, 0.7), vec3f(0.7, 0.9, 1.0), perpendicular);
+    color = vec4f(color.rgb * 0.15 + tint * streamline, 1.0);
   }
   return color;
 }
@@ -925,12 +1030,18 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   // Merge ping-pong storage buffers (probeCount x probeCount)
   #mergeBuffers!: GPUBuffer[];
+  #fluxMergeBuffers!: GPUBuffer[];
 
   // Fluence SSBO: all 4 directions accumulate into this buffer (no ping-pong).
   // Copied to a texture after cascade processing for blit/bounce reads.
   #fluenceBuffer!: GPUBuffer;
   #fluenceTexture!: GPUTexture;
   #fluenceTextureView!: GPUTextureView;
+
+  // Flux vector SSBO: 2D directional flow of light, accumulated alongside fluence.
+  #fluxBuffer!: GPUBuffer;
+  #fluxTexture!: GPUTexture;
+  #fluxTextureView!: GPUTextureView;
 
   // Bounce texture (screen resolution) for diffuse light bounces
   #bounceTexture!: GPUTexture;
@@ -1471,6 +1582,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeBuffers = [0, 1].map((i) =>
       device.createBuffer({ label: `Merge-${i}`, size: mergeStride * psMax * 4, usage: GPUBufferUsage.STORAGE }),
     );
+    this.#fluxMergeBuffers = [0, 1].map((i) =>
+      device.createBuffer({ label: `FluxMerge-${i}`, size: mergeStride * psMax * 4, usage: GPUBufferUsage.STORAGE }),
+    );
     const alignedFluenceRow = Math.ceil((psX * 8) / 256) * 256;
     this.#fluenceBuffer = device.createBuffer({
       label: 'Fluence-SSBO',
@@ -1488,6 +1602,22 @@ export class FolkHolographicRC extends FolkBaseSet {
     );
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
+
+    this.#fluxBuffer = device.createBuffer({
+      label: 'Flux-SSBO',
+      size: alignedFluenceRow * psY,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+    const [fxt, fxv] = tex(
+      device,
+      'Flux',
+      psX,
+      psY,
+      'rgba16float',
+      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    );
+    this.#fluxTexture = fxt;
+    this.#fluxTextureView = fxv;
 
     [this.#bounceTexture, this.#bounceTextureView] = tex(
       device,
@@ -1700,6 +1830,9 @@ export class FolkHolographicRC extends FolkBaseSet {
             { buffer: this.#fluenceBuffer },
             this.#skyPrefixSumTextureView,
             { buffer: this.#angWeightBuffer },
+            { buffer: this.#fluxBuffer },
+            { buffer: this.#fluxMergeBuffers[readIdx] },
+            { buffer: this.#fluxMergeBuffers[writeIdx] },
           ),
         );
         [readIdx, writeIdx] = [writeIdx, readIdx];
@@ -1714,6 +1847,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#worldTextureView,
       { buffer: this.#blitParamsBuffer },
       this.#linearSampler,
+      this.#fluxTextureView,
     );
 
     this.#bounceBindGroup = bg(
@@ -1732,8 +1866,11 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#materialTexture?.destroy();
     this.#rayBuffers?.forEach((b) => b.destroy());
     this.#mergeBuffers?.forEach((b) => b.destroy());
+    this.#fluxMergeBuffers?.forEach((b) => b.destroy());
     this.#fluenceBuffer?.destroy();
     this.#fluenceTexture?.destroy();
+    this.#fluxBuffer?.destroy();
+    this.#fluxTexture?.destroy();
     this.#angWeightBuffer?.destroy();
     this.#bounceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
@@ -2028,8 +2165,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // ── Step 2: HRC cascade processing per direction ──
-    // Zero the fluence SSBO. All 4 directions accumulate into it additively.
     encoder.clearBuffer(this.#fluenceBuffer);
+    encoder.clearBuffer(this.#fluxBuffer);
 
     // Two frustum configs: H (E/W) and V (N/S). Each direction uses its
     // frustum's probe/slice counts for dispatch. Zero waste.
@@ -2073,7 +2210,6 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#lastFluenceReady = true;
 
-    // ── Step 2.5: Copy fluence SSBO → texture for blit (bilinear sampling) and bounce ──
     encoder.copyBufferToTexture(
       {
         buffer: this.#fluenceBuffer,
@@ -2081,6 +2217,15 @@ export class FolkHolographicRC extends FolkBaseSet {
         rowsPerImage: this.#psY,
       },
       { texture: this.#fluenceTexture },
+      { width: this.#psX, height: this.#psY },
+    );
+    encoder.copyBufferToTexture(
+      {
+        buffer: this.#fluxBuffer,
+        bytesPerRow: this.#fluenceStride * 8,
+        rowsPerImage: this.#psY,
+      },
+      { texture: this.#fluxTexture },
       { width: this.#psX, height: this.#psY },
     );
 
@@ -2255,6 +2400,12 @@ export class FolkHolographicRC extends FolkBaseSet {
       { fxProbe: -1, fxSlice: 0, fxOff: psX, fyProbe: 0, fySlice: 1, fyOff: 0 }, // W
       { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: -1, fySlice: 0, fyOff: psY }, // S
     ];
+    const axisVecs: [number, number][] = [
+      [1, 0],
+      [0, 1],
+      [-1, 0],
+      [0, -1],
+    ];
     const perDir = 2 * (1 << nc) - 2;
     const angData = new Float32Array(4 * perDir);
     for (let dir = 0; dir < 4; dir++) {
@@ -2286,6 +2437,8 @@ export class FolkHolographicRC extends FolkBaseSet {
           mergeStride: f.ms,
           mergeInWidth: level < f.nc - 1 ? ceilDiv(f.pc, 1 << (level + 1)) * (1 << (level + 1)) : 0,
           ...fl,
+          axisX: axisVecs[dir][0],
+          axisY: axisVecs[dir][1],
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
         angOff += nextNumCones;
