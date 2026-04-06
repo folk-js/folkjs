@@ -1066,11 +1066,20 @@ export class FolkHolographicRC extends FolkBaseSet {
         if (passCount > 0) {
           this.#gpuTimeMs = Number(times[passCount * 2 - 1] - times[0]) / 1e6;
         }
-        const passTimings: { label: string; ms: number }[] = [];
+        const aggregated = new Map<string, number>();
+        let totalGpu = 0;
         for (let i = 0; i < passCount; i++) {
-          const start = Number(times[i * 2]);
-          const end = Number(times[i * 2 + 1]);
-          passTimings.push({ label: labels[i] || `pass${i}`, ms: (end - start) / 1e6 });
+          const ms = (Number(times[i * 2 + 1]) - Number(times[i * 2])) / 1e6;
+          const raw = labels[i] || `pass${i}`;
+          const dashIdx = raw.indexOf('-');
+          const key = dashIdx >= 0 && /^[ENSW]$/.test(raw.substring(0, dashIdx)) ? raw.substring(dashIdx + 1) : raw;
+          aggregated.set(key, (aggregated.get(key) ?? 0) + ms);
+          totalGpu += ms;
+        }
+        this.#gpuTimeMs = totalGpu;
+        const passTimings: { label: string; ms: number }[] = [];
+        for (const [label, ms] of aggregated) {
+          passTimings.push({ label, ms });
         }
         this.#gpuPassTimings = passTimings;
         this.#tsResultBuffer!.unmap();
@@ -2043,32 +2052,41 @@ export class FolkHolographicRC extends FolkBaseSet {
       const dn = ['E', 'N', 'W', 'S'][dir];
       const cfg = dirCfg[dir];
       const { pc, sc } = frustums[cfg];
-      const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(dn) });
 
-      pass.setPipeline(this.#raySeedPipeline);
-      pass.setBindGroup(0, this.#seedBindGroups[dir]);
-      pass.dispatchWorkgroups(Math.ceil(pc / WG_SEED[0]), Math.ceil(sc / WG_SEED[1]));
-
-      pass.setPipeline(this.#rayExtendPipeline);
-      for (let level = 1; level < nc; level++) {
-        pass.setBindGroup(0, this.#extendBindGroups[cfg * (nc - 1) + (level - 1)]);
-        pass.dispatchWorkgroups(
-          Math.ceil((ceilDiv(pc, 1 << level) * ((1 << level) + 1)) / WG_EXTEND[0]),
-          Math.ceil(sc / WG_EXTEND[1]),
-        );
+      {
+        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-seed`) });
+        pass.setPipeline(this.#raySeedPipeline);
+        pass.setBindGroup(0, this.#seedBindGroups[dir]);
+        pass.dispatchWorkgroups(Math.ceil(pc / WG_SEED[0]), Math.ceil(sc / WG_SEED[1]));
+        pass.end();
       }
 
-      pass.setPipeline(this.#coneMergePipeline);
-      for (let k = 0; k < nc; k++) {
-        const level = nc - 1 - k;
-        pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
-        pass.dispatchWorkgroups(
-          Math.ceil((ceilDiv(pc, 1 << level) * (1 << level)) / WG_MERGE[0]),
-          Math.ceil(sc / WG_MERGE[1]),
-        );
+      {
+        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-extend`) });
+        pass.setPipeline(this.#rayExtendPipeline);
+        for (let level = 1; level < nc; level++) {
+          pass.setBindGroup(0, this.#extendBindGroups[cfg * (nc - 1) + (level - 1)]);
+          pass.dispatchWorkgroups(
+            Math.ceil((ceilDiv(pc, 1 << level) * ((1 << level) + 1)) / WG_EXTEND[0]),
+            Math.ceil(sc / WG_EXTEND[1]),
+          );
+        }
+        pass.end();
       }
 
-      pass.end();
+      {
+        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-merge`) });
+        pass.setPipeline(this.#coneMergePipeline);
+        for (let k = 0; k < nc; k++) {
+          const level = nc - 1 - k;
+          pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
+          pass.dispatchWorkgroups(
+            Math.ceil((ceilDiv(pc, 1 << level) * (1 << level)) / WG_MERGE[0]),
+            Math.ceil(sc / WG_MERGE[1]),
+          );
+        }
+        pass.end();
+      }
     }
 
     this.#lastFluenceReady = true;
@@ -2085,7 +2103,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     );
 
     // ── Step 3: Final blit ──
-    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroup, 'blit');
+    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroup);
 
     this.#resolveTimestamps(encoder);
     this.#submitAndCapture(device, encoder);
