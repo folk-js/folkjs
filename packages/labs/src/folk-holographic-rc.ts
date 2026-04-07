@@ -70,6 +70,10 @@ function computePipeline(device: GPUDevice, label: string, code: string) {
   });
 }
 
+function toU8(v: number): number {
+  return Math.round(Math.max(0, Math.min(1, v)) * 255);
+}
+
 function uploadVertexData(
   device: GPUDevice,
   existing: GPUBuffer | undefined,
@@ -1026,11 +1030,11 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
 
-  // Pixel-based drawing for pixel-perfect mode (Bresenham lines + square brush)
-  #debugPixels: [x: number, y: number, r: number, g: number, b: number, opacity: number, albedo: number][] = [];
-  #debugPixelBuffer?: GPUBuffer;
-  #debugPixelVertexCount = 0;
-  #debugPixelsDirty = false;
+  // Scene canvas (pixel-perfect mode): 2D canvas used as CPU-side scene buffer.
+  // Uploaded to world texture via copyExternalImageToTexture when dirty.
+  #sceneCanvas: HTMLCanvasElement | null = null;
+  #sceneCtx: CanvasRenderingContext2D | null = null;
+  #sceneDirty = false;
 
   // Per-level ray storage buffers: vec4f (rad.rgb + transmittance)
   #rayBuffers!: GPUBuffer[];
@@ -1334,6 +1338,22 @@ export class FolkHolographicRC extends FolkBaseSet {
     return v * (this.#canvas.width / rect.width);
   }
 
+  #ensureSceneCanvas() {
+    const pp = this.#pp;
+    if (!pp) return;
+    if (!this.#sceneCanvas || this.#sceneCanvas.width !== pp) {
+      this.#sceneCanvas = document.createElement('canvas');
+      this.#sceneCanvas.width = pp;
+      this.#sceneCanvas.height = pp;
+      this.#sceneCtx = this.#sceneCanvas.getContext('2d')!;
+      this.#sceneDirty = true;
+    }
+  }
+
+  #sceneColor(r: number, g: number, b: number, a: number): string {
+    return `rgba(${toU8(r)},${toU8(g)},${toU8(b)},${a})`;
+  }
+
   addLine(
     x1: number,
     y1: number,
@@ -1345,18 +1365,28 @@ export class FolkHolographicRC extends FolkBaseSet {
     albedo = 0,
   ) {
     if (this.#pp) {
+      this.#ensureSceneCanvas();
       [x1, y1] = this.#mapToCanvas(x1, y1);
       [x2, y2] = this.#mapToCanvas(x2, y2);
-      this.#stampLine(
-        Math.floor(x1),
-        Math.floor(y1),
-        Math.floor(x2),
-        Math.floor(y2),
-        color,
-        thickness,
-        opacity,
-        albedo,
-      );
+      const ctx = this.#sceneCtx!;
+      ctx.fillStyle = this.#sceneColor(color[0], color[1], color[2], opacity);
+      const bs = Math.max(1, thickness);
+      const blo = -Math.floor((bs - 1) / 2);
+      const dx = Math.abs(Math.floor(x2) - Math.floor(x1));
+      const dy = Math.abs(Math.floor(y2) - Math.floor(y1));
+      const sx = x1 < x2 ? 1 : -1;
+      const sy = y1 < y2 ? 1 : -1;
+      let err = dx - dy;
+      let x = Math.floor(x1), y = Math.floor(y1);
+      const ex = Math.floor(x2), ey = Math.floor(y2);
+      for (;;) {
+        ctx.fillRect(x + blo, y + blo, bs, bs);
+        if (x === ex && y === ey) break;
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx) { err += dx; y += sy; }
+      }
+      this.#sceneDirty = true;
       return;
     }
     const [r, g, b] = color;
@@ -1364,56 +1394,52 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#lineBufferDirty = true;
   }
 
-  #stampLine(
-    x0: number,
-    y0: number,
-    x1: number,
-    y1: number,
-    color: [number, number, number],
-    brushSize: number,
-    opacity: number,
-    albedo: number,
-  ) {
-    const [r, g, b] = color;
-    const dx = Math.abs(x1 - x0);
-    const dy = Math.abs(y1 - y0);
-    const sx = x0 < x1 ? 1 : -1;
-    const sy = y0 < y1 ? 1 : -1;
-    let err = dx - dy;
-    let x = x0,
-      y = y0;
-    const size = this.#pp!;
-    const blo = -Math.floor((brushSize - 1) / 2);
-    const bhi = Math.floor(brushSize / 2);
-    for (;;) {
-      for (let by = blo; by <= bhi; by++) {
-        for (let bx = blo; bx <= bhi; bx++) {
-          const px = x + bx;
-          const py = y + by;
-          if (px >= 0 && py >= 0 && px < size && py < size) {
-            this.#debugPixels.push([px, py, r, g, b, opacity, albedo]);
-          }
-        }
-      }
-      if (x === x1 && y === y1) break;
-      const e2 = 2 * err;
-      if (e2 > -dy) {
-        err -= dy;
-        x += sx;
-      }
-      if (e2 < dx) {
-        err += dx;
-        y += sy;
-      }
-    }
-    this.#debugPixelsDirty = true;
-  }
-
   clearLines() {
     this.#lines = [];
     this.#lineBufferDirty = true;
-    this.#debugPixels = [];
-    this.#debugPixelsDirty = true;
+    if (this.#sceneCanvas && this.#sceneCtx) {
+      this.#sceneCtx.clearRect(0, 0, this.#sceneCanvas.width, this.#sceneCanvas.height);
+      this.#sceneDirty = true;
+    }
+  }
+
+  addRect(x: number, y: number, w: number, h: number, rgb: [number, number, number], opacity = SOLID_OPACITY) {
+    this.#ensureSceneCanvas();
+    const ctx = this.#sceneCtx;
+    if (!ctx) return;
+    ctx.fillStyle = this.#sceneColor(rgb[0], rgb[1], rgb[2], opacity);
+    ctx.fillRect(x, y, w, h);
+    this.#sceneDirty = true;
+  }
+
+  addPixel(x: number, y: number, rgb: [number, number, number], opacity = SOLID_OPACITY) {
+    this.#ensureSceneCanvas();
+    const ctx = this.#sceneCtx;
+    if (!ctx) return;
+    ctx.fillStyle = this.#sceneColor(rgb[0], rgb[1], rgb[2], opacity);
+    ctx.fillRect(x, y, 1, 1);
+    this.#sceneDirty = true;
+  }
+
+  loadSceneImage(img: HTMLImageElement) {
+    const size = img.width;
+    if (img.width !== img.height) {
+      console.warn('Scene PNG must be square, got', img.width, 'x', img.height);
+      return;
+    }
+    this.pixelPerfect = size;
+    this.clearLines();
+    this.#ensureSceneCanvas();
+    this.#sceneCtx!.drawImage(img, 0, 0);
+    this.#sceneDirty = true;
+  }
+
+  saveScenePNG(filename = 'scene.png') {
+    if (!this.#sceneCanvas) { console.warn('saveScenePNG only works in pixel-perfect mode'); return; }
+    const a = document.createElement('a');
+    a.href = this.#sceneCanvas.toDataURL('image/png');
+    a.download = filename;
+    a.click();
   }
 
   setMouseLightColor(r: number, g: number, b: number) {
@@ -1433,16 +1459,17 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   eraseAt(x: number, y: number, radius: number) {
-    if (this.#pp) {
+    if (this.#pp && this.#sceneCtx) {
       [x, y] = this.#mapToCanvas(x, y);
       radius = this.#scaleToCanvas(radius);
-      const r2 = radius * radius;
-      this.#debugPixels = this.#debugPixels.filter(([px, py]) => {
-        const dx = px + 0.5 - x;
-        const dy = py + 0.5 - y;
-        return dx * dx + dy * dy > r2;
-      });
-      this.#debugPixelsDirty = true;
+      const ctx = this.#sceneCtx;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.clearRect(x - radius, y - radius, radius * 2, radius * 2);
+      ctx.restore();
+      this.#sceneDirty = true;
       return;
     }
     this.#lines = this.#lines.filter((line) => {
@@ -1717,7 +1744,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const ubo = (label: string, size: number) =>
       device.createBuffer({ label, size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER | GPUTextureUsage.COPY_SRC);
+    [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST);
     [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
 
     // Ray/merge buffers are shared across all 4 directions, sized for worst case.
@@ -2103,19 +2130,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     out.push(x0, y1, r, g, b, op, al);
   }
 
-  #updateDebugPixelBuffer() {
-    if (!this.#device || this.#debugPixels.length === 0) {
-      this.#debugPixelVertexCount = 0;
-      return;
-    }
-    const verts: number[] = [];
-    for (const [px, py, r, g, b, op, al] of this.#debugPixels) {
-      this.#pixelQuadVerts(px, py, r, g, b, op, al, verts);
-    }
-    this.#debugPixelVertexCount = verts.length / 7;
-    this.#debugPixelBuffer = uploadVertexData(this.#device, this.#debugPixelBuffer, new Float32Array(verts));
-  }
-
   #updateLineBuffer() {
     if (!this.#device || this.#lines.length === 0) {
       this.#lineCount = 0;
@@ -2204,10 +2218,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#lineBufferDirty = false;
       this.#updateLineBuffer();
     }
-    if (this.#debugPixelsDirty) {
-      this.#debugPixelsDirty = false;
-      this.#updateDebugPixelBuffer();
-    }
     if (this.#mouseDirty) {
       this.#mouseDirty = false;
       this.#updateMouseLightBuffer();
@@ -2224,13 +2234,21 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#tsBeginFrame();
 
     // ── Step 1: Render world textures (world + material) ──
+    const hasScene = this.#sceneCanvas && this.#sceneCanvas.width === width;
+    if (hasScene) {
+      device.queue.copyExternalImageToTexture(
+        { source: this.#sceneCanvas!, flipY: false },
+        { texture: this.#worldTexture, premultipliedAlpha: false },
+        { width, height },
+      );
+    }
     {
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
             view: this.#worldTextureView,
             clearValue: { r: 0, g: 0, b: 0, a: 0 },
-            loadOp: 'clear',
+            loadOp: hasScene ? 'load' : 'clear',
             storeOp: 'store',
           },
           {
@@ -2247,10 +2265,6 @@ export class FolkHolographicRC extends FolkBaseSet {
         pass.setVertexBuffer(0, this.#shapeDataBuffer);
         pass.draw(this.#shapeCount * 6);
       }
-      if (this.#debugPixelBuffer && this.#debugPixelVertexCount > 0) {
-        pass.setVertexBuffer(0, this.#debugPixelBuffer);
-        pass.draw(this.#debugPixelVertexCount);
-      }
       if (this.#lineInstanceBuffer && this.#lineCount > 0) {
         pass.setPipeline(this.#lineRenderPipeline);
         if (!this.#lineBindGroup) {
@@ -2265,7 +2279,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         pass.setPipeline(this.#worldRenderPipeline);
       }
       const { r: mr, g: mg, b: mb } = this.#mouseLightColor;
-      if (this.#mouseLightBuffer && this.#mouseLightVertexCount > 0 && (mr > 0 || mg > 0 || mb > 0)) {
+      if (this.#mouseLightBuffer && this.#mouseLightVertexCount > 0 && (mr > 0 || mg > 0 || mb > 0 || this.#mouseLightOpacity > 0)) {
         pass.setVertexBuffer(0, this.#mouseLightBuffer);
         pass.draw(this.#mouseLightVertexCount);
       }

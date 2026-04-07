@@ -229,6 +229,8 @@
       #color-btn.open {
         border-color: rgba(255, 255, 255, 0.7);
       }
+      #load-btn,
+      #save-btn,
       #fs-btn {
         background: none;
         border: none;
@@ -238,6 +240,8 @@
         padding: 0 2px;
         line-height: 1;
       }
+      #load-btn:hover,
+      #save-btn:hover,
       #fs-btn:hover {
         color: rgba(255, 255, 255, 0.7);
       }
@@ -422,6 +426,9 @@
       <span id="rmse-display" style="color: rgba(255,255,255,0.4); white-space: nowrap; display: none;"></span>
       <span id="fps" title="Toggle perf graph"></span>
       <div id="color-btn" title="Material inspector"></div>
+      <input id="scene-file" type="file" accept=".png" style="display:none" />
+      <button id="load-btn" title="Load scene PNG">📂</button>
+      <button id="save-btn" title="Save scene as PNG">💾</button>
       <button id="info-btn" title="Keyboard shortcuts">?</button>
       <button id="fs-btn" title="Fullscreen">⛶</button>
     </div>
@@ -518,7 +525,7 @@
 
       const presets = [
         { name: 'Eraser', css: null, rgb: [0, 0, 0] },
-        { name: 'Black', css: '#111', rgb: [0.05, 0.05, 0.05] },
+        { name: 'Black', css: '#000', rgb: [0, 0, 0] },
         { name: 'Red', css: '#ff4444', rgb: [1, 0.25, 0.25] },
         { name: 'Orange', css: '#ff8833', rgb: [1, 0.5, 0.2] },
         { name: 'Yellow', css: '#dddd33', rgb: [0.75, 0.75, 0.2] },
@@ -691,7 +698,7 @@
       function syncMouse() {
         const [r, g, b] = pen.eraser ? [0, 0, 0] : pen.color;
         hrc.setMouseLightColor(r, g, b);
-        hrc.setMouseLightMaterial(pen.opacity, pen.albedo);
+        hrc.setMouseLightMaterial(pen.eraser ? 0 : pen.opacity, pen.albedo);
       }
 
       // ── Shape selection ──
@@ -788,6 +795,24 @@
       debugSelect.addEventListener('change', () => {
         hrc.debugMode = Number(debugSelect.value);
         syncURL();
+      });
+
+      $('load-btn').addEventListener('click', () => $('scene-file').click());
+      $('save-btn').addEventListener('click', () => hrc.saveScenePNG(`scene-${Date.now()}.png`));
+      $('scene-file').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const img = new Image();
+        img.onload = () => {
+          hrc.loadSceneImage(img);
+          ppToggle.checked = true;
+          ppMode = true;
+          probeCounts = ppCounts;
+          setProbeSize(img.width);
+          syncURL();
+        };
+        img.src = URL.createObjectURL(file);
+        e.target.value = '';
       });
 
       hrc.setMouseLightRadius(pen.size / 2);
@@ -1323,7 +1348,12 @@
         sceneSelect.appendChild(o);
       });
       sceneSelect.addEventListener('change', () => switchScene(Number(sceneSelect.value)));
-      switchScene(params.has('scene') ? Number(params.get('scene')) : 0);
+
+      // Restore all params before any syncURL call
+      if (params.get('1px') === '1') {
+        ppToggle.checked = true;
+        setPPMode(true);
+      }
       if (params.has('sky')) {
         skySelect.value = params.get('sky');
         applySky(skySelect.value);
@@ -1338,10 +1368,7 @@
         hrc.debugMode = dm;
         debugSelect.value = dm;
       }
-      if (params.get('1px') === '1') {
-        ppToggle.checked = true;
-        setPPMode(true);
-      }
+      switchScene(params.has('scene') ? Number(params.get('scene')) : 0);
 
       // ── FPS + Perf Graph ──
       const fpsEl = $('fps');
@@ -1603,7 +1630,7 @@
       });
 
       document.addEventListener('pointermove', (e) => {
-        if (!drawing) return;
+        if (!drawing || e.buttons === 0) { drawing = false; return; }
         const dx = e.clientX - lastX,
           dy = e.clientY - lastY;
         if (Math.sqrt(dx * dx + dy * dy) >= 4) {
