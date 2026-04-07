@@ -373,12 +373,16 @@
         <span class="v" id="probe-value">1024</span>
       </div>
       <label><input id="bounces-toggle" type="checkbox" checked /> bounces</label>
+      <label><input id="blur-toggle" type="checkbox" checked /> blur</label>
+      <label><input id="pp-toggle" type="checkbox" /> 1px</label>
       <select id="debug-select">
         <option value="0">debug: off</option>
         <option value="1">debug: probes</option>
         <option value="2">debug: fluence</option>
+        <option value="3">debug: false color</option>
+        <option value="4">debug: path trace</option>
+        <option value="5">debug: PT vs HRC diff</option>
       </select>
-      <label><input id="pt-toggle" type="checkbox" /> path trace</label>
       <div class="spacer"></div>
       <span id="fps" title="Toggle perf graph"></span>
       <div id="color-btn" title="Material inspector"></div>
@@ -410,10 +414,6 @@
       <div class="row"
         ><span><kbd>C</kbd></span
         ><span>clear drawing</span></div
-      >
-      <div class="row"
-        ><span><kbd>P</kbd></span
-        ><span>path trace</span></div
       >
       <div class="row"
         ><span><kbd>S</kbd></span
@@ -660,16 +660,39 @@
         exposureSlider.value = v;
         exposureValue.textContent = v.toFixed(1);
       }
-      const probeCounts = [
+      const normalCounts = [
         ...new Set([32, 64, 128, 256, 512, 1024, 2048, ...Array.from({ length: 20 }, (_, i) => (i + 1) * 100)]),
       ].sort((a, b) => a - b);
+      const ppCounts = [16, 32, 64, 128, 256, 512, 1024, 2048];
+      let ppMode = false;
+      let probeCounts = normalCounts;
+
       function setProbeSize(size) {
         const idx = probeCounts.indexOf(size);
         const i = idx >= 0 ? idx : probeCounts.findIndex((v) => v >= size) || probeCounts.length - 1;
-        hrc.probeCount = probeCounts[i];
-        probeSlider.value = i;
-        probeValue.textContent = probeCounts[i];
+        const actual = probeCounts[Math.max(0, i)];
+        hrc.probeCount = actual;
+        probeSlider.max = probeCounts.length - 1;
+        probeSlider.value = Math.max(0, i);
+        probeValue.textContent = actual;
+        if (ppMode) hrc.pixelPerfect = actual;
       }
+
+      function setPPMode(on) {
+        ppMode = on;
+        probeCounts = on ? ppCounts : normalCounts;
+        if (on) {
+          const nearest = ppCounts.reduce((best, v) =>
+            Math.abs(v - hrc.probeCount) < Math.abs(best - hrc.probeCount) ? v : best,
+          );
+          hrc.pixelPerfect = nearest;
+          setProbeSize(nearest);
+        } else {
+          hrc.pixelPerfect = 0;
+          setProbeSize(hrc.probeCount);
+        }
+      }
+
       const params = new URLSearchParams(location.search);
       let perfOpen = params.get('perf') === '1';
 
@@ -680,7 +703,8 @@
         if (hrc.probeCount !== 1024) p.set('probes', hrc.probeCount);
         if (hrc.exposure !== 2) p.set('exposure', hrc.exposure.toFixed(1));
         if (!hrc.bounces) p.set('bounces', '0');
-        if (hrc.debugMode > 0) p.set('debug', hrc.debugMode);
+        if (hrc.debugMode > 0 && hrc.debugMode < 4) p.set('debug', hrc.debugMode);
+        if (ppMode) p.set('1px', '1');
         if (perfOpen) p.set('perf', '1');
         const qs = p.toString();
         history.replaceState(null, '', qs ? '?' + qs : location.pathname);
@@ -700,13 +724,18 @@
         hrc.bounces = e.target.checked;
         syncURL();
       });
+      $('blur-toggle').addEventListener('change', (e) => {
+        hrc.crossBlur = e.target.checked;
+      });
+      const ppToggle = $('pp-toggle');
+      ppToggle.addEventListener('change', (e) => {
+        setPPMode(e.target.checked);
+        syncURL();
+      });
       const debugSelect = $('debug-select');
       debugSelect.addEventListener('change', () => {
         hrc.debugMode = Number(debugSelect.value);
         syncURL();
-      });
-      $('pt-toggle').addEventListener('change', (e) => {
-        hrc.pathTracing = e.target.checked;
       });
 
       hrc.setMouseLightRadius(pen.size / 2);
@@ -968,7 +997,7 @@
         const cx = window.innerWidth / 2,
           cy = hrc.clientHeight / 2;
         addShape(cx - 30, cy + 80, 60, 30, 3);
-        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: 0.02, albedo: 0.9 });
+        addShape(cx - 80, cy - 100, 160, 160, 0, { opacity: 0.05, albedo: 0.9 });
         addShape(cx - 200, cy - 60, 30, 30, 1);
         addShape(cx + 170, cy - 60, 30, 30, 1);
       }
@@ -1257,6 +1286,10 @@
         hrc.debugMode = dm;
         debugSelect.value = dm;
       }
+      if (params.get('1px') === '1') {
+        ppToggle.checked = true;
+        setPPMode(true);
+      }
 
       // ── FPS + Perf Graph ──
       const fpsEl = $('fps');
@@ -1419,14 +1452,9 @@
           case 'C':
             hrc.clearLines();
             break;
-          case 'p':
-          case 'P':
-            hrc.pathTracing = !hrc.pathTracing;
-            $('pt-toggle').checked = hrc.pathTracing;
-            break;
           case 's':
           case 'S':
-            hrc.saveScreenshot(`${hrc.pathTracing ? 'pt' : 'hrc'}-${Date.now()}.png`);
+            hrc.saveScreenshot(`hrc-${Date.now()}.png`);
             break;
           case 'f':
           case 'F':
@@ -1497,6 +1525,11 @@
         if (e.target.tagName === 'FOLK-SHAPE' || e.target.closest('#panel') || e.target.closest('#bar')) return;
         const rect = hrc.getBoundingClientRect();
         if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+        if (selectedShape) {
+          selectShape(null);
+          e.preventDefault();
+          return;
+        }
         if (document.activeElement?.tagName === 'FOLK-SHAPE') document.activeElement.blur();
         drawing = true;
         lastX = e.clientX;
@@ -1518,9 +1551,13 @@
 
       document.addEventListener('pointerup', (e) => {
         if (!drawing) return;
-        if (pen.eraser) hrc.eraseAt(e.clientX, e.clientY, pen.size);
-        else if (Math.abs(e.clientX - lastX) > 1 || Math.abs(e.clientY - lastY) > 1)
+        if (pen.eraser) {
+          hrc.eraseAt(e.clientX, e.clientY, pen.size);
+        } else if (Math.abs(e.clientX - lastX) > 1 || Math.abs(e.clientY - lastY) > 1) {
           hrc.addLine(lastX, lastY, e.clientX, e.clientY, pen.color, pen.size, pen.opacity, pen.albedo);
+        } else {
+          hrc.addLine(lastX, lastY, lastX, lastY, pen.color, pen.size, pen.opacity, pen.albedo);
+        }
         drawing = false;
       });
     </script>

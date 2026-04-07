@@ -17,7 +17,6 @@ type Line = [
 
 const SOLID_OPACITY = 1;
 
-const DEBUG_CANVAS: number | null = null;
 
 function nextPow2(n: number): number {
   let v = 1;
@@ -550,6 +549,29 @@ fn tonemapAndDither(hdr: vec3f, fragCoord: vec2u) -> vec4f {
   return vec4f(linearToSrgb(acesTonemap(hdr)) + triangularDither(fragCoord), 1.0);
 }
 
+fn spectrumRamp(t: f32) -> vec3f {
+  let black  = vec3f(0.0);
+  let dblue  = vec3f(0.05, 0.0, 0.3);
+  let blue   = vec3f(0.0, 0.2, 1.0);
+  let cyan   = vec3f(0.0, 0.9, 0.9);
+  let green  = vec3f(0.1, 0.9, 0.1);
+  let yel    = vec3f(1.0, 0.95, 0.1);
+  let orange = vec3f(1.0, 0.5, 0.0);
+  let red    = vec3f(1.0, 0.0, 0.0);
+  let pink   = vec3f(1.0, 0.5, 0.8);
+  let white  = vec3f(1.0);
+  let s = 1.0 / 9.0;
+  if      (t < s)     { return mix(black,  dblue,  t / s); }
+  else if (t < s * 2) { return mix(dblue,  blue,   (t - s)     / s); }
+  else if (t < s * 3) { return mix(blue,   cyan,   (t - s * 2) / s); }
+  else if (t < s * 4) { return mix(cyan,   green,  (t - s * 3) / s); }
+  else if (t < s * 5) { return mix(green,  yel,    (t - s * 4) / s); }
+  else if (t < s * 6) { return mix(yel,    orange, (t - s * 5) / s); }
+  else if (t < s * 7) { return mix(orange, red,    (t - s * 6) / s); }
+  else if (t < s * 8) { return mix(red,    pink,   (t - s * 7) / s); }
+  else                { return mix(pink,   white,  (t - s * 8) / s); }
+}
+
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   let pos = array(vec2f(-1, -1), vec2f(1, -1), vec2f(-1, 1), vec2f(1, 1));
   return vec4f(pos[i], 0, 1);
@@ -563,6 +585,7 @@ const blitShader =
 @group(0) @binding(1) var worldTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: BlitParams;
 @group(0) @binding(3) var linearSamp: sampler;
+@group(0) @binding(4) var ptAccumTex: texture_2d<f32>;
 
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let uv = pos.xy / vec2f(params.screenW, params.screenH);
@@ -570,23 +593,93 @@ const blitShader =
   let world = textureLoad(worldTex, vec2u(pos.xy), 0);
   let emissive = world.rgb * world.a;
   let indirect = fluence / TWO_PI * (1.0 - world.a);
-  var color = tonemapAndDither((emissive + indirect) * params.exposure, vec2u(pos.xy));
+  let hrcHdr = (emissive + indirect) * params.exposure;
+  var color = tonemapAndDither(hrcHdr, vec2u(pos.xy));
   let dm = i32(params.debugMode);
   if (dm == 1) {
-    // Probes: orange dots at probe centers
     let probeCoord = uv * vec2f(textureDimensions(fluenceTex, 0));
     if (length(fract(probeCoord) - 0.5) < 0.15) {
       color = vec4f(1.0, 0.3, 0.1, 1.0);
     }
   } else if (dm == 2) {
-    // Fluence heatmap: log-scale magnitude
     let mag = dot(fluence, vec3f(0.2126, 0.7152, 0.0722));
     let t = clamp(log2(mag + 1.0) * 0.3, 0.0, 1.0);
-    let cool = vec3f(0.0, 0.1, 0.3);
-    let hot = vec3f(1.0, 0.8, 0.2);
-    color = vec4f(mix(cool, hot, t), 1.0);
+    color = vec4f(mix(vec3f(0.0, 0.1, 0.3), vec3f(1.0, 0.8, 0.2), t), 1.0);
+  } else if (dm == 3) {
+    let mag = dot(fluence, vec3f(0.2126, 0.7152, 0.0722));
+    let t = clamp(log2(mag * 10000.0 + 1.0) / log2(10001.0), 0.0, 1.0);
+    color = vec4f(spectrumRamp(t), 1.0);
+  } else if (dm == 4) {
+    // Path trace reference view
+    let ptHdr = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb * params.exposure;
+    color = tonemapAndDither(ptHdr, vec2u(pos.xy));
+  } else if (dm == 5) {
+    // HRC vs PT diff: absolute error mapped to spectrum ramp
+    let ptHdr = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb * params.exposure;
+    let diff = abs(hrcHdr - ptHdr);
+    let errLum = dot(diff, vec3f(0.2126, 0.7152, 0.0722));
+    let t = clamp(log2(errLum * 10000.0 + 1.0) / log2(10001.0), 0.0, 1.0);
+    color = vec4f(spectrumRamp(t), 1.0);
   }
   return color;
+}
+`;
+
+// ── Fluence cross-blur compute shader (HRC paper Eq. 21) ──
+// Opacity-aware 1px cross blur on fluence at probe resolution.
+// Kernel [0,1,0; 1,4,1; 0,1,0] / 8, skipping neighbors whose
+// opacity differs significantly from the center probe's opacity.
+// This cancels the period-2 checkerboard from even/odd merge
+// parity without leaking light across surface boundaries.
+
+const WG_BLUR = [16, 16] as const;
+
+const fluenceBlurShader = /*wgsl*/ `
+struct BlurParams { w: u32, h: u32, stride: u32, screenW: u32, screenH: u32, pad0: u32, pad1: u32, pad2: u32 };
+
+fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
+
+@group(0) @binding(0) var<storage, read> src: array<vec2u>;
+@group(0) @binding(1) var dst: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var<uniform> params: BlurParams;
+@group(0) @binding(3) var worldTex: texture_2d<f32>;
+
+fn load(x: i32, y: i32) -> vec3f {
+  return unpackF16(src[y * i32(params.stride) + x]).rgb;
+}
+
+fn probeOpacity(px: i32, py: i32, spacing: f32) -> f32 {
+  let wp = vec2i(vec2f(f32(px) + 0.5, f32(py) + 0.5) * spacing);
+  return textureLoad(worldTex, wp, 0).a;
+}
+
+@compute @workgroup_size(${WG_BLUR[0]}, ${WG_BLUR[1]})
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let x = i32(gid.x);
+  let y = i32(gid.y);
+  let w = i32(params.w);
+  let h = i32(params.h);
+  if (x >= w || y >= h) { return; }
+
+  let spacing = f32(params.screenW) / f32(w);
+  let centerOpacity = probeOpacity(x, y, spacing);
+  let center = load(x, y);
+
+  var sum = center * 4.0;
+  var wt = 4.0;
+
+  let off = array<vec2i, 4>(vec2i(-1, 0), vec2i(1, 0), vec2i(0, -1), vec2i(0, 1));
+  for (var i = 0; i < 4; i++) {
+    let nx = clamp(x + off[i].x, 0, w - 1);
+    let ny = clamp(y + off[i].y, 0, h - 1);
+    let nOpacity = probeOpacity(nx, ny, spacing);
+    if (abs(nOpacity - centerOpacity) < 0.5) {
+      sum += load(nx, ny);
+      wt += 1.0;
+    }
+  }
+
+  textureStore(dst, vec2i(x, y), vec4f(sum / wt, 1.0));
 }
 `;
 
@@ -910,8 +1003,14 @@ export class FolkHolographicRC extends FolkBaseSet {
   @property({ type: Number, reflect: true }) exposure = 2.0;
   @property({ type: Number, reflect: true }) probeCount = 1024;
   @property({ type: Boolean, reflect: true }) bounces = true;
+  @property({ type: Boolean, reflect: true, attribute: 'cross-blur' }) crossBlur = true;
   @property({ type: Number, reflect: true, attribute: 'debug-mode' }) debugMode = 0;
   @property({ type: Boolean, reflect: true, attribute: 'path-tracing' }) pathTracing = false;
+  @property({ type: Number, reflect: true, attribute: 'pixel-perfect' }) pixelPerfect = 0;
+
+  get #pp(): number | null {
+    return this.pixelPerfect > 0 ? this.pixelPerfect : null;
+  }
 
   #canvas!: HTMLCanvasElement;
   #device!: GPUDevice;
@@ -945,7 +1044,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
 
-  // Pixel-based drawing for DEBUG_CANVAS (Bresenham lines + square brush)
+  // Pixel-based drawing for pixel-perfect mode (Bresenham lines + square brush)
   #debugPixels: [x: number, y: number, r: number, g: number, b: number, opacity: number, albedo: number][] = [];
   #debugPixelBuffer?: GPUBuffer;
   #debugPixelVertexCount = 0;
@@ -997,6 +1096,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #raySeedPipeline!: GPUComputePipeline;
   #rayExtendPipeline!: GPUComputePipeline;
   #coneMergePipeline!: GPUComputePipeline;
+  #fluenceBlurPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
   // Pre-created bind groups
@@ -1004,6 +1104,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #extendBindGroups!: GPUBindGroup[];
   #mergeBindGroups!: GPUBindGroup[][];
   #blitBindGroup!: GPUBindGroup;
+  #fluenceBlurBindGroup!: GPUBindGroup;
   #bounceBindGroup!: GPUBindGroup;
 
   // Sampler
@@ -1020,6 +1121,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #blitParamsView!: StructuredView;
   #bounceParamsBuffer!: GPUBuffer;
   #bounceParamsView!: StructuredView;
+  #fluenceBlurParamsBuffer!: GPUBuffer;
 
   // Computed
   #numCascades = 0;
@@ -1142,12 +1244,12 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #mapToCanvas(x: number, y: number): [number, number] {
     const rect = this.#canvas.getBoundingClientRect();
-    if (!DEBUG_CANVAS) return [x - rect.left, y - rect.top];
+    if (!this.#pp) return [x - rect.left, y - rect.top];
     return [(x - rect.left) * (this.#canvas.width / rect.width), (y - rect.top) * (this.#canvas.height / rect.height)];
   }
 
   #scaleToCanvas(v: number): number {
-    if (!DEBUG_CANVAS) return v;
+    if (!this.#pp) return v;
     const rect = this.#canvas.getBoundingClientRect();
     return v * (this.#canvas.width / rect.width);
   }
@@ -1162,7 +1264,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     opacity = SOLID_OPACITY,
     albedo = 0,
   ) {
-    if (DEBUG_CANVAS) {
+    if (this.#pp) {
       [x1, y1] = this.#mapToCanvas(x1, y1);
       [x2, y2] = this.#mapToCanvas(x2, y2);
       this.#stampLine(
@@ -1200,7 +1302,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     let err = dx - dy;
     let x = x0,
       y = y0;
-    const size = DEBUG_CANVAS!;
+    const size = this.#pp!;
     const blo = -Math.floor((brushSize - 1) / 2);
     const bhi = Math.floor(brushSize / 2);
     for (;;) {
@@ -1251,7 +1353,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   eraseAt(x: number, y: number, radius: number) {
-    if (DEBUG_CANVAS) {
+    if (this.#pp) {
       [x, y] = this.#mapToCanvas(x, y);
       radius = this.#scaleToCanvas(radius);
       const r2 = radius * radius;
@@ -1408,7 +1510,35 @@ export class FolkHolographicRC extends FolkBaseSet {
   override update(changedProperties: PropertyValues<this>) {
     super.update(changedProperties);
     if (!this.#device) return;
-    if (changedProperties.has('probeCount') && changedProperties.get('probeCount') !== undefined) {
+    const probeChanged = changedProperties.has('probeCount') && changedProperties.get('probeCount') !== undefined;
+    const ppChanged = changedProperties.has('pixelPerfect') && changedProperties.get('pixelPerfect') !== undefined;
+    if (probeChanged || ppChanged) {
+      if (ppChanged) {
+        const pp = this.#pp;
+        if (pp) {
+          this.#canvas.width = pp;
+          this.#canvas.height = pp;
+          const containerW = this.clientWidth || 800;
+          const containerH = this.clientHeight || 600;
+          const displaySize = Math.min(containerW - 64, containerH - 64);
+          Object.assign(this.#canvas.style, {
+            left: `${(containerW - displaySize) / 2}px`,
+            top: `${(containerH - displaySize) / 2}px`,
+            width: `${displaySize}px`,
+            height: `${displaySize}px`,
+            imageRendering: 'pixelated',
+          });
+        } else {
+          this.#canvas.width = this.clientWidth || 800;
+          this.#canvas.height = this.clientHeight || 600;
+          Object.assign(this.#canvas.style, {
+            left: '', top: '',
+            width: '100%', height: '100%',
+            imageRendering: '',
+          });
+        }
+        this.#context.configure({ device: this.#device, format: this.#presentationFormat, alphaMode: 'premultiplied' });
+      }
       this.#destroyResources();
       this.#initResources();
       this.#createStaticBindGroups();
@@ -1436,14 +1566,15 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     this.#canvas = document.createElement('canvas');
-    if (DEBUG_CANVAS) {
-      this.#canvas.width = DEBUG_CANVAS;
-      this.#canvas.height = DEBUG_CANVAS;
+    const pp = this.#pp;
+    if (pp) {
+      this.#canvas.width = pp;
+      this.#canvas.height = pp;
     } else {
       this.#canvas.width = this.clientWidth || 800;
       this.#canvas.height = this.clientHeight || 600;
     }
-    if (DEBUG_CANVAS) {
+    if (pp) {
       const containerW = this.clientWidth || 800;
       const containerH = this.clientHeight || 600;
       const displaySize = Math.min(containerW - 64, containerH - 64);
@@ -1484,8 +1615,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     const { width: cw, height: ch } = this.#canvas;
     const maxDim = Math.max(cw, ch);
     const ps = Math.max(2, this.probeCount);
-    const psX = DEBUG_CANVAS ? DEBUG_CANVAS : Math.max(2, ceilDiv(cw * ps, maxDim));
-    const psY = DEBUG_CANVAS ? DEBUG_CANVAS : Math.max(2, ceilDiv(ch * ps, maxDim));
+    const pp = this.#pp;
+    const psX = pp ? pp : Math.max(2, ceilDiv(cw * ps, maxDim));
+    const psY = pp ? pp : Math.max(2, ceilDiv(ch * ps, maxDim));
     const psMax = Math.max(psX, psY);
     this.#psX = psX;
     this.#psY = psY;
@@ -1524,7 +1656,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       psX,
       psY,
       'rgba16float',
-      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST,
     );
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
@@ -1586,6 +1718,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeParamsBuffer = ubo('MergeParams', 4 * this.#numCascades * 256);
     this.#blitParamsBuffer = ubo('BlitParams', this.#blitParamsView.arrayBuffer.byteLength);
     this.#bounceParamsBuffer = ubo('BounceParams', this.#bounceParamsView.arrayBuffer.byteLength);
+
+    this.#fluenceBlurParamsBuffer = ubo('FluenceBlurParams', 32);
+    device.queue.writeBuffer(
+      this.#fluenceBlurParamsBuffer,
+      0,
+      new Uint32Array([psX, psY, this.#fluenceStride, width, height, 0, 0, 0]),
+    );
 
     const [ptA0, ptV0] = tex(device, 'PT-Accum-0', width, height, 'rgba32float', TEX_STORAGE);
     const [ptA1, ptV1] = tex(device, 'PT-Accum-1', width, height, 'rgba32float', TEX_STORAGE);
@@ -1669,6 +1808,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#raySeedPipeline = computePipeline(device, 'HRC-RaySeed', raySeedShader);
     this.#rayExtendPipeline = computePipeline(device, 'HRC-RayExtend', rayExtendShader);
     this.#coneMergePipeline = computePipeline(device, 'HRC-ConeMerge', coneMergeShader);
+    this.#fluenceBlurPipeline = computePipeline(device, 'HRC-FluenceBlur', fluenceBlurShader);
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
     this.#ptPipeline = computePipeline(device, 'PT-PathTrace', pathTraceShader);
     this.#ptBlitPipeline = fullscreenBlit('PT-Blit', ptBlitShader, this.#presentationFormat);
@@ -1747,6 +1887,15 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#mergeBindGroups.push(dirBGs);
     }
 
+    this.#fluenceBlurBindGroup = bg(
+      device,
+      this.#fluenceBlurPipeline.getBindGroupLayout(0),
+      { buffer: this.#fluenceBuffer },
+      this.#fluenceTextureView,
+      { buffer: this.#fluenceBlurParamsBuffer },
+      this.#worldTextureView,
+    );
+
     this.#blitBindGroup = bg(
       device,
       this.#renderPipeline.getBindGroupLayout(0),
@@ -1754,6 +1903,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#worldTextureView,
       { buffer: this.#blitParamsBuffer },
       this.#linearSampler,
+      this.#ptAccumTextureViews[0],
     );
 
     this.#bounceBindGroup = bg(
@@ -1786,6 +1936,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeParamsBuffer?.destroy();
     this.#blitParamsBuffer?.destroy();
     this.#bounceParamsBuffer?.destroy();
+    this.#fluenceBlurParamsBuffer?.destroy();
   }
 
   // ── Shape / line data ──
@@ -1804,7 +1955,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       let sh = shape.height ?? 0;
       const rot = shape.rotation ?? 0;
 
-      if (DEBUG_CANVAS) {
+      if (this.#pp) {
         const rect = this.#canvas.getBoundingClientRect();
         const scale = this.#canvas.width / rect.width;
         sx = (sx - rect.left) * scale;
@@ -1904,13 +2055,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     const al = this.#mouseLightAlbedo;
     const verts: number[] = [];
 
-    if (DEBUG_CANVAS) {
+    const pp = this.#pp;
+    if (pp) {
       const cx = Math.floor(x);
       const cy = Math.floor(y);
       const bs = Math.max(1, this.#mouseLightRadius * 2);
       const blo = -Math.floor((bs - 1) / 2);
       const bhi = Math.floor(bs / 2);
-      const size = DEBUG_CANVAS;
+      const size = pp;
       for (let by = blo; by <= bhi; by++) {
         for (let bx = blo; bx <= bhi; bx++) {
           const px = cx + bx;
@@ -2122,19 +2274,41 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#lastFluenceReady = true;
 
-    // ── Step 2.5: Copy fluence SSBO → texture for blit (bilinear sampling) and bounce ──
-    encoder.copyBufferToTexture(
-      {
-        buffer: this.#fluenceBuffer,
-        bytesPerRow: this.#fluenceStride * 8,
-        rowsPerImage: this.#psY,
-      },
-      { texture: this.#fluenceTexture },
-      { width: this.#psX, height: this.#psY },
-    );
+    // ── Step 2.5: Fluence SSBO → texture ──
+    if (this.crossBlur) {
+      const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('blur') });
+      pass.setPipeline(this.#fluenceBlurPipeline);
+      pass.setBindGroup(0, this.#fluenceBlurBindGroup);
+      pass.dispatchWorkgroups(Math.ceil(this.#psX / WG_BLUR[0]), Math.ceil(this.#psY / WG_BLUR[1]));
+      pass.end();
+    } else {
+      encoder.copyBufferToTexture(
+        { buffer: this.#fluenceBuffer, bytesPerRow: this.#fluenceStride * 8, rowsPerImage: this.#psY },
+        { texture: this.#fluenceTexture },
+        { width: this.#psX, height: this.#psY },
+      );
+    }
+
+    // ── Step 2.75: Run PT alongside HRC for debug modes 4/5 ──
+    if (this.debugMode >= 4) {
+      this.#runPathTraceCompute(encoder, width, height);
+    }
 
     // ── Step 3: Final blit ──
-    this.#blitToScreen(encoder, this.#renderPipeline, this.#blitBindGroup);
+    let blitBG = this.#blitBindGroup;
+    if (this.debugMode >= 4) {
+      const ptLastWriteIdx = (this.#ptFrameIndex + 1) % 2;
+      blitBG = bg(
+        device,
+        this.#renderPipeline.getBindGroupLayout(0),
+        this.#fluenceTextureView,
+        this.#worldTextureView,
+        { buffer: this.#blitParamsBuffer },
+        this.#linearSampler,
+        this.#ptAccumTextureViews[ptLastWriteIdx],
+      );
+    }
+    this.#blitToScreen(encoder, this.#renderPipeline, blitBG);
 
     this.#resolveTimestamps(encoder);
     this.#submitAndCapture(device, encoder);
@@ -2183,7 +2357,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
   }
 
-  #renderPathTraced(encoder: GPUCommandEncoder, width: number, height: number) {
+  #runPathTraceCompute(encoder: GPUCommandEncoder, width: number, height: number) {
     const device = this.#device;
     const readIdx = this.#ptFrameIndex % 2;
     const writeIdx = 1 - readIdx;
@@ -2216,15 +2390,19 @@ export class FolkHolographicRC extends FolkBaseSet {
     pass.setBindGroup(0, ptBG);
     pass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
     pass.end();
+    this.#ptFrameIndex++;
+  }
 
+  #renderPathTraced(encoder: GPUCommandEncoder, width: number, height: number) {
+    this.#runPathTraceCompute(encoder, width, height);
+    const writeIdx = (this.#ptFrameIndex + 1) % 2;
     this.#blitToScreen(
       encoder,
       this.#ptBlitPipeline,
-      bg(device, this.#ptBlitPipeline.getBindGroupLayout(0), this.#ptAccumTextureViews[writeIdx], {
+      bg(this.#device, this.#ptBlitPipeline.getBindGroupLayout(0), this.#ptAccumTextureViews[writeIdx], {
         buffer: this.#blitParamsBuffer,
       }),
     );
-    this.#ptFrameIndex++;
   }
 
   #renderPTBlit(encoder: GPUCommandEncoder) {
@@ -2364,7 +2542,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   // ── Event handlers ──
 
   #handleResize = async () => {
-    if (DEBUG_CANVAS) return;
+    if (this.#pp) return;
     if (this.#resizing) return;
     this.#resizing = true;
     this.#isRunning = false;
