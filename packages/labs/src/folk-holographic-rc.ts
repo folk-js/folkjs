@@ -613,9 +613,10 @@ const blitShader =
     let ptHdr = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb * params.exposure;
     color = tonemapAndDither(ptHdr, vec2u(pos.xy));
   } else if (dm == 5) {
-    // HRC vs PT diff: absolute error mapped to spectrum ramp
-    let ptHdr = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb * params.exposure;
-    let diff = abs(hrcHdr - ptHdr);
+    // HRC vs PT diff: absolute radiance error (exposure-independent)
+    let hrcRad = emissive + indirect;
+    let ptRad = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb;
+    let diff = abs(hrcRad - ptRad);
     let errLum = dot(diff, vec3f(0.2126, 0.7152, 0.0722));
     let t = clamp(log2(errLum * 10000.0 + 1.0) / log2(10001.0), 0.0, 1.0);
     color = vec4f(spectrumRamp(t), 1.0);
@@ -1201,6 +1202,104 @@ export class FolkHolographicRC extends FolkBaseSet {
       .catch(() => {});
   }
 
+  async computeRMSE(): Promise<number> {
+    if (!this.#device || this.#ptFrameIndex < 2) return 0;
+    const device = this.#device;
+    const { width, height } = this.#canvas;
+    const ptIdx = this.#ptFrameIndex % 2;
+    const bytesPerRow = Math.ceil(width * 16 / 256) * 256;
+    const bufSize = bytesPerRow * height;
+
+    const ptBuf = device.createBuffer({ size: bufSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const encoder = device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      { texture: this.#ptAccumTextures[ptIdx] },
+      { buffer: ptBuf, bytesPerRow },
+      { width, height },
+    );
+    device.queue.submit([encoder.finish()]);
+
+    await ptBuf.mapAsync(GPUMapMode.READ);
+    const ptData = new Float32Array(ptBuf.getMappedRange());
+
+    const fluenceW = this.#psX;
+    const fluenceH = this.#psY;
+    const flBytesPerRow = Math.ceil(fluenceW * 8 / 256) * 256;
+    const flBufSize = flBytesPerRow * fluenceH;
+    const flBuf = device.createBuffer({ size: flBufSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const worldBytesPerRow = Math.ceil(width * 8 / 256) * 256;
+    const worldBufSize = worldBytesPerRow * height;
+    const worldBuf = device.createBuffer({ size: worldBufSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+
+    const enc2 = device.createCommandEncoder();
+    enc2.copyTextureToBuffer(
+      { texture: this.#fluenceTexture },
+      { buffer: flBuf, bytesPerRow: flBytesPerRow },
+      { width: fluenceW, height: fluenceH },
+    );
+    enc2.copyTextureToBuffer(
+      { texture: this.#worldTexture },
+      { buffer: worldBuf, bytesPerRow: worldBytesPerRow },
+      { width, height },
+    );
+    device.queue.submit([enc2.finish()]);
+
+    await flBuf.mapAsync(GPUMapMode.READ);
+    await worldBuf.mapAsync(GPUMapMode.READ);
+    const flData = new Uint16Array(flBuf.getMappedRange());
+    const worldData = new Uint16Array(worldBuf.getMappedRange());
+
+    const f16ToF32 = (bits: number): number => {
+      const sign = (bits >> 15) & 1;
+      const exp = (bits >> 10) & 0x1f;
+      const mant = bits & 0x3ff;
+      if (exp === 0) return (sign ? -1 : 1) * 2 ** -14 * (mant / 1024);
+      if (exp === 31) return mant ? NaN : (sign ? -Infinity : Infinity);
+      return (sign ? -1 : 1) * 2 ** (exp - 15) * (1 + mant / 1024);
+    };
+
+    const TWO_PI = 6.2831853;
+    let sumSqErr = 0;
+    const flRowStride = flBytesPerRow / 2;
+    const worldRowStride = worldBytesPerRow / 2;
+    const ptRowStride = bytesPerRow / 4;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const wOff = y * worldRowStride + x * 4;
+        const wR = f16ToF32(worldData[wOff]);
+        const wG = f16ToF32(worldData[wOff + 1]);
+        const wB = f16ToF32(worldData[wOff + 2]);
+        const wA = f16ToF32(worldData[wOff + 3]);
+
+        const fx = Math.min(Math.floor((x + 0.5) / width * fluenceW), fluenceW - 1);
+        const fy = Math.min(Math.floor((y + 0.5) / height * fluenceH), fluenceH - 1);
+        const fOff = fy * flRowStride + fx * 4;
+        const fR = f16ToF32(flData[fOff]);
+        const fG = f16ToF32(flData[fOff + 1]);
+        const fB = f16ToF32(flData[fOff + 2]);
+
+        const emR = wR * wA, emG = wG * wA, emB = wB * wA;
+        const mask = 1 - wA;
+        const hrcR = emR + fR / TWO_PI * mask;
+        const hrcG = emG + fG / TWO_PI * mask;
+        const hrcB = emB + fB / TWO_PI * mask;
+
+        const pOff = y * ptRowStride + x * 4;
+        const ptR = ptData[pOff], ptG = ptData[pOff + 1], ptB = ptData[pOff + 2];
+
+        const dR = hrcR - ptR, dG = hrcG - ptG, dB = hrcB - ptB;
+        sumSqErr += dR * dR + dG * dG + dB * dB;
+      }
+    }
+
+    ptBuf.unmap(); ptBuf.destroy();
+    flBuf.unmap(); flBuf.destroy();
+    worldBuf.unmap(); worldBuf.destroy();
+
+    return Math.sqrt(sumSqErr / (width * height * 3));
+  }
+
   override async connectedCallback() {
     super.connectedCallback();
     await this.#initWebGPU();
@@ -1530,8 +1629,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
     if (this.sourcesMap.size !== this.sourceElements.size) return;
     this.#updateShapeData();
-    this.#ptFrameIndex = 0;
-    this.#ptShowResult = false;
+    if (probeChanged || ppChanged || changedProperties.has('exposure') || changedProperties.has('bounces')) {
+      this.#ptFrameIndex = 0;
+      this.#ptShowResult = false;
+    }
+    if (changedProperties.has('debugMode')) {
+      this.#ptFrameIndex = 0;
+    }
   }
 
   // ── WebGPU init ──
@@ -1541,9 +1645,11 @@ export class FolkHolographicRC extends FolkBaseSet {
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('Failed to get GPU adapter.');
     const canTimestamp = adapter.features.has('timestamp-query');
-    this.#device = await adapter.requestDevice({
-      requiredFeatures: canTimestamp ? ['timestamp-query' as GPUFeatureName] : [],
-    });
+    const canFloat32Filter = adapter.features.has('float32-filterable');
+    const features: GPUFeatureName[] = [];
+    if (canTimestamp) features.push('timestamp-query' as GPUFeatureName);
+    if (canFloat32Filter) features.push('float32-filterable' as GPUFeatureName);
+    this.#device = await adapter.requestDevice({ requiredFeatures: features });
     if (canTimestamp) {
       this.#initTimestampQueries();
     }
@@ -1611,7 +1717,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const ubo = (label: string, size: number) =>
       device.createBuffer({ label, size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER);
+    [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER | GPUTextureUsage.COPY_SRC);
     [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
 
     // Ray/merge buffers are shared across all 4 directions, sized for worst case.
@@ -1639,7 +1745,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       psX,
       psY,
       'rgba16float',
-      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST,
+      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
     );
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
@@ -1709,8 +1815,9 @@ export class FolkHolographicRC extends FolkBaseSet {
       new Uint32Array([psX, psY, this.#fluenceStride, width, height, 0, 0, 0]),
     );
 
-    const [ptA0, ptV0] = tex(device, 'PT-Accum-0', width, height, 'rgba32float', TEX_STORAGE);
-    const [ptA1, ptV1] = tex(device, 'PT-Accum-1', width, height, 'rgba32float', TEX_STORAGE);
+    const ptUsage = TEX_STORAGE | GPUTextureUsage.COPY_SRC;
+    const [ptA0, ptV0] = tex(device, 'PT-Accum-0', width, height, 'rgba32float', ptUsage);
+    const [ptA1, ptV1] = tex(device, 'PT-Accum-1', width, height, 'rgba32float', ptUsage);
     this.#ptAccumTextures = [ptA0, ptA1];
     this.#ptAccumTextureViews = [ptV0, ptV1];
     this.#ptParamsView = uboView(pathTraceShader, 'params');
@@ -2280,7 +2387,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     // ── Step 3: Final blit ──
     let blitBG = this.#blitBindGroup;
     if (this.debugMode >= 4) {
-      const ptLastWriteIdx = (this.#ptFrameIndex + 1) % 2;
+      const ptWriteIdx = this.#ptFrameIndex % 2;
       blitBG = bg(
         device,
         this.#renderPipeline.getBindGroupLayout(0),
@@ -2288,7 +2395,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         this.#worldTextureView,
         { buffer: this.#blitParamsBuffer },
         this.#linearSampler,
-        this.#ptAccumTextureViews[ptLastWriteIdx],
+        this.#ptAccumTextureViews[ptWriteIdx],
       );
     }
     this.#blitToScreen(encoder, this.#renderPipeline, blitBG);
@@ -2378,7 +2485,7 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #renderPathTraced(encoder: GPUCommandEncoder, width: number, height: number) {
     this.#runPathTraceCompute(encoder, width, height);
-    const writeIdx = (this.#ptFrameIndex + 1) % 2;
+    const writeIdx = this.#ptFrameIndex % 2;
     this.#blitToScreen(
       encoder,
       this.#ptBlitPipeline,
@@ -2389,7 +2496,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   #renderPTBlit(encoder: GPUCommandEncoder) {
-    const lastWriteIdx = (this.#ptFrameIndex + 1) % 2;
+    const lastWriteIdx = this.#ptFrameIndex % 2;
     this.#blitToScreen(
       encoder,
       this.#ptBlitPipeline,

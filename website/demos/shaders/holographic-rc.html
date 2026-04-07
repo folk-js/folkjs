@@ -146,6 +146,41 @@
       #info-popup .row span:last-child {
         color: rgba(255, 255, 255, 0.35);
       }
+      #ramp-legend {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .ramp-title {
+        font-size: 9px;
+        color: rgba(255, 255, 255, 0.4);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 5px;
+      }
+      .ramp-bar {
+        height: 10px;
+        border-radius: 3px;
+        background: linear-gradient(to right,
+          #000000,
+          #0d004d 11.1%,
+          #0033ff 22.2%,
+          #00e6e6 33.3%,
+          #1ae61a 44.4%,
+          #fff21a 55.6%,
+          #ff8000 66.7%,
+          #ff0000 77.8%,
+          #ff80cc 88.9%,
+          #ffffff
+        );
+      }
+      .ramp-labels {
+        display: flex;
+        justify-content: space-between;
+        font-size: 8px;
+        color: rgba(255, 255, 255, 0.35);
+        margin-top: 2px;
+      }
       #fps {
         cursor: pointer;
         text-decoration: underline;
@@ -384,6 +419,7 @@
         <option value="5">debug: PT vs HRC diff</option>
       </select>
       <div class="spacer"></div>
+      <span id="rmse-display" style="color: rgba(255,255,255,0.4); white-space: nowrap; display: none;"></span>
       <span id="fps" title="Toggle perf graph"></span>
       <div id="color-btn" title="Material inspector"></div>
       <button id="info-btn" title="Keyboard shortcuts">?</button>
@@ -423,6 +459,22 @@
         ><span><kbd>F</kbd></span
         ><span>fullscreen</span></div
       >
+      <div id="ramp-legend">
+        <div class="ramp-title">false color / diff error (linear radiance)</div>
+        <div class="ramp-bar"></div>
+        <div class="ramp-labels">
+          <span>0</span>
+          <span>.0002</span>
+          <span>.0007</span>
+          <span>.002</span>
+          <span>.006</span>
+          <span>.017</span>
+          <span>.046</span>
+          <span>.13</span>
+          <span>.36</span>
+          <span>1+</span>
+        </div>
+      </div>
     </div>
 
     <div id="perf-graph">
@@ -1412,6 +1464,7 @@
         if (now - lastFpsUpdate > 250) {
           lastFpsUpdate = now;
           fpsEl.textContent = `${Math.round(avgFps)} fps`;
+          $('rmse-display').style.display = hrc.debugMode === 5 ? '' : 'none';
         }
         if (perfOpen) {
           drawPerfGraph();
@@ -1421,6 +1474,18 @@
         }
         requestAnimationFrame(tick);
       })(0);
+
+      // ── RMSE polling (async, separate from render loop) ──
+      let rmsePolling = false;
+      setInterval(async () => {
+        if (hrc.debugMode !== 5 || rmsePolling) return;
+        rmsePolling = true;
+        try {
+          const r = await hrc.computeRMSE();
+          $('rmse-display').textContent = r > 0 ? `RMSE ${r.toFixed(5)}` : 'RMSE …';
+        } catch (e) { console.warn('RMSE error:', e); }
+        rmsePolling = false;
+      }, 1000);
 
       // ── Keyboard ──
       document.addEventListener('keydown', (e) => {
