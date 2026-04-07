@@ -17,7 +17,6 @@ type Line = [
 
 const SOLID_OPACITY = 1;
 
-
 function nextPow2(n: number): number {
   let v = 1;
   while (v < n) v *= 2;
@@ -768,19 +767,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // Progressive Monte Carlo path tracer at screen resolution. Each frame adds
 // N stratified samples per pixel, blended into the accumulation buffer.
 //
-// Transport model:
-//   - Emission: radiance += throughput × emission × opacity
-//   - Extinction (bounces off): throughput *= (1 − opacity)
-//   - Extinction (bounces on):  throughput *= (1 − opacity × (1 − ω_vol))
-//     where ω_vol = albedo × (1 − opacity) smoothly transitions from
-//     energy-preserving scatter in volumes to full extinction at surfaces.
-//   - Surface bounce: when throughput < 0.001 (opaque hit), re-emit from
-//     surfaceEntry with probability = albedo (Russian roulette for albedo).
-//   - Volume scatter: redirect ray with probability opacity × albedo.
-//     Only active when bounces are enabled (matches HRC behavior where
-//     scatter requires the frame-to-frame bounce feedback loop).
-//   - Russian roulette: stochastic termination below throughput 0.2 to
-//     prevent deterministic banding in volumes.
+// Transport model — deterministic emission + stochastic interaction:
+//   At each pixel:
+//     1. Deterministic emission: radiance += throughput × emission × opacity
+//        (zero variance — every sample accumulates emission at every pixel)
+//     2. Stochastic interaction (three-way, bounces on):
+//        - pass-through (prob 1−opacity): continue, throughput unchanged
+//        - scatter (prob opacity×albedo): new direction, throughput unchanged
+//        - absorb (prob opacity×(1−albedo)): ray terminates
+//     3. Deterministic extinction (bounces off):
+//        throughput *= (1 − opacity)
+//   Throughput stays constant until the ray is absorbed. The ray survives
+//   longer with higher albedo (scatter keeps it alive), which correctly
+//   increases emission from scattering volumes. The camera pixel uses
+//   deterministic emission + extinction to match HRC blit exactly.
 
 const pathTraceShader = /*wgsl*/ `
 struct PTParams {
@@ -809,12 +809,6 @@ fn sampleSky(dir: vec2f) -> vec3f {
   return textureLoad(skyTex, vec2i(skyI, 0), 0).rgb;
 }
 
-// Surface bounce fires when throughput falls below this (opaque surface hit).
-const BOUNCE_THRESHOLD = 0.001;
-// Russian roulette starts below this throughput to stochastically terminate
-// low-energy volume rays (prevents deterministic banding).
-const RR_THRESHOLD = 0.2;
-const RR_BOOST = 1.0 / RR_THRESHOLD;
 
 fn pcgHash(v: u32) -> u32 {
   var s = v * 747796405u + 2891336453u;
@@ -864,7 +858,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var inSurface = false;
     var bounceCount = 0u;
 
-    // Camera pixel: accumulate emission, reduce throughput by opacity.
+    // Camera pixel: deterministic emission + extinction to match HRC blit
+    // (emissive×α + indirect×(1−α)). Not stochastic — every sample sees it.
     {
       let w0 = loadWorld(rayPos);
       radiance += throughput * w0.rgb * w0.a;
@@ -872,9 +867,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     for (var step = 0u; step < 4096u; step++) {
-      // Opaque camera pixels (throughput≈0 before entering any surface)
-      // show emission only, matching HRC blit: emission×α + fluence×(1−α).
-      if (throughput < 1e-6 && !inSurface) { break; }
+      if (throughput < 1e-6) { break; }
 
       rayPos += rayDir;
       let w = loadWorld(rayPos);
@@ -896,47 +889,35 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       }
 
       let albedo = loadAlbedo(rayPos);
+
+      // Deterministic emission (zero variance).
       radiance += throughput * w.rgb * opacity;
 
-      // Extinction model branches on bounce mode:
       if (params.maxBounces > 0u) {
-        // ω_vol = albedo×(1−opacity): smoothly 0 at surfaces, ≈albedo in
-        // volumes. Throughput drops by absorption only; scatter preserves
-        // energy. Surfaces still fully block (ω_vol=0 → extinction=opacity).
-        let wVol = albedo * (1.0 - opacity);
-        throughput *= (1.0 - opacity * (1.0 - wVol));
-      } else {
-        // Full extinction — matches HRC without bounce feedback.
-        throughput *= (1.0 - opacity);
-      }
-
-      // Surface bounce (throughput≈0 at opaque surfaces).
-      if (throughput < BOUNCE_THRESHOLD) {
-        if (bounceCount < params.maxBounces
-            && albedo > 0.0 && randomFloat(&seed) < albedo) {
-          throughput = 1.0;
+        // Stochastic interaction: pass-through / scatter / absorb.
+        let r = randomFloat(&seed);
+        if (r < opacity * (1.0 - albedo)) {
+          // Absorbed — ray dies.
+          break;
+        } else if (r < opacity) {
+          // Scattered — new direction, throughput unchanged.
+          if (bounceCount >= params.maxBounces) { break; }
           bounceCount++;
-          rayPos = surfaceEntry;
-          inSurface = false;
+          // HACK: bounce from surface entry for near-opaque pixels to prevent
+          // rays getting stuck inside thick walls. Creates a discontinuity at 0.9.
+          if (opacity > 0.9) {
+            rayPos = surfaceEntry;
+            inSurface = false;
+          }
           let newAngle = randomFloat(&seed) * 6.2831853;
           rayDir = vec2f(cos(newAngle), sin(newAngle));
           continue;
         }
-        break;
-      }
-
-      // Russian roulette for low-throughput volume rays (prevents banding).
-      if (throughput < RR_THRESHOLD) {
-        if (randomFloat(&seed) > throughput * RR_BOOST) { break; }
-        throughput = RR_THRESHOLD;
-      }
-
-      // Volume scatter (only with bounces — HRC needs the feedback loop).
-      if (params.maxBounces > 0u && albedo > 0.0 && opacity < 1.0) {
-        if (randomFloat(&seed) < opacity * albedo) {
-          let newAngle = randomFloat(&seed) * 6.2831853;
-          rayDir = vec2f(cos(newAngle), sin(newAngle));
-        }
+        // Pass-through — throughput unchanged, continue forward.
+      } else {
+        // No bounces: deterministic extinction.
+        throughput *= (1.0 - opacity);
+        if (throughput < 1e-6) { break; }
       }
     }
 
@@ -1532,8 +1513,10 @@ export class FolkHolographicRC extends FolkBaseSet {
           this.#canvas.width = this.clientWidth || 800;
           this.#canvas.height = this.clientHeight || 600;
           Object.assign(this.#canvas.style, {
-            left: '', top: '',
-            width: '100%', height: '100%',
+            left: '',
+            top: '',
+            width: '100%',
+            height: '100%',
             imageRendering: '',
           });
         }
@@ -2367,7 +2350,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       screenH: height,
       frameIndex: this.#ptFrameIndex,
       samplesPerPixel: 16,
-      maxBounces: this.bounces ? 8 : 0,
+      maxBounces: this.bounces ? 2000 : 0,
       pad0: 0,
       pad1: 0,
       pad2: 0,
