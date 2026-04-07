@@ -188,6 +188,10 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 // ── HRC Phase A: Ray Seed (cascade 0) ──
 // Samples world + bounce textures at each probe position. Computes per-cell
 // radiance and transmittance using discrete Beer-Lambert: T = (1−α)^spacing.
+// Emission is multiplied by (1 - T) because emission and absorption are coupled
+// through the extinction coefficient: a cell that absorbs fraction (1-T) of
+// passing light also converts fraction (1-T) of its own emission into the ray.
+// This is the source function integral over the cell thickness.
 // The bounce texture (at probe resolution) provides the diffuse re-emission
 // from the previous frame's fluence, enabling multi-bounce GI over time.
 
@@ -233,6 +237,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let packed = packF16(vec4f(rad, trans));
   let rayW = i32(params.probeCount) * 2;
+  // Sub-probe duplication: write identical (R,T) to both sub-probe slots.
+  // At level 0 both halves are the same; the extend shader differentiates
+  // them at higher levels by compositing different angular directions.
   rayOut[sliceIdx * rayW + probeIdx * 2] = packed;
   rayOut[sliceIdx * rayW + probeIdx * 2 + 1] = packed;
 }
@@ -240,7 +247,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
 // ── HRC Phase B: Ray Extension (bottom-up, levels 1..N-1) ──
 // Composes two shorter rays from the previous level into one longer ray.
-// For each output ray, builds two crossed extensions (L→R, R→L) and averages.
+// For each target direction, builds two crossed compositions: each pairs a
+// different angular sub-direction for the near and far sub-probes, then
+// averages. This interpolates between the two nearest finer-level directions.
 // Transmittance is scalar, packed in the ray texture alpha channel.
 
 const rayExtendShader = /*wgsl*/ `
@@ -282,6 +291,11 @@ fn compositeRay(near: RayData, far: RayData) -> RayData {
   return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
 }
 
+// Direction k at interval size N maps to a perpendicular (slice) offset of 2k - N.
+fn dirToSliceOffset(dirIdx: i32, intervalSize: i32) -> i32 {
+  return dirIdx * 2 - intervalSize;
+}
+
 @compute @workgroup_size(${WG_EXTEND[0]}, ${WG_EXTEND[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let texelX = i32(gid.x);
@@ -299,13 +313,13 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let lower = rayIdx / 2;
   let upper = (rayIdx + 1) / 2;
 
-  let sliceOffA = -prevInterval + lower * 2;
+  let sliceOffA = dirToSliceOffset(lower, prevInterval);
   let crossA = compositeRay(
     loadPrev(probeIdx * 2, lower, sliceIdx),
     loadPrev(probeIdx * 2 + 1, upper, sliceIdx + sliceOffA),
   );
 
-  let sliceOffB = -prevInterval + upper * 2;
+  let sliceOffB = dirToSliceOffset(upper, prevInterval);
   let crossB = compositeRay(
     loadPrev(probeIdx * 2, upper, sliceIdx),
     loadPrev(probeIdx * 2 + 1, lower, sliceIdx + sliceOffB),
@@ -317,25 +331,28 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// ── HRC Phase C: Cone Merge (top-down, levels N-1..0) ──
-// Reads pre-computed ray data from the ray texture and merges with previously
-// merged cones from the coarser level. Even/odd probe parity is handled as in
-// the Amitabha reference: even probes compose two rays and average with the
-// near-probe cone; odd probes do a direct over-composite.
+// ── HRC Phase C: Cascade Merge (top-down, levels N-1..0) ──
+// Reads pre-computed ray data and merges with fluence from coarser levels.
+// Parity-dependent cascade connection (HRC paper, sections 4-5):
+//   Even probes: composite two adjacent fine intervals, transmit to the
+//     continuation fluence, then Richardson-average with the coarser level's
+//     result at this position to cancel first-order spatial error.
+//   Odd probes: composite one fine interval with the continuation fluence
+//     directly (no averaging with the coarser level).
 
 const coneMergeShader = /*wgsl*/ `
 struct MergeParams {
   probeCount: u32,
-  numCones: u32,
+  numAngularBins: u32,
   numProbes: u32,
   numRays: u32,
-  nextNumCones: u32,
+  nextNumAngBins: u32,
   isLastLevel: u32,
   fluenceW: u32,
   fluenceStride: u32,
   skyRow: u32,
   skyShift: u32,
-  conesShift: u32,
+  level: u32,
   angWeightBase: u32,
   sliceCount: u32,
   mergeStride: u32,
@@ -349,6 +366,8 @@ struct MergeParams {
 };
 
 @group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
+// Merge ping-pong buffers use RGB9E5 (32-bit) instead of rgba16float (64-bit)
+// to halve memory bandwidth at the cost of 9-bit mantissa precision.
 @group(0) @binding(1) var<storage, read> mergeInBuf: array<u32>;
 @group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<u32>;
 
@@ -394,7 +413,7 @@ fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let texX = (probeIdx << params.conesShift) + probeIdx + rayIdx;
+  let texX = (probeIdx << params.level) + probeIdx + rayIdx;
   let r = unpackF16(rayBuf[sliceIdx * i32(params.numProbes * params.numRays) + texX]);
   return RayData(r.rgb, r.a);
 }
@@ -408,69 +427,81 @@ fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
   return unpackRGB9E5(mergeInBuf[sliceIdx * i32(params.mergeStride) + texX]);
 }
 
-fn getAngularWeight(subCone: u32) -> f32 {
-  return angWeights[params.angWeightBase + subCone];
+fn getAngularWeight(subBin: u32) -> f32 {
+  return angWeights[params.angWeightBase + subBin];
 }
 
-fn loadSkyFluence(subCone: u32) -> vec3f {
-  let base = subCone << params.skyShift;
+fn loadSkyFluence(subBin: u32) -> vec3f {
+  let base = subBin << params.skyShift;
   let end = base + (1u << params.skyShift);
   let row = i32(params.skyRow);
   return textureLoad(skyPrefixTex, vec2i(i32(end), row), 0).rgb
        - textureLoad(skyPrefixTex, vec2i(i32(base), row), 0).rgb;
 }
 
+// Direction k at interval size N maps to a perpendicular (slice) offset of 2k - N.
+fn dirToSliceOffset(dirIdx: i32, intervalSize: i32) -> i32 {
+  return dirIdx * 2 - intervalSize;
+}
+
 @compute @workgroup_size(${WG_MERGE[0]}, ${WG_MERGE[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let probeConeIdx = i32(gid.x);
+  let probeAngIdx = i32(gid.x);
   let sliceIdx = i32(gid.y);
-  let conesShift = params.conesShift;
-  let numCones = i32(1u << conesShift);
-  let probeIdx = probeConeIdx >> conesShift;
-  let coneIdx = probeConeIdx & (numCones - 1);
+  let level = params.level;
+  let numAngularBins = i32(1u << level);
+  let probeIdx = probeAngIdx >> level;
+  let angBinIdx = probeAngIdx & (numAngularBins - 1);
 
   if (probeIdx >= i32(params.numProbes) || sliceIdx >= i32(params.sliceCount)) { return; }
 
+  // Parity-dependent cascade connection:
+  // Even probes composite two adjacent fine intervals and Richardson-average
+  // with the coarser level; odd probes do direct single-interval compositing.
+  // farStep=2 for even probes because they've already composited the adjacent
+  // probe's interval locally, so the continuation comes from 2 probes ahead.
   let isEven = (probeIdx % 2 == 0);
   let farStep = select(1, 2, isEven);
 
   var result = vec3f(0.0);
 
   for (var side = 0; side < 2; side++) {
-    let subCone = u32(coneIdx * 2 + side);
-    let rayIdx = coneIdx + side;
-    let weight = getAngularWeight(subCone);
+    let subBin = u32(angBinIdx * 2 + side);
+    let rayIdx = angBinIdx + side;
+    let weight = getAngularWeight(subBin);
 
     let ray = loadRay(probeIdx, rayIdx, sliceIdx);
-    let sliceOff = -numCones + rayIdx * 2;
+    let sliceOff = dirToSliceOffset(rayIdx, numAngularBins);
 
-    let farX = ((probeIdx + farStep) << conesShift) + i32(subCone);
+    let farX = ((probeIdx + farStep) << level) + i32(subBin);
     let farSlice = sliceIdx + sliceOff * farStep;
-    var farCone: vec3f;
+    // Top cascade level has no coarser merge result — fluence beyond its
+    // interval comes from the sky. Out-of-bounds probes also fall back to sky.
+    var continuationFluence: vec3f;
     if (params.isLastLevel == 1u ||
         farX < 0 || farX >= i32(params.mergeInWidth) ||
         farSlice < 0 || farSlice >= i32(params.sliceCount)) {
-      farCone = loadSkyFluence(subCone);
+      continuationFluence = loadSkyFluence(subBin);
     } else {
-      farCone = unpackRGB9E5(mergeInBuf[farSlice * i32(params.mergeStride) + farX]);
+      continuationFluence = unpackRGB9E5(mergeInBuf[farSlice * i32(params.mergeStride) + farX]);
     }
 
     if (isEven) {
       let ext = loadRay(probeIdx + 1, rayIdx, sliceIdx + sliceOff);
       let cRad = ray.rad + ext.rad * ray.trans;
       let cTrans = ray.trans * ext.trans;
-      let merged = cRad * weight + farCone * cTrans;
-      let nearCone = loadMerge((probeIdx << conesShift) + i32(subCone), sliceIdx);
-      result += (merged + nearCone) * 0.5;
+      let merged = cRad * weight + continuationFluence * cTrans;
+      let coarseFluence = loadMerge((probeIdx << level) + i32(subBin), sliceIdx);
+      result += (merged + coarseFluence) * 0.5;
     } else {
-      result += ray.rad * weight + farCone * ray.trans;
+      result += ray.rad * weight + continuationFluence * ray.trans;
     }
   }
 
-  let outX = (probeIdx << conesShift) + coneIdx;
+  let outX = (probeIdx << level) + angBinIdx;
   mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = packRGB9E5(result);
 
-  if (params.numCones == 1u) {
+  if (params.numAngularBins == 1u) {
     let fc = vec2i(
       params.fxProbe * probeIdx + params.fxSlice * sliceIdx + params.fxOff,
       params.fyProbe * probeIdx + params.fySlice * sliceIdx + params.fyOff,
@@ -2207,6 +2238,11 @@ export class FolkHolographicRC extends FolkBaseSet {
     );
   }
 
+  // TS/shader coupling: the direction-to-slope formula (2s - N + 1) / N in
+  // #computeSkyPrefixSums and the angular weight formula atan2(2s-N+2, N) -
+  // atan2(2s-N, N) below must stay in sync with the extend/merge shaders'
+  // dirToSliceOffset mapping. If direction indexing changes in a shader,
+  // both this method and #computeSkyPrefixSums must be updated to match.
   #uploadStaticParams(width: number, height: number) {
     const device = this.#device;
     const psX = this.#psX;
@@ -2265,8 +2301,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // Merge params: per direction (4) — fluence coordinate transform differs per direction
+    // Fluence coordinate transform: maps (probeIdx, sliceIdx) → fluence buffer (x, y).
     // fc = (fxProbe*probeIdx + fxSlice*sliceIdx + fxOff,
     //        fyProbe*probeIdx + fySlice*sliceIdx + fyOff)
+    // The -1 offsets (fxOff for E/W, fyOff for N/S) are the 1px frustum offset
+    // fix: cascade-0 rays start one probe step into the scene, so fluence is
+    // written one position behind the ray-emitting probe column. Without this,
+    // the first probe column/row would receive zero fluence from that direction.
     const dirFluence = [
       { fxProbe: 1, fxSlice: 0, fxOff: -1, fyProbe: 0, fySlice: 1, fyOff: 0 }, // E
       { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: 1, fySlice: 0, fyOff: -1 }, // N
@@ -2280,24 +2321,24 @@ export class FolkHolographicRC extends FolkBaseSet {
       const fl = dirFluence[dir];
       let angOff = dir * perDir;
       for (let level = 0; level < nc; level++) {
-        const numCones = 1 << level;
-        const nextNumCones = numCones * 2;
+        const numAngularBins = 1 << level;
+        const nextNumAngBins = numAngularBins * 2;
         const angBase = angOff;
-        for (let s = 0; s < nextNumCones; s++) {
-          const N = nextNumCones;
+        for (let s = 0; s < nextNumAngBins; s++) {
+          const N = nextNumAngBins;
           angData[angOff + s] = Math.atan2(2 * s - N + 2, N) - Math.atan2(2 * s - N, N);
         }
         this.#mergeParamsView.set({
           probeCount: f.pc,
-          numCones,
+          numAngularBins,
           numProbes: ceilDiv(f.pc, 1 << level),
-          numRays: numCones + 1,
-          nextNumCones,
+          numRays: numAngularBins + 1,
+          nextNumAngBins,
           isLastLevel: level === f.nc - 1 ? 1 : 0,
           fluenceW: psX,
           fluenceStride: this.#fluenceStride,
-          skyShift: Math.log2(f.ms) - Math.log2(nextNumCones),
-          conesShift: level,
+          skyShift: Math.log2(f.ms) - Math.log2(nextNumAngBins),
+          level: level,
           angWeightBase: angBase,
           skyRow: dir,
           sliceCount: f.sc,
@@ -2306,7 +2347,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           ...fl,
         });
         device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
-        angOff += nextNumCones;
+        angOff += nextNumAngBins;
       }
     }
     device.queue.writeBuffer(this.#angWeightBuffer, 0, angData);
