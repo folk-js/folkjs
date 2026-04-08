@@ -90,6 +90,23 @@ function uploadVertexData(
   return existing;
 }
 
+// ── Shared WGSL functions ──
+
+const wgslPackF16 = /*wgsl*/ `
+fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
+fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
+`;
+
+const wgslSrgb = /*wgsl*/ `
+fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
+`;
+
+const wgslSliceOffset = /*wgsl*/ `
+fn dirToSliceOffset(dirIdx: i32, intervalSize: i32) -> i32 {
+  return dirIdx * 2 - intervalSize;
+}
+`;
+
 // ── World-render shaders (shapes, lines, mouse light → world + material) ──
 //
 // Two render targets (MRT):
@@ -106,7 +123,7 @@ function uploadVertexData(
 //   - Volume (opacity=0.03, albedo=0.5): each step scatters 1.5% of light
 //   - Absorber (albedo=0): all interacted light is destroyed
 
-const worldRenderShader = /*wgsl*/ `
+const worldRenderShader = wgslSrgb + /*wgsl*/ `
 struct VertexInput {
   @location(0) position: vec2f,
   @location(1) color: vec3f,
@@ -119,7 +136,6 @@ struct VertexOutput {
   @location(1) opacity: f32,
   @location(2) albedo: f32,
 }
-fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 @vertex fn vertex_main(input: VertexInput) -> VertexOutput {
   var out: VertexOutput;
   out.position = vec4f(input.position, 0.0, 1.0);
@@ -137,7 +153,7 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 }
 `;
 
-const lineRenderShader = /*wgsl*/ `
+const lineRenderShader = wgslSrgb + /*wgsl*/ `
 struct VertexOutput {
   @builtin(position) position: vec4f,
   @location(0) color: vec3f,
@@ -149,7 +165,6 @@ struct VertexOutput {
 }
 struct Canvas { width: f32, height: f32 }
 @group(0) @binding(0) var<uniform> canvas: Canvas;
-fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 @vertex fn vertex_main(
   @builtin(vertex_index) vid: u32,
   @location(0) p1: vec2f, @location(1) p2: vec2f,
@@ -197,7 +212,7 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 // The bounce texture (at probe resolution) provides the diffuse re-emission
 // from the previous frame's fluence, enabling multi-bounce GI over time.
 
-const raySeedShader = /*wgsl*/ `
+const raySeedShader = wgslPackF16 + /*wgsl*/ `
 struct SeedParams {
   probeCount: u32,
   sliceCount: u32,
@@ -213,9 +228,6 @@ struct SeedParams {
 @group(0) @binding(1) var bounceTex: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read_write> rayOut: array<vec2u>;
 @group(0) @binding(3) var<uniform> params: SeedParams;
-
-fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
-fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
 @compute @workgroup_size(${WG_SEED[0]}, ${WG_SEED[1]})
 fn main(@builtin(global_invocation_id) gid: vec3u) {
@@ -254,7 +266,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // averages. This interpolates between the two nearest finer-level directions.
 // Transmittance is scalar, packed in the ray texture alpha channel.
 
-const rayExtendShader = /*wgsl*/ `
+const rayExtendShader = wgslPackF16 + wgslSliceOffset + /*wgsl*/ `
 struct ExtendParams {
   probeCount: u32,
   level: u32,
@@ -269,9 +281,6 @@ struct ExtendParams {
 @group(0) @binding(0) var<storage, read> prevRay: array<vec2u>;
 @group(0) @binding(1) var<storage, read_write> currRay: array<vec2u>;
 @group(0) @binding(2) var<uniform> params: ExtendParams;
-
-fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
-fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
 struct RayData { rad: vec3f, trans: f32 }
 
@@ -291,11 +300,6 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
 
 fn compositeRay(near: RayData, far: RayData) -> RayData {
   return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
-}
-
-// Direction k at interval size N maps to a perpendicular (slice) offset of 2k - N.
-fn dirToSliceOffset(dirIdx: i32, intervalSize: i32) -> i32 {
-  return dirIdx * 2 - intervalSize;
 }
 
 @compute @workgroup_size(${WG_EXTEND[0]}, ${WG_EXTEND[1]})
@@ -342,7 +346,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 //   Odd probes: composite one fine interval with the continuation fluence
 //     directly (no averaging with the coarser level).
 
-const coneMergeShader = /*wgsl*/ `
+const coneMergeShader = wgslPackF16 + wgslSliceOffset + /*wgsl*/ `
 struct MergeParams {
   probeCount: u32,
   numAngularBins: u32,
@@ -368,13 +372,8 @@ struct MergeParams {
 };
 
 @group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
-// Merge ping-pong buffers use RGB9E5 (32-bit) instead of rgba16float (64-bit)
-// to halve memory bandwidth at the cost of 9-bit mantissa precision.
 @group(0) @binding(1) var<storage, read> mergeInBuf: array<u32>;
 @group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<u32>;
-
-fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
-fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
 
 fn packRGB9E5(c: vec3f) -> u32 {
   let maxC = max(c.r, max(c.g, c.b));
@@ -439,11 +438,6 @@ fn loadSkyFluence(subBin: u32) -> vec3f {
   let row = i32(params.skyRow);
   return textureLoad(skyPrefixTex, vec2i(i32(end), row), 0).rgb
        - textureLoad(skyPrefixTex, vec2i(i32(base), row), 0).rgb;
-}
-
-// Direction k at interval size N maps to a perpendicular (slice) offset of 2k - N.
-fn dirToSliceOffset(dirIdx: i32, intervalSize: i32) -> i32 {
-  return dirIdx * 2 - intervalSize;
 }
 
 @compute @workgroup_size(${WG_MERGE[0]}, ${WG_MERGE[1]})
@@ -600,24 +594,13 @@ const blitShader =
   var color = tonemapAndDither(hrcHdr, vec2u(pos.xy));
   let dm = i32(params.debugMode);
   if (dm == 1) {
-    let probeCoord = uv * vec2f(textureDimensions(fluenceTex, 0));
-    if (length(fract(probeCoord) - 0.5) < 0.15) {
-      color = vec4f(1.0, 0.3, 0.1, 1.0);
-    }
-  } else if (dm == 2) {
-    let mag = dot(fluence, vec3f(0.2126, 0.7152, 0.0722));
-    let t = clamp(log2(mag + 1.0) * 0.3, 0.0, 1.0);
-    color = vec4f(mix(vec3f(0.0, 0.1, 0.3), vec3f(1.0, 0.8, 0.2), t), 1.0);
-  } else if (dm == 3) {
     let mag = dot(fluence, vec3f(0.2126, 0.7152, 0.0722));
     let t = clamp(log2(mag * 10000.0 + 1.0) / log2(10001.0), 0.0, 1.0);
     color = vec4f(spectrumRamp(t), 1.0);
-  } else if (dm == 4) {
-    // Path trace reference view
+  } else if (dm == 2) {
     let ptHdr = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb * params.exposure;
     color = tonemapAndDither(ptHdr, vec2u(pos.xy));
-  } else if (dm == 5) {
-    // HRC vs PT diff: absolute radiance error (exposure-independent)
+  } else if (dm == 3) {
     let hrcRad = emissive + indirect;
     let ptRad = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb;
     let diff = abs(hrcRad - ptRad);
@@ -943,17 +926,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-const ptBlitShader =
-  blitCommon +
-  /*wgsl*/ `
-@group(0) @binding(0) var ptAccum: texture_2d<f32>;
-@group(0) @binding(1) var<uniform> params: BlitParams;
-
-@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  return tonemapAndDither(textureLoad(ptAccum, vec2i(pos.xy), 0).rgb * params.exposure, vec2u(pos.xy));
-}
-`;
-
 // ── Direction definitions ──
 // Each direction is a 2×3 transform matrix mapping (probeIdx, sliceIdx) → world.
 // Isotropic probes: spacing = max(W,H)/ps for both axes, so the probe grid
@@ -991,7 +963,6 @@ export class FolkHolographicRC extends FolkBaseSet {
   @property({ type: Boolean, reflect: true }) bounces = true;
   @property({ type: Boolean, reflect: true, attribute: 'cross-blur' }) crossBlur = true;
   @property({ type: Number, reflect: true, attribute: 'debug-mode' }) debugMode = 0;
-  @property({ type: Boolean, reflect: true, attribute: 'path-tracing' }) pathTracing = false;
   @property({ type: Number, reflect: true, attribute: 'pixel-perfect' }) pixelPerfect = 0;
 
   get #pp(): number | null {
@@ -1034,7 +1005,6 @@ export class FolkHolographicRC extends FolkBaseSet {
   // Uploaded to world texture via copyExternalImageToTexture when dirty.
   #sceneCanvas: HTMLCanvasElement | null = null;
   #sceneCtx: CanvasRenderingContext2D | null = null;
-  #sceneDirty = false;
 
   // Per-level ray storage buffers: vec4f (rad.rgb + transmittance)
   #rayBuffers!: GPUBuffer[];
@@ -1070,10 +1040,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #ptAccumTextures!: GPUTexture[];
   #ptAccumTextureViews!: GPUTextureView[];
   #ptFrameIndex = 0;
-  #ptStartTime = 0;
-  #ptShowResult = false;
   #ptPipeline!: GPUComputePipeline;
-  #ptBlitPipeline!: GPURenderPipeline;
   #ptParamsBuffer!: GPUBuffer;
   #ptParamsView!: StructuredView;
 
@@ -1310,6 +1277,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#initResources();
     this.#initPipelines();
     this.#uploadStaticParams(this.#canvas.width, this.#canvas.height);
+    this.#lineBindGroup = undefined;
     window.addEventListener('resize', this.#handleResize);
     window.addEventListener('mousemove', this.#handleMouseMove);
     this.#isRunning = true;
@@ -1324,6 +1292,47 @@ export class FolkHolographicRC extends FolkBaseSet {
     window.removeEventListener('resize', this.#handleResize);
     window.removeEventListener('mousemove', this.#handleMouseMove);
     this.#destroyResources();
+  }
+
+  #updateCanvasLayout() {
+    const pp = this.#pp;
+    if (pp) {
+      this.#canvas.width = pp;
+      this.#canvas.height = pp;
+      const containerW = this.clientWidth || 800;
+      const containerH = this.clientHeight || 600;
+      const displaySize = Math.min(containerW - 64, containerH - 64);
+      Object.assign(this.#canvas.style, {
+        position: 'absolute',
+        left: `${(containerW - displaySize) / 2}px`,
+        top: `${(containerH - displaySize) / 2}px`,
+        width: `${displaySize}px`,
+        height: `${displaySize}px`,
+        pointerEvents: 'none',
+        imageRendering: 'pixelated',
+      });
+    } else {
+      this.#canvas.width = this.clientWidth || 800;
+      this.#canvas.height = this.clientHeight || 600;
+      Object.assign(this.#canvas.style, {
+        position: 'absolute',
+        inset: '0',
+        left: '',
+        top: '',
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        imageRendering: '',
+      });
+    }
+  }
+
+  #rebuild() {
+    this.#destroyResources();
+    this.#initResources();
+    this.#createStaticBindGroups();
+    this.#uploadStaticParams(this.#canvas.width, this.#canvas.height);
+    this.#lineBindGroup = undefined;
   }
 
   #mapToCanvas(x: number, y: number): [number, number] {
@@ -1346,7 +1355,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       this.#sceneCanvas.width = pp;
       this.#sceneCanvas.height = pp;
       this.#sceneCtx = this.#sceneCanvas.getContext('2d')!;
-      this.#sceneDirty = true;
     }
   }
 
@@ -1386,7 +1394,6 @@ export class FolkHolographicRC extends FolkBaseSet {
         if (e2 > -dy) { err -= dy; x += sx; }
         if (e2 < dx) { err += dx; y += sy; }
       }
-      this.#sceneDirty = true;
       return;
     }
     const [r, g, b] = color;
@@ -1399,7 +1406,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#lineBufferDirty = true;
     if (this.#sceneCanvas && this.#sceneCtx) {
       this.#sceneCtx.clearRect(0, 0, this.#sceneCanvas.width, this.#sceneCanvas.height);
-      this.#sceneDirty = true;
     }
   }
 
@@ -1409,7 +1415,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (!ctx) return;
     ctx.fillStyle = this.#sceneColor(rgb[0], rgb[1], rgb[2], opacity);
     ctx.fillRect(x, y, w, h);
-    this.#sceneDirty = true;
   }
 
   addPixel(x: number, y: number, rgb: [number, number, number], opacity = SOLID_OPACITY) {
@@ -1418,7 +1423,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (!ctx) return;
     ctx.fillStyle = this.#sceneColor(rgb[0], rgb[1], rgb[2], opacity);
     ctx.fillRect(x, y, 1, 1);
-    this.#sceneDirty = true;
   }
 
   loadSceneImage(img: HTMLImageElement) {
@@ -1431,7 +1435,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.clearLines();
     this.#ensureSceneCanvas();
     this.#sceneCtx!.drawImage(img, 0, 0);
-    this.#sceneDirty = true;
   }
 
   saveScenePNG(filename = 'scene.png') {
@@ -1469,7 +1472,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       ctx.clip();
       ctx.clearRect(x - radius, y - radius, radius * 2, radius * 2);
       ctx.restore();
-      this.#sceneDirty = true;
       return;
     }
     this.#lines = this.#lines.filter((line) => {
@@ -1621,46 +1623,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     const ppChanged = changedProperties.has('pixelPerfect') && changedProperties.get('pixelPerfect') !== undefined;
     if (probeChanged || ppChanged) {
       if (ppChanged) {
-        const pp = this.#pp;
-        if (pp) {
-          this.#canvas.width = pp;
-          this.#canvas.height = pp;
-          const containerW = this.clientWidth || 800;
-          const containerH = this.clientHeight || 600;
-          const displaySize = Math.min(containerW - 64, containerH - 64);
-          Object.assign(this.#canvas.style, {
-            left: `${(containerW - displaySize) / 2}px`,
-            top: `${(containerH - displaySize) / 2}px`,
-            width: `${displaySize}px`,
-            height: `${displaySize}px`,
-            imageRendering: 'pixelated',
-          });
-        } else {
-          this.#canvas.width = this.clientWidth || 800;
-          this.#canvas.height = this.clientHeight || 600;
-          Object.assign(this.#canvas.style, {
-            left: '',
-            top: '',
-            width: '100%',
-            height: '100%',
-            imageRendering: '',
-          });
-        }
+        this.#updateCanvasLayout();
         this.#context.configure({ device: this.#device, format: this.#presentationFormat, alphaMode: 'premultiplied' });
       }
-      this.#destroyResources();
-      this.#initResources();
-      this.#createStaticBindGroups();
-      this.#uploadStaticParams(this.#canvas.width, this.#canvas.height);
-      this.#lineBindGroup = undefined;
+      this.#rebuild();
     }
     if (this.sourcesMap.size !== this.sourceElements.size) return;
     this.#updateShapeData();
-    if (probeChanged || ppChanged || changedProperties.has('exposure') || changedProperties.has('bounces')) {
-      this.#ptFrameIndex = 0;
-      this.#ptShowResult = false;
-    }
-    if (changedProperties.has('debugMode')) {
+    if (probeChanged || ppChanged || changedProperties.has('exposure') || changedProperties.has('bounces') || changedProperties.has('debugMode')) {
       this.#ptFrameIndex = 0;
     }
   }
@@ -1682,36 +1652,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     this.#canvas = document.createElement('canvas');
-    const pp = this.#pp;
-    if (pp) {
-      this.#canvas.width = pp;
-      this.#canvas.height = pp;
-    } else {
-      this.#canvas.width = this.clientWidth || 800;
-      this.#canvas.height = this.clientHeight || 600;
-    }
-    if (pp) {
-      const containerW = this.clientWidth || 800;
-      const containerH = this.clientHeight || 600;
-      const displaySize = Math.min(containerW - 64, containerH - 64);
-      Object.assign(this.#canvas.style, {
-        position: 'absolute',
-        left: `${(containerW - displaySize) / 2}px`,
-        top: `${(containerH - displaySize) / 2}px`,
-        width: `${displaySize}px`,
-        height: `${displaySize}px`,
-        pointerEvents: 'none',
-        imageRendering: 'pixelated',
-      });
-    } else {
-      Object.assign(this.#canvas.style, {
-        position: 'absolute',
-        inset: '0',
-        width: '100%',
-        height: '100%',
-        pointerEvents: 'none',
-      });
-    }
+    this.#updateCanvasLayout();
     this.renderRoot.prepend(this.#canvas);
 
     const context = this.#canvas.getContext('webgpu');
@@ -1928,7 +1869,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#fluenceBlurPipeline = computePipeline(device, 'HRC-FluenceBlur', fluenceBlurShader);
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
     this.#ptPipeline = computePipeline(device, 'PT-PathTrace', pathTraceShader);
-    this.#ptBlitPipeline = fullscreenBlit('PT-Blit', ptBlitShader, this.#presentationFormat);
 
     this.#createStaticBindGroups();
   }
@@ -2115,21 +2055,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#shapeDataBuffer = uploadVertexData(this.#device, this.#shapeDataBuffer, new Float32Array(vertices));
   }
 
-  #pixelQuadVerts(px: number, py: number, r: number, g: number, b: number, op: number, al: number, out: number[]) {
-    const w = this.#canvas.width;
-    const h = this.#canvas.height;
-    const x0 = (px / w) * 2 - 1;
-    const y0 = 1 - (py / h) * 2;
-    const x1 = ((px + 1) / w) * 2 - 1;
-    const y1 = 1 - ((py + 1) / h) * 2;
-    out.push(x0, y0, r, g, b, op, al);
-    out.push(x1, y0, r, g, b, op, al);
-    out.push(x0, y1, r, g, b, op, al);
-    out.push(x1, y0, r, g, b, op, al);
-    out.push(x1, y1, r, g, b, op, al);
-    out.push(x0, y1, r, g, b, op, al);
-  }
-
   #updateLineBuffer() {
     if (!this.#device || this.#lines.length === 0) {
       this.#lineCount = 0;
@@ -2161,18 +2086,18 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const pp = this.#pp;
     if (pp) {
-      const cx = Math.floor(x);
-      const cy = Math.floor(y);
+      const cw = this.#canvas.width, ch = this.#canvas.height;
+      const cx = Math.floor(x), cy = Math.floor(y);
       const bs = Math.max(1, this.#mouseLightRadius * 2);
-      const blo = -Math.floor((bs - 1) / 2);
-      const bhi = Math.floor(bs / 2);
-      const size = pp;
+      const blo = -Math.floor((bs - 1) / 2), bhi = Math.floor(bs / 2);
       for (let by = blo; by <= bhi; by++) {
         for (let bx = blo; bx <= bhi; bx++) {
-          const px = cx + bx;
-          const py = cy + by;
-          if (px >= 0 && py >= 0 && px < size && py < size) {
-            this.#pixelQuadVerts(px, py, r, g, b, op, al, verts);
+          const px = cx + bx, py = cy + by;
+          if (px >= 0 && py >= 0 && px < pp && py < pp) {
+            const x0 = (px / cw) * 2 - 1, y0 = 1 - (py / ch) * 2;
+            const x1 = ((px + 1) / cw) * 2 - 1, y1 = 1 - ((py + 1) / ch) * 2;
+            verts.push(x0, y0, r, g, b, op, al, x1, y0, r, g, b, op, al, x0, y1, r, g, b, op, al);
+            verts.push(x1, y0, r, g, b, op, al, x1, y1, r, g, b, op, al, x0, y1, r, g, b, op, al);
           }
         }
       }
@@ -2286,22 +2211,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       pass.end();
     }
 
-    if (this.pathTracing) {
-      if (this.#ptFrameIndex === 0) {
-        this.#ptStartTime = performance.now();
-      }
-      this.#ptShowResult = true;
-      this.#renderPathTraced(encoder, width, height);
-      this.#submitAndCapture(device, encoder);
-      return;
-    }
-
-    if (this.#ptShowResult) {
-      this.#renderPTBlit(encoder);
-      this.#submitAndCapture(device, encoder);
-      return;
-    }
-
     // ── Step 1.5: Bounce compute (reads previous frame's fluence at probe resolution) ──
     if (!this.bounces && this.#lastFluenceReady) {
       this.#lastFluenceReady = false;
@@ -2394,13 +2303,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     }
 
     // ── Step 2.75: Run PT alongside HRC for debug modes 4/5 ──
-    if (this.debugMode >= 4) {
+    if (this.debugMode >= 2) {
       this.#runPathTraceCompute(encoder, width, height);
     }
 
     // ── Step 3: Final blit ──
     let blitBG = this.#blitBindGroup;
-    if (this.debugMode >= 4) {
+    if (this.debugMode >= 2) {
       const ptWriteIdx = this.#ptFrameIndex % 2;
       blitBG = bg(
         device,
@@ -2495,29 +2404,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     pass.dispatchWorkgroups(Math.ceil(width / 8), Math.ceil(height / 8));
     pass.end();
     this.#ptFrameIndex++;
-  }
-
-  #renderPathTraced(encoder: GPUCommandEncoder, width: number, height: number) {
-    this.#runPathTraceCompute(encoder, width, height);
-    const writeIdx = this.#ptFrameIndex % 2;
-    this.#blitToScreen(
-      encoder,
-      this.#ptBlitPipeline,
-      bg(this.#device, this.#ptBlitPipeline.getBindGroupLayout(0), this.#ptAccumTextureViews[writeIdx], {
-        buffer: this.#blitParamsBuffer,
-      }),
-    );
-  }
-
-  #renderPTBlit(encoder: GPUCommandEncoder) {
-    const lastWriteIdx = this.#ptFrameIndex % 2;
-    this.#blitToScreen(
-      encoder,
-      this.#ptBlitPipeline,
-      bg(this.#device, this.#ptBlitPipeline.getBindGroupLayout(0), this.#ptAccumTextureViews[lastWriteIdx], {
-        buffer: this.#blitParamsBuffer,
-      }),
-    );
   }
 
   // TS/shader coupling: the direction-to-slope formula (2s - N + 1) / N in
@@ -2653,18 +2539,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     cancelAnimationFrame(this.#animationFrame);
     await this.#device.queue.onSubmittedWorkDone();
 
-    this.#canvas.width = this.clientWidth || 800;
-    this.#canvas.height = this.clientHeight || 600;
-    this.#context.configure({
-      device: this.#device,
-      format: this.#presentationFormat,
-      alphaMode: 'premultiplied',
-    });
-    this.#destroyResources();
-    this.#initResources();
-    this.#createStaticBindGroups();
-    this.#uploadStaticParams(this.#canvas.width, this.#canvas.height);
-    this.#lineBindGroup = undefined;
+    this.#updateCanvasLayout();
+    this.#context.configure({ device: this.#device, format: this.#presentationFormat, alphaMode: 'premultiplied' });
+    this.#rebuild();
     this.#updateShapeData();
 
     this.#resizing = false;
@@ -2710,11 +2587,8 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   get debugInfo() {
-    if (this.pathTracing || this.#ptShowResult) {
-      const spp = this.#ptFrameIndex * 16;
-      const elapsed = this.#ptFrameIndex > 0 ? ((performance.now() - this.#ptStartTime) / 1000).toFixed(1) : '0.0';
-      const label = this.pathTracing ? 'PT' : 'PT (frozen)';
-      return ` ${label} f${this.#ptFrameIndex} ${spp}spp ${elapsed}s`;
+    if (this.debugMode >= 2 && this.#ptFrameIndex > 0) {
+      return ` PT f${this.#ptFrameIndex} ${this.#ptFrameIndex * 16}spp`;
     }
     if (!this.#tsQuerySet) return '';
     if (this.#gpuTimeMs <= 0) return ' gpu:...';
