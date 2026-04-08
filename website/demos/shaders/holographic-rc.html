@@ -412,7 +412,6 @@
         <span class="v" id="probe-value">1024</span>
       </div>
       <label><input id="bounces-toggle" type="checkbox" checked /> bounces</label>
-      <label><input id="blur-toggle" type="checkbox" checked /> blur</label>
       <label><input id="pp-toggle" type="checkbox" /> 1px</label>
       <select id="debug-select">
         <option value="0">debug: off</option>
@@ -779,7 +778,6 @@
       probeSlider.addEventListener('input', () => { setProbeSize(probeCounts[Number(probeSlider.value)]); syncURL(); });
       setProbeSize(initState.probes);
       $('bounces-toggle').addEventListener('change', (e) => { hrc.bounces = e.target.checked; syncURL(); });
-      $('blur-toggle').addEventListener('change', (e) => { hrc.crossBlur = e.target.checked; });
       const ppToggle = $('pp-toggle');
       ppToggle.addEventListener('change', (e) => { setPPMode(e.target.checked); syncURL(); });
       const debugSelect = $('debug-select');

@@ -107,6 +107,34 @@ fn dirToSliceOffset(dirIdx: i32, intervalSize: i32) -> i32 {
 }
 `;
 
+const wgslRGB9E5 = /*wgsl*/ `
+fn packRGB9E5(c: vec3f) -> u32 {
+  let maxC = max(c.r, max(c.g, c.b));
+  var exp_shared: i32;
+  var scale: f32;
+  if (maxC < 6.10352e-5) {
+    exp_shared = 0;
+    scale = 0.0;
+  } else {
+    let e = clamp(i32(ceil(log2(maxC))) + 15, 0, 31);
+    exp_shared = e;
+    scale = exp2(f32(-e + 15 + 9));
+  }
+  let r = u32(clamp(c.r * scale, 0.0, 511.0));
+  let g = u32(clamp(c.g * scale, 0.0, 511.0));
+  let b = u32(clamp(c.b * scale, 0.0, 511.0));
+  return r | (g << 9u) | (b << 18u) | (u32(exp_shared) << 27u);
+}
+
+fn unpackRGB9E5(p: u32) -> vec3f {
+  let r = f32(p & 0x1FFu);
+  let g = f32((p >> 9u) & 0x1FFu);
+  let b = f32((p >> 18u) & 0x1FFu);
+  let e = f32((p >> 27u) & 0x1Fu) - 15.0 - 9.0;
+  return vec3f(r, g, b) * exp2(e);
+}
+`;
+
 // ── World-render shaders (shapes, lines, mouse light → world + material) ──
 //
 // Two render targets (MRT):
@@ -250,12 +278,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   let packed = packF16(vec4f(rad, trans));
-  let rayW = i32(params.probeCount) * 2;
-  // Sub-probe duplication: write identical (R,T) to both sub-probe slots.
-  // At level 0 both halves are the same; the extend shader differentiates
-  // them at higher levels by compositing different angular directions.
-  rayOut[sliceIdx * rayW + probeIdx * 2] = packed;
-  rayOut[sliceIdx * rayW + probeIdx * 2 + 1] = packed;
+  rayOut[sliceIdx * i32(params.probeCount) + probeIdx] = packed;
 }
 `;
 
@@ -293,7 +316,12 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let idx = sliceIdx * i32(params.prevRayW) + (probeIdx << prevLevel) + probeIdx + rayIdx;
+  var idx: i32;
+  if (prevLevel == 0u) {
+    idx = sliceIdx * i32(params.prevRayW) + probeIdx;
+  } else {
+    idx = sliceIdx * i32(params.prevRayW) + (probeIdx << prevLevel) + probeIdx + rayIdx;
+  }
   let r = unpackF16(prevRay[idx]);
   return RayData(r.rgb, r.a);
 }
@@ -346,7 +374,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 //   Odd probes: composite one fine interval with the continuation fluence
 //     directly (no averaging with the coarser level).
 
-const coneMergeShader = wgslPackF16 + wgslSliceOffset + /*wgsl*/ `
+const coneMergeShader = wgslPackF16 + wgslSliceOffset + wgslRGB9E5 + /*wgsl*/ `
 struct MergeParams {
   probeCount: u32,
   numAngularBins: u32,
@@ -375,33 +403,8 @@ struct MergeParams {
 @group(0) @binding(1) var<storage, read> mergeInBuf: array<u32>;
 @group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<u32>;
 
-fn packRGB9E5(c: vec3f) -> u32 {
-  let maxC = max(c.r, max(c.g, c.b));
-  var exp_shared: i32;
-  var scale: f32;
-  if (maxC < 6.10352e-5) {
-    exp_shared = 0;
-    scale = 0.0;
-  } else {
-    let e = clamp(i32(ceil(log2(maxC))) + 15, 0, 31);
-    exp_shared = e;
-    scale = exp2(f32(-e + 15 + 9));
-  }
-  let r = u32(clamp(c.r * scale, 0.0, 511.0));
-  let g = u32(clamp(c.g * scale, 0.0, 511.0));
-  let b = u32(clamp(c.b * scale, 0.0, 511.0));
-  return r | (g << 9u) | (b << 18u) | (u32(exp_shared) << 27u);
-}
-
-fn unpackRGB9E5(p: u32) -> vec3f {
-  let r = f32(p & 0x1FFu);
-  let g = f32((p >> 9u) & 0x1FFu);
-  let b = f32((p >> 18u) & 0x1FFu);
-  let e = f32((p >> 27u) & 0x1Fu) - 15.0 - 9.0;
-  return vec3f(r, g, b) * exp2(e);
-}
 @group(0) @binding(3) var<uniform> params: MergeParams;
-@group(0) @binding(4) var<storage, read_write> fluenceBuf: array<vec2u>;
+@group(0) @binding(4) var<storage, read_write> fluenceBuf: array<u32>;
 @group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
 @group(0) @binding(6) var<storage, read> angWeights: array<f32>;
 
@@ -414,8 +417,16 @@ fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  let texX = (probeIdx << params.level) + probeIdx + rayIdx;
-  let r = unpackF16(rayBuf[sliceIdx * i32(params.numProbes * params.numRays) + texX]);
+  var texX: i32;
+  var rowW: i32;
+  if (params.level == 0u) {
+    texX = probeIdx;
+    rowW = i32(params.numProbes);
+  } else {
+    texX = (probeIdx << params.level) + probeIdx + rayIdx;
+    rowW = i32(params.numProbes * params.numRays);
+  }
+  let r = unpackF16(rayBuf[sliceIdx * rowW + texX]);
   return RayData(r.rgb, r.a);
 }
 
@@ -495,7 +506,9 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   }
 
   let outX = (probeIdx << level) + angBinIdx;
-  mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = packRGB9E5(result);
+  if (params.numAngularBins > 1u) {
+    mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = packRGB9E5(result);
+  }
 
   if (params.numAngularBins == 1u) {
     let fc = vec2i(
@@ -507,8 +520,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     let fh = i32(arrayLength(&fluenceBuf)) / fStride;
     if (fc.x >= 0 && fc.x < fw && fc.y >= 0 && fc.y < fh) {
       let fi = fc.y * fStride + fc.x;
-      let prev = unpackF16(fluenceBuf[fi]);
-      fluenceBuf[fi] = packF16(vec4f(prev.rgb + result, 1.0));
+      let prev = unpackRGB9E5(fluenceBuf[fi]);
+      fluenceBuf[fi] = packRGB9E5(prev + result);
     }
   }
 }
@@ -621,18 +634,16 @@ const blitShader =
 
 const WG_BLUR = [16, 16] as const;
 
-const fluenceBlurShader = /*wgsl*/ `
+const fluenceBlurShader = wgslRGB9E5 + /*wgsl*/ `
 struct BlurParams { w: u32, h: u32, stride: u32, screenW: u32, screenH: u32, pad0: u32, pad1: u32, pad2: u32 };
 
-fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
-
-@group(0) @binding(0) var<storage, read> src: array<vec2u>;
+@group(0) @binding(0) var<storage, read> src: array<u32>;
 @group(0) @binding(1) var dst: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(2) var<uniform> params: BlurParams;
 @group(0) @binding(3) var worldTex: texture_2d<f32>;
 
 fn load(x: i32, y: i32) -> vec3f {
-  return unpackF16(src[y * i32(params.stride) + x]).rgb;
+  return unpackRGB9E5(src[y * i32(params.stride) + x]);
 }
 
 fn probeOpacity(px: i32, py: i32, spacing: f32) -> f32 {
@@ -961,7 +972,6 @@ export class FolkHolographicRC extends FolkBaseSet {
   @property({ type: Number, reflect: true }) exposure = 2.0;
   @property({ type: Number, reflect: true }) probeCount = 1024;
   @property({ type: Boolean, reflect: true }) bounces = true;
-  @property({ type: Boolean, reflect: true, attribute: 'cross-blur' }) crossBlur = true;
   @property({ type: Number, reflect: true, attribute: 'debug-mode' }) debugMode = 0;
   @property({ type: Number, reflect: true, attribute: 'pixel-perfect' }) pixelPerfect = 0;
 
@@ -1686,9 +1696,10 @@ export class FolkHolographicRC extends FolkBaseSet {
     [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
 
     // Ray/merge buffers are shared across all 4 directions, sized for worst case.
+    // Level 0 stores one entry per probe (no sub-probe duplication).
     this.#rayBuffers = [];
     for (let i = 0; i < this.#numCascades; i++) {
-      const w = ceilDiv(psMax, 1 << i) * ((1 << i) + 1);
+      const w = i === 0 ? psMax : ceilDiv(psMax, 1 << i) * ((1 << i) + 1);
       this.#rayBuffers.push(
         device.createBuffer({ label: `Ray-${i}`, size: w * psMax * 8, usage: GPUBufferUsage.STORAGE }),
       );
@@ -1697,13 +1708,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeBuffers = [0, 1].map((i) =>
       device.createBuffer({ label: `Merge-${i}`, size: mergeStride * psMax * 4, usage: GPUBufferUsage.STORAGE }),
     );
-    const alignedFluenceRow = Math.ceil((psX * 8) / 256) * 256;
+    const alignedFluenceRow = Math.ceil((psX * 4) / 256) * 256;
     this.#fluenceBuffer = device.createBuffer({
       label: 'Fluence-SSBO',
       size: alignedFluenceRow * psY,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    this.#fluenceStride = alignedFluenceRow / 8;
+    this.#fluenceStride = alignedFluenceRow / 4;
     const [ft, fv] = tex(
       device,
       'Fluence',
@@ -2284,19 +2295,13 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#lastFluenceReady = true;
 
-    // ── Step 2.5: Fluence SSBO → texture ──
-    if (this.crossBlur) {
+    // ── Step 2.5: Fluence SSBO → texture (cross-blur + RGB9E5→f16 conversion) ──
+    {
       const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('blur') });
       pass.setPipeline(this.#fluenceBlurPipeline);
       pass.setBindGroup(0, this.#fluenceBlurBindGroup);
       pass.dispatchWorkgroups(Math.ceil(this.#psX / WG_BLUR[0]), Math.ceil(this.#psY / WG_BLUR[1]));
       pass.end();
-    } else {
-      encoder.copyBufferToTexture(
-        { buffer: this.#fluenceBuffer, bytesPerRow: this.#fluenceStride * 8, rowsPerImage: this.#psY },
-        { texture: this.#fluenceTexture },
-        { width: this.#psX, height: this.#psY },
-      );
     }
 
     // ── Step 2.75: Run PT alongside HRC for debug modes 4/5 ──
@@ -2451,7 +2456,7 @@ export class FolkHolographicRC extends FolkBaseSet {
           probeCount: f.pc,
           level,
           invNumRays: 1.0 / numRays,
-          prevRayW: ceilDiv(f.pc, 1 << (level - 1)) * ((1 << (level - 1)) + 1),
+          prevRayW: level === 1 ? f.pc : ceilDiv(f.pc, 1 << (level - 1)) * ((1 << (level - 1)) + 1),
           currRayW: ceilDiv(f.pc, 1 << level) * numRays,
           sliceCount: f.sc,
           pad2: 0,
