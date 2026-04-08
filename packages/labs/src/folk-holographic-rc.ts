@@ -1628,8 +1628,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
       this.#rebuild();
     }
-    if (this.sourcesMap.size !== this.sourceElements.size) return;
-    this.#updateShapeData();
     if (probeChanged || ppChanged || changedProperties.has('exposure') || changedProperties.has('bounces') || changedProperties.has('debugMode')) {
       this.#ptFrameIndex = 0;
     }
@@ -1667,14 +1665,13 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   #initResources() {
-    const { width, height } = this.#canvas;
     const device = this.#device;
-    const { width: cw, height: ch } = this.#canvas;
-    const maxDim = Math.max(cw, ch);
+    const { width, height } = this.#canvas;
+    const maxDim = Math.max(width, height);
     const ps = Math.max(2, this.probeCount);
     const pp = this.#pp;
-    const psX = pp ? pp : Math.max(2, ceilDiv(cw * ps, maxDim));
-    const psY = pp ? pp : Math.max(2, ceilDiv(ch * ps, maxDim));
+    const psX = pp ? pp : Math.max(2, ceilDiv(width * ps, maxDim));
+    const psY = pp ? pp : Math.max(2, ceilDiv(height * ps, maxDim));
     const psMax = Math.max(psX, psY);
     this.#psX = psX;
     this.#psY = psY;
@@ -2519,9 +2516,6 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
     }
     device.queue.writeBuffer(this.#angWeightBuffer, 0, angData);
-
-    this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height, debugMode: this.debugMode });
-    device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
 
     this.#bounceParamsView.set({ screenW: width, screenH: height, pad0: 0, pad1: 0 });
     device.queue.writeBuffer(this.#bounceParamsBuffer, 0, this.#bounceParamsView.arrayBuffer);
