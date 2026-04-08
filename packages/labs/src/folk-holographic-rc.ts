@@ -153,7 +153,9 @@ fn unpackRGB9E5(p: u32) -> vec3f {
 //   - Volume (opacity=0.03, albedo=0.5): each step scatters 1.5% of light
 //   - Absorber (albedo=0): all interacted light is destroyed
 
-const worldRenderShader = wgslSrgb + /*wgsl*/ `
+const worldRenderShader =
+  wgslSrgb +
+  /*wgsl*/ `
 struct VertexInput {
   @location(0) position: vec2f,
   @location(1) color: vec3f,
@@ -183,7 +185,9 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 }
 `;
 
-const lineRenderShader = wgslSrgb + /*wgsl*/ `
+const lineRenderShader =
+  wgslSrgb +
+  /*wgsl*/ `
 struct VertexOutput {
   @builtin(position) position: vec4f,
   @location(0) color: vec3f,
@@ -242,7 +246,9 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 // The bounce texture (at probe resolution) provides the diffuse re-emission
 // from the previous frame's fluence, enabling multi-bounce GI over time.
 
-const raySeedShader = wgslPackF16 + /*wgsl*/ `
+const raySeedShader =
+  wgslPackF16 +
+  /*wgsl*/ `
 struct SeedParams {
   probeCount: u32,
   sliceCount: u32,
@@ -291,7 +297,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // averages. This interpolates between the two nearest finer-level directions.
 // Transmittance is scalar, packed in the ray texture alpha channel.
 
-const rayExtendShader = wgslPackF16 + wgslSliceOffset + /*wgsl*/ `
+const rayExtendShader =
+  wgslPackF16 +
+  wgslSliceOffset +
+  /*wgsl*/ `
 struct ExtendParams {
   probeCount: u32,
   level: u32,
@@ -355,11 +364,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     loadPrev(probeIdx * 2 + 1, upper, sliceIdx + sliceOffA),
   );
 
-  let sliceOffB = dirToSliceOffset(upper, prevInterval);
-  let crossB = compositeRay(
-    loadPrev(probeIdx * 2, upper, sliceIdx),
-    loadPrev(probeIdx * 2 + 1, lower, sliceIdx + sliceOffB),
-  );
+    let sliceOffB = dirToSliceOffset(upper, prevInterval);
+    let crossB = compositeRay(
+      loadPrev(probeIdx * 2, upper, sliceIdx),
+      loadPrev(probeIdx * 2 + 1, lower, sliceIdx + sliceOffB),
+    );
 
   let avgRad = (crossA.rad + crossB.rad) * 0.5;
   let avgTrans = (crossA.trans + crossB.trans) * 0.5;
@@ -376,7 +385,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 //   Odd probes: composite one fine interval with the continuation fluence
 //     directly (no averaging with the coarser level).
 
-const coneMergeShader = wgslPackF16 + wgslSliceOffset + wgslRGB9E5 + /*wgsl*/ `
+const coneMergeShader =
+  wgslPackF16 +
+  wgslSliceOffset +
+  wgslRGB9E5 +
+  /*wgsl*/ `
 struct MergeParams {
   probeCount: u32,
   numAngularBins: u32,
@@ -636,7 +649,9 @@ const blitShader =
 
 const WG_BLUR = [16, 16] as const;
 
-const fluenceBlurShader = wgslRGB9E5 + /*wgsl*/ `
+const fluenceBlurShader =
+  wgslRGB9E5 +
+  /*wgsl*/ `
 struct BlurParams { w: u32, h: u32, stride: u32, screenW: u32, screenH: u32, pad0: u32, pad1: u32, pad2: u32 };
 
 @group(0) @binding(0) var<storage, read> src: array<u32>;
@@ -1190,7 +1205,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const device = this.#device;
     const { width, height } = this.#canvas;
     const ptIdx = this.#ptFrameIndex % 2;
-    const bytesPerRow = Math.ceil(width * 16 / 256) * 256;
+    const bytesPerRow = Math.ceil((width * 16) / 256) * 256;
     const bufSize = bytesPerRow * height;
 
     const ptBuf = device.createBuffer({ size: bufSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
@@ -1207,12 +1222,15 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const fluenceW = this.#psX;
     const fluenceH = this.#psY;
-    const flBytesPerRow = Math.ceil(fluenceW * 8 / 256) * 256;
+    const flBytesPerRow = Math.ceil((fluenceW * 8) / 256) * 256;
     const flBufSize = flBytesPerRow * fluenceH;
     const flBuf = device.createBuffer({ size: flBufSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    const worldBytesPerRow = Math.ceil(width * 8 / 256) * 256;
+    const worldBytesPerRow = Math.ceil((width * 8) / 256) * 256;
     const worldBufSize = worldBytesPerRow * height;
-    const worldBuf = device.createBuffer({ size: worldBufSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const worldBuf = device.createBuffer({
+      size: worldBufSize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
 
     const enc2 = device.createCommandEncoder();
     enc2.copyTextureToBuffer(
@@ -1237,7 +1255,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       const exp = (bits >> 10) & 0x1f;
       const mant = bits & 0x3ff;
       if (exp === 0) return (sign ? -1 : 1) * 2 ** -14 * (mant / 1024);
-      if (exp === 31) return mant ? NaN : (sign ? -Infinity : Infinity);
+      if (exp === 31) return mant ? NaN : sign ? -Infinity : Infinity;
       return (sign ? -1 : 1) * 2 ** (exp - 15) * (1 + mant / 1024);
     };
 
@@ -1255,30 +1273,39 @@ export class FolkHolographicRC extends FolkBaseSet {
         const wB = f16ToF32(worldData[wOff + 2]);
         const wA = f16ToF32(worldData[wOff + 3]);
 
-        const fx = Math.min(Math.floor((x + 0.5) / width * fluenceW), fluenceW - 1);
-        const fy = Math.min(Math.floor((y + 0.5) / height * fluenceH), fluenceH - 1);
+        const fx = Math.min(Math.floor(((x + 0.5) / width) * fluenceW), fluenceW - 1);
+        const fy = Math.min(Math.floor(((y + 0.5) / height) * fluenceH), fluenceH - 1);
         const fOff = fy * flRowStride + fx * 4;
         const fR = f16ToF32(flData[fOff]);
         const fG = f16ToF32(flData[fOff + 1]);
         const fB = f16ToF32(flData[fOff + 2]);
 
-        const emR = wR * wA, emG = wG * wA, emB = wB * wA;
+        const emR = wR * wA,
+          emG = wG * wA,
+          emB = wB * wA;
         const mask = 1 - wA;
-        const hrcR = emR + fR / TWO_PI * mask;
-        const hrcG = emG + fG / TWO_PI * mask;
-        const hrcB = emB + fB / TWO_PI * mask;
+        const hrcR = emR + (fR / TWO_PI) * mask;
+        const hrcG = emG + (fG / TWO_PI) * mask;
+        const hrcB = emB + (fB / TWO_PI) * mask;
 
         const pOff = y * ptRowStride + x * 4;
-        const ptR = ptData[pOff], ptG = ptData[pOff + 1], ptB = ptData[pOff + 2];
+        const ptR = ptData[pOff],
+          ptG = ptData[pOff + 1],
+          ptB = ptData[pOff + 2];
 
-        const dR = hrcR - ptR, dG = hrcG - ptG, dB = hrcB - ptB;
+        const dR = hrcR - ptR,
+          dG = hrcG - ptG,
+          dB = hrcB - ptB;
         sumSqErr += dR * dR + dG * dG + dB * dB;
       }
     }
 
-    ptBuf.unmap(); ptBuf.destroy();
-    flBuf.unmap(); flBuf.destroy();
-    worldBuf.unmap(); worldBuf.destroy();
+    ptBuf.unmap();
+    ptBuf.destroy();
+    flBuf.unmap();
+    flBuf.destroy();
+    worldBuf.unmap();
+    worldBuf.destroy();
 
     return Math.sqrt(sumSqErr / (width * height * 3));
   }
@@ -1397,14 +1424,22 @@ export class FolkHolographicRC extends FolkBaseSet {
       const sx = x1 < x2 ? 1 : -1;
       const sy = y1 < y2 ? 1 : -1;
       let err = dx - dy;
-      let x = Math.floor(x1), y = Math.floor(y1);
-      const ex = Math.floor(x2), ey = Math.floor(y2);
+      let x = Math.floor(x1),
+        y = Math.floor(y1);
+      const ex = Math.floor(x2),
+        ey = Math.floor(y2);
       for (;;) {
         ctx.fillRect(x + blo, y + blo, bs, bs);
         if (x === ex && y === ey) break;
         const e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x += sx; }
-        if (e2 < dx) { err += dx; y += sy; }
+        if (e2 > -dy) {
+          err -= dy;
+          x += sx;
+        }
+        if (e2 < dx) {
+          err += dx;
+          y += sy;
+        }
       }
       return;
     }
@@ -1450,7 +1485,10 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   saveScenePNG(filename = 'scene.png') {
-    if (!this.#sceneCanvas) { console.warn('saveScenePNG only works in pixel-perfect mode'); return; }
+    if (!this.#sceneCanvas) {
+      console.warn('saveScenePNG only works in pixel-perfect mode');
+      return;
+    }
     const a = document.createElement('a');
     a.href = this.#sceneCanvas.toDataURL('image/png');
     a.download = filename;
@@ -1640,7 +1678,13 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
       this.#rebuild();
     }
-    if (probeChanged || ppChanged || changedProperties.has('exposure') || changedProperties.has('bounces') || changedProperties.has('debugMode')) {
+    if (
+      probeChanged ||
+      ppChanged ||
+      changedProperties.has('exposure') ||
+      changedProperties.has('bounces') ||
+      changedProperties.has('debugMode')
+    ) {
       this.#ptFrameIndex = 0;
     }
   }
@@ -1694,7 +1738,14 @@ export class FolkHolographicRC extends FolkBaseSet {
     const ubo = (label: string, size: number) =>
       device.createBuffer({ label, size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    [this.#worldTexture, this.#worldTextureView] = tex(device, 'World', width, height, 'rgba16float', TEX_RENDER | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST);
+    [this.#worldTexture, this.#worldTextureView] = tex(
+      device,
+      'World',
+      width,
+      height,
+      'rgba16float',
+      TEX_RENDER | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
+    );
     [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
 
     // Ray/merge buffers are shared across all 4 directions, sized for worst case.
@@ -1723,7 +1774,10 @@ export class FolkHolographicRC extends FolkBaseSet {
       psX,
       psY,
       'rgba16float',
-      GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
+      GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.STORAGE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.COPY_SRC,
     );
     this.#fluenceTexture = ft;
     this.#fluenceTextureView = fv;
@@ -2029,7 +2083,9 @@ export class FolkHolographicRC extends FolkBaseSet {
     const invCw2 = 2 / cw;
     const invCh2 = 2 / ch;
     const pp = this.#pp;
-    let ppScale = 0, ppOffX = 0, ppOffY = 0;
+    let ppScale = 0,
+      ppOffX = 0,
+      ppOffY = 0;
     if (pp) {
       const rect = this.#canvas.getBoundingClientRect();
       ppScale = this.#canvas.width / rect.width;
@@ -2054,7 +2110,9 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
 
       const rgbAttr = element.getAttribute('data-rgb');
-      let r = 0, g = 0, b = 0;
+      let r = 0,
+        g = 0,
+        b = 0;
       if (rgbAttr) {
         const c1 = rgbAttr.indexOf(',');
         const c2 = rgbAttr.indexOf(',', c1 + 1);
@@ -2072,10 +2130,14 @@ export class FolkHolographicRC extends FolkBaseSet {
       const cos = Math.cos(rot);
       const sin = Math.sin(rot);
 
-      const hlx = -sw * 0.5, hly = -sh * 0.5;
-      const hrx = sw * 0.5, hry = -sh * 0.5;
-      const blx = -sw * 0.5, bly = sh * 0.5;
-      const brx = sw * 0.5, bry = sh * 0.5;
+      const hlx = -sw * 0.5,
+        hly = -sh * 0.5;
+      const hrx = sw * 0.5,
+        hry = -sh * 0.5;
+      const blx = -sw * 0.5,
+        bly = sh * 0.5;
+      const brx = sw * 0.5,
+        bry = sh * 0.5;
 
       const tlX = (mx + hlx * cos - hly * sin) * invCw2 - 1;
       const tlY = 1 - (my + hlx * sin + hly * cos) * invCh2;
@@ -2087,12 +2149,48 @@ export class FolkHolographicRC extends FolkBaseSet {
       const brY = 1 - (my + brx * sin + bry * cos) * invCh2;
 
       const off = i * STRIDE;
-      verts[off]    = tlX; verts[off+1]  = tlY; verts[off+2]  = r; verts[off+3]  = g; verts[off+4]  = b; verts[off+5]  = opacity; verts[off+6]  = albedo;
-      verts[off+7]  = trX; verts[off+8]  = trY; verts[off+9]  = r; verts[off+10] = g; verts[off+11] = b; verts[off+12] = opacity; verts[off+13] = albedo;
-      verts[off+14] = blX; verts[off+15] = blY; verts[off+16] = r; verts[off+17] = g; verts[off+18] = b; verts[off+19] = opacity; verts[off+20] = albedo;
-      verts[off+21] = trX; verts[off+22] = trY; verts[off+23] = r; verts[off+24] = g; verts[off+25] = b; verts[off+26] = opacity; verts[off+27] = albedo;
-      verts[off+28] = brX; verts[off+29] = brY; verts[off+30] = r; verts[off+31] = g; verts[off+32] = b; verts[off+33] = opacity; verts[off+34] = albedo;
-      verts[off+35] = blX; verts[off+36] = blY; verts[off+37] = r; verts[off+38] = g; verts[off+39] = b; verts[off+40] = opacity; verts[off+41] = albedo;
+      verts[off] = tlX;
+      verts[off + 1] = tlY;
+      verts[off + 2] = r;
+      verts[off + 3] = g;
+      verts[off + 4] = b;
+      verts[off + 5] = opacity;
+      verts[off + 6] = albedo;
+      verts[off + 7] = trX;
+      verts[off + 8] = trY;
+      verts[off + 9] = r;
+      verts[off + 10] = g;
+      verts[off + 11] = b;
+      verts[off + 12] = opacity;
+      verts[off + 13] = albedo;
+      verts[off + 14] = blX;
+      verts[off + 15] = blY;
+      verts[off + 16] = r;
+      verts[off + 17] = g;
+      verts[off + 18] = b;
+      verts[off + 19] = opacity;
+      verts[off + 20] = albedo;
+      verts[off + 21] = trX;
+      verts[off + 22] = trY;
+      verts[off + 23] = r;
+      verts[off + 24] = g;
+      verts[off + 25] = b;
+      verts[off + 26] = opacity;
+      verts[off + 27] = albedo;
+      verts[off + 28] = brX;
+      verts[off + 29] = brY;
+      verts[off + 30] = r;
+      verts[off + 31] = g;
+      verts[off + 32] = b;
+      verts[off + 33] = opacity;
+      verts[off + 34] = albedo;
+      verts[off + 35] = blX;
+      verts[off + 36] = blY;
+      verts[off + 37] = r;
+      verts[off + 38] = g;
+      verts[off + 39] = b;
+      verts[off + 40] = opacity;
+      verts[off + 41] = albedo;
       i++;
     }
 
@@ -2130,16 +2228,22 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const pp = this.#pp;
     if (pp) {
-      const cw = this.#canvas.width, ch = this.#canvas.height;
-      const cx = Math.floor(x), cy = Math.floor(y);
+      const cw = this.#canvas.width,
+        ch = this.#canvas.height;
+      const cx = Math.floor(x),
+        cy = Math.floor(y);
       const bs = Math.max(1, this.#mouseLightRadius * 2);
-      const blo = -Math.floor((bs - 1) / 2), bhi = Math.floor(bs / 2);
+      const blo = -Math.floor((bs - 1) / 2),
+        bhi = Math.floor(bs / 2);
       for (let by = blo; by <= bhi; by++) {
         for (let bx = blo; bx <= bhi; bx++) {
-          const px = cx + bx, py = cy + by;
+          const px = cx + bx,
+            py = cy + by;
           if (px >= 0 && py >= 0 && px < pp && py < pp) {
-            const x0 = (px / cw) * 2 - 1, y0 = 1 - (py / ch) * 2;
-            const x1 = ((px + 1) / cw) * 2 - 1, y1 = 1 - ((py + 1) / ch) * 2;
+            const x0 = (px / cw) * 2 - 1,
+              y0 = 1 - (py / ch) * 2;
+            const x1 = ((px + 1) / cw) * 2 - 1,
+              y1 = 1 - ((py + 1) / ch) * 2;
             verts.push(x0, y0, r, g, b, op, al, x1, y0, r, g, b, op, al, x0, y1, r, g, b, op, al);
             verts.push(x1, y0, r, g, b, op, al, x1, y1, r, g, b, op, al, x0, y1, r, g, b, op, al);
           }
@@ -2248,7 +2352,11 @@ export class FolkHolographicRC extends FolkBaseSet {
         pass.setPipeline(this.#worldRenderPipeline);
       }
       const { r: mr, g: mg, b: mb } = this.#mouseLightColor;
-      if (this.#mouseLightBuffer && this.#mouseLightVertexCount > 0 && (mr > 0 || mg > 0 || mb > 0 || this.#mouseLightOpacity > 0)) {
+      if (
+        this.#mouseLightBuffer &&
+        this.#mouseLightVertexCount > 0 &&
+        (mr > 0 || mg > 0 || mb > 0 || this.#mouseLightOpacity > 0)
+      ) {
         pass.setVertexBuffer(0, this.#mouseLightBuffer);
         pass.draw(this.#mouseLightVertexCount);
       }
