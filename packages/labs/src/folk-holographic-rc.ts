@@ -78,15 +78,17 @@ function uploadVertexData(
   device: GPUDevice,
   existing: GPUBuffer | undefined,
   data: Float32Array<ArrayBuffer>,
+  count?: number,
 ): GPUBuffer {
-  if (!existing || existing.size < data.byteLength) {
+  const bytes = (count ?? data.length) * 4;
+  if (!existing || existing.size < bytes) {
     existing?.destroy();
     existing = device.createBuffer({
-      size: data.byteLength,
+      size: bytes,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
   }
-  device.queue.writeBuffer(existing, 0, data);
+  device.queue.writeBuffer(existing, 0, data, 0, count);
   return existing;
 }
 
@@ -2006,13 +2008,37 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   // ── Shape / line data ──
 
+  #shapeVertexData?: Float32Array<ArrayBuffer>;
+
   #updateShapeData() {
-    const vertices: number[] = [];
-    const elements = Array.from(this.sourceElements);
+    const count = this.sourceElements.size;
+    this.#shapeCount = count;
+    if (count === 0) return;
+
+    const FLOATS_PER_VERTEX = 7;
+    const VERTICES_PER_SHAPE = 6;
+    const STRIDE = FLOATS_PER_VERTEX * VERTICES_PER_SHAPE;
+    const needed = count * STRIDE;
+    if (!this.#shapeVertexData || this.#shapeVertexData.length < needed) {
+      this.#shapeVertexData = new Float32Array(needed);
+    }
+    const verts = this.#shapeVertexData;
+
     const cw = this.#canvas.width;
     const ch = this.#canvas.height;
+    const invCw2 = 2 / cw;
+    const invCh2 = 2 / ch;
+    const pp = this.#pp;
+    let ppScale = 0, ppOffX = 0, ppOffY = 0;
+    if (pp) {
+      const rect = this.#canvas.getBoundingClientRect();
+      ppScale = this.#canvas.width / rect.width;
+      ppOffX = rect.left;
+      ppOffY = rect.top;
+    }
 
-    elements.forEach((element, index) => {
+    let i = 0;
+    for (const element of this.sourceElements) {
       const shape = element as HTMLElement & { x: number; y: number; width: number; height: number; rotation: number };
       let sx = shape.x ?? 0;
       let sy = shape.y ?? 0;
@@ -2020,47 +2046,57 @@ export class FolkHolographicRC extends FolkBaseSet {
       let sh = shape.height ?? 0;
       const rot = shape.rotation ?? 0;
 
-      if (this.#pp) {
-        const rect = this.#canvas.getBoundingClientRect();
-        const scale = this.#canvas.width / rect.width;
-        sx = (sx - rect.left) * scale;
-        sy = (sy - rect.top) * scale;
-        sw = sw * scale;
-        sh = sh * scale;
+      if (pp) {
+        sx = (sx - ppOffX) * ppScale;
+        sy = (sy - ppOffY) * ppScale;
+        sw = sw * ppScale;
+        sh = sh * ppScale;
       }
 
       const rgbAttr = element.getAttribute('data-rgb');
-      const parts = rgbAttr ? rgbAttr.split(',').map(Number) : [0, 0, 0];
-      const [r, g, b] = [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+      let r = 0, g = 0, b = 0;
+      if (rgbAttr) {
+        const c1 = rgbAttr.indexOf(',');
+        const c2 = rgbAttr.indexOf(',', c1 + 1);
+        r = +rgbAttr.substring(0, c1) || 0;
+        g = +rgbAttr.substring(c1 + 1, c2) || 0;
+        b = +rgbAttr.substring(c2 + 1) || 0;
+      }
       const opacityAttr = element.getAttribute('data-opacity');
-      const opacity = opacityAttr !== null ? Number(opacityAttr) : SOLID_OPACITY;
+      const opacity = opacityAttr !== null ? +opacityAttr : SOLID_OPACITY;
       const albedoAttr = element.getAttribute('data-albedo');
-      const albedo = albedoAttr !== null ? Number(albedoAttr) : 0;
-      // Compute rotated corners around shape center
-      const cx = sx + sw / 2;
-      const cy = sy + sh / 2;
+      const albedo = albedoAttr !== null ? +albedoAttr : 0;
+
+      const mx = sx + sw * 0.5;
+      const my = sy + sh * 0.5;
       const cos = Math.cos(rot);
       const sin = Math.sin(rot);
-      const corners: [number, number][] = [
-        [sx - cx, sy - cy], // top-left
-        [sx + sw - cx, sy - cy], // top-right
-        [sx - cx, sy + sh - cy], // bottom-left
-        [sx + sw - cx, sy + sh - cy], // bottom-right
-      ].map(([lx, ly]) => [((cx + lx * cos - ly * sin) / cw) * 2 - 1, 1 - ((cy + lx * sin + ly * cos) / ch) * 2]);
 
-      const v = (vx: number, vy: number) => {
-        vertices.push(vx, vy, r, g, b, opacity, albedo);
-      };
-      v(corners[0][0], corners[0][1]); // TL
-      v(corners[1][0], corners[1][1]); // TR
-      v(corners[2][0], corners[2][1]); // BL
-      v(corners[1][0], corners[1][1]); // TR
-      v(corners[3][0], corners[3][1]); // BR
-      v(corners[2][0], corners[2][1]); // BL
-    });
-    this.#shapeCount = elements.length;
-    if (vertices.length === 0) return;
-    this.#shapeDataBuffer = uploadVertexData(this.#device, this.#shapeDataBuffer, new Float32Array(vertices));
+      const hlx = -sw * 0.5, hly = -sh * 0.5;
+      const hrx = sw * 0.5, hry = -sh * 0.5;
+      const blx = -sw * 0.5, bly = sh * 0.5;
+      const brx = sw * 0.5, bry = sh * 0.5;
+
+      const tlX = (mx + hlx * cos - hly * sin) * invCw2 - 1;
+      const tlY = 1 - (my + hlx * sin + hly * cos) * invCh2;
+      const trX = (mx + hrx * cos - hry * sin) * invCw2 - 1;
+      const trY = 1 - (my + hrx * sin + hry * cos) * invCh2;
+      const blX = (mx + blx * cos - bly * sin) * invCw2 - 1;
+      const blY = 1 - (my + blx * sin + bly * cos) * invCh2;
+      const brX = (mx + brx * cos - bry * sin) * invCw2 - 1;
+      const brY = 1 - (my + brx * sin + bry * cos) * invCh2;
+
+      const off = i * STRIDE;
+      verts[off]    = tlX; verts[off+1]  = tlY; verts[off+2]  = r; verts[off+3]  = g; verts[off+4]  = b; verts[off+5]  = opacity; verts[off+6]  = albedo;
+      verts[off+7]  = trX; verts[off+8]  = trY; verts[off+9]  = r; verts[off+10] = g; verts[off+11] = b; verts[off+12] = opacity; verts[off+13] = albedo;
+      verts[off+14] = blX; verts[off+15] = blY; verts[off+16] = r; verts[off+17] = g; verts[off+18] = b; verts[off+19] = opacity; verts[off+20] = albedo;
+      verts[off+21] = trX; verts[off+22] = trY; verts[off+23] = r; verts[off+24] = g; verts[off+25] = b; verts[off+26] = opacity; verts[off+27] = albedo;
+      verts[off+28] = brX; verts[off+29] = brY; verts[off+30] = r; verts[off+31] = g; verts[off+32] = b; verts[off+33] = opacity; verts[off+34] = albedo;
+      verts[off+35] = blX; verts[off+36] = blY; verts[off+37] = r; verts[off+38] = g; verts[off+39] = b; verts[off+40] = opacity; verts[off+41] = albedo;
+      i++;
+    }
+
+    this.#shapeDataBuffer = uploadVertexData(this.#device, this.#shapeDataBuffer, verts, needed);
   }
 
   #updateLineBuffer() {
