@@ -704,10 +704,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // problem where some of the probes used for the interpolation will likely
 // be inside the object, where no light arrives.
 //
-// The exterior neighbor fluence is averaged with the probe one step further
-// out (ni + ni2) to cancel the cascade's period-2 checkerboard artifact,
-// preventing the bounce feedback loop from amplifying it.
-//
 // The blend `ownFluence * (1-opacity) + exteriorFluence * opacity` is
 // continuous: vacuum probes use their own fluence, wall probes use exterior
 // neighbors', and deep interior probes (no exterior neighbors) get zero.
@@ -744,8 +740,6 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let ownFluence = textureLoad(prevFluence, probe, 0).rgb;
 
-  // Exterior neighbor fluence, averaged with the probe one step further
-  // out to cancel the cascade's period-2 checkerboard: (F+δ + F-δ)/2 = F.
   var extFluence = vec3f(0.0);
   var extWeight = 0.0;
   let pMax = pdim - 1;
