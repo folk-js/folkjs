@@ -230,13 +230,13 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 }
 `;
 
-// ── HRC Phase A: Ray Seed (cascade 0) ──
+// ── HRC Phase A: Ray Seed — direct ray tracing for T_0 (paper §4.2, Alg. 1) ──
 // Samples world + bounce textures at each probe position. Computes per-cell
 // radiance and transmittance using discrete Beer-Lambert: T = (1−α)^spacing.
 // Emission is multiplied by (1 - T) because emission and absorption are coupled
 // through the extinction coefficient: a cell that absorbs fraction (1-T) of
 // passing light also converts fraction (1-T) of its own emission into the ray.
-// This is the source function integral over the cell thickness.
+// This is the source function integral over the cell thickness (paper Eq. 4).
 // The bounce texture (at probe resolution) provides the diffuse re-emission
 // from the previous frame's fluence, enabling multi-bounce GI over time.
 
@@ -284,11 +284,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// ── HRC Phase B: Ray Extension (bottom-up, levels 1..N-1) ──
+// ── HRC Phase B: Ray Extension — "Merge Up", building T_1..T_N (paper §4.1) ──
 // Composes two shorter rays from the previous level into one longer ray.
-// For each target direction, builds two crossed compositions: each pairs a
-// different angular sub-direction for the near and far sub-probes, then
-// averages. This interpolates between the two nearest finer-level directions.
+// Even k: exact composition via Eq. 18: T_{n+1}(p,2k) = Merge(T_n(p,k), T_n(p+v_n(k),k))
+// Odd k: averaged cross-composition via Eq. 19-20, interpolating between the
+// two nearest finer-level directions.
 // Transmittance is scalar, packed in the ray texture alpha channel.
 
 const rayExtendShader =
@@ -331,6 +331,7 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   return RayData(r.rgb, r.a);
 }
 
+// Paper Eq. 7: Merge(⟨r_n, t_n⟩, ⟨r_f, t_f⟩) = ⟨r_n + t_n·r_f, t_n·t_f⟩
 fn compositeRay(near: RayData, far: RayData) -> RayData {
   return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
 }
@@ -342,11 +343,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let interval = i32(1u << params.level);
   let numRays = interval + 1;
-  let numProbes = i32((params.probeCount + (1u << params.level) - 1u) >> params.level);
+  let levelProbes = i32((params.probeCount + (1u << params.level) - 1u) >> params.level);
   let probeIdx = i32(floor(f32(texelX) * params.invNumRays));
   let rayIdx = texelX - probeIdx * numRays;
 
-  if (probeIdx >= numProbes || sliceIdx >= i32(params.sliceCount)) { return; }
+  if (probeIdx >= levelProbes || sliceIdx >= i32(params.sliceCount)) { return; }
 
   let prevInterval = interval / 2;
   let lower = rayIdx / 2;
@@ -370,42 +371,36 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// ── HRC Phase C: Cascade Merge (top-down, levels N-1..0) ──
-// Reads pre-computed ray data and merges with fluence from coarser levels.
-// Parity-dependent cascade connection (HRC paper, sections 4-5):
-//   Even probes: composite two adjacent fine intervals, transmit to the
-//     continuation fluence, then Richardson-average with the coarser level's
-//     result at this position to cancel first-order spatial error.
-//   Odd probes: composite one fine interval with the continuation fluence
-//     directly (no averaging with the coarser level).
+// ── HRC Phase C: Cascade Merge — "Merge Down", computing R_{N-1}..R_0 (paper §4.2) ──
+// Reads pre-computed ray data and merges with far-field fluence from higher levels.
+// Parity-dependent cascade connection:
+//   Odd probes (Eq. 14): Merge_r(A_{n+1}(j) × Trace(p,q), R_{n+1}(q,j))
+//   Even probes (Eq. 15-17): Richardson-average of local composite with
+//     coarser level's result to cancel first-order spatial interpolation error.
 
-const coneMergeShader =
+const cascadeMergeShader =
   wgslPackF16 +
   wgslSliceOffset +
   wgslRGB9E5 +
   /*wgsl*/ `
 struct MergeParams {
   probeCount: u32,
-  numAngularBins: u32,
-  numProbes: u32,
+  numDirections: u32,
+  levelProbes: u32,
   numRays: u32,
-  nextNumAngBins: u32,
-  isLastLevel: u32,
+  nextNumDirections: u32,
+  isTopCascade: u32,
   fluenceW: u32,
   fluenceStride: u32,
   skyRow: u32,
   skyShift: u32,
   level: u32,
-  angWeightBase: u32,
+  coneArcBase: u32,
   sliceCount: u32,
   mergeStride: u32,
   mergeInWidth: u32,
-  fxProbe: i32,
-  fxSlice: i32,
-  fxOff: i32,
-  fyProbe: i32,
-  fySlice: i32,
-  fyOff: i32,
+  direction: u32,
+  fluenceH: u32,
 };
 
 @group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
@@ -415,12 +410,12 @@ struct MergeParams {
 @group(0) @binding(3) var<uniform> params: MergeParams;
 @group(0) @binding(4) var<storage, read_write> fluenceBuf: array<u32>;
 @group(0) @binding(5) var skyPrefixTex: texture_2d<f32>;
-@group(0) @binding(6) var<storage, read> angWeights: array<f32>;
+@group(0) @binding(6) var<storage, read> coneArcs: array<f32>;
 
 struct RayData { rad: vec3f, trans: f32 }
 
 fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
-  let effProbes = i32(params.numProbes);
+  let effProbes = i32(params.levelProbes);
   if (probeIdx < 0 || probeIdx >= effProbes ||
       rayIdx < 0 || rayIdx >= i32(params.numRays) ||
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
@@ -430,17 +425,17 @@ fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
   var rowW: i32;
   if (params.level == 0u) {
     texX = probeIdx;
-    rowW = i32(params.numProbes);
+    rowW = i32(params.levelProbes);
   } else {
     texX = (probeIdx << params.level) + probeIdx + rayIdx;
-    rowW = i32(params.numProbes * params.numRays);
+    rowW = i32(params.levelProbes * params.numRays);
   }
   let r = unpackF16(rayBuf[sliceIdx * rowW + texX]);
   return RayData(r.rgb, r.a);
 }
 
 fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
-  if (params.isLastLevel == 1u ||
+  if (params.isTopCascade == 1u ||
       texX < 0 || texX >= i32(params.mergeInWidth) ||
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
     return vec3f(0.0);
@@ -448,8 +443,9 @@ fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
   return unpackRGB9E5(mergeInBuf[sliceIdx * i32(params.mergeStride) + texX]);
 }
 
-fn getAngularWeight(subBin: u32) -> f32 {
-  return angWeights[params.angWeightBase + subBin];
+// Paper Eq. 13: A_n(i) = angle(v_n(i+½)) - angle(v_n(i-½))
+fn getConeArc(subBin: u32) -> f32 {
+  return coneArcs[params.coneArcBase + subBin];
 }
 
 fn loadSkyFluence(subBin: u32) -> vec3f {
@@ -465,11 +461,11 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let probeAngIdx = i32(gid.x);
   let sliceIdx = i32(gid.y);
   let level = params.level;
-  let numAngularBins = i32(1u << level);
+  let numDirections = i32(1u << level);
   let probeIdx = probeAngIdx >> level;
-  let angBinIdx = probeAngIdx & (numAngularBins - 1);
+  let angBinIdx = probeAngIdx & (numDirections - 1);
 
-  if (probeIdx >= i32(params.numProbes) || sliceIdx >= i32(params.sliceCount)) { return; }
+  if (probeIdx >= i32(params.levelProbes) || sliceIdx >= i32(params.sliceCount)) { return; }
 
   // Parity-dependent cascade connection:
   // Even probes composite two adjacent fine intervals and Richardson-average
@@ -484,49 +480,53 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   for (var side = 0; side < 2; side++) {
     let subBin = u32(angBinIdx * 2 + side);
     let rayIdx = angBinIdx + side;
-    let weight = getAngularWeight(subBin);
+    let weight = getConeArc(subBin);
 
     let ray = loadRay(probeIdx, rayIdx, sliceIdx);
-    let sliceOff = dirToSliceOffset(rayIdx, numAngularBins);
+    let sliceOff = dirToSliceOffset(rayIdx, numDirections);
 
     let farX = ((probeIdx + farStep) << level) + i32(subBin);
     let farSlice = sliceIdx + sliceOff * farStep;
     // Top cascade level has no coarser merge result — fluence beyond its
     // interval comes from the sky. Out-of-bounds probes also fall back to sky.
-    var continuationFluence: vec3f;
-    if (params.isLastLevel == 1u ||
+    var farFluence: vec3f;
+    if (params.isTopCascade == 1u ||
         farX < 0 || farX >= i32(params.mergeInWidth) ||
         farSlice < 0 || farSlice >= i32(params.sliceCount)) {
-      continuationFluence = loadSkyFluence(subBin);
+      farFluence = loadSkyFluence(subBin);
     } else {
-      continuationFluence = unpackRGB9E5(mergeInBuf[farSlice * i32(params.mergeStride) + farX]);
+      farFluence = unpackRGB9E5(mergeInBuf[farSlice * i32(params.mergeStride) + farX]);
     }
 
     if (isEven) {
       let ext = loadRay(probeIdx + 1, rayIdx, sliceIdx + sliceOff);
       let cRad = ray.rad + ext.rad * ray.trans;
       let cTrans = ray.trans * ext.trans;
-      let merged = cRad * weight + continuationFluence * cTrans;
+      let merged = cRad * weight + farFluence * cTrans;
       let coarseFluence = loadMerge((probeIdx << level) + i32(subBin), sliceIdx);
       result += (merged + coarseFluence) * 0.5;
     } else {
-      result += ray.rad * weight + continuationFluence * ray.trans;
+      result += ray.rad * weight + farFluence * ray.trans;
     }
   }
 
   let outX = (probeIdx << level) + angBinIdx;
-  if (params.numAngularBins > 1u) {
+  if (params.numDirections > 1u) {
     mergeOutBuf[sliceIdx * i32(params.mergeStride) + outX] = packRGB9E5(result);
   }
 
-  if (params.numAngularBins == 1u) {
-    let fc = vec2i(
-      params.fxProbe * probeIdx + params.fxSlice * sliceIdx + params.fxOff,
-      params.fyProbe * probeIdx + params.fySlice * sliceIdx + params.fyOff,
-    );
+  if (params.numDirections == 1u) {
+    var fc: vec2i;
+    switch (params.direction) {
+      case 0u: { fc = vec2i(probeIdx - 1, sliceIdx); }
+      case 1u: { fc = vec2i(sliceIdx, probeIdx - 1); }
+      case 2u: { fc = vec2i(i32(params.fluenceW) - probeIdx, sliceIdx); }
+      case 3u: { fc = vec2i(sliceIdx, i32(params.fluenceH) - probeIdx); }
+      default: { fc = vec2i(probeIdx - 1, sliceIdx); }
+    }
     let fw = i32(params.fluenceW);
+    let fh = i32(params.fluenceH);
     let fStride = i32(params.fluenceStride);
-    let fh = i32(arrayLength(&fluenceBuf)) / fStride;
     if (fc.x >= 0 && fc.x < fw && fc.y >= 0 && fc.y < fh) {
       let fi = fc.y * fStride + fc.x;
       let prev = unpackRGB9E5(fluenceBuf[fi]);
@@ -1068,7 +1068,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #skyPrefixSumTexture!: GPUTexture;
   #skyPrefixSumTextureView!: GPUTextureView;
 
-  #angWeightBuffer!: GPUBuffer;
+  #coneArcBuffer!: GPUBuffer;
 
   // Path tracer accumulation (screen resolution, rgba32float for precision)
   #ptAccumTextures!: GPUTexture[];
@@ -1082,7 +1082,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #bounceComputePipeline!: GPUComputePipeline;
   #raySeedPipeline!: GPUComputePipeline;
   #rayExtendPipeline!: GPUComputePipeline;
-  #coneMergePipeline!: GPUComputePipeline;
+  #cascadeMergePipeline!: GPUComputePipeline;
   #fluenceBlurPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
@@ -1112,8 +1112,8 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   // Computed
   #numCascades = 0;
-  #psX = 0;
-  #psY = 0;
+  #probesX = 0;
+  #probesY = 0;
   #mergeStride = 0;
   #fluenceStride = 0;
 
@@ -1454,8 +1454,6 @@ export class FolkHolographicRC extends FolkBaseSet {
 
   #computeSkyPrefixSums() {
     if (!this.#device || !this.#skyPrefixSumTexture || !this.#canvas) return;
-    const ps = this.#psX;
-    const { width, height } = this.#canvas;
     const ms = this.#mergeStride;
     const rowLen = ms + 1;
     const data = new Float32Array(rowLen * 4 * 4);
@@ -1581,13 +1579,13 @@ export class FolkHolographicRC extends FolkBaseSet {
     const maxDim = Math.max(width, height);
     const ps = Math.max(2, this.probeCount);
     const pp = this.#pp;
-    const psX = pp ? pp : Math.max(2, ceilDiv(width * ps, maxDim));
-    const psY = pp ? pp : Math.max(2, ceilDiv(height * ps, maxDim));
-    const psMax = Math.max(psX, psY);
-    this.#psX = psX;
-    this.#psY = psY;
-    this.#numCascades = ceilLog2(psMax);
-    const mergeStride = nextPow2(psMax);
+    const probesX = pp ? pp : Math.max(2, ceilDiv(width * ps, maxDim));
+    const probesY = pp ? pp : Math.max(2, ceilDiv(height * ps, maxDim));
+    const probesMax = Math.max(probesX, probesY);
+    this.#probesX = probesX;
+    this.#probesY = probesY;
+    this.#numCascades = ceilLog2(probesMax);
+    const mergeStride = nextPow2(probesMax);
     this.#mergeStride = mergeStride;
 
     const ubo = (label: string, size: number) =>
@@ -1607,27 +1605,27 @@ export class FolkHolographicRC extends FolkBaseSet {
     // Level 0 stores one entry per probe (no sub-probe duplication).
     this.#rayBuffers = [];
     for (let i = 0; i < this.#numCascades; i++) {
-      const w = i === 0 ? psMax : ceilDiv(psMax, 1 << i) * ((1 << i) + 1);
+      const w = i === 0 ? probesMax : ceilDiv(probesMax, 1 << i) * ((1 << i) + 1);
       this.#rayBuffers.push(
-        device.createBuffer({ label: `Ray-${i}`, size: w * psMax * 8, usage: GPUBufferUsage.STORAGE }),
+        device.createBuffer({ label: `Ray-${i}`, size: w * probesMax * 8, usage: GPUBufferUsage.STORAGE }),
       );
     }
 
     this.#mergeBuffers = [0, 1].map((i) =>
-      device.createBuffer({ label: `Merge-${i}`, size: mergeStride * psMax * 4, usage: GPUBufferUsage.STORAGE }),
+      device.createBuffer({ label: `Merge-${i}`, size: mergeStride * probesMax * 4, usage: GPUBufferUsage.STORAGE }),
     );
-    const alignedFluenceRow = Math.ceil((psX * 4) / 256) * 256;
+    const alignedFluenceRow = Math.ceil((probesX * 4) / 256) * 256;
     this.#fluenceBuffer = device.createBuffer({
       label: 'Fluence-SSBO',
-      size: alignedFluenceRow * psY,
+      size: alignedFluenceRow * probesY,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     this.#fluenceStride = alignedFluenceRow / 4;
     const [ft, fv] = tex(
       device,
       'Fluence',
-      psX,
-      psY,
+      probesX,
+      probesY,
       'rgba16float',
       GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.STORAGE_BINDING |
@@ -1640,20 +1638,20 @@ export class FolkHolographicRC extends FolkBaseSet {
     [this.#bounceTexture, this.#bounceTextureView] = tex(
       device,
       'Bounce',
-      psX,
-      psY,
+      probesX,
+      probesY,
       'rgba16float',
       TEX_STORAGE | GPUTextureUsage.COPY_DST,
     );
     // bytesPerRow must be 256-aligned for WebGPU copy operations.
-    const alignedBounceRow = Math.ceil((psX * 8) / 256) * 256;
-    const bounceZeroSize = alignedBounceRow * psY;
+    const alignedBounceRow = Math.ceil((probesX * 8) / 256) * 256;
+    const bounceZeroSize = alignedBounceRow * probesY;
     this.#bounceZeroBuffer = device.createBuffer({ size: bounceZeroSize, usage: GPUBufferUsage.COPY_SRC });
     device.queue.writeTexture(
       { texture: this.#bounceTexture },
       new Uint8Array(bounceZeroSize),
-      { bytesPerRow: alignedBounceRow, rowsPerImage: psY },
-      { width: psX, height: psY },
+      { bytesPerRow: alignedBounceRow, rowsPerImage: probesY },
+      { width: probesX, height: probesY },
     );
     [this.#skyTexture, this.#skyTextureView] = tex(
       device,
@@ -1676,16 +1674,16 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     this.#lastFluenceReady = false;
 
-    const totalAngWeights = 4 * (2 * (1 << this.#numCascades) - 2);
-    this.#angWeightBuffer = device.createBuffer({
-      size: totalAngWeights * 4,
+    const totalConeArcs = 2 * (1 << this.#numCascades) - 2;
+    this.#coneArcBuffer = device.createBuffer({
+      size: Math.max(4, totalConeArcs * 4),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     // GPU buffers are zero-initialized by default in WebGPU
 
     this.#seedParamsView = uboView(raySeedShader, 'params');
     this.#extendParamsView = uboView(rayExtendShader, 'params');
-    this.#mergeParamsView = uboView(coneMergeShader, 'params');
+    this.#mergeParamsView = uboView(cascadeMergeShader, 'params');
     this.#blitParamsView = uboView(blitShader, 'params');
     this.#bounceParamsView = uboView(bounceComputeShader, 'params');
 
@@ -1699,7 +1697,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     device.queue.writeBuffer(
       this.#fluenceBlurParamsBuffer,
       0,
-      new Uint32Array([psX, psY, this.#fluenceStride, width, height, 0, 0, 0]),
+      new Uint32Array([probesX, probesY, this.#fluenceStride, width, height, 0, 0, 0]),
     );
 
     const ptUsage = TEX_STORAGE | GPUTextureUsage.COPY_SRC;
@@ -1784,7 +1782,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#bounceComputePipeline = computePipeline(device, 'HRC-BounceCompute', bounceComputeShader);
     this.#raySeedPipeline = computePipeline(device, 'HRC-RaySeed', raySeedShader);
     this.#rayExtendPipeline = computePipeline(device, 'HRC-RayExtend', rayExtendShader);
-    this.#coneMergePipeline = computePipeline(device, 'HRC-ConeMerge', coneMergeShader);
+    this.#cascadeMergePipeline = computePipeline(device, 'HRC-CascadeMerge', cascadeMergeShader);
     this.#fluenceBlurPipeline = computePipeline(device, 'HRC-FluenceBlur', fluenceBlurShader);
     this.#renderPipeline = fullscreenBlit('HRC-Blit', blitShader, this.#presentationFormat);
     this.#ptPipeline = computePipeline(device, 'PT-PathTrace', pathTraceShader);
@@ -1797,7 +1795,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     const nc = this.#numCascades;
     const seedLayout = this.#raySeedPipeline.getBindGroupLayout(0);
     const extLayout = this.#rayExtendPipeline.getBindGroupLayout(0);
-    const mergeLayout = this.#coneMergePipeline.getBindGroupLayout(0);
+    const mergeLayout = this.#cascadeMergePipeline.getBindGroupLayout(0);
     const seedPS = this.#seedParamsView.arrayBuffer.byteLength;
     const extPS = this.#extendParamsView.arrayBuffer.byteLength;
     const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
@@ -1817,8 +1815,8 @@ export class FolkHolographicRC extends FolkBaseSet {
       ),
     );
 
-    // Two cascade configs: H (E/W) and V (N/S). Extend params are
-    // identical within each pair, so only 2 × (nc-1) bind groups needed.
+    // Extend params depend only on the frustum shape (pc, sc), not the direction.
+    // cfg 0 = E/W (probesX, probesY), cfg 1 = N/S (probesY, probesX). Indexed in #runCascade as dir & 1.
     this.#extendBindGroups = [];
     for (let cfg = 0; cfg < 2; cfg++) {
       for (let level = 1; level < nc; level++) {
@@ -1855,7 +1853,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             { buffer: this.#mergeParamsBuffer, offset: (dir * nc + level) * 256, size: mergePS },
             { buffer: this.#fluenceBuffer },
             this.#skyPrefixSumTextureView,
-            { buffer: this.#angWeightBuffer },
+            { buffer: this.#coneArcBuffer },
           ),
         );
         [readIdx, writeIdx] = [writeIdx, readIdx];
@@ -1900,7 +1898,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#mergeBuffers?.forEach((b) => b.destroy());
     this.#fluenceBuffer?.destroy();
     this.#fluenceTexture?.destroy();
-    this.#angWeightBuffer?.destroy();
+    this.#coneArcBuffer?.destroy();
     this.#bounceZeroBuffer?.destroy();
     this.#bounceTexture?.destroy();
     this.#skyTexture?.destroy();
@@ -2153,7 +2151,6 @@ export class FolkHolographicRC extends FolkBaseSet {
 
     const { width, height } = this.#canvas;
     const device = this.#device;
-    const nc = this.#numCascades;
 
     this.#blitParamsView.set({
       exposure: this.exposure,
@@ -2233,72 +2230,30 @@ export class FolkHolographicRC extends FolkBaseSet {
       encoder.copyBufferToTexture(
         {
           buffer: this.#bounceZeroBuffer,
-          bytesPerRow: Math.ceil((this.#psX * 8) / 256) * 256,
-          rowsPerImage: this.#psY,
+          bytesPerRow: Math.ceil((this.#probesX * 8) / 256) * 256,
+          rowsPerImage: this.#probesY,
         },
         { texture: this.#bounceTexture },
-        { width: this.#psX, height: this.#psY },
+        { width: this.#probesX, height: this.#probesY },
       );
     }
     if (this.bounces && this.#lastFluenceReady) {
       const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('bounce') });
       pass.setPipeline(this.#bounceComputePipeline);
       pass.setBindGroup(0, this.#bounceBindGroup);
-      pass.dispatchWorkgroups(Math.ceil(this.#psX / WG_BOUNCE[0]), Math.ceil(this.#psY / WG_BOUNCE[1]));
+      pass.dispatchWorkgroups(Math.ceil(this.#probesX / WG_BOUNCE[0]), Math.ceil(this.#probesY / WG_BOUNCE[1]));
       pass.end();
     }
 
-    // ── Step 2: HRC cascade processing per direction ──
-    // Zero the fluence SSBO. All 4 directions accumulate into it additively.
+    // ── Step 2: HRC cascade processing ──
+    // Run the per-frustum algorithm once per cardinal direction.
+    // E/W share frustum shape (probesX × probesY), N/S share (probesY × probesX).
     encoder.clearBuffer(this.#fluenceBuffer);
 
-    // Two frustum configs: H (E/W) and V (N/S). Each direction uses its
-    // frustum's probe/slice counts for dispatch. Zero waste.
-    const frustums = [
-      { pc: this.#psX, sc: this.#psY },
-      { pc: this.#psY, sc: this.#psX },
-    ];
-    const dirCfg = [0, 1, 0, 1]; // E→H, N→V, W→H, S→V
-
     for (let dir = 0; dir < 4; dir++) {
-      const dn = ['E', 'N', 'W', 'S'][dir];
-      const cfg = dirCfg[dir];
-      const { pc, sc } = frustums[cfg];
-
-      {
-        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-seed`) });
-        pass.setPipeline(this.#raySeedPipeline);
-        pass.setBindGroup(0, this.#seedBindGroups[dir]);
-        pass.dispatchWorkgroups(Math.ceil(pc / WG_SEED[0]), Math.ceil(sc / WG_SEED[1]));
-        pass.end();
-      }
-
-      {
-        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-extend`) });
-        pass.setPipeline(this.#rayExtendPipeline);
-        for (let level = 1; level < nc; level++) {
-          pass.setBindGroup(0, this.#extendBindGroups[cfg * (nc - 1) + (level - 1)]);
-          pass.dispatchWorkgroups(
-            Math.ceil((ceilDiv(pc, 1 << level) * ((1 << level) + 1)) / WG_EXTEND[0]),
-            Math.ceil(sc / WG_EXTEND[1]),
-          );
-        }
-        pass.end();
-      }
-
-      {
-        const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-merge`) });
-        pass.setPipeline(this.#coneMergePipeline);
-        for (let k = 0; k < nc; k++) {
-          const level = nc - 1 - k;
-          pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
-          pass.dispatchWorkgroups(
-            Math.ceil((ceilDiv(pc, 1 << level) * (1 << level)) / WG_MERGE[0]),
-            Math.ceil(sc / WG_MERGE[1]),
-          );
-        }
-        pass.end();
-      }
+      const pc = dir & 1 ? this.#probesY : this.#probesX;
+      const sc = dir & 1 ? this.#probesX : this.#probesY;
+      this.#runCascade(encoder, dir, pc, sc);
     }
 
     this.#lastFluenceReady = true;
@@ -2308,7 +2263,7 @@ export class FolkHolographicRC extends FolkBaseSet {
       const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass('blur') });
       pass.setPipeline(this.#fluenceBlurPipeline);
       pass.setBindGroup(0, this.#fluenceBlurBindGroup);
-      pass.dispatchWorkgroups(Math.ceil(this.#psX / WG_BLUR[0]), Math.ceil(this.#psY / WG_BLUR[1]));
+      pass.dispatchWorkgroups(Math.ceil(this.#probesX / WG_BLUR[0]), Math.ceil(this.#probesY / WG_BLUR[1]));
       pass.end();
     }
 
@@ -2336,6 +2291,50 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#resolveTimestamps(encoder);
     this.#submitAndCapture(device, encoder);
     this.#readTimestamps();
+  }
+
+  // HRC is a per-frustum algorithm: given (probeCount × sliceCount), run
+  // seed → extend → merge to produce fluence contributions. The `dir`
+  // parameter (0=E, 1=N, 2=W, 3=S) selects pre-built bind groups but
+  // does not affect the algorithm structure.
+  #runCascade(encoder: GPUCommandEncoder, dir: number, pc: number, sc: number) {
+    const nc = this.#numCascades;
+    const dn = ['E', 'N', 'W', 'S'][dir];
+    const cfg = dir & 1;
+
+    // Phase A: Seed — trace T_0 directly (paper §4.2, Alg. 1 line 3)
+    {
+      const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-seed`) });
+      pass.setPipeline(this.#raySeedPipeline);
+      pass.setBindGroup(0, this.#seedBindGroups[dir]);
+      pass.dispatchWorkgroups(Math.ceil(pc / WG_SEED[0]), Math.ceil(sc / WG_SEED[1]));
+      pass.end();
+    }
+
+    // Phase B: Extend / "Merge Up" — build T_1..T_{N-1} bottom-up (Eq. 18, 20)
+    {
+      const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-extend`) });
+      pass.setPipeline(this.#rayExtendPipeline);
+      for (let level = 1; level < nc; level++) {
+        const rayWidth = ceilDiv(pc, 1 << level) * ((1 << level) + 1);
+        pass.setBindGroup(0, this.#extendBindGroups[cfg * (nc - 1) + (level - 1)]);
+        pass.dispatchWorkgroups(Math.ceil(rayWidth / WG_EXTEND[0]), Math.ceil(sc / WG_EXTEND[1]));
+      }
+      pass.end();
+    }
+
+    // Phase C: "Merge Down" — resolve R_{N-1}..R_0 top-down (Eq. 14-15), write fluence at level 0
+    {
+      const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-merge`) });
+      pass.setPipeline(this.#cascadeMergePipeline);
+      for (let k = 0; k < nc; k++) {
+        const level = nc - 1 - k;
+        const levelProbes = ceilDiv(pc, 1 << level);
+        pass.setBindGroup(0, this.#mergeBindGroups[dir][k]);
+        pass.dispatchWorkgroups(Math.ceil((levelProbes * (1 << level)) / WG_MERGE[0]), Math.ceil(sc / WG_MERGE[1]));
+      }
+      pass.end();
+    }
   }
 
   #blitToScreen(encoder: GPUCommandEncoder, pipeline: GPURenderPipeline, bindGroup: GPUBindGroup, tsLabel = '') {
@@ -2423,28 +2422,18 @@ export class FolkHolographicRC extends FolkBaseSet {
   // both this method and #computeSkyPrefixSums must be updated to match.
   #uploadStaticParams(width: number, height: number) {
     const device = this.#device;
-    const psX = this.#psX;
-    const psY = this.#psY;
+    const probesX = this.#probesX;
+    const probesY = this.#probesY;
     const nc = this.#numCascades;
-
-    // Per-direction probe/slice counts:
-    // E/W: probes along X (psX), slices along Y (psY)
-    // N/S: probes along Y (psY), slices along X (psX)
-    // Two frustum configurations: Horizontal (E/W) and Vertical (N/S).
-    // Each defines the cascade's active-axis probe count and cross-axis slice count.
-    const frustums = [
-      { pc: psX, sc: psY, nc: ceilLog2(psX), ms: nextPow2(psX) }, // H
-      { pc: psY, sc: psX, nc: ceilLog2(psY), ms: nextPow2(psY) }, // V
-    ];
-    const dirCfg = [0, 1, 0, 1]; // E→H, N→V, W→H, S→V
 
     // Seed params: per direction (4) — includes transform matrix
     for (let dir = 0; dir < 4; dir++) {
-      const f = frustums[dirCfg[dir]];
-      const dt = dirTransform(dir, width, height, Math.max(psX, psY));
+      const pc = dir & 1 ? probesY : probesX;
+      const sc = dir & 1 ? probesX : probesY;
+      const dt = dirTransform(dir, width, height, Math.max(probesX, probesY));
       this.#seedParamsView.set({
-        probeCount: f.pc,
-        sliceCount: f.sc,
+        probeCount: pc,
+        sliceCount: sc,
         screenW: width,
         screenH: height,
         probeSpacing: dt.probeSpacing,
@@ -2455,18 +2444,19 @@ export class FolkHolographicRC extends FolkBaseSet {
       device.queue.writeBuffer(this.#seedParamsBuffer, dir * 256, this.#seedParamsView.arrayBuffer);
     }
 
-    // Extend params: per frustum (2) — cascade structure is identical within H/V pair
+    // Extend params: per frustum config (2) — E/W share (probesX, probesY), N/S share (probesY, probesX)
     for (let cfg = 0; cfg < 2; cfg++) {
-      const f = frustums[cfg];
+      const pc = cfg === 0 ? probesX : probesY;
+      const sc = cfg === 0 ? probesY : probesX;
       for (let level = 1; level < nc; level++) {
         const numRays = (1 << level) + 1;
         this.#extendParamsView.set({
-          probeCount: f.pc,
+          probeCount: pc,
           level,
           invNumRays: 1.0 / numRays,
-          prevRayW: level === 1 ? f.pc : ceilDiv(f.pc, 1 << (level - 1)) * ((1 << (level - 1)) + 1),
-          currRayW: ceilDiv(f.pc, 1 << level) * numRays,
-          sliceCount: f.sc,
+          prevRayW: level === 1 ? pc : ceilDiv(pc, 1 << (level - 1)) * ((1 << (level - 1)) + 1),
+          currRayW: ceilDiv(pc, 1 << level) * numRays,
+          sliceCount: sc,
           pad2: 0,
           pad3: 0,
         });
@@ -2478,57 +2468,53 @@ export class FolkHolographicRC extends FolkBaseSet {
       }
     }
 
-    // Merge params: per direction (4) — fluence coordinate transform differs per direction
-    // Fluence coordinate transform: maps (probeIdx, sliceIdx) → fluence buffer (x, y).
-    // fc = (fxProbe*probeIdx + fxSlice*sliceIdx + fxOff,
-    //        fyProbe*probeIdx + fySlice*sliceIdx + fyOff)
-    // The -1 offsets (fxOff for E/W, fyOff for N/S) are the 1px frustum offset
-    // fix: cascade-0 rays start one probe step into the scene, so fluence is
-    // written one position behind the ray-emitting probe column. Without this,
-    // the first probe column/row would receive zero fluence from that direction.
-    const dirFluence = [
-      { fxProbe: 1, fxSlice: 0, fxOff: -1, fyProbe: 0, fySlice: 1, fyOff: 0 }, // E
-      { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: 1, fySlice: 0, fyOff: -1 }, // N
-      { fxProbe: -1, fxSlice: 0, fxOff: psX, fyProbe: 0, fySlice: 1, fyOff: 0 }, // W
-      { fxProbe: 0, fxSlice: 1, fxOff: 0, fyProbe: -1, fySlice: 0, fyOff: psY }, // S
-    ];
-    const perDir = 2 * (1 << nc) - 2;
-    const angData = new Float32Array(4 * perDir);
-    for (let dir = 0; dir < 4; dir++) {
-      const f = frustums[dirCfg[dir]];
-      const fl = dirFluence[dir];
-      let angOff = dir * perDir;
+    // Cone arc sizes A_n(i) (paper Eq. 13): shared across all directions.
+    // coneArcBase for level l = 2^(l+1) - 2.
+    const totalConeArcs = 2 * (1 << nc) - 2;
+    const arcData = new Float32Array(totalConeArcs);
+    {
+      let off = 0;
       for (let level = 0; level < nc; level++) {
-        const numAngularBins = 1 << level;
-        const nextNumAngBins = numAngularBins * 2;
-        const angBase = angOff;
-        for (let s = 0; s < nextNumAngBins; s++) {
-          const N = nextNumAngBins;
-          angData[angOff + s] = Math.atan2(2 * s - N + 2, N) - Math.atan2(2 * s - N, N);
+        const N = 2 << level;
+        for (let s = 0; s < N; s++) {
+          arcData[off + s] = Math.atan2(2 * s - N + 2, N) - Math.atan2(2 * s - N, N);
         }
-        this.#mergeParamsView.set({
-          probeCount: f.pc,
-          numAngularBins,
-          numProbes: ceilDiv(f.pc, 1 << level),
-          numRays: numAngularBins + 1,
-          nextNumAngBins,
-          isLastLevel: level === f.nc - 1 ? 1 : 0,
-          fluenceW: psX,
-          fluenceStride: this.#fluenceStride,
-          skyShift: Math.log2(f.ms) - Math.log2(nextNumAngBins),
-          level: level,
-          angWeightBase: angBase,
-          skyRow: dir,
-          sliceCount: f.sc,
-          mergeStride: f.ms,
-          mergeInWidth: level < f.nc - 1 ? ceilDiv(f.pc, 1 << (level + 1)) * (1 << (level + 1)) : 0,
-          ...fl,
-        });
-        device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
-        angOff += nextNumAngBins;
+        off += N;
       }
     }
-    device.queue.writeBuffer(this.#angWeightBuffer, 0, angData);
+    device.queue.writeBuffer(this.#coneArcBuffer, 0, arcData);
+
+    // Merge params: per direction (4) × per level
+    for (let dir = 0; dir < 4; dir++) {
+      const pc = dir & 1 ? probesY : probesX;
+      const sc = dir & 1 ? probesX : probesY;
+      const fNc = ceilLog2(pc);
+      const fMs = nextPow2(pc);
+      for (let level = 0; level < nc; level++) {
+        const numDirections = 1 << level;
+        const nextNumDirections = numDirections * 2;
+        this.#mergeParamsView.set({
+          probeCount: pc,
+          numDirections,
+          levelProbes: ceilDiv(pc, 1 << level),
+          numRays: numDirections + 1,
+          nextNumDirections,
+          isTopCascade: level === fNc - 1 ? 1 : 0,
+          fluenceW: probesX,
+          fluenceStride: this.#fluenceStride,
+          skyShift: Math.log2(fMs) - Math.log2(nextNumDirections),
+          level,
+          coneArcBase: (1 << (level + 1)) - 2,
+          skyRow: dir,
+          sliceCount: sc,
+          mergeStride: fMs,
+          mergeInWidth: level < fNc - 1 ? ceilDiv(pc, 1 << (level + 1)) * (1 << (level + 1)) : 0,
+          direction: dir,
+          fluenceH: probesY,
+        });
+        device.queue.writeBuffer(this.#mergeParamsBuffer, (dir * nc + level) * 256, this.#mergeParamsView.arrayBuffer);
+      }
+    }
 
     this.#bounceParamsView.set({ screenW: width, screenH: height, pad0: 0, pad1: 0 });
     device.queue.writeBuffer(this.#bounceParamsBuffer, 0, this.#bounceParamsView.arrayBuffer);
