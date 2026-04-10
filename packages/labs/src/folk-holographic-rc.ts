@@ -547,7 +547,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // Uses world texture alpha (opacity) to mask indirect light at surfaces.
 
 const blitCommon = /*wgsl*/ `
-struct BlitParams { exposure: f32, screenW: f32, screenH: f32, debugMode: f32 };
+struct BlitParams { exposure: f32, screenW: f32, screenH: f32, debugMode: f32, falseColor: f32, pad0: f32, pad1: f32, pad2: f32 };
 const TWO_PI = 6.2831853;
 
 fn acesTonemap(x: vec3f) -> vec3f {
@@ -618,25 +618,33 @@ const blitShader =
   let world = textureLoad(worldTex, vec2u(pos.xy), 0);
   let emissive = world.rgb * world.a;
   let indirect = fluence / TWO_PI * (1.0 - world.a);
-  let hrcHdr = (emissive + indirect) * params.exposure;
-  var color = tonemapAndDither(hrcHdr, vec2u(pos.xy));
   let dm = i32(params.debugMode);
+  let fc = params.falseColor > 0.5;
+
+  var hdr: vec3f;
+  var fcSource: vec3f;
+  var forceFc = false;
+
   if (dm == 1) {
-    let mag = dot(fluence, vec3f(0.2126, 0.7152, 0.0722));
-    let t = clamp(log2(mag * 10000.0 + 1.0) / log2(10001.0), 0.0, 1.0);
-    color = vec4f(spectrumRamp(t), 1.0);
-  } else if (dm == 2) {
-    let ptHdr = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb * params.exposure;
-    color = tonemapAndDither(ptHdr, vec2u(pos.xy));
-  } else if (dm == 3) {
-    let hrcRad = emissive + indirect;
     let ptRad = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb;
-    let diff = abs(hrcRad - ptRad);
-    let errLum = dot(diff, vec3f(0.2126, 0.7152, 0.0722));
-    let t = clamp(log2(errLum * 10000.0 + 1.0) / log2(10001.0), 0.0, 1.0);
-    color = vec4f(spectrumRamp(t), 1.0);
+    hdr = ptRad;
+    fcSource = ptRad;
+  } else if (dm == 2) {
+    let ptRad = textureLoad(ptAccumTex, vec2i(pos.xy), 0).rgb;
+    hdr = abs((emissive + indirect) - ptRad);
+    fcSource = hdr;
+    forceFc = true;
+  } else {
+    hdr = emissive + indirect;
+    fcSource = fluence;
   }
-  return color;
+
+  if (fc || forceFc) {
+    let mag = dot(fcSource, vec3f(0.2126, 0.7152, 0.0722));
+    let t = clamp(log2(mag * 10000.0 + 1.0) / log2(10001.0), 0.0, 1.0);
+    return vec4f(spectrumRamp(t), 1.0);
+  }
+  return tonemapAndDither(hdr * params.exposure, vec2u(pos.xy));
 }
 `;
 
@@ -783,20 +791,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // Progressive Monte Carlo path tracer at screen resolution. Each frame adds
 // N stratified samples per pixel, blended into the accumulation buffer.
 //
+// Uses Amanatides & Woo DDA to walk every grid cell the ray crosses,
+// computing Beer-Lambert with the exact Euclidean path length through
+// each cell. This eliminates the directional bias of unit-step marching
+// where diagonal rays traversed more cells than axis-aligned ones.
+//
 // Transport model — deterministic emission + stochastic interaction:
 //   At each pixel:
-//     1. Deterministic emission: radiance += throughput × emission × opacity
-//        (zero variance — every sample accumulates emission at every pixel)
+//     1. Deterministic emission: radiance += throughput × emission × interactProb
+//        where interactProb = 1 − pow(1−opacity, pathLen)
 //     2. Stochastic interaction (three-way, bounces on):
-//        - pass-through (prob 1−opacity): continue, throughput unchanged
-//        - scatter (prob opacity×albedo): new direction, throughput unchanged
-//        - absorb (prob opacity×(1−albedo)): ray terminates
+//        - pass-through (prob 1−interactProb): continue, throughput unchanged
+//        - scatter (prob interactProb×albedo): new direction, throughput unchanged
+//        - absorb (prob interactProb×(1−albedo)): ray terminates
 //     3. Deterministic extinction (bounces off):
-//        throughput *= (1 − opacity)
-//   Throughput stays constant until the ray is absorbed. The ray survives
-//   longer with higher albedo (scatter keeps it alive), which correctly
-//   increases emission from scattering volumes. The camera pixel uses
-//   deterministic emission + extinction to match HRC blit exactly.
+//        throughput *= pow(1 − opacity, pathLen)
 
 const pathTraceShader = /*wgsl*/ `
 struct PTParams {
@@ -825,7 +834,6 @@ fn sampleSky(dir: vec2f) -> vec3f {
   return textureLoad(skyTex, vec2i(skyI, 0), 0).rgb;
 }
 
-
 fn pcgHash(v: u32) -> u32 {
   var s = v * 747796405u + 2891336453u;
   let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
@@ -835,22 +843,6 @@ fn pcgHash(v: u32) -> u32 {
 fn randomFloat(seed: ptr<function, u32>) -> f32 {
   *seed = pcgHash(*seed);
   return f32(*seed) / 4294967295.0;
-}
-
-fn loadWorld(pos: vec2f) -> vec4f {
-  let px = vec2i(i32(floor(pos.x)), i32(floor(pos.y)));
-  if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
-    return vec4f(0.0);
-  }
-  return textureLoad(worldTex, px, 0);
-}
-
-fn loadAlbedo(pos: vec2f) -> f32 {
-  let px = vec2i(i32(floor(pos.x)), i32(floor(pos.y)));
-  if (px.x < 0 || px.y < 0 || px.x >= i32(params.screenW) || px.y >= i32(params.screenH)) {
-    return 0.0;
-  }
-  return textureLoad(materialTex, px, 0).r;
 }
 
 @compute @workgroup_size(8, 8)
@@ -875,66 +867,94 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     var bounceCount = 0u;
 
     // Camera pixel: deterministic emission + extinction to match HRC blit
-    // (emissive×α + indirect×(1−α)). Not stochastic — every sample sees it.
     {
-      let w0 = loadWorld(rayPos);
+      let w0 = textureLoad(worldTex, vec2i(px, py), 0);
       radiance += throughput * w0.rgb * w0.a;
       throughput *= (1.0 - w0.a);
     }
 
-    for (var step = 0u; step < 4096u; step++) {
-      if (throughput < 1e-6) { break; }
+    let sw = i32(params.screenW);
+    let sh = i32(params.screenH);
 
-      rayPos += rayDir;
-      let w = loadWorld(rayPos);
+    var rayOrigin = rayPos;
+    var cell = vec2i(i32(floor(rayPos.x)), i32(floor(rayPos.y)));
+    var absDX = abs(rayDir.x);
+    var absDY = abs(rayDir.y);
+    var sX = select(-1, 1, rayDir.x >= 0.0);
+    var sY = select(-1, 1, rayDir.y >= 0.0);
+    var tDX = select(1e20, 1.0 / absDX, absDX > 1e-12);
+    var tDY = select(1e20, 1.0 / absDY, absDY > 1e-12);
+    var tMX: f32; var tMY: f32;
+    if (absDX > 1e-12) { tMX = (select(f32(cell.x), f32(cell.x + 1), rayDir.x >= 0.0) - rayOrigin.x) / rayDir.x; } else { tMX = 1e20; }
+    if (absDY > 1e-12) { tMY = (select(f32(cell.y), f32(cell.y + 1), rayDir.y >= 0.0) - rayOrigin.y) / rayDir.y; } else { tMY = 1e20; }
+    var tPrev = 0.0;
+
+    // Advance past camera pixel (already handled above)
+    tPrev = min(tMX, tMY);
+    if (tMX < tMY) { cell.x += sX; tMX += tDX; } else { cell.y += sY; tMY += tDY; }
+
+    for (var step = 0u; step < 8192u; step++) {
+      if (throughput < 1e-6) { break; }
+      if (cell.x < 0 || cell.y < 0 || cell.x >= sw || cell.y >= sh) {
+        radiance += throughput * sampleSky(rayDir);
+        break;
+      }
+
+      let tExit = min(tMX, tMY);
+      let pathLen = tExit - tPrev;
+      let w = textureLoad(worldTex, cell, 0);
       let opacity = w.a;
 
-      if (opacity < 1e-6) {
-        let rpx = vec2i(i32(floor(rayPos.x)), i32(floor(rayPos.y)));
-        if (rpx.x < 0 || rpx.y < 0 || rpx.x >= i32(params.screenW) || rpx.y >= i32(params.screenH)) {
-          radiance += throughput * sampleSky(rayDir);
-          break;
-        }
+      if (opacity < 1e-6 || pathLen <= 0.0) {
         inSurface = false;
-        continue;
-      }
-
-      if (!inSurface) {
-        surfaceEntry = rayPos - rayDir;
-        inSurface = true;
-      }
-
-      let albedo = loadAlbedo(rayPos);
-
-      // Deterministic emission (zero variance).
-      radiance += throughput * w.rgb * opacity;
-
-      if (params.maxBounces > 0u) {
-        // Stochastic interaction: pass-through / scatter / absorb.
-        let r = randomFloat(&seed);
-        if (r < opacity * (1.0 - albedo)) {
-          // Absorbed — ray dies.
-          break;
-        } else if (r < opacity) {
-          // Scattered — new direction, throughput unchanged.
-          if (bounceCount >= params.maxBounces) { break; }
-          bounceCount++;
-          // HACK: bounce from surface entry for near-opaque pixels to prevent
-          // rays getting stuck inside thick walls. Creates a discontinuity at 0.9.
-          if (opacity > 0.9) {
-            rayPos = surfaceEntry;
-            inSurface = false;
-          }
-          let newAngle = randomFloat(&seed) * 6.2831853;
-          rayDir = vec2f(cos(newAngle), sin(newAngle));
-          continue;
-        }
-        // Pass-through — throughput unchanged, continue forward.
       } else {
-        // No bounces: deterministic extinction.
-        throughput *= (1.0 - opacity);
-        if (throughput < 1e-6) { break; }
+        if (!inSurface) {
+          surfaceEntry = rayOrigin + rayDir * tPrev;
+          inSurface = true;
+        }
+
+        let stepTrans = pow(1.0 - opacity, pathLen);
+        let interactProb = 1.0 - stepTrans;
+
+        radiance += throughput * w.rgb * interactProb;
+
+        if (params.maxBounces > 0u) {
+          let albedo = textureLoad(materialTex, cell, 0).r;
+          let r = randomFloat(&seed);
+          if (r < interactProb * (1.0 - albedo)) {
+            break;
+          } else if (r < interactProb) {
+            if (bounceCount >= params.maxBounces) { break; }
+            bounceCount++;
+            if (opacity > 0.9) {
+              rayPos = surfaceEntry;
+              inSurface = false;
+            } else {
+              rayPos = rayOrigin + rayDir * tPrev;
+            }
+            let newAngle = randomFloat(&seed) * 6.2831853;
+            rayDir = vec2f(cos(newAngle), sin(newAngle));
+
+            rayOrigin = rayPos;
+            cell = vec2i(i32(floor(rayPos.x)), i32(floor(rayPos.y)));
+            absDX = abs(rayDir.x); absDY = abs(rayDir.y);
+            sX = select(-1, 1, rayDir.x >= 0.0); sY = select(-1, 1, rayDir.y >= 0.0);
+            tDX = select(1e20, 1.0 / absDX, absDX > 1e-12);
+            tDY = select(1e20, 1.0 / absDY, absDY > 1e-12);
+            if (absDX > 1e-12) { tMX = (select(f32(cell.x), f32(cell.x + 1), rayDir.x >= 0.0) - rayOrigin.x) / rayDir.x; } else { tMX = 1e20; }
+            if (absDY > 1e-12) { tMY = (select(f32(cell.y), f32(cell.y + 1), rayDir.y >= 0.0) - rayOrigin.y) / rayDir.y; } else { tMY = 1e20; }
+            tPrev = min(tMX, tMY);
+            if (tMX < tMY) { cell.x += sX; tMX += tDX; } else { cell.y += sY; tMY += tDY; }
+            continue;
+          }
+        } else {
+          throughput *= stepTrans;
+          if (throughput < 1e-6) { break; }
+        }
       }
+
+      tPrev = tExit;
+      if (tMX < tMY) { cell.x += sX; tMX += tDX; } else { cell.y += sY; tMY += tDY; }
     }
 
     sampleSum += radiance;
@@ -990,6 +1010,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   @property({ type: Number, reflect: true }) probeCount = 1024;
   @property({ type: Boolean, reflect: true }) bounces = true;
   @property({ type: Number, reflect: true, attribute: 'debug-mode' }) debugMode = 0;
+  @property({ type: Boolean, reflect: true, attribute: 'false-color' }) falseColor = false;
   @property({ type: Number, reflect: true, attribute: 'pixel-perfect' }) pixelPerfect = 0;
 
   get #pp(): number | null {
@@ -1198,116 +1219,6 @@ export class FolkHolographicRC extends FolkBaseSet {
         this.#tsResultBuffer!.unmap();
       })
       .catch(() => {});
-  }
-
-  async computeRMSE(): Promise<number> {
-    if (!this.#device || this.#ptFrameIndex < 2) return 0;
-    const device = this.#device;
-    const { width, height } = this.#canvas;
-    const ptIdx = this.#ptFrameIndex % 2;
-    const bytesPerRow = Math.ceil((width * 16) / 256) * 256;
-    const bufSize = bytesPerRow * height;
-
-    const ptBuf = device.createBuffer({ size: bufSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    const encoder = device.createCommandEncoder();
-    encoder.copyTextureToBuffer(
-      { texture: this.#ptAccumTextures[ptIdx] },
-      { buffer: ptBuf, bytesPerRow },
-      { width, height },
-    );
-    device.queue.submit([encoder.finish()]);
-
-    await ptBuf.mapAsync(GPUMapMode.READ);
-    const ptData = new Float32Array(ptBuf.getMappedRange());
-
-    const fluenceW = this.#psX;
-    const fluenceH = this.#psY;
-    const flBytesPerRow = Math.ceil((fluenceW * 8) / 256) * 256;
-    const flBufSize = flBytesPerRow * fluenceH;
-    const flBuf = device.createBuffer({ size: flBufSize, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    const worldBytesPerRow = Math.ceil((width * 8) / 256) * 256;
-    const worldBufSize = worldBytesPerRow * height;
-    const worldBuf = device.createBuffer({
-      size: worldBufSize,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-
-    const enc2 = device.createCommandEncoder();
-    enc2.copyTextureToBuffer(
-      { texture: this.#fluenceTexture },
-      { buffer: flBuf, bytesPerRow: flBytesPerRow },
-      { width: fluenceW, height: fluenceH },
-    );
-    enc2.copyTextureToBuffer(
-      { texture: this.#worldTexture },
-      { buffer: worldBuf, bytesPerRow: worldBytesPerRow },
-      { width, height },
-    );
-    device.queue.submit([enc2.finish()]);
-
-    await flBuf.mapAsync(GPUMapMode.READ);
-    await worldBuf.mapAsync(GPUMapMode.READ);
-    const flData = new Uint16Array(flBuf.getMappedRange());
-    const worldData = new Uint16Array(worldBuf.getMappedRange());
-
-    const f16ToF32 = (bits: number): number => {
-      const sign = (bits >> 15) & 1;
-      const exp = (bits >> 10) & 0x1f;
-      const mant = bits & 0x3ff;
-      if (exp === 0) return (sign ? -1 : 1) * 2 ** -14 * (mant / 1024);
-      if (exp === 31) return mant ? NaN : sign ? -Infinity : Infinity;
-      return (sign ? -1 : 1) * 2 ** (exp - 15) * (1 + mant / 1024);
-    };
-
-    const TWO_PI = 6.2831853;
-    let sumSqErr = 0;
-    const flRowStride = flBytesPerRow / 2;
-    const worldRowStride = worldBytesPerRow / 2;
-    const ptRowStride = bytesPerRow / 4;
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const wOff = y * worldRowStride + x * 4;
-        const wR = f16ToF32(worldData[wOff]);
-        const wG = f16ToF32(worldData[wOff + 1]);
-        const wB = f16ToF32(worldData[wOff + 2]);
-        const wA = f16ToF32(worldData[wOff + 3]);
-
-        const fx = Math.min(Math.floor(((x + 0.5) / width) * fluenceW), fluenceW - 1);
-        const fy = Math.min(Math.floor(((y + 0.5) / height) * fluenceH), fluenceH - 1);
-        const fOff = fy * flRowStride + fx * 4;
-        const fR = f16ToF32(flData[fOff]);
-        const fG = f16ToF32(flData[fOff + 1]);
-        const fB = f16ToF32(flData[fOff + 2]);
-
-        const emR = wR * wA,
-          emG = wG * wA,
-          emB = wB * wA;
-        const mask = 1 - wA;
-        const hrcR = emR + (fR / TWO_PI) * mask;
-        const hrcG = emG + (fG / TWO_PI) * mask;
-        const hrcB = emB + (fB / TWO_PI) * mask;
-
-        const pOff = y * ptRowStride + x * 4;
-        const ptR = ptData[pOff],
-          ptG = ptData[pOff + 1],
-          ptB = ptData[pOff + 2];
-
-        const dR = hrcR - ptR,
-          dG = hrcG - ptG,
-          dB = hrcB - ptB;
-        sumSqErr += dR * dR + dG * dG + dB * dB;
-      }
-    }
-
-    ptBuf.unmap();
-    ptBuf.destroy();
-    flBuf.unmap();
-    flBuf.destroy();
-    worldBuf.unmap();
-    worldBuf.destroy();
-
-    return Math.sqrt(sumSqErr / (width * height * 3));
   }
 
   override async connectedCallback() {
@@ -1683,7 +1594,8 @@ export class FolkHolographicRC extends FolkBaseSet {
       ppChanged ||
       changedProperties.has('exposure') ||
       changedProperties.has('bounces') ||
-      changedProperties.has('debugMode')
+      changedProperties.has('debugMode') ||
+      changedProperties.has('falseColor')
     ) {
       this.#ptFrameIndex = 0;
     }
@@ -2300,7 +2212,16 @@ export class FolkHolographicRC extends FolkBaseSet {
     const device = this.#device;
     const nc = this.#numCascades;
 
-    this.#blitParamsView.set({ exposure: this.exposure, screenW: width, screenH: height, debugMode: this.debugMode });
+    this.#blitParamsView.set({
+      exposure: this.exposure,
+      screenW: width,
+      screenH: height,
+      debugMode: this.debugMode,
+      falseColor: this.falseColor ? 1.0 : 0.0,
+      pad0: 0,
+      pad1: 0,
+      pad2: 0,
+    });
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, this.#blitParamsView.arrayBuffer);
 
     const encoder = device.createCommandEncoder();
@@ -2448,14 +2369,14 @@ export class FolkHolographicRC extends FolkBaseSet {
       pass.end();
     }
 
-    // ── Step 2.75: Run PT alongside HRC for debug modes 4/5 ──
-    if (this.debugMode >= 2) {
+    // ── Step 2.75: Run PT alongside HRC for PT or PT-diff modes ──
+    if (this.debugMode === 1 || this.debugMode === 2) {
       this.#runPathTraceCompute(encoder, width, height);
     }
 
     // ── Step 3: Final blit ──
     let blitBG = this.#blitBindGroup;
-    if (this.debugMode >= 2) {
+    if (this.debugMode === 1 || this.debugMode === 2) {
       const ptWriteIdx = this.#ptFrameIndex % 2;
       blitBG = bg(
         device,
@@ -2730,7 +2651,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   get debugInfo() {
-    if (this.debugMode >= 2 && this.#ptFrameIndex > 0) {
+    if ((this.debugMode === 1 || this.debugMode === 2) && this.#ptFrameIndex > 0) {
       return ` PT f${this.#ptFrameIndex} ${this.#ptFrameIndex * 16}spp`;
     }
     if (!this.#tsQuerySet) return '';
