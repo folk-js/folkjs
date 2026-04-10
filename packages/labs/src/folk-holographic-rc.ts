@@ -15,8 +15,6 @@ type Line = [
   albedo: number,
 ];
 
-const SOLID_OPACITY = 1;
-
 function nextPow2(n: number): number {
   let v = 1;
   while (v < n) v *= 2;
@@ -68,10 +66,6 @@ function computePipeline(device: GPUDevice, label: string, code: string) {
     layout: 'auto',
     compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
   });
-}
-
-function toU8(v: number): number {
-  return Math.round(Math.max(0, Math.min(1, v)) * 255);
 }
 
 function uploadVertexData(
@@ -546,7 +540,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 // Bilinearly upscales fluence from probe resolution to screen resolution.
 // Uses world texture alpha (opacity) to mask indirect light at surfaces.
 
-const blitCommon = /*wgsl*/ `
+const blitShader = /*wgsl*/ `
 struct BlitParams { exposure: f32, screenW: f32, screenH: f32, debugMode: f32, falseColor: f32, pad0: f32, pad1: f32, pad2: f32 };
 const TWO_PI = 6.2831853;
 
@@ -574,38 +568,30 @@ fn tonemapAndDither(hdr: vec3f, fragCoord: vec2u) -> vec4f {
   return vec4f(linearToSrgb(acesTonemap(hdr)) + triangularDither(fragCoord), 1.0);
 }
 
+const RAMP = array<vec3f, 10>(
+  vec3f(0.0),              // black
+  vec3f(0.05, 0.0,  0.3),  // deep blue
+  vec3f(0.0,  0.2,  1.0),  // blue
+  vec3f(0.0,  0.9,  0.9),  // cyan
+  vec3f(0.1,  0.9,  0.1),  // green
+  vec3f(1.0,  0.95, 0.1),  // yellow
+  vec3f(1.0,  0.5,  0.0),  // orange
+  vec3f(1.0,  0.0,  0.0),  // red
+  vec3f(1.0,  0.5,  0.8),  // pink
+  vec3f(1.0),              // white
+);
+
 fn spectrumRamp(t: f32) -> vec3f {
-  let black  = vec3f(0.0);
-  let dblue  = vec3f(0.05, 0.0, 0.3);
-  let blue   = vec3f(0.0, 0.2, 1.0);
-  let cyan   = vec3f(0.0, 0.9, 0.9);
-  let green  = vec3f(0.1, 0.9, 0.1);
-  let yel    = vec3f(1.0, 0.95, 0.1);
-  let orange = vec3f(1.0, 0.5, 0.0);
-  let red    = vec3f(1.0, 0.0, 0.0);
-  let pink   = vec3f(1.0, 0.5, 0.8);
-  let white  = vec3f(1.0);
-  let s = 1.0 / 9.0;
-  if      (t < s)     { return mix(black,  dblue,  t / s); }
-  else if (t < s * 2) { return mix(dblue,  blue,   (t - s)     / s); }
-  else if (t < s * 3) { return mix(blue,   cyan,   (t - s * 2) / s); }
-  else if (t < s * 4) { return mix(cyan,   green,  (t - s * 3) / s); }
-  else if (t < s * 5) { return mix(green,  yel,    (t - s * 4) / s); }
-  else if (t < s * 6) { return mix(yel,    orange, (t - s * 5) / s); }
-  else if (t < s * 7) { return mix(orange, red,    (t - s * 6) / s); }
-  else if (t < s * 8) { return mix(red,    pink,   (t - s * 7) / s); }
-  else                { return mix(pink,   white,  (t - s * 8) / s); }
+  let s = clamp(t, 0.0, 1.0) * 9.0;
+  let i = min(u32(s), 8u);
+  return mix(RAMP[i], RAMP[i + 1u], fract(s));
 }
 
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   let pos = array(vec2f(-1, -1), vec2f(1, -1), vec2f(-1, 1), vec2f(1, 1));
   return vec4f(pos[i], 0, 1);
 }
-`;
 
-const blitShader =
-  blitCommon +
-  /*wgsl*/ `
 @group(0) @binding(0) var fluenceTex: texture_2d<f32>;
 @group(0) @binding(1) var worldTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> params: BlitParams;
@@ -1044,7 +1030,7 @@ export class FolkHolographicRC extends FolkBaseSet {
   #mouseDirty = true;
   #mouseLightColor = { r: 0.8, g: 0.6, b: 0.3 };
   #mouseLightRadius = 10;
-  #mouseLightOpacity = SOLID_OPACITY;
+  #mouseLightOpacity = 1;
   #mouseLightAlbedo = 0;
   #mouseLightBuffer?: GPUBuffer;
   #mouseLightVertexCount = 0;
@@ -1309,7 +1295,8 @@ export class FolkHolographicRC extends FolkBaseSet {
   }
 
   #sceneColor(r: number, g: number, b: number, a: number): string {
-    return `rgba(${toU8(r)},${toU8(g)},${toU8(b)},${a})`;
+    const u = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 255);
+    return `rgba(${u(r)},${u(g)},${u(b)},${a})`;
   }
 
   addLine(
@@ -1319,7 +1306,7 @@ export class FolkHolographicRC extends FolkBaseSet {
     y2: number,
     color: [number, number, number] = [0, 0, 0],
     thickness = 20,
-    opacity = SOLID_OPACITY,
+    opacity = 1,
     albedo = 0,
   ) {
     if (this.#pp) {
@@ -1365,22 +1352,6 @@ export class FolkHolographicRC extends FolkBaseSet {
     if (this.#sceneCanvas && this.#sceneCtx) {
       this.#sceneCtx.clearRect(0, 0, this.#sceneCanvas.width, this.#sceneCanvas.height);
     }
-  }
-
-  addRect(x: number, y: number, w: number, h: number, rgb: [number, number, number], opacity = SOLID_OPACITY) {
-    this.#ensureSceneCanvas();
-    const ctx = this.#sceneCtx;
-    if (!ctx) return;
-    ctx.fillStyle = this.#sceneColor(rgb[0], rgb[1], rgb[2], opacity);
-    ctx.fillRect(x, y, w, h);
-  }
-
-  addPixel(x: number, y: number, rgb: [number, number, number], opacity = SOLID_OPACITY) {
-    this.#ensureSceneCanvas();
-    const ctx = this.#sceneCtx;
-    if (!ctx) return;
-    ctx.fillStyle = this.#sceneColor(rgb[0], rgb[1], rgb[2], opacity);
-    ctx.fillRect(x, y, 1, 1);
   }
 
   loadSceneImage(img: HTMLImageElement) {
@@ -1457,39 +1428,11 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#uploadSkyCircle();
   }
 
-  setSkyGradient(topColor: [number, number, number], bottomColor: [number, number, number]) {
-    for (let i = 0; i < SKY_CIRCLE_SIZE; i++) {
-      const angle = (i / SKY_CIRCLE_SIZE) * Math.PI * 2 - Math.PI;
-      const t = Math.sin(angle) * 0.5 + 0.5;
-      this.#skyCircleData[i * 4] = topColor[0] * (1 - t) + bottomColor[0] * t;
-      this.#skyCircleData[i * 4 + 1] = topColor[1] * (1 - t) + bottomColor[1] * t;
-      this.#skyCircleData[i * 4 + 2] = topColor[2] * (1 - t) + bottomColor[2] * t;
-      this.#skyCircleData[i * 4 + 3] = 1;
-    }
-    this.#uploadSkyCircle();
-  }
-
   setSkyCircle(data: Float32Array) {
     if (data.length !== SKY_CIRCLE_SIZE * 4) {
       throw new Error(`Sky circle data must have ${SKY_CIRCLE_SIZE * 4} elements (${SKY_CIRCLE_SIZE} RGBA texels)`);
     }
     this.#skyCircleData.set(data);
-    this.#uploadSkyCircle();
-  }
-
-  setSkyDirectional(angle: number, color: [number, number, number], angularRadius = 0.05) {
-    const invTwoSigmaSq = 1 / (2 * angularRadius * angularRadius);
-    for (let i = 0; i < SKY_CIRCLE_SIZE; i++) {
-      const texAngle = (i / SKY_CIRCLE_SIZE) * Math.PI * 2 - Math.PI;
-      let delta = texAngle - angle;
-      if (delta > Math.PI) delta -= Math.PI * 2;
-      if (delta < -Math.PI) delta += Math.PI * 2;
-      const intensity = Math.exp(-delta * delta * invTwoSigmaSq);
-      this.#skyCircleData[i * 4] = color[0] * intensity;
-      this.#skyCircleData[i * 4 + 1] = color[1] * intensity;
-      this.#skyCircleData[i * 4 + 2] = color[2] * intensity;
-      this.#skyCircleData[i * 4 + 3] = 1;
-    }
     this.#uploadSkyCircle();
   }
 
@@ -2033,7 +1976,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         b = +rgbAttr.substring(c2 + 1) || 0;
       }
       const opacityAttr = element.getAttribute('data-opacity');
-      const opacity = opacityAttr !== null ? +opacityAttr : SOLID_OPACITY;
+      const opacity = opacityAttr !== null ? +opacityAttr : 1;
       const albedoAttr = element.getAttribute('data-albedo');
       const albedo = albedoAttr !== null ? +albedoAttr : 0;
 
