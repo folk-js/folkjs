@@ -43,6 +43,7 @@ const WG_SEED = [16, 16] as const;
 const WG_EXTEND = [16, 16] as const;
 const WG_MERGE = [16, 16] as const;
 const WG_BOUNCE = [16, 16] as const;
+const TRACED_LEVELS = 3;
 
 function uboView(shader: string, name: string): StructuredView {
   return makeStructuredView(makeShaderDataDefinitions(shader).uniforms[name]);
@@ -230,15 +231,13 @@ struct FragOut { @location(0) world: vec4f, @location(1) material: vec4f }
 }
 `;
 
-// ── HRC Phase A: Ray Seed (cascade 0) ──
-// Samples world + bounce textures at each probe position. Computes per-cell
-// radiance and transmittance using discrete Beer-Lambert: T = (1−α)^spacing.
-// Emission is multiplied by (1 - T) because emission and absorption are coupled
-// through the extinction coefficient: a cell that absorbs fraction (1-T) of
-// passing light also converts fraction (1-T) of its own emission into the ray.
-// This is the source function integral over the cell thickness.
-// The bounce texture (at probe resolution) provides the diffuse re-emission
-// from the previous frame's fluence, enabling multi-bounce GI over time.
+// ── HRC Phase A: Ray Seed (DDA-traced, levels 0..TRACED_LEVELS-1) ──
+// Traces T_n rays using Amanatides & Woo DDA through the world texture.
+// At level n, each probe produces 2^n+1 rays with direction vectors
+// v_n(k) = (2^n, 2k − 2^n). Beer-Lambert extinction uses the exact
+// Euclidean path length through each cell, avoiding the zigzag path-length
+// inflation that composition introduces for non-diagonal directions.
+// The paper recommends DDA for n=0,1,2 (Section 4.2, Algorithm 1).
 
 const raySeedShader =
   wgslPackF16 +
@@ -248,7 +247,7 @@ struct SeedParams {
   sliceCount: u32,
   screenW: f32,
   screenH: f32,
-  probeSpacing: f32,
+  level: u32,
   pad: u32,
   transformX: vec4f,
   transformY: vec4f,
@@ -259,28 +258,82 @@ struct SeedParams {
 @group(0) @binding(2) var<storage, read_write> rayOut: array<vec2u>;
 @group(0) @binding(3) var<uniform> params: SeedParams;
 
-@compute @workgroup_size(${WG_SEED[0]}, ${WG_SEED[1]})
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let probeIdx = i32(gid.x);
-  let sliceIdx = i32(gid.y);
-  if (probeIdx >= i32(params.probeCount) || sliceIdx >= i32(params.sliceCount)) { return; }
+fn gridToWorld(gx: f32, gy: f32) -> vec2f {
+  let p = vec3f(gx, gy, 1.0);
+  return vec2f(dot(params.transformX.xyz, p), dot(params.transformY.xyz, p));
+}
 
-  let p = vec3f(f32(probeIdx) + 0.5, f32(sliceIdx) + 0.5, 1.0);
-  let wp = vec2f(dot(params.transformX.xyz, p), dot(params.transformY.xyz, p));
+struct RayData { rad: vec3f, trans: f32 }
 
-  let px = vec2i(i32(floor(wp.x)), i32(floor(wp.y)));
+fn traceRay(startW: vec2f, endW: vec2f) -> RayData {
+  let delta = endW - startW;
+  let rayLen = length(delta);
+  if (rayLen < 1e-6) { return RayData(vec3f(0.0), 1.0); }
+  let rayDir = delta / rayLen;
+  let sw = i32(params.screenW);
+  let sh = i32(params.screenH);
+  let bdim = vec2i(textureDimensions(bounceTex, 0));
+
+  var cell = vec2i(i32(floor(startW.x)), i32(floor(startW.y)));
+  let sX = select(-1, 1, rayDir.x >= 0.0);
+  let sY = select(-1, 1, rayDir.y >= 0.0);
+  let absDX = abs(rayDir.x);
+  let absDY = abs(rayDir.y);
+  let tDX = select(1e20, 1.0 / absDX, absDX > 1e-12);
+  let tDY = select(1e20, 1.0 / absDY, absDY > 1e-12);
+  var tMX: f32;
+  var tMY: f32;
+  if (absDX > 1e-12) { tMX = (select(f32(cell.x), f32(cell.x + 1), rayDir.x >= 0.0) - startW.x) / rayDir.x; } else { tMX = 1e20; }
+  if (absDY > 1e-12) { tMY = (select(f32(cell.y), f32(cell.y + 1), rayDir.y >= 0.0) - startW.y) / rayDir.y; } else { tMY = 1e20; }
+
+  var tPrev = 0.0;
   var rad = vec3f(0.0);
   var trans = 1.0;
-  if (px.x >= 0 && px.y >= 0 && px.x < i32(params.screenW) && px.y < i32(params.screenH)) {
-    let world = textureLoad(worldTex, px, 0);
-    let bdim = vec2i(textureDimensions(bounceTex, 0));
-    let bounce = textureLoad(bounceTex, clamp(vec2i(wp / vec2f(params.screenW, params.screenH) * vec2f(bdim)), vec2i(0), bdim - 1), 0).rgb;
-    trans = pow(1.0 - world.a, params.probeSpacing);
-    rad = (world.rgb + bounce) * (1.0 - trans);
+
+  for (var step = 0u; step < 64u; step++) {
+    let tExit = min(min(tMX, tMY), rayLen);
+    let pathLen = tExit - tPrev;
+
+    if (pathLen > 0.0 && cell.x >= 0 && cell.y >= 0 && cell.x < sw && cell.y < sh) {
+      let world = textureLoad(worldTex, cell, 0);
+      if (world.a > 0.0) {
+        let stepTrans = pow(1.0 - world.a, pathLen);
+        let buv = clamp(vec2i(vec2f(f32(cell.x) + 0.5, f32(cell.y) + 0.5) / vec2f(params.screenW, params.screenH) * vec2f(bdim)), vec2i(0), bdim - 1);
+        let bounce = textureLoad(bounceTex, buv, 0).rgb;
+        rad += trans * (world.rgb + bounce) * (1.0 - stepTrans);
+        trans *= stepTrans;
+      }
+    }
+
+    if (tExit >= rayLen) { break; }
+    tPrev = tExit;
+    if (tMX < tMY) { cell.x += sX; tMX += tDX; } else { cell.y += sY; tMY += tDY; }
   }
 
-  let packed = packF16(vec4f(rad, trans));
-  rayOut[sliceIdx * i32(params.probeCount) + probeIdx] = packed;
+  return RayData(rad, trans);
+}
+
+@compute @workgroup_size(${WG_SEED[0]}, ${WG_SEED[1]})
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let sliceIdx = i32(gid.y);
+  let interval = i32(1u << params.level);
+  let numRays = interval + 1;
+  let numProbes = i32((params.probeCount + u32(interval) - 1u) >> params.level);
+  let probeIdx = i32(gid.x) / numRays;
+  let rayIdx = i32(gid.x) % numRays;
+
+  if (probeIdx >= numProbes || sliceIdx >= i32(params.sliceCount)) { return; }
+
+  let probeGridX = f32(probeIdx * interval);
+  let startW = gridToWorld(probeGridX + 0.5, f32(sliceIdx) + 0.5);
+  let sliceOff = f32(rayIdx * 2 - interval);
+  let endW = gridToWorld(probeGridX + f32(interval) + 0.5, f32(sliceIdx) + 0.5 + sliceOff);
+
+  let r = traceRay(startW, endW);
+
+  let rowW = numProbes * numRays;
+  let outIdx = sliceIdx * rowW + probeIdx * numRays + rayIdx;
+  rayOut[outIdx] = packF16(vec4f(r.rad, r.trans));
 }
 `;
 
@@ -321,12 +374,7 @@ fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  var idx: i32;
-  if (prevLevel == 0u) {
-    idx = sliceIdx * i32(params.prevRayW) + probeIdx;
-  } else {
-    idx = sliceIdx * i32(params.prevRayW) + (probeIdx << prevLevel) + probeIdx + rayIdx;
-  }
+  let idx = sliceIdx * i32(params.prevRayW) + (probeIdx << prevLevel) + probeIdx + rayIdx;
   let r = unpackF16(prevRay[idx]);
   return RayData(r.rgb, r.a);
 }
@@ -426,15 +474,8 @@ fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
       sliceIdx < 0 || sliceIdx >= i32(params.sliceCount)) {
     return RayData(vec3f(0.0), 1.0);
   }
-  var texX: i32;
-  var rowW: i32;
-  if (params.level == 0u) {
-    texX = probeIdx;
-    rowW = i32(params.numProbes);
-  } else {
-    texX = (probeIdx << params.level) + probeIdx + rayIdx;
-    rowW = i32(params.numProbes * params.numRays);
-  }
+  let texX = (probeIdx << params.level) + probeIdx + rayIdx;
+  let rowW = i32(params.numProbes * params.numRays);
   let r = unpackF16(rayBuf[sliceIdx * rowW + texX]);
   return RayData(r.rgb, r.a);
 }
@@ -1604,10 +1645,10 @@ export class FolkHolographicRC extends FolkBaseSet {
     [this.#materialTexture, this.#materialTextureView] = tex(device, 'Material', width, height, 'r8unorm', TEX_RENDER);
 
     // Ray/merge buffers are shared across all 4 directions, sized for worst case.
-    // Level 0 stores one entry per probe (no sub-probe duplication).
+    // Level n stores ceilDiv(psMax, 2^n) * (2^n + 1) entries per row (probes × rays).
     this.#rayBuffers = [];
     for (let i = 0; i < this.#numCascades; i++) {
-      const w = i === 0 ? psMax : ceilDiv(psMax, 1 << i) * ((1 << i) + 1);
+      const w = ceilDiv(psMax, 1 << i) * ((1 << i) + 1);
       this.#rayBuffers.push(
         device.createBuffer({ label: `Ray-${i}`, size: w * psMax * 8, usage: GPUBufferUsage.STORAGE }),
       );
@@ -1689,8 +1730,8 @@ export class FolkHolographicRC extends FolkBaseSet {
     this.#blitParamsView = uboView(blitShader, 'params');
     this.#bounceParamsView = uboView(bounceComputeShader, 'params');
 
-    this.#seedParamsBuffer = ubo('SeedParams', 4 * 256);
-    this.#extendParamsBuffer = ubo('ExtendParams', 2 * Math.max(1, this.#numCascades - 1) * 256);
+    this.#seedParamsBuffer = ubo('SeedParams', 4 * TRACED_LEVELS * 256);
+    this.#extendParamsBuffer = ubo('ExtendParams', 2 * Math.max(1, this.#numCascades - TRACED_LEVELS) * 256);
     this.#mergeParamsBuffer = ubo('MergeParams', 4 * this.#numCascades * 256);
     this.#blitParamsBuffer = ubo('BlitParams', this.#blitParamsView.arrayBuffer.byteLength);
     this.#bounceParamsBuffer = ubo('BounceParams', this.#bounceParamsView.arrayBuffer.byteLength);
@@ -1802,26 +1843,35 @@ export class FolkHolographicRC extends FolkBaseSet {
     const extPS = this.#extendParamsView.arrayBuffer.byteLength;
     const mergePS = this.#mergeParamsView.arrayBuffer.byteLength;
 
-    this.#seedBindGroups = [0, 1, 2, 3].map((dir) =>
-      bg(
-        device,
-        seedLayout,
-        this.#worldTextureView,
-        this.#bounceTextureView,
-        { buffer: this.#rayBuffers[0] },
-        {
-          buffer: this.#seedParamsBuffer,
-          offset: dir * 256,
-          size: seedPS,
-        },
-      ),
-    );
+    // Seed bind groups: 4 directions × TRACED_LEVELS levels.
+    // Each binds the ray buffer for that level and its own param slice.
+    this.#seedBindGroups = [];
+    for (let dir = 0; dir < 4; dir++) {
+      for (let lvl = 0; lvl < TRACED_LEVELS; lvl++) {
+        this.#seedBindGroups.push(
+          bg(
+            device,
+            seedLayout,
+            this.#worldTextureView,
+            this.#bounceTextureView,
+            { buffer: this.#rayBuffers[lvl] },
+            {
+              buffer: this.#seedParamsBuffer,
+              offset: (dir * TRACED_LEVELS + lvl) * 256,
+              size: seedPS,
+            },
+          ),
+        );
+      }
+    }
 
-    // Two cascade configs: H (E/W) and V (N/S). Extend params are
-    // identical within each pair, so only 2 × (nc-1) bind groups needed.
+    // Two cascade configs: H (E/W) and V (N/S). Extend starts from
+    // TRACED_LEVELS since lower levels are DDA-traced by the seed.
+    const extStart = TRACED_LEVELS;
+    const extCount = Math.max(0, nc - extStart);
     this.#extendBindGroups = [];
     for (let cfg = 0; cfg < 2; cfg++) {
-      for (let level = 1; level < nc; level++) {
+      for (let level = extStart; level < nc; level++) {
         this.#extendBindGroups.push(
           bg(
             device,
@@ -1830,7 +1880,7 @@ export class FolkHolographicRC extends FolkBaseSet {
             { buffer: this.#rayBuffers[level] },
             {
               buffer: this.#extendParamsBuffer,
-              offset: (cfg * (nc - 1) + (level - 1)) * 256,
+              offset: (cfg * extCount + (level - extStart)) * 256,
               size: extPS,
             },
           ),
@@ -2268,16 +2318,21 @@ export class FolkHolographicRC extends FolkBaseSet {
       {
         const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-seed`) });
         pass.setPipeline(this.#raySeedPipeline);
-        pass.setBindGroup(0, this.#seedBindGroups[dir]);
-        pass.dispatchWorkgroups(Math.ceil(pc / WG_SEED[0]), Math.ceil(sc / WG_SEED[1]));
+        for (let lvl = 0; lvl < TRACED_LEVELS; lvl++) {
+          pass.setBindGroup(0, this.#seedBindGroups[dir * TRACED_LEVELS + lvl]);
+          const dispatchW = ceilDiv(pc, 1 << lvl) * ((1 << lvl) + 1);
+          pass.dispatchWorkgroups(Math.ceil(dispatchW / WG_SEED[0]), Math.ceil(sc / WG_SEED[1]));
+        }
         pass.end();
       }
 
       {
+        const extStart = TRACED_LEVELS;
+        const extCount = Math.max(0, nc - extStart);
         const pass = encoder.beginComputePass({ timestampWrites: this.#tsPass(`${dn}-extend`) });
         pass.setPipeline(this.#rayExtendPipeline);
-        for (let level = 1; level < nc; level++) {
-          pass.setBindGroup(0, this.#extendBindGroups[cfg * (nc - 1) + (level - 1)]);
+        for (let level = extStart; level < nc; level++) {
+          pass.setBindGroup(0, this.#extendBindGroups[cfg * extCount + (level - extStart)]);
           pass.dispatchWorkgroups(
             Math.ceil((ceilDiv(pc, 1 << level) * ((1 << level) + 1)) / WG_EXTEND[0]),
             Math.ceil(sc / WG_EXTEND[1]),
@@ -2438,33 +2493,41 @@ export class FolkHolographicRC extends FolkBaseSet {
     ];
     const dirCfg = [0, 1, 0, 1]; // E→H, N→V, W→H, S→V
 
-    // Seed params: per direction (4) — includes transform matrix
+    // Seed params: per direction (4) × TRACED_LEVELS — includes transform matrix and level
     for (let dir = 0; dir < 4; dir++) {
       const f = frustums[dirCfg[dir]];
       const dt = dirTransform(dir, width, height, Math.max(psX, psY));
-      this.#seedParamsView.set({
-        probeCount: f.pc,
-        sliceCount: f.sc,
-        screenW: width,
-        screenH: height,
-        probeSpacing: dt.probeSpacing,
-        pad: 0,
-        transformX: [...dt.transformX, 0],
-        transformY: [...dt.transformY, 0],
-      });
-      device.queue.writeBuffer(this.#seedParamsBuffer, dir * 256, this.#seedParamsView.arrayBuffer);
+      for (let lvl = 0; lvl < TRACED_LEVELS; lvl++) {
+        this.#seedParamsView.set({
+          probeCount: f.pc,
+          sliceCount: f.sc,
+          screenW: width,
+          screenH: height,
+          level: lvl,
+          pad: 0,
+          transformX: [...dt.transformX, 0],
+          transformY: [...dt.transformY, 0],
+        });
+        device.queue.writeBuffer(
+          this.#seedParamsBuffer,
+          (dir * TRACED_LEVELS + lvl) * 256,
+          this.#seedParamsView.arrayBuffer,
+        );
+      }
     }
 
-    // Extend params: per frustum (2) — cascade structure is identical within H/V pair
+    // Extend params: per frustum (2) — starts from TRACED_LEVELS since lower levels are DDA-traced
+    const extStart = TRACED_LEVELS;
+    const extCount = Math.max(0, nc - extStart);
     for (let cfg = 0; cfg < 2; cfg++) {
       const f = frustums[cfg];
-      for (let level = 1; level < nc; level++) {
+      for (let level = extStart; level < nc; level++) {
         const numRays = (1 << level) + 1;
         this.#extendParamsView.set({
           probeCount: f.pc,
           level,
           invNumRays: 1.0 / numRays,
-          prevRayW: level === 1 ? f.pc : ceilDiv(f.pc, 1 << (level - 1)) * ((1 << (level - 1)) + 1),
+          prevRayW: ceilDiv(f.pc, 1 << (level - 1)) * ((1 << (level - 1)) + 1),
           currRayW: ceilDiv(f.pc, 1 << level) * numRays,
           sliceCount: f.sc,
           pad2: 0,
@@ -2472,7 +2535,7 @@ export class FolkHolographicRC extends FolkBaseSet {
         });
         device.queue.writeBuffer(
           this.#extendParamsBuffer,
-          (cfg * (nc - 1) + (level - 1)) * 256,
+          (cfg * extCount + (level - extStart)) * 256,
           this.#extendParamsView.arrayBuffer,
         );
       }
