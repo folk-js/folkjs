@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Dual Polygonal HRC – Gapless Tiling</title>
+    <title>Dual Polygonal HRC – Fixed Grid</title>
     <style>
       * {
         margin: 0;
@@ -47,17 +47,24 @@
     <canvas id="canvas"></canvas>
     <div id="info"></div>
     <div id="legend">
-      <span style="color: #f55">■ 1:3 (even trapezoid)</span>
-      <span style="color: #5f5">■ 1:2 (odd trapezoid)</span>
-      <span style="color: #55f">■ 1:1 (parallelogram)</span>
+      <span style="color: #e44">■ frustum even(1:3)</span>
+      <span style="color: #4e4">■ frustum odd(1:2)</span>
+      <span style="color: #44e">■ band even</span>
+      <span style="color: #ee4">■ band odd</span>
     </div>
     <div id="error"></div>
     <script type="module">
       const SIZE = 256,
         PS = 8,
         LS0 = 8,
+        DC0 = 1,
         NC = 5,
         SCALE = 2;
+      const LINES = SIZE / LS0,
+        PROBES = SIZE / PS;
+      const MAX_DC = DC0 << (NC - 1);
+      const ATLAS_W = LINES * MAX_DC * 2,
+        ATLAS_H = PROBES;
 
       const canvas = document.getElementById('canvas');
       canvas.width = SIZE;
@@ -83,192 +90,51 @@
         if (e.key >= '0' && e.key <= '9') maxCascade = Math.min(parseInt(e.key), NC - 1);
       });
 
-      // ─── Precompute shape patterns ───
-      function buildCascadeShapes(nc) {
-        const cascades = [];
-        cascades.push({ widths: [3] }); // C0: one 1:3
-        for (let n = 1; n < nc; n++) {
-          const prev = cascades[n - 1].widths;
-          const maxW = n % 2 === 0 ? 3 : 2;
-          const widths = [];
-          for (const w of prev) {
-            if (w === 3) widths.push(maxW, 1, maxW);
-            else if (w === 2) widths.push(maxW, maxW);
-            else widths.push(1);
-          }
-          cascades.push({ widths });
-        }
-        for (const c of cascades) {
-          c.cumRight = [0];
-          for (let i = 0; i < c.widths.length; i++) c.cumRight.push(c.cumRight[i] + c.widths[i]);
-          c.totalRight = c.cumRight[c.widths.length];
-          c.count = c.widths.length;
-        }
-        return cascades;
-      }
-      const CI = buildCascadeShapes(NC);
-      const MAX_S = Math.max(...CI.map((c) => c.count));
-      const LINES = SIZE / LS0;
-      const ATLAS_W = LINES * MAX_S;
-      const ATLAS_H = SIZE / PS;
-
-      // Precompute cascade x-positions for exact 45° slopes
-      const C_SPAN = CI.map((c) => (c.totalRight - c.count) * PS); // span = height_increase * PS
-      const C_LEFT = [0];
-      for (let n = 1; n < NC; n++) C_LEFT.push(C_LEFT[n - 1] + C_SPAN[n - 1]);
-      // Which atlas line each cascade uses (C0=line at source, C1+=line 1)
-      const C_LINE = CI.map((_, n) => (n === 0 ? -1 : 1)); // -1 = determined by source position at runtime
-
-      console.log(
-        'Shapes:',
-        CI.map((c, i) => `C${i}:[${c.count}]→${c.totalRight}p`),
-      );
-      console.log('Spans (px):', C_SPAN);
-      console.log('Left edges (px):', C_LEFT);
-
-      // Extension parent map
-      function buildExtMaps(ci) {
-        const maps = [null];
-        for (let n = 1; n < ci.length; n++) {
-          const src = ci[n - 1],
-            dst = ci[n],
-            map = [];
-          for (let s = 0; s < dst.count; s++) {
-            let ss = 0;
-            while (ss < src.count && src.cumRight[ss + 1] <= s) ss++;
-            map.push({ srcShape: ss, probeOff: s - ss });
-          }
-          maps.push(map);
-        }
-        return maps;
-      }
-      const EM = buildExtMaps(CI);
-
-      // Pack for GPU: shapeInfo[n * MAX_S + s] = ivec2(width, cumRight)
-      const SI = new Int32Array(NC * MAX_S * 2);
-      for (let n = 0; n < NC; n++)
-        for (let s = 0; s < MAX_S; s++) {
-          const b = (n * MAX_S + s) * 2;
-          SI[b] = s < CI[n].count ? CI[n].widths[s] : 0;
-          SI[b + 1] = s < CI[n].count ? CI[n].cumRight[s] : 0;
-        }
-      // extInfo[n * MAX_S + s] = ivec2(srcShape, probeOff)
-      const EI = new Int32Array(NC * MAX_S * 2);
-      for (let n = 1; n < NC; n++) {
-        const m = EM[n];
-        for (let s = 0; s < MAX_S; s++) {
-          const b = (n * MAX_S + s) * 2;
-          if (s < m.length) {
-            EI[b] = m[s].srcShape;
-            EI[b + 1] = m[s].probeOff;
-          }
-        }
-      }
-
-      // ─── WGSL ───
-      const common = `
-const SIZE=${SIZE}u; const PS=${PS}u; const LS0=${LS0}u; const NC=${NC}u;
-const ATL_W=${ATLAS_W}u; const ATL_H=${ATLAS_H}u; const ATL_SZ=${ATLAS_W * ATLAS_H}u;
-const MAX_S=${MAX_S}u; const LINES=${LINES}u;
-
-struct Params { sx:f32, sy:f32, ci:u32, dbg:u32 }
-
-fn shapeW(si: array<vec2i,${NC * MAX_S}>, n:u32, s:u32) -> i32 { return si[n*MAX_S+s].x; }
-fn shapeCR(si: array<vec2i,${NC * MAX_S}>, n:u32, s:u32) -> i32 { return si[n*MAX_S+s].y; }
-`;
-
-      // Use a simpler approach: inline the shape data as constants
-      // Build WGSL constant arrays from the precomputed data
-      let shapeWGSL = '';
-      {
-        // Widths per cascade per shape
-        const wArr = [];
-        const crArr = [];
-        for (let n = 0; n < NC; n++) {
-          for (let s = 0; s < MAX_S; s++) {
-            wArr.push(s < CI[n].count ? CI[n].widths[s] : 0);
-            crArr.push(s < CI[n].count ? CI[n].cumRight[s] : 0);
-          }
-        }
-        const scArr = CI.map((c) => c.count);
-        shapeWGSL = `
-const S_W = array<i32,${wArr.length}>(${wArr.join(',')});
-const S_CR = array<i32,${crArr.length}>(${crArr.join(',')});
-const S_CNT = array<u32,${NC}>(${scArr.join('u,')}u);
-const C_LEFT = array<i32,${NC}>(${C_LEFT.join(',')});
-const C_SPAN = array<i32,${NC}>(${C_SPAN.join(',')});
-fn sW(n:u32,s:u32)->i32{return S_W[n*MAX_S+s];}
-fn sCR(n:u32,s:u32)->i32{return S_CR[n*MAX_S+s];}
-fn sCnt(n:u32)->u32{return S_CNT[n];}
-`;
-      }
-
-      let extWGSLData = '';
-      {
-        const ssArr = [],
-          poArr = [];
-        for (let n = 0; n < NC; n++) {
-          for (let s = 0; s < MAX_S; s++) {
-            if (n > 0 && EM[n] && s < EM[n].length) {
-              ssArr.push(EM[n][s].srcShape);
-              poArr.push(EM[n][s].probeOff);
-            } else {
-              ssArr.push(0);
-              poArr.push(0);
-            }
-          }
-        }
-        extWGSLData = `
-const E_SS = array<i32,${ssArr.length}>(${ssArr.join(',')});
-const E_PO = array<i32,${poArr.length}>(${poArr.join(',')});
-fn eSS(n:u32,s:u32)->i32{return E_SS[n*MAX_S+s];}
-fn ePO(n:u32,s:u32)->i32{return E_PO[n*MAX_S+s];}
-`;
-      }
-
       const commonWGSL = `
-const SIZE=${SIZE}u; const PS=${PS}u; const LS0=${LS0}u; const NC=${NC}u;
-const ATL_W=${ATLAS_W}u; const ATL_H=${ATLAS_H}u; const ATL_SZ=${ATLAS_W * ATLAS_H}u;
-const MAX_S=${MAX_S}u;
-struct Params { sx:f32, sy:f32, ci:u32, dbg:u32 }
-${shapeWGSL}
+const SIZE=${SIZE}u;const PS=${PS}u;const LS0=${LS0}u;const DC0=${DC0}u;const NC=${NC}u;
+const LINES=${LINES}u;const PROBES=${PROBES}u;
+const ATL_W=${ATLAS_W}u;const ATL_H=${ATLAS_H}u;const ATL_SZ=${ATLAS_W * ATLAS_H}u;
 
-fn shapeFunc(pos:vec2f, pi:i32, si:i32, n:u32, base:i32) -> f32 {
-  let w = sW(n, u32(si));
-  if(w==0){return -1.0;}
-  let cr = f32(sCR(n, u32(si)));
-  let wf = f32(w);
-  let ps = f32(PS);
-  let pf = f32(pi);
-  let lx = f32(base + C_LEFT[n]);
-  let rx = f32(base + C_LEFT[n] + C_SPAN[n]);
-  let ly = vec2f(pf, pf+1.0)*ps;
-  let sf = f32(si);
-  let ry = vec2f(pf-sf+cr, pf-sf+cr+wf)*ps;
-  if(pos.x>=lx && pos.x<rx){
+struct Params{sx:f32,sy:f32,ci:u32,dbg:u32}
+
+fn probeFunc(pos:vec2f,li:i32,pi:i32,di:i32,is_f:bool,ls:u32)->f32{
+  let ps=f32(PS);let lsf=f32(ls);let pf=f32(pi);let df=f32(di);
+  let lx=f32(li)*lsf;
+  let ly=vec2f(pf,pf+1.0)*ps;
+  let ext=(li&1)==0;
+  let stride=select(1,2,ext);
+  let sf=f32(stride);
+  let rx=f32(li+stride)*lsf;
+  var wmax:f32;
+  if(is_f){wmax=select(2.0,3.0,ext);}else{wmax=1.0;}
+  let ry=vec2f(pf+df*sf,pf+df*sf+wmax)*ps;
+  if(pos.x>=lx&&pos.x<rx){
     let t=(pos.x-lx)/(rx-lx);
     let yr=mix(ly,ry,vec2f(t));
-    if(pos.y>=yr.x && pos.y<yr.y){return t;}
+    if(pos.y>=yr.x&&pos.y<yr.y){return t;}
   }
   return -1.0;
 }
 
-fn atlasIdx(li:i32,pi:i32,si:i32)->i32{
-  let x=li*i32(MAX_S)+si; let y=pi;
+fn atlasIdx(li:i32,pi:i32,di:i32,is_f:bool,dc:u32)->i32{
+  let x=li*i32(dc*2u)+select(i32(dc),0,is_f)+di;
+  let y=pi;
   if(x<0||x>=i32(ATL_W)||y<0||y>=i32(ATL_H)){return -1;}
   return y*i32(ATL_W)+x;
 }
 
-fn dbgCol(w:i32, n:u32, si:u32)->vec3f{
+fn falloffRange(n:u32)->vec2f{
+  return vec2f(1.0)/vec2f(f32(1u<<n),f32(1u<<(n+1u)));
+}
+
+fn dbgCol(li:i32,is_f:bool,di:i32,n:u32)->vec3f{
+  let ext=(li&1)==0;
   var col:vec3f;
-  if(w==3){col = vec3f(0.85,0.2,0.15);}
-  else if(w==2){col = vec3f(0.15,0.75,0.15);}
-  else{col = vec3f(0.2,0.2,0.9);}
-  // Sharp alternation: every other shape gets darkened or lightened
-  let odd = (si & 1u) == 1u;
-  if(odd){ col = col * 0.55; } else { col = min(col + vec3f(0.15), vec3f(1.0)); }
-  // Cascade tint shift
-  if((n & 1u)==1u){ col = col.gbr; }  // rotate channels for odd cascades
+  if(is_f&&ext){col=vec3f(0.9,0.2,0.15);}
+  else if(is_f&&!ext){col=vec3f(0.15,0.8,0.15);}
+  else if(!is_f&&ext){col=vec3f(0.2,0.2,0.9);}
+  else{col=vec3f(0.85,0.85,0.15);}
+  if((di&1)==1){col*=0.6;}
   return col;
 }
 `;
@@ -276,20 +142,21 @@ fn dbgCol(w:i32, n:u32, si:u32)->vec3f{
       const seedWGSL =
         commonWGSL +
         `
-@group(0) @binding(0) var<storage,read_write> cas: array<vec4f>;
-@group(0) @binding(1) var<uniform> par: Params;
-
+@group(0)@binding(0) var<storage,read_write> cas:array<vec4f>;
+@group(0)@binding(1) var<uniform> par:Params;
 @compute @workgroup_size(16,16)
 fn main(@builtin(global_invocation_id) gid:vec3u){
-  let tx=i32(gid.x); let ty=i32(gid.y);
+  let tx=i32(gid.x);let ty=i32(gid.y);
   if(tx>=i32(ATL_W)||ty>=i32(ATL_H)){return;}
-  let li=tx/i32(MAX_S); let si=tx%i32(MAX_S); let pi=ty;
+  let dc=DC0;
+  let li=tx/i32(dc*2u);let rem=tx%i32(dc*2u);
+  let is_f=rem<i32(dc);let di=rem%i32(dc);let pi=ty;
   let src=vec2f(par.sx,par.sy);
   let sl=i32(floor(src.x/f32(LS0)));
   let sp=i32(floor(src.y/f32(PS)));
   let idx=ty*i32(ATL_W)+tx;
-  if(li==sl && pi==sp && si==0){
-    if(par.dbg>0u){cas[idx]=vec4f(dbgCol(sW(0u,0u), 0u, 0u),0.0);}
+  if(li==sl&&pi==sp&&di==0&&is_f){
+    if(par.dbg>0u){cas[idx]=vec4f(dbgCol(li,true,0,0u),0.0);}
     else{cas[idx]=vec4f(1.0);}
   }else{cas[idx]=vec4f(0.0);}
 }
@@ -297,57 +164,59 @@ fn main(@builtin(global_invocation_id) gid:vec3u){
 
       const extendWGSL =
         commonWGSL +
-        extWGSLData +
         `
-@group(0) @binding(0) var<storage,read> src: array<vec4f>;
-@group(0) @binding(1) var<storage,read_write> dst: array<vec4f>;
-@group(0) @binding(2) var<uniform> par: Params;
+@group(0)@binding(0) var<storage,read> src:array<vec4f>;
+@group(0)@binding(1) var<storage,read_write> dst:array<vec4f>;
+@group(0)@binding(2) var<uniform> par:Params;
 
-fn readSrc(li:i32,pi:i32,si:i32)->vec4f{
-  let i=atlasIdx(li,pi,si);
+fn readSrc(li:i32,pi:i32,di:i32,is_f:bool,dc:u32)->vec4f{
+  let i=atlasIdx(li,pi,di,is_f,dc);
   if(i<0||i>=i32(ATL_SZ)){return vec4f(0.0);}
   return src[i];
 }
 
 @compute @workgroup_size(16,16)
 fn main(@builtin(global_invocation_id) gid:vec3u){
-  let tx=i32(gid.x); let ty=i32(gid.y);
+  let tx=i32(gid.x);let ty=i32(gid.y);
   if(tx>=i32(ATL_W)||ty>=i32(ATL_H)){return;}
   let dn=par.ci;
-  let li=tx/i32(MAX_S); let si=tx%i32(MAX_S); let pi=ty;
-  let idx=ty*i32(ATL_W)+tx;
+  let ddc=DC0<<dn;let sdc=DC0<<(dn-1u);
+  let li=tx/i32(ddc*2u);let rem=tx%i32(ddc*2u);
+  let is_f=rem<i32(ddc);let di=rem%i32(ddc);let pi=ty;
+  var res=vec4f(0.0);
 
-  // Only populate line 1 for cascades >= 1
-  if(li!=1){dst[idx]=vec4f(0.0);return;}
-
-  let w=sW(dn,u32(si));
-  if(w==0){dst[idx]=vec4f(0.0);return;}
-
-  let ss=eSS(dn,u32(si));
-  let po=ePO(dn,u32(si));
-
-  // Source line: C0 uses srcLine, C1+ uses line 1
-  let srcLi = select(1, i32(floor(par.sx / f32(LS0))), dn==1u);
-  var res = readSrc(srcLi, pi-po, ss);
-
-  if(par.dbg>0u && any(res.rgb>vec3f(0.0))){
-    dst[idx]=vec4f(dbgCol(w, dn, u32(si)),0.0);
+  if(is_f){
+    {let sl=li*2-2;let sd=di/2;
+      if((di&1)==0){res+=readSrc(sl,pi-di,sd,true,sdc);}
+      else{res+=readSrc(sl,pi-(di+1),sd,true,sdc);}}
+    {let sl=li*2-1;let sd=di/2;
+      if((di&1)==0){res+=readSrc(sl,pi-sd,sd,true,sdc);}
+      else{res+=readSrc(sl,pi-sd-1,sd,true,sdc);}}
   }else{
-    dst[idx]=res;
+    {let sl=li*2-2;let sd=di/2;
+      if((di&1)==1){res+=readSrc(sl,pi-di,sd,true,sdc);}
+      else{res+=readSrc(sl,pi-di,sd,false,sdc);}}
+    if((di&1)==0){let sl=li*2-1;let sd=di/2;
+      res+=readSrc(sl,pi-sd,sd,false,sdc);}
   }
+
+  let idx=ty*i32(ATL_W)+tx;
+  if(par.dbg>0u&&any(res.rgb>vec3f(0.0))){
+    dst[idx]=vec4f(dbgCol(li,is_f,di,dn),0.0);
+  }else{dst[idx]=res;}
 }
 `;
 
       const gatherWGSL =
         commonWGSL +
         `
-@group(0) @binding(0) var<storage,read> c0:array<vec4f>;
-@group(0) @binding(1) var<storage,read> c1:array<vec4f>;
-@group(0) @binding(2) var<storage,read> c2:array<vec4f>;
-@group(0) @binding(3) var<storage,read> c3:array<vec4f>;
-@group(0) @binding(4) var<storage,read> c4:array<vec4f>;
-@group(0) @binding(5) var<storage,read_write> flu:array<vec4f>;
-@group(0) @binding(6) var<uniform> gpar: Params;
+@group(0)@binding(0) var<storage,read> c0:array<vec4f>;
+@group(0)@binding(1) var<storage,read> c1:array<vec4f>;
+@group(0)@binding(2) var<storage,read> c2:array<vec4f>;
+@group(0)@binding(3) var<storage,read> c3:array<vec4f>;
+@group(0)@binding(4) var<storage,read> c4:array<vec4f>;
+@group(0)@binding(5) var<storage,read_write> flu:array<vec4f>;
+@group(0)@binding(6) var<uniform> gpar:Params;
 
 fn readC(n:u32,i:i32)->vec4f{
   if(i<0||i>=i32(ATL_SZ)){return vec4f(0.0);}
@@ -356,28 +225,23 @@ fn readC(n:u32,i:i32)->vec4f{
 
 @compute @workgroup_size(16,16)
 fn main(@builtin(global_invocation_id) gid:vec3u){
-  let px=i32(gid.x); let py=i32(gid.y);
+  let px=i32(gid.x);let py=i32(gid.y);
   if(px>=i32(SIZE)||py>=i32(SIZE)){return;}
   let pos=vec2f(f32(px)+0.5,f32(py)+0.5);
   var tot=vec4f(0.0);
-  // Show all cascades up to maxCascade
-  let nEnd = gpar.ci + 1u;
-  let srcLine = i32(floor(gpar.sx / f32(LS0)));
-  let base = srcLine * i32(LS0);
+  let nEnd=gpar.ci+1u;
   for(var n=0u;n<nEnd;n++){
-    // Check if pixel is within this cascade's x-range
-    if(px < base + C_LEFT[n] || px >= base + C_LEFT[n] + C_SPAN[n]){continue;}
-    let sc=sCnt(n);
-    let li = select(1, srcLine, n==0u);
-    for(var pi=0;pi<i32(ATL_H);pi++){
-      for(var si=0u;si<sc;si++){
-        let pf=shapeFunc(pos,pi,i32(si),n,base);
-        if(pf>=0.0){
-          let ai=atlasIdx(li,pi,i32(si));
-          // 1/r falloff: distance from source in pixels
-          let dist = f32(base + C_LEFT[n]) + pf * f32(C_SPAN[n]);
-          let falloff = f32(PS) / max(f32(PS), dist);
-          tot+=readC(n,ai) * falloff;
+    let ls=LS0<<n;let dc=DC0<<n;let fo=falloffRange(n);
+    let bli=px/i32(ls);
+    for(var lp=0u;lp<2u;lp++){
+      var cl=bli;
+      if(lp==1u){if((bli&1)==0){continue;}cl=bli-1;}
+      for(var pi=0;pi<i32(PROBES);pi++){
+        for(var di=0;di<i32(dc);di++){
+          {let pf=probeFunc(pos,cl,pi,di,true,ls);
+            if(pf>=0.0){let ai=atlasIdx(cl,pi,di,true,dc);tot+=readC(n,ai)*mix(fo.x,fo.y,pf);}}
+          {let pf=probeFunc(pos,cl,pi,di,false,ls);
+            if(pf>=0.0){let ai=atlasIdx(cl,pi,di,false,dc);tot+=readC(n,ai)*mix(fo.x,fo.y,pf);}}
         }
       }
     }
@@ -387,33 +251,32 @@ fn main(@builtin(global_invocation_id) gid:vec3u){
 `;
 
       const blitWGSL = `
-const SIZE=${SIZE}u; const PS=${PS}u;
-@group(0) @binding(0) var<storage,read> flu:array<vec4f>;
-@group(0) @binding(1) var<uniform> bp:vec4f;
+const SIZE=${SIZE}u;const PS=${PS}u;
+@group(0)@binding(0) var<storage,read> flu:array<vec4f>;
+@group(0)@binding(1) var<uniform> bp:vec4f;
 @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4f{
-  let p=array(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));
-  return vec4f(p[i],0,1);
-}
+  let p=array(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(p[i],0,1);}
 @fragment fn fs(@builtin(position) pos:vec4f)->@location(0) vec4f{
   let px=i32(pos.x);let py=i32(pos.y);
   if(px>=i32(SIZE)||py>=i32(SIZE)){return vec4f(0,0,0,1);}
   let f=flu[py*i32(SIZE)+px];
-  let ck=0.03+0.015*f32(((px/i32(PS))+(py/i32(PS)))&1);
-  let bg=vec3f(ck);
-  let hdr=f.rgb*bp.x;
-  var m:vec3f;
-  if(bp.y>0.5){m=hdr;}else{m=hdr/(hdr+vec3f(1.0));}
-  var r=max(bg,pow(m,vec3f(1.0/2.2)));
+  let checker=0.03+0.015*f32(((px/i32(PS))+(py/i32(PS)))&1);
+  let bg=vec3f(checker);
+  let exposure=bp.x;let debug=bp.y;
   let mc=vec2i(i32(bp.z)/i32(PS),i32(bp.w)/i32(PS));
   let pc=vec2i(px/i32(PS),py/i32(PS));
-  let lxy=vec2i(px%i32(PS),py%i32(PS));
-  let ob=lxy.x==0||lxy.y==0||lxy.x==i32(PS)-1||lxy.y==i32(PS)-1;
-  if(all(mc==pc)&&ob){r=mix(r,vec3f(0,1,0.9),0.85);}
-  return vec4f(r,1);
+  let isMC=all(mc==pc);
+  let loc=vec2i(px%i32(PS),py%i32(PS));
+  let onB=loc.x==0||loc.y==0||loc.x==i32(PS)-1||loc.y==i32(PS)-1;
+  let hdr=f.rgb*exposure;
+  var mapped:vec3f;
+  if(debug>0.5){mapped=hdr;}else{mapped=hdr/(hdr+vec3f(1.0));}
+  var result=max(bg,pow(mapped,vec3f(1.0/2.2)));
+  if(isMC&&onB){result=mix(result,vec3f(0.0,1.0,0.9),0.85);}
+  return vec4f(result,1.0);
 }
 `;
 
-      // ─── WebGPU ───
       async function main() {
         if (!navigator.gpu) {
           document.getElementById('error').textContent = 'WebGPU not supported';
@@ -444,6 +307,7 @@ const SIZE=${SIZE}u; const PS=${PS}u;
           dev.queue.writeBuffer(b, 0, d);
           return b;
         });
+        const gparB = dev.createBuffer({ label: 'gpar', size: 16, usage: U });
 
         function comp(code, label) {
           return dev.createComputePipeline({
@@ -453,9 +317,9 @@ const SIZE=${SIZE}u; const PS=${PS}u;
           });
         }
 
-        const seedP = comp(seedWGSL, 'seed');
-        const extP = comp(extendWGSL, 'extend');
-        const gatP = comp(gatherWGSL, 'gather');
+        const seedP = comp(seedWGSL, 'seed'),
+          extP = comp(extendWGSL, 'extend'),
+          gatP = comp(gatherWGSL, 'gather');
         const bm = dev.createShaderModule({ code: blitWGSL });
         const blitP = dev.createRenderPipeline({
           label: 'blit',
@@ -465,45 +329,27 @@ const SIZE=${SIZE}u; const PS=${PS}u;
           primitive: { topology: 'triangle-list' },
         });
 
-        const seedBG = dev.createBindGroup({
-          layout: seedP.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: cB[0] } },
-            { binding: 1, resource: { buffer: pB[0] } },
-          ],
-        });
+        function bg(pipe, entries) {
+          return dev.createBindGroup({
+            layout: pipe.getBindGroupLayout(0),
+            entries: entries.map((resource, binding) => ({ binding, resource })),
+          });
+        }
+
+        const seedBG = bg(seedP, [{ buffer: cB[0] }, { buffer: pB[0] }]);
         const extBG = [];
         for (let n = 0; n < NC - 1; n++)
-          extBG.push(
-            dev.createBindGroup({
-              layout: extP.getBindGroupLayout(0),
-              entries: [
-                { binding: 0, resource: { buffer: cB[n] } },
-                { binding: 1, resource: { buffer: cB[n + 1] } },
-                { binding: 2, resource: { buffer: pB[n + 1] } },
-              ],
-            }),
-          );
-        const gparBuf = dev.createBuffer({ label: 'gpar', size: 16, usage: U });
-        const gatBG = dev.createBindGroup({
-          layout: gatP.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: cB[0] } },
-            { binding: 1, resource: { buffer: cB[1] } },
-            { binding: 2, resource: { buffer: cB[2] } },
-            { binding: 3, resource: { buffer: cB[3] } },
-            { binding: 4, resource: { buffer: cB[4] } },
-            { binding: 5, resource: { buffer: fB } },
-            { binding: 6, resource: { buffer: gparBuf } },
-          ],
-        });
-        const blitBG = dev.createBindGroup({
-          layout: blitP.getBindGroupLayout(0),
-          entries: [
-            { binding: 0, resource: { buffer: fB } },
-            { binding: 1, resource: { buffer: bpB } },
-          ],
-        });
+          extBG.push(bg(extP, [{ buffer: cB[n] }, { buffer: cB[n + 1] }, { buffer: pB[n + 1] }]));
+        const gatBG = bg(gatP, [
+          { buffer: cB[0] },
+          { buffer: cB[1] },
+          { buffer: cB[2] },
+          { buffer: cB[3] },
+          { buffer: cB[4] },
+          { buffer: fB },
+          { buffer: gparB },
+        ]);
+        const blitBG = bg(blitP, [{ buffer: fB }, { buffer: bpB }]);
 
         const WA = Math.ceil(ATLAS_W / 16),
           WAH = Math.ceil(ATLAS_H / 16),
@@ -519,14 +365,16 @@ const SIZE=${SIZE}u; const PS=${PS}u;
               dev.queue.writeBuffer(pB[i], 12, new Uint32Array([debugMode]));
             }
             dev.queue.writeBuffer(bpB, 0, new Float32Array([debugMode > 0 ? 1 : 5, debugMode, mouseX, mouseY]));
-            // Gather params: ci=maxCascade, dbg=debugMode
-            const gparData = new ArrayBuffer(16);
-            const gv = new DataView(gparData);
-            gv.setFloat32(0, mouseX, true);
-            gv.setFloat32(4, mouseY, true);
-            gv.setUint32(8, maxCascade, true);
-            gv.setUint32(12, debugMode, true);
-            dev.queue.writeBuffer(gparBuf, 0, gparData);
+            {
+              const d = new ArrayBuffer(16);
+              const v = new DataView(d);
+              v.setFloat32(0, mouseX, true);
+              v.setFloat32(4, mouseY, true);
+              v.setUint32(8, maxCascade, true);
+              v.setUint32(12, debugMode, true);
+              dev.queue.writeBuffer(gparB, 0, d);
+            }
+
             const e = dev.createCommandEncoder();
             for (const b of cB) e.clearBuffer(b);
             e.clearBuffer(fB);
@@ -571,7 +419,7 @@ const SIZE=${SIZE}u; const PS=${PS}u;
             dev.queue.submit([e.finish()]);
           }
           document.getElementById('info').textContent =
-            `D=debug(${debugMode}) 0-4=cascade(${maxCascade}) | shapes: ${CI.map((c) => c.count).join(',')}`;
+            `D=debug(${debugMode}) 0-4=cascade(${maxCascade}) | Fixed grid, PS=${PS}, LS0=${LS0}, atlas=${ATLAS_W}x${ATLAS_H}`;
           requestAnimationFrame(frame);
         }
         requestAnimationFrame(frame);
