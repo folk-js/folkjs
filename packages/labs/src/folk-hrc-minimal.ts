@@ -1,41 +1,26 @@
 // Dual Polygonal HRC — custom element for 2D global illumination.
 //
-// Implements Alexander Sannikov's dual polygonal radiance cascade layout:
-//   1. Seed C0 from world texture (per polygon, read emissive at probe position)
-//   2. Extend C0→C1→...→C_{N-1} (each polygon reads 2 source polygons)
-//   3. Gather all cascades into fluence (efficient per-pixel lookup)
-//   4. Cross-blur + tonemap
-//
-// Key differences from vanilla HRC (FolkHrcMinimal):
-//   - Polygonal frustums (1:1 bands + 1:2/1:3 frustums) tile radiance field gaplessly
-//   - Extensions propagate radiance through polygon connectivity, not ray compositing
-//   - Gather sums polygon contributions with Chebyshev-distance falloff
-//   - No occlusion in this version (radiance only, no transmittance)
-//
-// Polygon layout (per cascade n, in rotated coordinates):
+// Fixed grid layout matching Alexander Sannikov's BlockHRC/PolygonalHRC45:
 //   - line_spacing = 1 << n, dirs_count = 1 << n
-//   - Lines at pi = 0, ls, 2*ls, ...
-//   - Even lines: "extended" (stride=2), odd lines: stride=1
-//   - Each polygon indexed by (line_idx, probe_idx, dir_idx, is_frustum)
-//   - Atlas: width = probeCount * 2, height = probeCount (constant across cascades)
-//   - Two types per direction: frustum (expanding 1→2 or 1→3) and band (constant 1→1)
+//   - Even lines: stride=2, frustum widening 1→3
+//   - Odd lines: stride=1, frustum widening 1→2
+//   - Band: always 1→1
+//   - Extension: Alexander's exact connectivity formulas
+//   - Gather: per-pixel polygon lookup with falloff
+//   - 8 rotations for full 360° coverage
 
 import { css, property, ReactiveElement, type CSSResultGroup, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 
 const WG = [16, 16] as const;
 
-// ── Shared WGSL ──
-
 const wgslCommon = (ps: number) => /* wgsl */ `
 const PS: u32 = ${ps}u;
-const PS2: u32 = ${ps * 2}u;  // atlas width = probeCount * 2
+const PS2: u32 = ${ps * 2}u;
 const PSf: f32 = ${ps}.0;
 
 struct Params { ps: u32, rotation: u32, cascade_idx: u32, num_cascades: u32 };
 
 fn rotateCoord(pi: i32, si: i32, ps: i32, rot: u32) -> vec2i {
-  // Rotations 0-3: polygons fan in +si direction (covers 0° to 45° of each quadrant)
-  // Rotations 4-7: mirror si (covers -45° to 0° of each quadrant)
   switch (rot) {
     case 0u: { return vec2i(pi, si); }
     case 1u: { return vec2i(si, pi); }
@@ -51,7 +36,6 @@ fn rotateCoord(pi: i32, si: i32, ps: i32, rot: u32) -> vec2i {
 
 fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
 
-// Polygon coverage: returns x_ratio in [0,1] if pos is inside, -1 otherwise
 fn polyFunc(pos: vec2f, lx: f32, ly: vec2f, rx: f32, ry: vec2f) -> f32 {
   if (pos.x >= lx && pos.x < rx) {
     let t = (pos.x - lx) / (rx - lx);
@@ -91,7 +75,6 @@ fn falloffRange(n: u32) -> vec2f {
 `;
 
 // ── Seed Shader ──
-// For each C0 polygon, read world texture at the probe's rotated position.
 const seedShader = (ps: number) =>
   wgslCommon(ps) +
   /* wgsl */ `
@@ -104,13 +87,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let tx = i32(gid.x); let ty = i32(gid.y);
   if (tx >= i32(PS2) || ty >= i32(PS)) { return; }
 
-  // C0: line_spacing=1, dirs_count=1
   let dc = 1u;
   let line_idx = tx / i32(dc * 2u);
   let rem = tx % i32(dc * 2u);
   let is_frustum = rem < i32(dc);
   let probe_idx = ty;
-  let pi = line_idx;  // in rotated coords, pi = line_idx for C0 (ls=1)
+  let pi = line_idx;
   let si = probe_idx;
 
   let px = rotateCoord(pi, si, i32(PS), params.rotation);
@@ -126,8 +108,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 `;
 
 // ── Extend Shader ──
-// Each polygon at cascade n+1 reads 2 polygons from cascade n.
-// Connectivity from Alexander's PolygonalHRC45 ExtendCascade.
+// Alexander's exact connectivity from BlockHRC, with the odd-source-line
+// frustum fix: odd dir_idx uses (pi - sd - 1), not (pi - sd).
 const extendShader = (ps: number) =>
   wgslCommon(ps) +
   /* wgsl */ `
@@ -159,23 +141,30 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   var res = vec4f(0.0);
 
   if (is_f) {
-    // Frustum: read from 2 src lines
+    // Frustum destination
+    // Source 1: even src line (2L-2)
     {
       let sl = line_idx * 2 - 2;
       let sd = dir_idx / 2;
       if ((dir_idx & 1) == 0) {
         res += readSrc(sl, pi - dir_idx, sd, true, src_dc);
       } else {
-        res += readSrc(sl, pi - dir_idx - 1, sd, true, src_dc);
+        res += readSrc(sl, pi - (dir_idx + 1), sd, true, src_dc);
       }
     }
+    // Source 2: odd src line (2L-1)
     {
       let sl = line_idx * 2 - 1;
       let sd = dir_idx / 2;
-      res += readSrc(sl, pi - sd, sd, true, src_dc);
+      if ((dir_idx & 1) == 0) {
+        res += readSrc(sl, pi - sd, sd, true, src_dc);
+      } else {
+        res += readSrc(sl, pi - sd - 1, sd, true, src_dc);
+      }
     }
   } else {
-    // Band: read from 2 src lines (asymmetric)
+    // Band destination
+    // Source 1: even src line (2L-2)
     {
       let sl = line_idx * 2 - 2;
       let sd = dir_idx / 2;
@@ -185,6 +174,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         res += readSrc(sl, pi - dir_idx, sd, false, src_dc);
       }
     }
+    // Source 2: odd src line (2L-1), even dir only
     if ((dir_idx & 1) == 0) {
       let sl = line_idx * 2 - 1;
       let sd = dir_idx / 2;
@@ -197,9 +187,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 `;
 
 // ── Gather Shader ──
-// Efficient per-pixel: for each cascade, compute covering line, then iterate
-// over directions and find the covering probe. O(dirs_count) per cascade.
-// Accumulates into fluence with 1px offset (matching vanilla HRC).
+// Per-pixel: for each cascade, find covering line, iterate directions,
+// locate covering probe. Accumulates with 1px offset.
+// Both frustum and band contribute — their overlap is handled by the
+// extension distributing radiance correctly between them.
 const gatherShader = (ps: number, nc: number) =>
   wgslCommon(ps) +
   /* wgsl */ `
@@ -230,7 +221,8 @@ fn gatherLine(pos: vec2f, si: f32, line_idx: i32, n: u32, dc: u32, ls: u32) -> v
       let wmax = select(2.0, 3.0, ext);
       let shifted = si - f32(d) * sf * t;
       let p = i32(floor(shifted));
-      for (var pp = p; pp <= p + 1; pp++) {
+      for (var pp = p - 1; pp <= p + 1; pp++) {
+        if (pp < 0 || pp >= i32(PS)) { continue; }
         let cov = probeFunc(pos, line_idx, pp, d, true, ls);
         if (cov >= 0.0) {
           let ai = atlasIdx(line_idx, pp, d, true, dc);
@@ -243,7 +235,8 @@ fn gatherLine(pos: vec2f, si: f32, line_idx: i32, n: u32, dc: u32, ls: u32) -> v
     {
       let shifted = si - f32(d) * sf * t;
       let p = i32(floor(shifted));
-      for (var pp = p; pp <= p + 1; pp++) {
+      for (var pp = p - 1; pp <= p + 1; pp++) {
+        if (pp < 0 || pp >= i32(PS)) { continue; }
         let cov = probeFunc(pos, line_idx, pp, d, false, ls);
         if (cov >= 0.0) {
           let ai = atlasIdx(line_idx, pp, d, false, dc);
@@ -271,13 +264,12 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     total += gatherLine(pos, f32(si) + 0.5, line_idx, n, dc, ls);
 
-    // If odd line, also check the even (extended) line
     if ((line_idx & 1) == 1) {
       total += gatherLine(pos, f32(si) + 0.5, line_idx - 1, n, dc, ls);
     }
   }
 
-  // Write to fluence with 1px offset (Algorithm 1 line 20)
+  // Write to fluence with 1px offset
   let fc = rotateCoord(pi - 1, si, i32(PS), params.rotation);
   if (fc.x >= 0 && fc.x < i32(PS) && fc.y >= 0 && fc.y < i32(PS)) {
     let fi = fc.y * i32(PS) + fc.x;
@@ -286,7 +278,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// ── Fluence blur (same as vanilla HRC, Eq. 21) ──
+// ── Fluence blur (Eq. 21) ──
 const fluenceBlurShader = (ps: number) => /* wgsl */ `
 struct Params { ps: u32, pad0: u32, pad1: u32, pad2: u32 };
 @group(0) @binding(0) var<storage, read> src: array<vec4f>;
@@ -317,7 +309,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-// ── Blit (same as vanilla HRC) ──
+// ── Blit ──
 const blitShader = /* wgsl */ `
 struct Params { exposure: f32, ps: f32, falseColor: f32, pad0: f32 };
 fn acesTonemap(x: vec3f) -> vec3f {
@@ -418,42 +410,31 @@ export class FolkHrcMinimal extends ReactiveElement {
   #device!: GPUDevice;
   #context!: GPUCanvasContext;
   #presentationFormat!: GPUTextureFormat;
-
   #worldTexture!: GPUTexture;
   #worldTextureView!: GPUTextureView;
-
   #sceneCanvas: HTMLCanvasElement | null = null;
   #sceneCtx: CanvasRenderingContext2D | null = null;
   #compositeCanvas: HTMLCanvasElement | null = null;
   #compositeCtx: CanvasRenderingContext2D | null = null;
-
-  // Polygonal cascade buffers (reused across rotations)
   #cascadeBuffers!: GPUBuffer[];
   #fluenceBuffer!: GPUBuffer;
   #fluenceTextureView!: GPUTextureView;
-
-  // Pipelines
   #seedPipeline!: GPUComputePipeline;
   #extendPipeline!: GPUComputePipeline;
   #gatherPipeline!: GPUComputePipeline;
   #fluenceBlurPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
-
-  // Bind groups (per rotation for seed/gather, per cascade transition for extend)
   #seedBindGroups!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
   #gatherBindGroups!: GPUBindGroup[];
   #fluenceBlurBindGroup!: GPUBindGroup;
   #blitBindGroup!: GPUBindGroup;
   #linearSampler!: GPUSampler;
-
-  // Uniform buffers
   #seedParamsBuffer!: GPUBuffer;
   #extendParamsBuffers!: GPUBuffer[];
   #gatherParamsBuffer!: GPUBuffer;
   #blitParamsBuffer!: GPUBuffer;
   #fluenceBlurParamsBuffer!: GPUBuffer;
-
   #numCascades = 0;
   #gpuResources: (GPUTexture | GPUBuffer)[] = [];
   #blitParamsData = new Float32Array(4);
@@ -571,7 +552,6 @@ export class FolkHrcMinimal extends ReactiveElement {
     const STORAGE = GPUBufferUsage.STORAGE;
     const UBO = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
 
-    // World texture
     const [worldTex, worldView] = tex(
       device,
       'World',
@@ -582,7 +562,6 @@ export class FolkHrcMinimal extends ReactiveElement {
     this.#worldTexture = track(worldTex);
     this.#worldTextureView = worldView;
 
-    // Cascade buffers: all same size = ps*2 * ps * 16 bytes
     const cascadeBufSize = ps * 2 * ps * 16;
     this.#cascadeBuffers = [];
     for (let n = 0; n < nc; n++) {
@@ -597,7 +576,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       );
     }
 
-    // Fluence buffer
     this.#fluenceBuffer = track(
       device.createBuffer({
         label: 'Fluence',
@@ -606,7 +584,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       }),
     );
 
-    // Fluence texture (for blur output + blit)
     const [ft, fv] = tex(
       device,
       'FluenceTex',
@@ -620,7 +597,6 @@ export class FolkHrcMinimal extends ReactiveElement {
     track(ft);
     this.#fluenceTextureView = fv;
 
-    // Uniform buffers
     this.#seedParamsBuffer = track(device.createBuffer({ label: 'SeedParams', size: 8 * 256, usage: UBO }));
     this.#extendParamsBuffers = [];
     for (let n = 1; n < nc; n++) {
@@ -658,7 +634,6 @@ export class FolkHrcMinimal extends ReactiveElement {
     const device = this.#device;
     const nc = this.#numCascades;
 
-    // Seed: per rotation (4 bind groups, different params offset)
     const seedLayout = this.#seedPipeline.getBindGroupLayout(0);
     this.#seedBindGroups = [0, 1, 2, 3, 4, 5, 6, 7].map((rot) =>
       bg(
@@ -670,7 +645,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       ),
     );
 
-    // Extend: per cascade transition
     const extLayout = this.#extendPipeline.getBindGroupLayout(0);
     this.#extendBindGroups = [];
     for (let n = 1; n < nc; n++) {
@@ -685,7 +659,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       );
     }
 
-    // Gather: per rotation
     const gatherLayout = this.#gatherPipeline.getBindGroupLayout(0);
     this.#gatherBindGroups = [0, 1, 2, 3, 4, 5, 6, 7].map((rot) => {
       const resources: GPUBindingResource[] = [
@@ -696,7 +669,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       return bg(device, gatherLayout, ...resources);
     });
 
-    // Blur
     this.#fluenceBlurBindGroup = bg(
       device,
       this.#fluenceBlurPipeline.getBindGroupLayout(0),
@@ -706,7 +678,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       this.#worldTextureView,
     );
 
-    // Blit
     this.#blitBindGroup = bg(
       device,
       this.#renderPipeline.getBindGroupLayout(0),
@@ -723,7 +694,6 @@ export class FolkHrcMinimal extends ReactiveElement {
     const nc = this.#numCascades;
     const u4 = new Uint32Array(4);
 
-    // Seed params: per rotation (8 rotations for full 360° coverage)
     for (let rot = 0; rot < 8; rot++) {
       u4[0] = ps;
       u4[1] = rot;
@@ -731,8 +701,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       u4[3] = nc;
       q.writeBuffer(this.#seedParamsBuffer, rot * 256, u4);
     }
-
-    // Extend params: per cascade
     for (let n = 1; n < nc; n++) {
       u4[0] = ps;
       u4[1] = 0;
@@ -740,8 +708,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       u4[3] = nc;
       q.writeBuffer(this.#extendParamsBuffers[n - 1], 0, u4);
     }
-
-    // Gather params: per rotation (8 rotations)
     for (let rot = 0; rot < 8; rot++) {
       u4[0] = ps;
       u4[1] = rot;
@@ -749,8 +715,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       u4[3] = nc;
       q.writeBuffer(this.#gatherParamsBuffer, rot * 256, u4);
     }
-
-    // Blur params
     u4[0] = ps;
     u4[1] = 0;
     u4[2] = 0;
@@ -805,11 +769,10 @@ export class FolkHrcMinimal extends ReactiveElement {
   #renderFrame() {
     const ps = this.probeCount;
     const device = this.#device;
-    const wgA = Math.ceil((ps * 2) / WG[0]); // atlas width = ps*2
-    const wgH = Math.ceil(ps / WG[1]); // atlas/viewport height = ps
-    const wgS = Math.ceil(ps / WG[0]); // viewport width = ps
+    const wgA = Math.ceil((ps * 2) / WG[0]);
+    const wgH = Math.ceil(ps / WG[1]);
+    const wgS = Math.ceil(ps / WG[0]);
 
-    // Upload world texture
     this.#compositeWorld();
     device.queue.copyExternalImageToTexture(
       { source: this.#compositeCanvas! },
@@ -817,7 +780,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       { width: ps, height: ps },
     );
 
-    // Update blit params
     const f = this.#blitParamsData;
     f[0] = this.exposure;
     f[1] = ps;
@@ -826,19 +788,14 @@ export class FolkHrcMinimal extends ReactiveElement {
     device.queue.writeBuffer(this.#blitParamsBuffer, 0, f);
 
     const encoder = device.createCommandEncoder();
-
-    // Clear fluence
     encoder.clearBuffer(this.#fluenceBuffer);
 
-    // Process 8 rotations (4 quadrants × 2 halves for full 360°)
     for (let rot = 0; rot < 8; rot++) {
       this.#runCascade(encoder, rot, wgA, wgH, wgS);
     }
 
-    // Cross-blur
     computePass(encoder, this.#fluenceBlurPipeline, this.#fluenceBlurBindGroup, wgS, wgH);
 
-    // Blit
     {
       const pass = encoder.beginRenderPass({
         colorAttachments: [
@@ -862,19 +819,11 @@ export class FolkHrcMinimal extends ReactiveElement {
 
   #runCascade(encoder: GPUCommandEncoder, rot: number, wgA: number, wgH: number, wgS: number) {
     const nc = this.#numCascades;
-
-    // Clear all cascade buffers
     for (const buf of this.#cascadeBuffers) encoder.clearBuffer(buf);
-
-    // Phase 1: Seed C0
     computePass(encoder, this.#seedPipeline, this.#seedBindGroups[rot], wgA, wgH);
-
-    // Phase 2: Extend C0→C1→...→C_{N-1}
     for (let n = 0; n < nc - 1; n++) {
       computePass(encoder, this.#extendPipeline, this.#extendBindGroups[n], wgA, wgH);
     }
-
-    // Phase 3: Gather all cascades into fluence
     computePass(encoder, this.#gatherPipeline, this.#gatherBindGroups[rot], wgS, wgH);
   }
 }
