@@ -221,7 +221,7 @@ fn gatherLine(pos: vec2f, si: f32, line_idx: i32, n: u32, dc: u32, ls: u32) -> v
       let wmax = select(2.0, 3.0, ext);
       let shifted = si - f32(d) * sf * t;
       let p = i32(floor(shifted));
-      for (var pp = p - 1; pp <= p + 1; pp++) {
+      for (var pp = p - 3; pp <= p + 1; pp++) {
         if (pp < 0 || pp >= i32(PS)) { continue; }
         let cov = probeFunc(pos, line_idx, pp, d, true, ls);
         if (cov >= 0.0) {
@@ -235,7 +235,7 @@ fn gatherLine(pos: vec2f, si: f32, line_idx: i32, n: u32, dc: u32, ls: u32) -> v
     {
       let shifted = si - f32(d) * sf * t;
       let p = i32(floor(shifted));
-      for (var pp = p - 1; pp <= p + 1; pp++) {
+      for (var pp = p - 3; pp <= p + 1; pp++) {
         if (pp < 0 || pp >= i32(PS)) { continue; }
         let cov = probeFunc(pos, line_idx, pp, d, false, ls);
         if (cov >= 0.0) {
