@@ -38,7 +38,7 @@
   </head>
   <body>
     <canvas id="canvas"></canvas>
-    <div id="info">Move mouse to move light source. Click to toggle pause.</div>
+    <div id="info">Move mouse to move light. Click=pause. D=cycle debug (off/colors/colors+no-extend)</div>
     <div id="error"></div>
     <script type="module">
       // ─── Constants ───
@@ -59,7 +59,8 @@
 
       let mouseX = SIZE / 2,
         mouseY = SIZE / 2,
-        paused = false;
+        paused = false,
+        debugMode = 1;
       canvas.addEventListener('mousemove', (e) => {
         const r = canvas.getBoundingClientRect();
         mouseX = ((e.clientX - r.left) * SIZE) / r.width;
@@ -67,6 +68,9 @@
       });
       canvas.addEventListener('click', () => {
         paused = !paused;
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'd') debugMode = (debugMode + 1) % 3;
       });
 
       // ─── Shared WGSL ───
@@ -80,7 +84,7 @@ const ATL_W = ${ATLAS_W}u;
 const ATL_H = ${ATLAS_H}u;
 const ATL_SZ = ${ATLAS_W * ATLAS_H}u;
 
-struct Params { source_x: f32, source_y: f32, cascade_idx: u32, _pad: u32 }
+struct Params { source_x: f32, source_y: f32, cascade_idx: u32, debug: u32 }
 
 // Polygon coverage test. Returns x_ratio [0,1] if inside, -1 otherwise.
 fn polyFunc(pos: vec2f, lx: f32, ly: vec2f, rx: f32, ry: vec2f) -> f32 {
@@ -151,7 +155,18 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let idx = ty * i32(ATL_W) + tx;
   if (cov >= 0.0) {
-    cascade[idx] = vec4f(1.0);
+    if (params.debug > 0u) {
+      // Color by polygon type
+      let ext = (line_idx & 1) == 0;
+      var col: vec3f;
+      if (is_f && ext)       { col = vec3f(1.0, 0.3, 0.3); }  // frustum 1:3 = red
+      else if (is_f && !ext) { col = vec3f(0.3, 1.0, 0.3); }  // frustum 1:2 = green
+      else if (!is_f && ext) { col = vec3f(0.3, 0.3, 1.0); }  // band even = blue
+      else                   { col = vec3f(1.0, 1.0, 0.3); }  // band odd = yellow
+      cascade[idx] = vec4f(col, 0.0);
+    } else {
+      cascade[idx] = vec4f(1.0);
+    }
   } else {
     cascade[idx] = vec4f(0.0);
   }
@@ -307,8 +322,10 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       // ─── Blit Shader ───
       const blitWGSL = /* wgsl */ `
 const SIZE = ${SIZE}u;
+const PS   = ${PS}u;
 
 @group(0) @binding(0) var<storage, read> fluence: array<vec4f>;
+@group(0) @binding(1) var<uniform> blitParams: vec4f;
 
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   let p = array(vec2f(-1,-1), vec2f(3,-1), vec2f(-1,3));
@@ -319,10 +336,31 @@ const SIZE = ${SIZE}u;
   let px = i32(pos.x); let py = i32(pos.y);
   if (px >= i32(SIZE) || py >= i32(SIZE)) { return vec4f(0,0,0,1); }
   let f = fluence[py * i32(SIZE) + px];
-  let exposure = 5.0;
+  // Faint checkerboard at probe granularity (1 probe = 1 logical pixel)
+  let checker = 0.03 + 0.015 * f32(((px / i32(PS)) + (py / i32(PS))) & 1);
+  let bg = vec3f(checker);
+
+  let exposure = blitParams.x;
+  let debug = blitParams.y;
+  let mouseCell = vec2i(i32(blitParams.z) / i32(PS), i32(blitParams.w) / i32(PS));
+  let pixelCell = vec2i(px / i32(PS), py / i32(PS));
+  let isMouseCell = all(mouseCell == pixelCell);
+  let localXY = vec2i(px % i32(PS), py % i32(PS));
+  let onBorder = localXY.x == 0 || localXY.y == 0 || localXY.x == i32(PS) - 1 || localXY.y == i32(PS) - 1;
+
   let hdr = f.rgb * exposure;
-  let mapped = hdr / (hdr + vec3f(1.0));
-  return vec4f(pow(mapped, vec3f(1.0 / 2.2)), 1.0);
+  var mapped: vec3f;
+  if (debug > 0.5) {
+    mapped = hdr;  // no tonemap in debug
+  } else {
+    mapped = hdr / (hdr + vec3f(1.0));
+  }
+  var result = max(bg, pow(mapped, vec3f(1.0 / 2.2)));
+  // Highlight the active probe cell with a cyan border
+  if (isMouseCell && onBorder) {
+    result = mix(result, vec3f(0.0, 1.0, 0.9), 0.85);
+  }
+  return vec4f(result, 1.0);
 }
 `;
 
@@ -353,6 +391,7 @@ const SIZE = ${SIZE}u;
           device.createBuffer({ label: `c${i}`, size: ATLAS_BYTES, usage: STOR | CDST }),
         );
         const fluBuf = device.createBuffer({ label: 'flu', size: SIZE * SIZE * 16, usage: STOR | CDST });
+        const blitParamsBuf = device.createBuffer({ label: 'blitP', size: 16, usage: UNI });
 
         // Per-cascade params (source_pos updated per frame, cascade_idx fixed)
         const pBufs = Array.from({ length: NC }, (_, i) => {
@@ -409,7 +448,7 @@ const SIZE = ${SIZE}u;
           { buffer: fluBuf },
         ]);
 
-        const blitBG = bg(blitPipe, [{ buffer: fluBuf }]);
+        const blitBG = bg(blitPipe, [{ buffer: fluBuf }, { buffer: blitParamsBuf }]);
 
         const WG_A = Math.ceil(ATLAS_W / 16);
         const WG_AH = Math.ceil(ATLAS_H / 16);
@@ -418,10 +457,16 @@ const SIZE = ${SIZE}u;
 
         function frame() {
           if (!paused) {
-            // Update source position in all param buffers
+            // Update source position and debug mode in all param buffers
             srcData[0] = mouseX;
             srcData[1] = mouseY;
             for (let i = 0; i < NC; i++) device.queue.writeBuffer(pBufs[i], 0, srcData);
+            // Write debug flag to seed params (offset 12 = debug field)
+            const debugU32 = new Uint32Array([debugMode]);
+            device.queue.writeBuffer(pBufs[0], 12, debugU32);
+            // Write blit params: [exposure, debug, mouseX, mouseY]
+            const exposure = debugMode > 0 ? 1.0 : 5.0;
+            device.queue.writeBuffer(blitParamsBuf, 0, new Float32Array([exposure, debugMode, mouseX, mouseY]));
 
             const enc = device.createCommandEncoder();
 
@@ -438,13 +483,15 @@ const SIZE = ${SIZE}u;
               p.end();
             }
 
-            // Extend C0→C1→...→C4
-            for (let n = 0; n < NC - 1; n++) {
-              const p = enc.beginComputePass();
-              p.setPipeline(extendPipe);
-              p.setBindGroup(0, extBGs[n]);
-              p.dispatchWorkgroups(WG_A, WG_AH);
-              p.end();
+            // Extend C0→C1→...→C4 (skip in debug mode 2)
+            if (debugMode < 2) {
+              for (let n = 0; n < NC - 1; n++) {
+                const p = enc.beginComputePass();
+                p.setPipeline(extendPipe);
+                p.setBindGroup(0, extBGs[n]);
+                p.dispatchWorkgroups(WG_A, WG_AH);
+                p.end();
+              }
             }
 
             // Gather (brute force)
