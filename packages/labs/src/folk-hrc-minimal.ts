@@ -1,32 +1,355 @@
-// Minimal implementation of Holographic Radiance Cascades (HRC) for 2D global illumination.
-// Based on "Holographic Radiance Cascades for 2D Global Illumination" (Freeman, Sannikov, Margel).
+// Dual Polygonal HRC — custom element for 2D global illumination.
 //
-// The algorithm computes fluence F(p) — radiance integrated across all directions — at every
-// pixel in a square grid. It splits the work into four 90° quadrants (rotations 0–3), handled
-// identically by rotating the world coordinate system (§4.2, Algorithm 1 lines 17–24).
+// Implements Alexander Sannikov's dual polygonal radiance cascade layout:
+//   1. Seed C0 from world texture (per polygon, read emissive at probe position)
+//   2. Extend C0→C1→...→C_{N-1} (each polygon reads 2 source polygons)
+//   3. Gather all cascades into fluence (efficient per-pixel lookup)
+//   4. Cross-blur + tonemap
 //
-// Each quadrant runs three phases:
-//   1. Merge Up (Seed → Extend)  — Build acceleration structure T_n from single-pixel seeds (§4.1, Eq. 18/20)
-//   2. Merge Down (Cascade Merge) — Compute angular fluence R_n from R_{n+1} down to R_0 (§4.2, Eq. 14/15)
-//   3. Accumulate — Write R_0 into the fluence buffer with a 1px offset (Alg. 1 line 20)
+// Key differences from vanilla HRC (FolkHrcMinimal):
+//   - Polygonal frustums (1:1 bands + 1:2/1:3 frustums) tile radiance field gaplessly
+//   - Extensions propagate radiance through polygon connectivity, not ray compositing
+//   - Gather sums polygon contributions with Chebyshev-distance falloff
+//   - No occlusion in this version (radiance only, no transmittance)
 //
-// After all four quadrants, a cross-blur (Eq. 21) fixes checkerboard artifacts from the
-// even/odd probe structure, then the result is tonemapped and displayed.
-//
-// This implementation assumes probeCount (grid size) is always a power of 2, which greatly
-// simplifies the math: levelProbes = ps >> level, mergeStride = ps, mergeInWidth = ps, etc.
-//
-// The world texture is populated entirely from a CPU-side composite canvas each frame.
-// The scene canvas holds persistent user drawing; the composite canvas layers the ephemeral
-// mouse light on top using 'copy' compositing (exact pixel values, no blending).
+// Polygon layout (per cascade n, in rotated coordinates):
+//   - line_spacing = 1 << n, dirs_count = 1 << n
+//   - Lines at pi = 0, ls, 2*ls, ...
+//   - Even lines: "extended" (stride=2), odd lines: stride=1
+//   - Each polygon indexed by (line_idx, probe_idx, dir_idx, is_frustum)
+//   - Atlas: width = probeCount * 2, height = probeCount (constant across cascades)
+//   - Two types per direction: frustum (expanding 1→2 or 1→3) and band (constant 1→1)
 
 import { css, property, ReactiveElement, type CSSResultGroup, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 
-const TEX_RENDER = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
-
 const WG = [16, 16] as const;
 
+// ── Shared WGSL ──
+
+const wgslCommon = (ps: number) => /* wgsl */ `
+const PS: u32 = ${ps}u;
+const PS2: u32 = ${ps * 2}u;  // atlas width = probeCount * 2
+const PSf: f32 = ${ps}.0;
+
+struct Params { ps: u32, rotation: u32, cascade_idx: u32, num_cascades: u32 };
+
+fn rotateCoord(pi: i32, si: i32, ps: i32, rot: u32) -> vec2i {
+  // Rotations 0-3: polygons fan in +si direction (covers 0° to 45° of each quadrant)
+  // Rotations 4-7: mirror si (covers -45° to 0° of each quadrant)
+  switch (rot) {
+    case 0u: { return vec2i(pi, si); }
+    case 1u: { return vec2i(si, pi); }
+    case 2u: { return vec2i(ps - 1 - pi, si); }
+    case 3u: { return vec2i(si, ps - 1 - pi); }
+    case 4u: { return vec2i(pi, ps - 1 - si); }
+    case 5u: { return vec2i(ps - 1 - si, pi); }
+    case 6u: { return vec2i(ps - 1 - pi, ps - 1 - si); }
+    case 7u: { return vec2i(ps - 1 - si, ps - 1 - pi); }
+    default: { return vec2i(pi, si); }
+  }
+}
+
+fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
+
+// Polygon coverage: returns x_ratio in [0,1] if pos is inside, -1 otherwise
+fn polyFunc(pos: vec2f, lx: f32, ly: vec2f, rx: f32, ry: vec2f) -> f32 {
+  if (pos.x >= lx && pos.x < rx) {
+    let t = (pos.x - lx) / (rx - lx);
+    let yr = mix(ly, ry, vec2f(t));
+    if (pos.y >= yr.x && pos.y < yr.y) { return t; }
+  }
+  return -1.0;
+}
+
+fn probeFunc(pos: vec2f, line_idx: i32, probe_idx: i32, dir_idx: i32,
+             is_frustum: bool, line_spacing: u32) -> f32 {
+  let ls = f32(line_spacing);
+  let pf = f32(probe_idx);
+  let df = f32(dir_idx);
+  let lx = f32(line_idx) * ls;
+  let ly = vec2f(pf, pf + 1.0);
+  let ext = (line_idx & 1) == 0;
+  let stride = select(1, 2, ext);
+  let sf = f32(stride);
+  let rx = f32(line_idx + stride) * ls;
+  var wmax: f32;
+  if (is_frustum) { wmax = select(2.0, 3.0, ext); } else { wmax = 1.0; }
+  let ry = vec2f(pf + df * sf, pf + df * sf + wmax);
+  return polyFunc(pos, lx, ly, rx, ry);
+}
+
+fn atlasIdx(line_idx: i32, probe_idx: i32, dir_idx: i32, is_frustum: bool, dirs_count: u32) -> i32 {
+  let x = line_idx * i32(dirs_count * 2u) + select(i32(dirs_count), 0, is_frustum) + dir_idx;
+  let y = probe_idx;
+  if (x < 0 || x >= i32(PS2) || y < 0 || y >= i32(PS)) { return -1; }
+  return y * i32(PS2) + x;
+}
+
+fn falloffRange(n: u32) -> vec2f {
+  return vec2f(1.0) / vec2f(f32(1u << n), f32(1u << (n + 1u)));
+}
+`;
+
+// ── Seed Shader ──
+// For each C0 polygon, read world texture at the probe's rotated position.
+const seedShader = (ps: number) =>
+  wgslCommon(ps) +
+  /* wgsl */ `
+@group(0) @binding(0) var worldTex: texture_2d<f32>;
+@group(0) @binding(1) var<storage, read_write> cascade: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: Params;
+
+@compute @workgroup_size(${WG[0]}, ${WG[1]})
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = i32(gid.x); let ty = i32(gid.y);
+  if (tx >= i32(PS2) || ty >= i32(PS)) { return; }
+
+  // C0: line_spacing=1, dirs_count=1
+  let dc = 1u;
+  let line_idx = tx / i32(dc * 2u);
+  let rem = tx % i32(dc * 2u);
+  let is_frustum = rem < i32(dc);
+  let probe_idx = ty;
+  let pi = line_idx;  // in rotated coords, pi = line_idx for C0 (ls=1)
+  let si = probe_idx;
+
+  let px = rotateCoord(pi, si, i32(PS), params.rotation);
+  var rad = vec3f(0.0);
+  if (px.x >= 0 && px.y >= 0 && px.x < i32(PS) && px.y < i32(PS)) {
+    let world = textureLoad(worldTex, px, 0);
+    let rgb = srgbToLinear(world.rgb);
+    rad = rgb * world.a;
+  }
+
+  cascade[ty * i32(PS2) + tx] = vec4f(rad, 0.0);
+}
+`;
+
+// ── Extend Shader ──
+// Each polygon at cascade n+1 reads 2 polygons from cascade n.
+// Connectivity from Alexander's PolygonalHRC45 ExtendCascade.
+const extendShader = (ps: number) =>
+  wgslCommon(ps) +
+  /* wgsl */ `
+@group(0) @binding(0) var<storage, read> src: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> dst: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: Params;
+
+fn readSrc(li: i32, pi: i32, di: i32, is_f: bool, dc: u32) -> vec4f {
+  let i = atlasIdx(li, pi, di, is_f, dc);
+  if (i < 0 || i >= i32(PS * PS2)) { return vec4f(0.0); }
+  return src[i];
+}
+
+@compute @workgroup_size(${WG[0]}, ${WG[1]})
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = i32(gid.x); let ty = i32(gid.y);
+  if (tx >= i32(PS2) || ty >= i32(PS)) { return; }
+
+  let dst_n = params.cascade_idx;
+  let dst_dc = 1u << dst_n;
+  let src_dc = 1u << (dst_n - 1u);
+
+  let line_idx = tx / i32(dst_dc * 2u);
+  let rem = tx % i32(dst_dc * 2u);
+  let is_f = rem < i32(dst_dc);
+  let dir_idx = rem % i32(dst_dc);
+  let pi = ty;
+
+  var res = vec4f(0.0);
+
+  if (is_f) {
+    // Frustum: read from 2 src lines
+    {
+      let sl = line_idx * 2 - 2;
+      let sd = dir_idx / 2;
+      if ((dir_idx & 1) == 0) {
+        res += readSrc(sl, pi - dir_idx, sd, true, src_dc);
+      } else {
+        res += readSrc(sl, pi - dir_idx - 1, sd, true, src_dc);
+      }
+    }
+    {
+      let sl = line_idx * 2 - 1;
+      let sd = dir_idx / 2;
+      res += readSrc(sl, pi - sd, sd, true, src_dc);
+    }
+  } else {
+    // Band: read from 2 src lines (asymmetric)
+    {
+      let sl = line_idx * 2 - 2;
+      let sd = dir_idx / 2;
+      if ((dir_idx & 1) == 1) {
+        res += readSrc(sl, pi - dir_idx, sd, true, src_dc);
+      } else {
+        res += readSrc(sl, pi - dir_idx, sd, false, src_dc);
+      }
+    }
+    if ((dir_idx & 1) == 0) {
+      let sl = line_idx * 2 - 1;
+      let sd = dir_idx / 2;
+      res += readSrc(sl, pi - sd, sd, false, src_dc);
+    }
+  }
+
+  dst[ty * i32(PS2) + tx] = res;
+}
+`;
+
+// ── Gather Shader ──
+// Efficient per-pixel: for each cascade, compute covering line, then iterate
+// over directions and find the covering probe. O(dirs_count) per cascade.
+// Accumulates into fluence with 1px offset (matching vanilla HRC).
+const gatherShader = (ps: number, nc: number) =>
+  wgslCommon(ps) +
+  /* wgsl */ `
+${Array.from({ length: nc }, (_, i) => `@group(0) @binding(${i}) var<storage, read> c${i}: array<vec4f>;`).join('\n')}
+@group(0) @binding(${nc}) var<storage, read_write> fluence: array<vec4f>;
+@group(0) @binding(${nc + 1}) var<uniform> params: Params;
+
+fn readC(n: u32, i: i32) -> vec4f {
+  if (i < 0 || i >= i32(PS * PS2)) { return vec4f(0.0); }
+  ${Array.from({ length: nc }, (_, i) => `if (n == ${i}u) { return c${i}[i]; }`).join('\n  ')}
+  return vec4f(0.0);
+}
+
+fn gatherLine(pos: vec2f, si: f32, line_idx: i32, n: u32, dc: u32, ls: u32) -> vec3f {
+  let ext = (line_idx & 1) == 0;
+  let stride = select(1, 2, ext);
+  let left_x = f32(line_idx * i32(ls));
+  let right_x = f32((line_idx + stride) * i32(ls));
+  if (pos.x < left_x || pos.x >= right_x) { return vec3f(0.0); }
+  let t = (pos.x - left_x) / (right_x - left_x);
+  let fo = falloffRange(n);
+
+  var result = vec3f(0.0);
+  for (var d = 0; d < i32(dc); d++) {
+    let sf = f32(select(1, 2, ext));
+    // Frustum
+    {
+      let wmax = select(2.0, 3.0, ext);
+      let shifted = si - f32(d) * sf * t;
+      let p = i32(floor(shifted));
+      for (var pp = p; pp <= p + 1; pp++) {
+        let cov = probeFunc(pos, line_idx, pp, d, true, ls);
+        if (cov >= 0.0) {
+          let ai = atlasIdx(line_idx, pp, d, true, dc);
+          let val = readC(n, ai);
+          result += val.rgb * mix(fo.x, fo.y, cov);
+        }
+      }
+    }
+    // Band
+    {
+      let shifted = si - f32(d) * sf * t;
+      let p = i32(floor(shifted));
+      for (var pp = p; pp <= p + 1; pp++) {
+        let cov = probeFunc(pos, line_idx, pp, d, false, ls);
+        if (cov >= 0.0) {
+          let ai = atlasIdx(line_idx, pp, d, false, dc);
+          let val = readC(n, ai);
+          result += val.rgb * mix(fo.x, fo.y, cov);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+@compute @workgroup_size(${WG[0]}, ${WG[1]})
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let pi = i32(gid.x); let si = i32(gid.y);
+  if (pi >= i32(PS) || si >= i32(PS)) { return; }
+
+  let pos = vec2f(f32(pi) + 0.5, f32(si) + 0.5);
+  var total = vec3f(0.0);
+
+  for (var n = 0u; n < ${nc}u; n++) {
+    let ls = 1u << n;
+    let dc = 1u << n;
+    let line_idx = pi / i32(ls);
+
+    total += gatherLine(pos, f32(si) + 0.5, line_idx, n, dc, ls);
+
+    // If odd line, also check the even (extended) line
+    if ((line_idx & 1) == 1) {
+      total += gatherLine(pos, f32(si) + 0.5, line_idx - 1, n, dc, ls);
+    }
+  }
+
+  // Write to fluence with 1px offset (Algorithm 1 line 20)
+  let fc = rotateCoord(pi - 1, si, i32(PS), params.rotation);
+  if (fc.x >= 0 && fc.x < i32(PS) && fc.y >= 0 && fc.y < i32(PS)) {
+    let fi = fc.y * i32(PS) + fc.x;
+    fluence[fi] = vec4f(fluence[fi].rgb + total, 0.0);
+  }
+}
+`;
+
+// ── Fluence blur (same as vanilla HRC, Eq. 21) ──
+const fluenceBlurShader = (ps: number) => /* wgsl */ `
+struct Params { ps: u32, pad0: u32, pad1: u32, pad2: u32 };
+@group(0) @binding(0) var<storage, read> src: array<vec4f>;
+@group(0) @binding(1) var dst: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var<uniform> params: Params;
+@group(0) @binding(3) var worldTex: texture_2d<f32>;
+
+fn load(x: i32, y: i32) -> vec3f { return src[y * i32(params.ps) + x].rgb; }
+
+@compute @workgroup_size(${WG[0]}, ${WG[1]})
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let x = i32(gid.x); let y = i32(gid.y);
+  let ps = i32(params.ps);
+  if (x >= ps || y >= ps) { return; }
+  let centerOpacity = textureLoad(worldTex, vec2i(x, y), 0).a;
+  let center = load(x, y);
+  var sum = center * 4.0;
+  var wt = 4.0;
+  let off = array<vec2i, 4>(vec2i(-1,0), vec2i(1,0), vec2i(0,-1), vec2i(0,1));
+  for (var i = 0; i < 4; i++) {
+    let nx = clamp(x + off[i].x, 0, ps - 1);
+    let ny = clamp(y + off[i].y, 0, ps - 1);
+    if (abs(textureLoad(worldTex, vec2i(nx, ny), 0).a - centerOpacity) < 0.5) {
+      sum += load(nx, ny); wt += 1.0;
+    }
+  }
+  textureStore(dst, vec2i(x, y), vec4f(sum / wt, 1.0));
+}
+`;
+
+// ── Blit (same as vanilla HRC) ──
+const blitShader = /* wgsl */ `
+struct Params { exposure: f32, ps: f32, falseColor: f32, pad0: f32 };
+fn acesTonemap(x: vec3f) -> vec3f {
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
+}
+fn linearToSrgb(c: vec3f) -> vec3f { return pow(c, vec3f(1.0 / 2.2)); }
+fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let pos = array(vec2f(-1,-1), vec2f(1,-1), vec2f(-1,1), vec2f(1,1));
+  return vec4f(pos[i], 0, 1);
+}
+
+@group(0) @binding(0) var fluenceTex: texture_2d<f32>;
+@group(0) @binding(1) var worldTex: texture_2d<f32>;
+@group(0) @binding(2) var<uniform> params: Params;
+@group(0) @binding(3) var linearSamp: sampler;
+
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let uv = pos.xy / params.ps;
+  let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
+  let world = textureLoad(worldTex, vec2u(pos.xy), 0);
+  let rgb = srgbToLinear(world.rgb);
+  let emissive = rgb * world.a;
+  let indirect = fluence / 6.2831853 * (1.0 - world.a);
+  let hdr = emissive + indirect;
+  return vec4f(linearToSrgb(acesTonemap(hdr * params.exposure)), 1.0);
+}
+`;
+
 // ── WebGPU helpers ──
+const TEX_RENDER = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
 
 function tex(device: GPUDevice, label: string, size: number, format: GPUTextureFormat, usage: number) {
   const t = device.createTexture({ label, size: { width: size, height: size }, format, usage });
@@ -62,375 +385,6 @@ function computePass(
   pass.end();
 }
 
-// ── Shared WGSL ──
-
-const wgslPackF16 = /*wgsl*/ `
-fn packF16(v: vec4f) -> vec2u { return vec2u(pack2x16float(v.xy), pack2x16float(v.zw)); }
-fn unpackF16(p: vec2u) -> vec4f { return vec4f(unpack2x16float(p.x), unpack2x16float(p.y)); }
-`;
-
-const wgslSrgb = /*wgsl*/ `
-fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
-`;
-
-// Computes the slice-axis offset for a ray direction within an interval.
-// dirIdx is the ray index, intervalSize is the number of directions (2^level).
-// Result is the perpendicular displacement: dirIdx * 2 - intervalSize.
-const wgslSliceOffset = /*wgsl*/ `
-fn dirToSliceOffset(dirIdx: i32, intervalSize: i32) -> i32 {
-  return dirIdx * 2 - intervalSize;
-}
-`;
-
-// Maps (probeIdx, sliceIdx) in the 1D cascade coordinate system to 2D world pixel coordinates.
-// Each of the 4 rotations covers a 90° quadrant of angular fluence (§4.2, Algorithm 1).
-const wgslRotate = /*wgsl*/ `
-fn rotateCoord(pi: i32, si: i32, ps: i32, rot: u32) -> vec2i {
-  switch (rot) {
-    case 0u: { return vec2i(pi, si); }
-    case 1u: { return vec2i(si, pi); }
-    case 2u: { return vec2i(ps - 1 - pi, si); }
-    case 3u: { return vec2i(si, ps - 1 - pi); }
-    default: { return vec2i(pi, si); }
-  }
-}
-`;
-
-// Eq. 7: Composite ray — near segment absorbs/emits before far segment.
-// Merge(⟨r_n, t_n⟩, ⟨r_f, t_f⟩) = ⟨r_n + t_n · r_f, t_n · t_f⟩
-const wgslRayData = /*wgsl*/ `
-struct RayData { rad: vec3f, trans: f32 }
-fn compositeRay(near: RayData, far: RayData) -> RayData {
-  return RayData(near.rad + far.rad * near.trans, near.trans * far.trans);
-}
-`;
-
-// ── Phase 1a: Ray Seed — Initialize T_0 ──
-// Seeds the base level of the acceleration structure (§4.1, Algorithm 1 lines 2–3).
-// Since probe spacing = 1 pixel, T_0(p, k) = Trace(p, p + v_0(k)) is just a single-pixel
-// lookup from the world texture. Each probe reads the (emissive radiance, transmittance)
-// pair at its rotated world position.
-
-const raySeedShader =
-  wgslPackF16 +
-  wgslSrgb +
-  wgslRotate +
-  /*wgsl*/ `
-struct Params { ps: u32, rotation: u32, pad0: u32, pad1: u32 };
-
-@group(0) @binding(0) var worldTex: texture_2d<f32>;
-@group(0) @binding(1) var<storage, read_write> rayOut: array<vec2u>;
-@group(0) @binding(2) var<uniform> params: Params;
-
-@compute @workgroup_size(${WG[0]}, ${WG[1]})
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let pi = i32(gid.x);
-  let si = i32(gid.y);
-  let ps = i32(params.ps);
-  if (pi >= ps || si >= ps) { return; }
-
-  let px = rotateCoord(pi, si, ps, params.rotation);
-
-  var rad = vec3f(0.0);
-  var trans = 1.0;
-  if (px.x >= 0 && px.y >= 0 && px.x < ps && px.y < ps) {
-    let world = textureLoad(worldTex, px, 0);
-    let rgb = srgbToLinear(world.rgb);
-    trans = 1.0 - world.a;
-    rad = rgb * world.a;
-  }
-
-  rayOut[si * ps + pi] = packF16(vec4f(rad, trans));
-}
-`;
-
-// ── Phase 1b: Ray Extension — Build T_n from T_{n-1} ──
-// Builds the acceleration structure by combining shorter rays into longer ones
-// (§4.1, Algorithm 1 lines 4–10).
-//
-// For even ray index 2k: T_{n}(p, 2k) = Merge(T_{n-1}(p, k), T_{n-1}(p + v_{n-1}(k), k))  [Eq. 18]
-// For odd ray index 2k+1: T_{n}(p, 2k+1) = average of two cross-composited paths            [Eq. 19/20]
-//
-// All layout parameters (levelProbes, numRays, row widths) are computed inline
-// from ps and level since ps is always a power of 2.
-
-const rayExtendShader =
-  wgslPackF16 +
-  wgslSliceOffset +
-  wgslRayData +
-  /*wgsl*/ `
-struct Params { ps: u32, level: u32, pad0: u32, pad1: u32 };
-
-@group(0) @binding(0) var<storage, read> prevRay: array<vec2u>;
-@group(0) @binding(1) var<storage, read_write> currRay: array<vec2u>;
-@group(0) @binding(2) var<uniform> params: Params;
-
-fn loadPrev(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
-  let prevLevel = params.level - 1u;
-  let prevProbes = i32(params.ps >> prevLevel);
-  let prevNumRays = i32(1u << prevLevel) + 1;
-  if (probeIdx < 0 || probeIdx >= prevProbes ||
-      rayIdx < 0 || rayIdx >= prevNumRays ||
-      sliceIdx < 0 || sliceIdx >= i32(params.ps)) {
-    return RayData(vec3f(0.0), 1.0);
-  }
-  var idx: i32;
-  if (prevLevel == 0u) {
-    // T_0 has one value per probe, no angular interleaving
-    idx = sliceIdx * i32(params.ps) + probeIdx;
-  } else {
-    let rowW = prevProbes * prevNumRays;
-    idx = sliceIdx * rowW + probeIdx * prevNumRays + rayIdx;
-  }
-  let r = unpackF16(prevRay[idx]);
-  return RayData(r.rgb, r.a);
-}
-
-@compute @workgroup_size(${WG[0]}, ${WG[1]})
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let texelX = i32(gid.x);
-  let sliceIdx = i32(gid.y);
-  let ps = i32(params.ps);
-  let level = params.level;
-  let interval = i32(1u << level);
-  let numRays = interval + 1;
-  let levelProbes = i32(params.ps >> level);
-  let probeIdx = texelX / numRays;
-  let rayIdx = texelX - probeIdx * numRays;
-  if (probeIdx >= levelProbes || sliceIdx >= ps) { return; }
-
-  let prevInterval = interval / 2;
-  let lower = rayIdx / 2;
-  let upper = (rayIdx + 1) / 2;
-
-  // Eq. 19/20: Cross-composite two paths and average for odd indices.
-  // For even indices this is exact (Eq. 18) since lower == upper.
-  let crossA = compositeRay(
-    loadPrev(probeIdx * 2, lower, sliceIdx),
-    loadPrev(probeIdx * 2 + 1, upper, sliceIdx + dirToSliceOffset(lower, prevInterval)),
-  );
-  let crossB = compositeRay(
-    loadPrev(probeIdx * 2, upper, sliceIdx),
-    loadPrev(probeIdx * 2 + 1, lower, sliceIdx + dirToSliceOffset(upper, prevInterval)),
-  );
-
-  let rowW = levelProbes * numRays;
-  currRay[sliceIdx * rowW + texelX] = packF16(vec4f(
-    (crossA.rad + crossB.rad) * 0.5,
-    (crossA.trans + crossB.trans) * 0.5,
-  ));
-}
-`;
-
-// ── Phase 2: Cascade Merge — Compute R_n from R_{n+1} ──
-// Computes angular fluence by merging rays with higher-cascade results, working from the
-// top cascade (R_{N-1}, initialized to 0) down to R_0 (§4.2, Algorithm 1 lines 11–18).
-//
-// For odd probeIdx (x):  Eq. 14 — trace to the next probe and merge with R_{n+1} there
-// For even probeIdx (x): Eq. 15 — interpolate near/far fluence to avoid center-bias artifacts
-//
-// At level 0 (single direction per probe), the result is accumulated into the fluence buffer
-// with a 1-pixel offset: L([x,y]) += R_0([x+1, y], 0) (Algorithm 1 line 20).
-//
-// Cone arc weights A_n(i) are computed inline using Eq. 13.
-
-const cascadeMergeShader =
-  wgslPackF16 +
-  wgslSliceOffset +
-  wgslRotate +
-  wgslRayData +
-  /*wgsl*/ `
-struct Params { ps: u32, level: u32, numCascades: u32, rotation: u32 };
-
-@group(0) @binding(0) var<storage, read> rayBuf: array<vec2u>;
-@group(0) @binding(1) var<storage, read> mergeInBuf: array<vec4f>;
-@group(0) @binding(2) var<storage, read_write> mergeOutBuf: array<vec4f>;
-@group(0) @binding(3) var<uniform> params: Params;
-@group(0) @binding(4) var<storage, read_write> fluenceBuf: array<vec4f>;
-
-// Eq. 13: A_n(i) = angle(v_n(i + 1/2)) - angle(v_n(i - 1/2))
-// where v_n(k) = (2^n, 2k - 2^n) and angle([x,y]) = atan2(y, x).
-// s is the sub-bin index, N = 2^(level+1) is the total number of sub-bins.
-fn coneArc(s: u32, level: u32) -> f32 {
-  let N = i32(2u << level);
-  let si = i32(s);
-  return atan2(f32(2 * si - N + 2), f32(N)) - atan2(f32(2 * si - N), f32(N));
-}
-
-fn loadRay(probeIdx: i32, rayIdx: i32, sliceIdx: i32) -> RayData {
-  let ps = i32(params.ps);
-  let levelProbes = i32(params.ps >> params.level);
-  let numRays = i32(1u << params.level) + 1;
-  if (probeIdx < 0 || probeIdx >= levelProbes ||
-      rayIdx < 0 || rayIdx >= numRays ||
-      sliceIdx < 0 || sliceIdx >= ps) {
-    return RayData(vec3f(0.0), 1.0);
-  }
-  var texX: i32; var rowW: i32;
-  if (params.level == 0u) {
-    texX = probeIdx; rowW = ps;
-  } else {
-    rowW = levelProbes * numRays;
-    texX = probeIdx * numRays + rayIdx;
-  }
-  let r = unpackF16(rayBuf[sliceIdx * rowW + texX]);
-  return RayData(r.rgb, r.a);
-}
-
-fn loadMerge(texX: i32, sliceIdx: i32) -> vec3f {
-  let ps = i32(params.ps);
-  if (params.level >= params.numCascades - 1u ||
-      texX < 0 || texX >= ps || sliceIdx < 0 || sliceIdx >= ps) {
-    return vec3f(0.0);
-  }
-  return mergeInBuf[sliceIdx * ps + texX].rgb;
-}
-
-@compute @workgroup_size(${WG[0]}, ${WG[1]})
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let probeAngIdx = i32(gid.x);
-  let sliceIdx = i32(gid.y);
-  let ps = i32(params.ps);
-  let level = params.level;
-  let numDirections = i32(1u << level);
-  let probeIdx = probeAngIdx >> level;
-  let angBinIdx = probeAngIdx & (numDirections - 1);
-  let levelProbes = i32(params.ps >> level);
-  if (probeIdx >= levelProbes || sliceIdx >= ps) { return; }
-
-  // Odd probes (Eq. 14) merge with nearest plane; even probes (Eq. 15) interpolate near/far.
-  let isEven = (probeIdx % 2 == 0);
-  let farStep = select(1, 2, isEven);
-  var result = vec3f(0.0);
-
-  for (var side = 0; side < 2; side++) {
-    let subBin = u32(angBinIdx * 2 + side);
-    let rayIdx = angBinIdx + side;
-    let weight = coneArc(subBin, level);
-    let ray = loadRay(probeIdx, rayIdx, sliceIdx);
-    let sliceOff = dirToSliceOffset(rayIdx, numDirections);
-
-    let farX = ((probeIdx + farStep) << level) + i32(subBin);
-    let farSlice = sliceIdx + sliceOff * farStep;
-    var farFluence: vec3f;
-    if (level >= params.numCascades - 1u ||
-        farX < 0 || farX >= ps || farSlice < 0 || farSlice >= ps) {
-      farFluence = vec3f(0.0);
-    } else {
-      farFluence = mergeInBuf[farSlice * ps + farX].rgb;
-    }
-
-    if (isEven) {
-      // Eq. 15: composite ray through both probes, then interpolate with near-plane estimate
-      let ext = loadRay(probeIdx + 1, rayIdx, sliceIdx + sliceOff);
-      let comp = compositeRay(ray, ext);
-      let merged = comp.rad * weight + farFluence * comp.trans;
-      result += (merged + loadMerge((probeIdx << level) + i32(subBin), sliceIdx)) * 0.5;
-    } else {
-      // Eq. 14: single probe, merge with far-cascade fluence
-      result += ray.rad * weight + farFluence * ray.trans;
-    }
-  }
-
-  if (numDirections > 1) {
-    mergeOutBuf[sliceIdx * ps + (probeIdx << level) + angBinIdx] = vec4f(result, 0.0);
-  }
-
-  // At level 0: write fluence with 1px probe offset (Algorithm 1, line 20).
-  if (numDirections == 1) {
-    let fc = rotateCoord(probeIdx - 1, sliceIdx, ps, params.rotation);
-    if (fc.x >= 0 && fc.x < ps && fc.y >= 0 && fc.y < ps) {
-      let fi = fc.y * ps + fc.x;
-      fluenceBuf[fi] = vec4f(fluenceBuf[fi].rgb + result, 0.0);
-    }
-  }
-}
-`;
-
-// ── Blit shader ──
-
-const blitShader = /*wgsl*/ `
-struct Params { exposure: f32, ps: f32, falseColor: f32, pad0: f32 };
-const TWO_PI = 6.2831853;
-
-fn srgbToLinear(c: vec3f) -> vec3f { return pow(c, vec3f(2.2)); }
-fn acesTonemap(x: vec3f) -> vec3f {
-  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0));
-}
-fn linearToSrgb(c: vec3f) -> vec3f { return pow(c, vec3f(1.0 / 2.2)); }
-fn pcg(v: u32) -> u32 { let s = v * 747796405u + 2891336453u; let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u; return (w >> 22u) ^ w; }
-fn triangularDither(fc: vec2u) -> vec3f { let s = fc.x + fc.y * 8192u; return vec3f((f32(pcg(s)) + f32(pcg(s + 1u))) / 4294967295.0 - 1.0) / 255.0; }
-
-const RAMP = array<vec3f, 10>(
-  vec3f(0.0), vec3f(0.05,0.0,0.3), vec3f(0.0,0.2,1.0), vec3f(0.0,0.9,0.9), vec3f(0.1,0.9,0.1),
-  vec3f(1.0,0.95,0.1), vec3f(1.0,0.5,0.0), vec3f(1.0,0.0,0.0), vec3f(1.0,0.5,0.8), vec3f(1.0),
-);
-fn spectrumRamp(t: f32) -> vec3f { let s = clamp(t, 0.0, 1.0) * 9.0; let i = min(u32(s), 8u); return mix(RAMP[i], RAMP[i+1u], fract(s)); }
-
-@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-  let pos = array(vec2f(-1,-1), vec2f(1,-1), vec2f(-1,1), vec2f(1,1));
-  return vec4f(pos[i], 0, 1);
-}
-
-@group(0) @binding(0) var fluenceTex: texture_2d<f32>;
-@group(0) @binding(1) var worldTex: texture_2d<f32>;
-@group(0) @binding(2) var<uniform> params: Params;
-@group(0) @binding(3) var linearSamp: sampler;
-
-@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let uv = pos.xy / params.ps;
-  let fluence = textureSampleLevel(fluenceTex, linearSamp, uv, 0.0).rgb;
-  let world = textureLoad(worldTex, vec2u(pos.xy), 0);
-  let rgb = srgbToLinear(world.rgb);
-  let emissive = rgb * world.a;
-  let indirect = fluence / TWO_PI * (1.0 - world.a);
-  let hdr = emissive + indirect;
-  if (params.falseColor > 0.5) {
-    let mag = dot(fluence, vec3f(0.2126, 0.7152, 0.0722));
-    return vec4f(spectrumRamp(clamp(log2(mag * 10000.0 + 1.0) / log2(10001.0), 0.0, 1.0)), 1.0);
-  }
-  return vec4f(linearToSrgb(acesTonemap(hdr * params.exposure)) + triangularDither(vec2u(pos.xy)), 1.0);
-}
-`;
-
-// ── Fluence cross-blur (Eq. 21) ──
-// Applies a 1px edge-aware cross blur [0 1 0; 1 4 1; 0 1 0] / 8 to fix checkerboard
-// artifacts from the even/odd probe structure. Neighbors with significantly different
-// opacity are excluded to preserve silhouettes.
-
-const fluenceBlurShader = /*wgsl*/ `
-struct Params { ps: u32, pad0: u32, pad1: u32, pad2: u32 };
-
-@group(0) @binding(0) var<storage, read> src: array<vec4f>;
-@group(0) @binding(1) var dst: texture_storage_2d<rgba16float, write>;
-@group(0) @binding(2) var<uniform> params: Params;
-@group(0) @binding(3) var worldTex: texture_2d<f32>;
-
-fn load(x: i32, y: i32) -> vec3f { return src[y * i32(params.ps) + x].rgb; }
-
-@compute @workgroup_size(${WG[0]}, ${WG[1]})
-fn main(@builtin(global_invocation_id) gid: vec3u) {
-  let x = i32(gid.x); let y = i32(gid.y);
-  let ps = i32(params.ps);
-  if (x >= ps || y >= ps) { return; }
-
-  let centerOpacity = textureLoad(worldTex, vec2i(x, y), 0).a;
-  let center = load(x, y);
-  var sum = center * 4.0;
-  var wt = 4.0;
-
-  let off = array<vec2i, 4>(vec2i(-1,0), vec2i(1,0), vec2i(0,-1), vec2i(0,1));
-  for (var i = 0; i < 4; i++) {
-    let nx = clamp(x + off[i].x, 0, ps - 1);
-    let ny = clamp(y + off[i].y, 0, ps - 1);
-    if (abs(textureLoad(worldTex, vec2i(nx, ny), 0).a - centerOpacity) < 0.5) {
-      sum += load(nx, ny); wt += 1.0;
-    }
-  }
-  textureStore(dst, vec2i(x, y), vec4f(sum / wt, 1.0));
-}
-`;
-
 // ── Component ──
 
 export class FolkHrcMinimal extends ReactiveElement {
@@ -451,11 +405,9 @@ export class FolkHrcMinimal extends ReactiveElement {
   `;
 
   @property({ type: Number, reflect: true }) exposure = 2.0;
-  @property({ type: Number, reflect: true, attribute: 'probe-count' }) probeCount = 128;
+  @property({ type: Number, reflect: true, attribute: 'probe-count' }) probeCount = 64;
   @property({ type: Boolean, reflect: true, attribute: 'false-color' }) falseColor = false;
 
-  // Mouse light — set these from the outside. All colors are sRGB [0-1].
-  // Position is in canvas-pixel coordinates (use mapToCanvas to convert).
   mouseX = 0;
   mouseY = 0;
   mouseLightColor: [number, number, number] = [0.8, 0.6, 0.3];
@@ -475,55 +427,52 @@ export class FolkHrcMinimal extends ReactiveElement {
   #compositeCanvas: HTMLCanvasElement | null = null;
   #compositeCtx: CanvasRenderingContext2D | null = null;
 
-  #rayBuffers!: GPUBuffer[];
-  #mergeBuffers!: GPUBuffer[];
+  // Polygonal cascade buffers (reused across rotations)
+  #cascadeBuffers!: GPUBuffer[];
   #fluenceBuffer!: GPUBuffer;
   #fluenceTextureView!: GPUTextureView;
 
-  #raySeedPipeline!: GPUComputePipeline;
-  #rayExtendPipeline!: GPUComputePipeline;
-  #cascadeMergePipeline!: GPUComputePipeline;
+  // Pipelines
+  #seedPipeline!: GPUComputePipeline;
+  #extendPipeline!: GPUComputePipeline;
+  #gatherPipeline!: GPUComputePipeline;
   #fluenceBlurPipeline!: GPUComputePipeline;
   #renderPipeline!: GPURenderPipeline;
 
+  // Bind groups (per rotation for seed/gather, per cascade transition for extend)
   #seedBindGroups!: GPUBindGroup[];
   #extendBindGroups!: GPUBindGroup[];
-  #mergeBindGroups!: GPUBindGroup[][];
-  #blitBindGroup!: GPUBindGroup;
+  #gatherBindGroups!: GPUBindGroup[];
   #fluenceBlurBindGroup!: GPUBindGroup;
+  #blitBindGroup!: GPUBindGroup;
   #linearSampler!: GPUSampler;
 
+  // Uniform buffers
   #seedParamsBuffer!: GPUBuffer;
-  #extendParamsBuffer!: GPUBuffer;
-  #mergeParamsBuffer!: GPUBuffer;
+  #extendParamsBuffers!: GPUBuffer[];
+  #gatherParamsBuffer!: GPUBuffer;
   #blitParamsBuffer!: GPUBuffer;
   #fluenceBlurParamsBuffer!: GPUBuffer;
 
-  #numCascades = 0; // N in the paper = log2(probeCount)
+  #numCascades = 0;
   #gpuResources: (GPUTexture | GPUBuffer)[] = [];
   #blitParamsData = new Float32Array(4);
-
   #animationFrame = 0;
   #isRunning = false;
   #smoothedFrameTime = 0;
   #lastFrameTimestamp = 0;
 
-  // ── Public API ──
-
   get sceneCanvas(): HTMLCanvasElement | null {
     this.#ensureCanvases();
     return this.#sceneCanvas;
   }
-
   get sceneCtx(): CanvasRenderingContext2D | null {
     this.#ensureCanvases();
     return this.#sceneCtx;
   }
-
   get fps() {
     return this.#smoothedFrameTime > 0 ? Math.round(1000 / this.#smoothedFrameTime) : 0;
   }
-
   get size() {
     return this.probeCount;
   }
@@ -540,14 +489,11 @@ export class FolkHrcMinimal extends ReactiveElement {
     return value * (this.probeCount / this.#canvas.getBoundingClientRect().width);
   }
 
-  // ── Lifecycle ──
-
   override async connectedCallback() {
     super.connectedCallback();
     await this.#initWebGPU();
     this.#initResources();
     this.#initPipelines();
-    this.#uploadStaticParams();
     this.#isRunning = true;
     this.#startAnimationLoop();
     this.requestUpdate();
@@ -570,12 +516,9 @@ export class FolkHrcMinimal extends ReactiveElement {
       this.#context.configure({ device: this.#device, format: this.#presentationFormat, alphaMode: 'premultiplied' });
       this.#destroyResources();
       this.#initResources();
-      this.#createStaticBindGroups();
-      this.#uploadStaticParams();
+      this.#initPipelines();
     }
   }
-
-  // ── Internals ──
 
   #ensureCanvases() {
     const ps = this.probeCount;
@@ -602,12 +545,10 @@ export class FolkHrcMinimal extends ReactiveElement {
     this.#device = await adapter.requestDevice({
       requiredFeatures: canFloat32Filter ? ['float32-filterable' as GPUFeatureName] : [],
     });
-
     this.#canvas = document.createElement('canvas');
     this.#canvas.width = this.probeCount;
     this.#canvas.height = this.probeCount;
     this.renderRoot.prepend(this.#canvas);
-
     const context = this.#canvas.getContext('webgpu');
     if (!context) throw new Error('No WebGPU context');
     this.#context = context;
@@ -630,6 +571,7 @@ export class FolkHrcMinimal extends ReactiveElement {
     const STORAGE = GPUBufferUsage.STORAGE;
     const UBO = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
 
+    // World texture
     const [worldTex, worldView] = tex(
       device,
       'World',
@@ -640,29 +582,22 @@ export class FolkHrcMinimal extends ReactiveElement {
     this.#worldTexture = track(worldTex);
     this.#worldTextureView = worldView;
 
-    this.#rayBuffers = [];
+    // Cascade buffers: all same size = ps*2 * ps * 16 bytes
+    const cascadeBufSize = ps * 2 * ps * 16;
+    this.#cascadeBuffers = [];
     for (let n = 0; n < nc; n++) {
-      const w = n === 0 ? ps : (ps >> n) * ((1 << n) + 1);
-      this.#rayBuffers.push(
+      this.#cascadeBuffers.push(
         track(
           device.createBuffer({
-            label: `T${n}`,
-            size: w * ps * 8,
-            usage: STORAGE,
+            label: `C${n}`,
+            size: cascadeBufSize,
+            usage: STORAGE | GPUBufferUsage.COPY_DST,
           }),
         ),
       );
     }
 
-    this.#mergeBuffers = [0, 1].map((i) =>
-      track(
-        device.createBuffer({
-          label: `R-${i}`,
-          size: ps * ps * 16,
-          usage: STORAGE,
-        }),
-      ),
-    );
+    // Fluence buffer
     this.#fluenceBuffer = track(
       device.createBuffer({
         label: 'Fluence',
@@ -671,6 +606,7 @@ export class FolkHrcMinimal extends ReactiveElement {
       }),
     );
 
+    // Fluence texture (for blur output + blit)
     const [ft, fv] = tex(
       device,
       'FluenceTex',
@@ -684,22 +620,26 @@ export class FolkHrcMinimal extends ReactiveElement {
     track(ft);
     this.#fluenceTextureView = fv;
 
-    this.#seedParamsBuffer = track(device.createBuffer({ label: 'SeedParams', size: 4 * 256, usage: UBO }));
-    this.#extendParamsBuffer = track(
-      device.createBuffer({ label: 'ExtendParams', size: Math.max(1, nc - 1) * 256, usage: UBO }),
-    );
-    this.#mergeParamsBuffer = track(device.createBuffer({ label: 'MergeParams', size: 4 * nc * 256, usage: UBO }));
+    // Uniform buffers
+    this.#seedParamsBuffer = track(device.createBuffer({ label: 'SeedParams', size: 8 * 256, usage: UBO }));
+    this.#extendParamsBuffers = [];
+    for (let n = 1; n < nc; n++) {
+      this.#extendParamsBuffers.push(track(device.createBuffer({ label: `ExtParams${n}`, size: 16, usage: UBO })));
+    }
+    this.#gatherParamsBuffer = track(device.createBuffer({ label: 'GatherParams', size: 8 * 256, usage: UBO }));
     this.#blitParamsBuffer = track(device.createBuffer({ label: 'BlitParams', size: 16, usage: UBO }));
     this.#fluenceBlurParamsBuffer = track(device.createBuffer({ label: 'BlurParams', size: 16, usage: UBO }));
   }
 
   #initPipelines() {
     const device = this.#device;
+    const ps = this.probeCount;
+    const nc = this.#numCascades;
 
-    this.#raySeedPipeline = computePipeline(device, 'Seed', raySeedShader);
-    this.#rayExtendPipeline = computePipeline(device, 'Extend', rayExtendShader);
-    this.#cascadeMergePipeline = computePipeline(device, 'Merge', cascadeMergeShader);
-    this.#fluenceBlurPipeline = computePipeline(device, 'Blur', fluenceBlurShader);
+    this.#seedPipeline = computePipeline(device, 'Seed', seedShader(ps));
+    this.#extendPipeline = computePipeline(device, 'Extend', extendShader(ps));
+    this.#gatherPipeline = computePipeline(device, 'Gather', gatherShader(ps, nc));
+    this.#fluenceBlurPipeline = computePipeline(device, 'Blur', fluenceBlurShader(ps));
 
     const blitModule = device.createShaderModule({ code: blitShader });
     this.#renderPipeline = device.createRenderPipeline({
@@ -710,62 +650,53 @@ export class FolkHrcMinimal extends ReactiveElement {
       primitive: { topology: 'triangle-strip' },
     });
 
-    this.#createStaticBindGroups();
+    this.#createBindGroups();
+    this.#uploadStaticParams();
   }
 
-  #createStaticBindGroups() {
+  #createBindGroups() {
     const device = this.#device;
     const nc = this.#numCascades;
-    const seedLayout = this.#raySeedPipeline.getBindGroupLayout(0);
-    const extLayout = this.#rayExtendPipeline.getBindGroupLayout(0);
-    const mergeLayout = this.#cascadeMergePipeline.getBindGroupLayout(0);
 
-    this.#seedBindGroups = [0, 1, 2, 3].map((rot) =>
+    // Seed: per rotation (4 bind groups, different params offset)
+    const seedLayout = this.#seedPipeline.getBindGroupLayout(0);
+    this.#seedBindGroups = [0, 1, 2, 3, 4, 5, 6, 7].map((rot) =>
       bg(
         device,
         seedLayout,
         this.#worldTextureView,
-        { buffer: this.#rayBuffers[0] },
+        { buffer: this.#cascadeBuffers[0] },
         { buffer: this.#seedParamsBuffer, offset: rot * 256, size: 16 },
       ),
     );
 
+    // Extend: per cascade transition
+    const extLayout = this.#extendPipeline.getBindGroupLayout(0);
     this.#extendBindGroups = [];
     for (let n = 1; n < nc; n++) {
       this.#extendBindGroups.push(
         bg(
           device,
           extLayout,
-          { buffer: this.#rayBuffers[n - 1] },
-          { buffer: this.#rayBuffers[n] },
-          { buffer: this.#extendParamsBuffer, offset: (n - 1) * 256, size: 16 },
+          { buffer: this.#cascadeBuffers[n - 1] },
+          { buffer: this.#cascadeBuffers[n] },
+          { buffer: this.#extendParamsBuffers[n - 1] },
         ),
       );
     }
 
-    this.#mergeBindGroups = [];
-    for (let rot = 0; rot < 4; rot++) {
-      const rotBGs: GPUBindGroup[] = [];
-      let readIdx = 1,
-        writeIdx = 0;
-      for (let k = 0; k < nc; k++) {
-        const level = nc - 1 - k;
-        rotBGs.push(
-          bg(
-            device,
-            mergeLayout,
-            { buffer: this.#rayBuffers[level] },
-            { buffer: this.#mergeBuffers[readIdx] },
-            { buffer: this.#mergeBuffers[writeIdx] },
-            { buffer: this.#mergeParamsBuffer, offset: (rot * nc + level) * 256, size: 16 },
-            { buffer: this.#fluenceBuffer },
-          ),
-        );
-        [readIdx, writeIdx] = [writeIdx, readIdx];
-      }
-      this.#mergeBindGroups.push(rotBGs);
-    }
+    // Gather: per rotation
+    const gatherLayout = this.#gatherPipeline.getBindGroupLayout(0);
+    this.#gatherBindGroups = [0, 1, 2, 3, 4, 5, 6, 7].map((rot) => {
+      const resources: GPUBindingResource[] = [
+        ...this.#cascadeBuffers.map((b) => ({ buffer: b })),
+        { buffer: this.#fluenceBuffer },
+        { buffer: this.#gatherParamsBuffer, offset: rot * 256, size: 16 },
+      ];
+      return bg(device, gatherLayout, ...resources);
+    });
 
+    // Blur
     this.#fluenceBlurBindGroup = bg(
       device,
       this.#fluenceBlurPipeline.getBindGroupLayout(0),
@@ -775,6 +706,7 @@ export class FolkHrcMinimal extends ReactiveElement {
       this.#worldTextureView,
     );
 
+    // Blit
     this.#blitBindGroup = bg(
       device,
       this.#renderPipeline.getBindGroupLayout(0),
@@ -789,21 +721,41 @@ export class FolkHrcMinimal extends ReactiveElement {
     const q = this.#device.queue;
     const ps = this.probeCount;
     const nc = this.#numCascades;
-
     const u4 = new Uint32Array(4);
-    const write = (buffer: GPUBuffer, slot: number, v0: number, v1: number, v2: number, v3: number) => {
-      u4[0] = v0;
-      u4[1] = v1;
-      u4[2] = v2;
-      u4[3] = v3;
-      q.writeBuffer(buffer, slot * 256, u4);
-    };
 
-    for (let rot = 0; rot < 4; rot++) write(this.#seedParamsBuffer, rot, ps, rot, 0, 0);
-    for (let n = 1; n < nc; n++) write(this.#extendParamsBuffer, n - 1, ps, n, 0, 0);
-    for (let rot = 0; rot < 4; rot++)
-      for (let level = 0; level < nc; level++) write(this.#mergeParamsBuffer, rot * nc + level, ps, level, nc, rot);
-    write(this.#fluenceBlurParamsBuffer, 0, ps, 0, 0, 0);
+    // Seed params: per rotation (8 rotations for full 360° coverage)
+    for (let rot = 0; rot < 8; rot++) {
+      u4[0] = ps;
+      u4[1] = rot;
+      u4[2] = 0;
+      u4[3] = nc;
+      q.writeBuffer(this.#seedParamsBuffer, rot * 256, u4);
+    }
+
+    // Extend params: per cascade
+    for (let n = 1; n < nc; n++) {
+      u4[0] = ps;
+      u4[1] = 0;
+      u4[2] = n;
+      u4[3] = nc;
+      q.writeBuffer(this.#extendParamsBuffers[n - 1], 0, u4);
+    }
+
+    // Gather params: per rotation (8 rotations)
+    for (let rot = 0; rot < 8; rot++) {
+      u4[0] = ps;
+      u4[1] = rot;
+      u4[2] = 0;
+      u4[3] = nc;
+      q.writeBuffer(this.#gatherParamsBuffer, rot * 256, u4);
+    }
+
+    // Blur params
+    u4[0] = ps;
+    u4[1] = 0;
+    u4[2] = 0;
+    u4[3] = 0;
+    q.writeBuffer(this.#fluenceBlurParamsBuffer, 0, u4);
   }
 
   #destroyResources() {
@@ -811,16 +763,12 @@ export class FolkHrcMinimal extends ReactiveElement {
     this.#gpuResources = [];
   }
 
-  // Compose the world texture from scene canvas + ephemeral mouse light.
-  // Uses 'copy' compositing so pixel values are set exactly, not blended.
   #compositeWorld() {
     this.#ensureCanvases();
     const ps = this.probeCount;
     const ctx = this.#compositeCtx!;
-
     ctx.clearRect(0, 0, ps, ps);
     if (this.#sceneCanvas) ctx.drawImage(this.#sceneCanvas, 0, 0);
-
     const {
       mouseX,
       mouseY,
@@ -838,8 +786,6 @@ export class FolkHrcMinimal extends ReactiveElement {
       ctx.fillRect(mx, my, bs, bs);
     }
   }
-
-  // ── Render loop ──
 
   #startAnimationLoop() {
     const render = (now: number) => {
@@ -859,8 +805,11 @@ export class FolkHrcMinimal extends ReactiveElement {
   #renderFrame() {
     const ps = this.probeCount;
     const device = this.#device;
-    const wg = ps / WG[0];
+    const wgA = Math.ceil((ps * 2) / WG[0]); // atlas width = ps*2
+    const wgH = Math.ceil(ps / WG[1]); // atlas/viewport height = ps
+    const wgS = Math.ceil(ps / WG[0]); // viewport width = ps
 
+    // Upload world texture
     this.#compositeWorld();
     device.queue.copyExternalImageToTexture(
       { source: this.#compositeCanvas! },
@@ -868,6 +817,7 @@ export class FolkHrcMinimal extends ReactiveElement {
       { width: ps, height: ps },
     );
 
+    // Update blit params
     const f = this.#blitParamsData;
     f[0] = this.exposure;
     f[1] = ps;
@@ -877,13 +827,18 @@ export class FolkHrcMinimal extends ReactiveElement {
 
     const encoder = device.createCommandEncoder();
 
+    // Clear fluence
     encoder.clearBuffer(this.#fluenceBuffer);
-    for (let rot = 0; rot < 4; rot++) this.#runCascade(encoder, rot);
 
-    // Cross-blur to fix checkerboard artifacts (Eq. 21)
-    computePass(encoder, this.#fluenceBlurPipeline, this.#fluenceBlurBindGroup, wg, wg);
+    // Process 8 rotations (4 quadrants × 2 halves for full 360°)
+    for (let rot = 0; rot < 8; rot++) {
+      this.#runCascade(encoder, rot, wgA, wgH, wgS);
+    }
 
-    // Blit to screen with tonemapping
+    // Cross-blur
+    computePass(encoder, this.#fluenceBlurPipeline, this.#fluenceBlurBindGroup, wgS, wgH);
+
+    // Blit
     {
       const pass = encoder.beginRenderPass({
         colorAttachments: [
@@ -905,36 +860,21 @@ export class FolkHrcMinimal extends ReactiveElement {
     device.queue.submit([encoder.finish()]);
   }
 
-  #runCascade(encoder: GPUCommandEncoder, rot: number) {
+  #runCascade(encoder: GPUCommandEncoder, rot: number, wgA: number, wgH: number, wgS: number) {
     const nc = this.#numCascades;
-    const ps = this.probeCount;
-    const wg = ps / WG[0];
 
-    // Phase 1a: Seed T_0 — single-pixel radiance/transmittance lookup
-    computePass(encoder, this.#raySeedPipeline, this.#seedBindGroups[rot], wg, wg);
+    // Clear all cascade buffers
+    for (const buf of this.#cascadeBuffers) encoder.clearBuffer(buf);
 
-    // Phase 1b: Extend T_1..T_{N-1} — combine shorter rays into longer ones (Eq. 18/20)
-    {
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.#rayExtendPipeline);
-      for (let n = 1; n < nc; n++) {
-        const rayWidth = (ps >> n) * ((1 << n) + 1);
-        pass.setBindGroup(0, this.#extendBindGroups[n - 1]);
-        pass.dispatchWorkgroups(Math.ceil(rayWidth / WG[0]), wg);
-      }
-      pass.end();
+    // Phase 1: Seed C0
+    computePass(encoder, this.#seedPipeline, this.#seedBindGroups[rot], wgA, wgH);
+
+    // Phase 2: Extend C0→C1→...→C_{N-1}
+    for (let n = 0; n < nc - 1; n++) {
+      computePass(encoder, this.#extendPipeline, this.#extendBindGroups[n], wgA, wgH);
     }
 
-    // Phase 2: Merge R_{N-1}..R_0 — angular fluence from rays + higher cascade (Eq. 14/15)
-    // Dispatch width is always ps (levelProbes × numDirections = (ps >> level) × (1 << level) = ps)
-    {
-      const pass = encoder.beginComputePass();
-      pass.setPipeline(this.#cascadeMergePipeline);
-      for (let k = 0; k < nc; k++) {
-        pass.setBindGroup(0, this.#mergeBindGroups[rot][k]);
-        pass.dispatchWorkgroups(wg, wg);
-      }
-      pass.end();
-    }
+    // Phase 3: Gather all cascades into fluence
+    computePass(encoder, this.#gatherPipeline, this.#gatherBindGroups[rot], wgS, wgH);
   }
 }

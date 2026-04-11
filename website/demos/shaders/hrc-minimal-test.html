@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dual Polygonal HRC</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #111;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        font-family: monospace;
+        color: #ccc;
+      }
+      canvas {
+        image-rendering: pixelated;
+        border: 1px solid #333;
+        cursor: crosshair;
+      }
+      #info {
+        margin-top: 10px;
+        font-size: 12px;
+        opacity: 0.6;
+      }
+      #error {
+        color: #f44;
+        margin: 20px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <div id="info">Move mouse to move light source. Click to toggle pause.</div>
+    <div id="error"></div>
+    <script type="module">
+      // ─── Constants ───
+      const SIZE = 256;
+      const PS = 8; // probe spacing (constant across cascades)
+      const LS0 = 8; // c0 line spacing
+      const DC0 = 1; // c0 directions count
+      const NC = 5; // cascade count
+      const ATLAS_W = (SIZE / LS0) * DC0 * 2; // = 64, constant across cascades
+      const ATLAS_H = SIZE / PS; // = 32, constant across cascades
+      const SCALE = 2;
+
+      const canvas = document.getElementById('canvas');
+      canvas.width = SIZE;
+      canvas.height = SIZE;
+      canvas.style.width = `${SIZE * SCALE}px`;
+      canvas.style.height = `${SIZE * SCALE}px`;
+
+      let mouseX = SIZE / 2,
+        mouseY = SIZE / 2,
+        paused = false;
+      canvas.addEventListener('mousemove', (e) => {
+        const r = canvas.getBoundingClientRect();
+        mouseX = ((e.clientX - r.left) * SIZE) / r.width;
+        mouseY = ((e.clientY - r.top) * SIZE) / r.height;
+      });
+      canvas.addEventListener('click', () => {
+        paused = !paused;
+      });
+
+      // ─── Shared WGSL ───
+      const commonWGSL = /* wgsl */ `
+const SIZE  = ${SIZE}u;
+const PS    = ${PS}u;
+const LS0   = ${LS0}u;
+const DC0   = ${DC0}u;
+const NC    = ${NC}u;
+const ATL_W = ${ATLAS_W}u;
+const ATL_H = ${ATLAS_H}u;
+const ATL_SZ = ${ATLAS_W * ATLAS_H}u;
+
+struct Params { source_x: f32, source_y: f32, cascade_idx: u32, _pad: u32 }
+
+// Polygon coverage test. Returns x_ratio [0,1] if inside, -1 otherwise.
+fn polyFunc(pos: vec2f, lx: f32, ly: vec2f, rx: f32, ry: vec2f) -> f32 {
+  if (pos.x >= lx && pos.x < rx) {
+    let t = (pos.x - lx) / (rx - lx);
+    let yr = mix(ly, ry, vec2f(t));
+    if (pos.y >= yr.x && pos.y < yr.y) { return t; }
+  }
+  return -1.0;
+}
+
+// Test if pos falls inside polygon (line_idx, probe_idx, dir_idx, is_frustum)
+// for a cascade with given probe_spacing and line_spacing.
+fn probeFunc(pos: vec2f, line_idx: i32, probe_idx: i32, dir_idx: i32,
+             is_frustum: bool, line_spacing: u32) -> f32 {
+  let ps = f32(PS);
+  let ls = f32(line_spacing);
+  let pf = f32(probe_idx);
+  let df = f32(dir_idx);
+  let lx = f32(line_idx) * ls;
+  let ly = vec2f(pf, pf + 1.0) * ps;
+  let ext = (line_idx & 1) == 0;
+  let stride = select(1, 2, ext);
+  let sf = f32(stride);
+  let rx = f32(line_idx + stride) * ls;
+  var wmax: f32;
+  if (is_frustum) { wmax = select(2.0, 3.0, ext); } else { wmax = 1.0; }
+  let ry = vec2f(pf + df * sf, pf + df * sf + wmax) * ps;
+  return polyFunc(pos, lx, ly, rx, ry);
+}
+
+// Atlas flat index from polygon indices
+fn atlasIdx(line_idx: i32, probe_idx: i32, dir_idx: i32, is_frustum: bool, dirs_count: u32) -> i32 {
+  let x = line_idx * i32(dirs_count * 2u) + select(i32(dirs_count), 0, is_frustum) + dir_idx;
+  let y = probe_idx;
+  if (x < 0 || x >= i32(ATL_W) || y < 0 || y >= i32(ATL_H)) { return -1; }
+  return y * i32(ATL_W) + x;
+}
+
+// Cascade falloff range: [1/2^n, 1/2^(n+1)]
+fn falloffRange(n: u32) -> vec2f {
+  return vec2f(1.0) / vec2f(f32(1u << n), f32(1u << (n + 1u)));
+}
+`;
+
+      // ─── Seed Shader (C0 only) ───
+      const seedWGSL =
+        commonWGSL +
+        /* wgsl */ `
+@group(0) @binding(0) var<storage, read_write> cascade: array<vec4f>;
+@group(0) @binding(1) var<uniform> params: Params;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = i32(gid.x); let ty = i32(gid.y);
+  if (tx >= i32(ATL_W) || ty >= i32(ATL_H)) { return; }
+
+  let dc = DC0;  // cascade 0
+  let ls = LS0;
+  let line_idx = tx / i32(dc * 2u);
+  let rem = tx % i32(dc * 2u);
+  let is_f = rem < i32(dc);
+  let dir_idx = rem % i32(dc);
+  let probe_idx = ty;
+
+  let src = vec2f(params.source_x, params.source_y);
+  let cov = probeFunc(src, line_idx, probe_idx, dir_idx, is_f, ls);
+
+  let idx = ty * i32(ATL_W) + tx;
+  if (cov >= 0.0) {
+    cascade[idx] = vec4f(1.0);
+  } else {
+    cascade[idx] = vec4f(0.0);
+  }
+}
+`;
+
+      // ─── Extend Shader ───
+      const extendWGSL =
+        commonWGSL +
+        /* wgsl */ `
+@group(0) @binding(0) var<storage, read> src: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> dst: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: Params;
+
+fn readSrc(li: i32, pi: i32, di: i32, is_f: bool, dc: u32) -> vec4f {
+  let i = atlasIdx(li, pi, di, is_f, dc);
+  if (i < 0 || i >= i32(ATL_SZ)) { return vec4f(0.0); }
+  return src[i];
+}
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = i32(gid.x); let ty = i32(gid.y);
+  if (tx >= i32(ATL_W) || ty >= i32(ATL_H)) { return; }
+
+  let dst_n = params.cascade_idx;
+  let dst_dc = DC0 << dst_n;
+  let src_dc = DC0 << (dst_n - 1u);
+
+  let line_idx = tx / i32(dst_dc * 2u);
+  let rem = tx % i32(dst_dc * 2u);
+  let is_f = rem < i32(dst_dc);
+  let dir_idx = rem % i32(dst_dc);
+  let pi = ty;  // probe_idx
+
+  var res = vec4f(0.0);
+
+  if (is_f) {
+    // Frustum destination
+    // Source 1: src_line = line_idx * 2 - 2
+    {
+      let sl = line_idx * 2 - 2;
+      let sd = dir_idx / 2;
+      if ((dir_idx & 1) == 0) {
+        res += readSrc(sl, pi - dir_idx, sd, true, src_dc);
+      } else {
+        res += readSrc(sl, pi - dir_idx - 1, sd, true, src_dc);
+      }
+    }
+    // Source 2: src_line = line_idx * 2 - 1
+    {
+      let sl = line_idx * 2 - 1;
+      let sd = dir_idx / 2;
+      res += readSrc(sl, pi - sd, sd, true, src_dc);
+    }
+  } else {
+    // Band destination
+    // Source 1: src_line = line_idx * 2 - 2
+    {
+      let sl = line_idx * 2 - 2;
+      let sd = dir_idx / 2;
+      if ((dir_idx & 1) == 1) {
+        res += readSrc(sl, pi - dir_idx, sd, true, src_dc);
+      } else {
+        res += readSrc(sl, pi - dir_idx, sd, false, src_dc);
+      }
+    }
+    // Source 2: src_line = line_idx * 2 - 1 (even dir only)
+    if ((dir_idx & 1) == 0) {
+      let sl = line_idx * 2 - 1;
+      let sd = dir_idx / 2;
+      res += readSrc(sl, pi - sd, sd, false, src_dc);
+    }
+  }
+
+  dst[ty * i32(ATL_W) + tx] = res;
+}
+`;
+
+      // ─── Gather Shader (brute force) ───
+      const gatherWGSL =
+        commonWGSL +
+        /* wgsl */ `
+@group(0) @binding(0) var<storage, read> c0: array<vec4f>;
+@group(0) @binding(1) var<storage, read> c1: array<vec4f>;
+@group(0) @binding(2) var<storage, read> c2: array<vec4f>;
+@group(0) @binding(3) var<storage, read> c3: array<vec4f>;
+@group(0) @binding(4) var<storage, read> c4: array<vec4f>;
+@group(0) @binding(5) var<storage, read_write> fluence: array<vec4f>;
+
+fn readC(n: u32, i: i32) -> vec4f {
+  if (i < 0 || i >= i32(ATL_SZ)) { return vec4f(0.0); }
+  switch (n) {
+    case 0u: { return c0[i]; }
+    case 1u: { return c1[i]; }
+    case 2u: { return c2[i]; }
+    case 3u: { return c3[i]; }
+    case 4u: { return c4[i]; }
+    default: { return vec4f(0.0); }
+  }
+}
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let px = i32(gid.x); let py = i32(gid.y);
+  if (px >= i32(SIZE) || py >= i32(SIZE)) { return; }
+  let pos = vec2f(f32(px) + 0.5, f32(py) + 0.5);
+
+  var total = vec4f(0.0);
+
+  for (var n = 0u; n < NC; n++) {
+    let ls = LS0 << n;
+    let dc = DC0 << n;
+    let fo = falloffRange(n);
+    let line_idx = px / i32(ls);
+
+    // Check this line + extended even line if odd
+    for (var lp = 0u; lp < 2u; lp++) {
+      var cl = line_idx;
+      if (lp == 1u) {
+        if ((line_idx & 1) == 0) { continue; }
+        cl = line_idx - 1;
+      }
+      for (var pi = 0; pi < i32(ATL_H); pi++) {
+        for (var di = 0; di < i32(dc); di++) {
+          // Frustum
+          {
+            let pf = probeFunc(pos, cl, pi, di, true, ls);
+            if (pf >= 0.0) {
+              let ai = atlasIdx(cl, pi, di, true, dc);
+              let val = readC(n, ai);
+              total += val * mix(fo.x, fo.y, pf);
+            }
+          }
+          // Band
+          {
+            let pf = probeFunc(pos, cl, pi, di, false, ls);
+            if (pf >= 0.0) {
+              let ai = atlasIdx(cl, pi, di, false, dc);
+              let val = readC(n, ai);
+              total += val * mix(fo.x, fo.y, pf);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fluence[py * i32(SIZE) + px] = total;
+}
+`;
+
+      // ─── Blit Shader ───
+      const blitWGSL = /* wgsl */ `
+const SIZE = ${SIZE}u;
+
+@group(0) @binding(0) var<storage, read> fluence: array<vec4f>;
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let p = array(vec2f(-1,-1), vec2f(3,-1), vec2f(-1,3));
+  return vec4f(p[i], 0, 1);
+}
+
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let px = i32(pos.x); let py = i32(pos.y);
+  if (px >= i32(SIZE) || py >= i32(SIZE)) { return vec4f(0,0,0,1); }
+  let f = fluence[py * i32(SIZE) + px];
+  let exposure = 5.0;
+  let hdr = f.rgb * exposure;
+  let mapped = hdr / (hdr + vec3f(1.0));
+  return vec4f(pow(mapped, vec3f(1.0 / 2.2)), 1.0);
+}
+`;
+
+      // ─── WebGPU Init & Render Loop ───
+      async function main() {
+        if (!navigator.gpu) {
+          document.getElementById('error').textContent = 'WebGPU not supported';
+          return;
+        }
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+          document.getElementById('error').textContent = 'No GPU adapter';
+          return;
+        }
+        const device = await adapter.requestDevice();
+
+        const ctx = canvas.getContext('webgpu');
+        const fmt = navigator.gpu.getPreferredCanvasFormat();
+        ctx.configure({ device, format: fmt, alphaMode: 'premultiplied' });
+
+        const STOR = GPUBufferUsage.STORAGE;
+        const UNI = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+        const CDST = GPUBufferUsage.COPY_DST;
+        const ATLAS_BYTES = ATLAS_W * ATLAS_H * 16;
+
+        // Buffers
+        const cBufs = Array.from({ length: NC }, (_, i) =>
+          device.createBuffer({ label: `c${i}`, size: ATLAS_BYTES, usage: STOR | CDST }),
+        );
+        const fluBuf = device.createBuffer({ label: 'flu', size: SIZE * SIZE * 16, usage: STOR | CDST });
+
+        // Per-cascade params (source_pos updated per frame, cascade_idx fixed)
+        const pBufs = Array.from({ length: NC }, (_, i) => {
+          const b = device.createBuffer({ label: `p${i}`, size: 16, usage: UNI });
+          const d = new ArrayBuffer(16);
+          new DataView(d).setUint32(8, i, true);
+          device.queue.writeBuffer(b, 0, d);
+          return b;
+        });
+
+        // Helper: create compute pipeline
+        function comp(code, label) {
+          return device.createComputePipeline({
+            label,
+            layout: 'auto',
+            compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
+          });
+        }
+
+        const seedPipe = comp(seedWGSL, 'seed');
+        const extendPipe = comp(extendWGSL, 'extend');
+        const gatherPipe = comp(gatherWGSL, 'gather');
+
+        const blitMod = device.createShaderModule({ code: blitWGSL });
+        const blitPipe = device.createRenderPipeline({
+          label: 'blit',
+          layout: 'auto',
+          vertex: { module: blitMod, entryPoint: 'vs' },
+          fragment: { module: blitMod, entryPoint: 'fs', targets: [{ format: fmt }] },
+          primitive: { topology: 'triangle-list' },
+        });
+
+        // Bind groups
+        function bg(pipe, entries) {
+          return device.createBindGroup({
+            layout: pipe.getBindGroupLayout(0),
+            entries: entries.map((resource, binding) => ({ binding, resource })),
+          });
+        }
+
+        const seedBG = bg(seedPipe, [{ buffer: cBufs[0] }, { buffer: pBufs[0] }]);
+
+        const extBGs = [];
+        for (let n = 0; n < NC - 1; n++) {
+          extBGs.push(bg(extendPipe, [{ buffer: cBufs[n] }, { buffer: cBufs[n + 1] }, { buffer: pBufs[n + 1] }]));
+        }
+
+        const gatherBG = bg(gatherPipe, [
+          { buffer: cBufs[0] },
+          { buffer: cBufs[1] },
+          { buffer: cBufs[2] },
+          { buffer: cBufs[3] },
+          { buffer: cBufs[4] },
+          { buffer: fluBuf },
+        ]);
+
+        const blitBG = bg(blitPipe, [{ buffer: fluBuf }]);
+
+        const WG_A = Math.ceil(ATLAS_W / 16);
+        const WG_AH = Math.ceil(ATLAS_H / 16);
+        const WG_S = Math.ceil(SIZE / 16);
+        const srcData = new Float32Array(2);
+
+        function frame() {
+          if (!paused) {
+            // Update source position in all param buffers
+            srcData[0] = mouseX;
+            srcData[1] = mouseY;
+            for (let i = 0; i < NC; i++) device.queue.writeBuffer(pBufs[i], 0, srcData);
+
+            const enc = device.createCommandEncoder();
+
+            // Clear
+            for (const b of cBufs) enc.clearBuffer(b);
+            enc.clearBuffer(fluBuf);
+
+            // Seed C0
+            {
+              const p = enc.beginComputePass();
+              p.setPipeline(seedPipe);
+              p.setBindGroup(0, seedBG);
+              p.dispatchWorkgroups(WG_A, WG_AH);
+              p.end();
+            }
+
+            // Extend C0→C1→...→C4
+            for (let n = 0; n < NC - 1; n++) {
+              const p = enc.beginComputePass();
+              p.setPipeline(extendPipe);
+              p.setBindGroup(0, extBGs[n]);
+              p.dispatchWorkgroups(WG_A, WG_AH);
+              p.end();
+            }
+
+            // Gather (brute force)
+            {
+              const p = enc.beginComputePass();
+              p.setPipeline(gatherPipe);
+              p.setBindGroup(0, gatherBG);
+              p.dispatchWorkgroups(WG_S, WG_S);
+              p.end();
+            }
+
+            // Blit
+            {
+              const p = enc.beginRenderPass({
+                colorAttachments: [
+                  {
+                    view: ctx.getCurrentTexture().createView(),
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                    loadOp: 'clear',
+                    storeOp: 'store',
+                  },
+                ],
+              });
+              p.setPipeline(blitPipe);
+              p.setBindGroup(0, blitBG);
+              p.draw(3);
+              p.end();
+            }
+
+            device.queue.submit([enc.finish()]);
+          }
+          requestAnimationFrame(frame);
+        }
+
+        requestAnimationFrame(frame);
+        document.getElementById('info').textContent += ` | ${SIZE}×${SIZE}, ${NC} cascades, PS=${PS}, LS0=${LS0}`;
+      }
+
+      main().catch((e) => {
+        document.getElementById('error').textContent = e.message + '\n' + e.stack;
+      });
+    </script>
+  </body>
+</html>
