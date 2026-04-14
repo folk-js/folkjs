@@ -157,15 +157,19 @@
       const tessellationWGSL = `
 const SLOTS_PER_DIR = ${SLOTS_PER_DIR}u;
 
+fn angularDist(fullDirIdx: i32, dirCount: u32) -> i32 {
+  let offset = fullDirIdx - i32(dirCount);
+  return select(offset, -offset - 1, offset < 0);
+}
+
 fn slotShapeTest(pos: vec2f, lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
                  slotIdx: i32, lineSpacing: u32, dirCount: u32) -> f32 {
   let ps = f32(PROBE_SPACING);
   let ls = f32(lineSpacing);
   let P = f32(probeIdx);
   let offset = fullDirIdx - i32(dirCount);
-  let D = f32(select(offset, -offset - 1, offset < 0));
-  let isEven = (lineIdx & 1) == 0;
-  let stride = select(1, 2, isEven);
+  let D = f32(angularDist(fullDirIdx, dirCount));
+  let stride = select(1, 2, (lineIdx & 1) == 0);
 
   let leftX = f32(lineIdx) * ls + f32(LINE_SPACING);
   let rightX = f32(lineIdx + stride) * ls + f32(LINE_SPACING);
@@ -175,33 +179,18 @@ fn slotShapeTest(pos: vec2f, lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
   var lY: vec2f;
   var rY: vec2f;
 
-  if (isEven) {
-    let base = P + D * 2.0;
-    if (slotIdx == 0) {
-      lY = vec2f(P, P + 1.0);
-      rY = vec2f(base, base + 1.0);
-    } else if (slotIdx == 1) {
-      lY = vec2f(P + 1.0, P + 1.0);
-      rY = vec2f(base + 1.0, base + 2.0);
-    } else if (slotIdx == 2) {
-      lY = vec2f(P + 1.0, P + 1.0);
-      rY = vec2f(base + 2.0, base + 3.0);
-    } else if (slotIdx == 3) {
-      lY = vec2f(P, P + 1.0);
-      rY = vec2f(base, base + 1.0);
-    } else { return -1.0; }
+  let base = P + D * f32(stride);
+  let bandSlot = stride + 1;
+  let k = f32(slotIdx);
+
+  if (slotIdx == 0 || slotIdx == bandSlot) {
+    lY = vec2f(P, P + 1.0);
+    rY = vec2f(base, base + 1.0);
+  } else if (slotIdx < bandSlot) {
+    lY = vec2f(P + 1.0, P + 1.0);
+    rY = vec2f(base + k, base + k + 1.0);
   } else {
-    let base = P + D;
-    if (slotIdx == 0) {
-      lY = vec2f(P, P + 1.0);
-      rY = vec2f(base, base + 1.0);
-    } else if (slotIdx == 1) {
-      lY = vec2f(P + 1.0, P + 1.0);
-      rY = vec2f(base + 1.0, base + 2.0);
-    } else if (slotIdx == 2) {
-      lY = vec2f(P, P + 1.0);
-      rY = vec2f(base, base + 1.0);
-    } else { return -1.0; }
+    return -1.0;
   }
 
   if (offset < 0) {
@@ -226,9 +215,8 @@ fn slotAtlasIndex(lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
   return y * i32(ATLAS_W) + x;
 }
 
-fn isTriangleSlot(isEven: bool, slotIdx: i32) -> bool {
-  if (isEven) { return slotIdx == 1 || slotIdx == 2; }
-  return slotIdx == 1;
+fn isTriangleSlot(stride: i32, slotIdx: i32) -> bool {
+  return slotIdx >= 1 && slotIdx < stride + 1;
 }
 
 fn falloffRange(n: u32) -> vec2f {
@@ -329,34 +317,26 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let slotIdx = rem % i32(SLOTS_PER_DIR);
   let probeIdx = ty;
 
-  let isEven = (lineIdx & 1) == 0;
-  let numFrustumSlots = select(2, 3, isEven);
-  let bandSlot = select(2, 3, isEven);
+  let stride = select(1, 2, (lineIdx & 1) == 0);
+  let bandSlot = stride + 1;
 
   let offset = fullDirIdx - i32(dstDirCount);
   let isUp = offset < 0;
-  let pSign = select(-1, 1, isUp);
-  let D = select(offset, -offset - 1, isUp);
+  let pSign = select(-1, 1, isUp); // +1 upward, -1 downward in probe space
+  let D = angularDist(fullDirIdx, dstDirCount);
 
   let srcFullDir = fullDirIdx / 2;
-  let srcOffset = srcFullDir - i32(srcDirCount);
-  let srcD = select(srcOffset, -srcOffset - 1, srcOffset < 0);
+  let srcD = angularDist(srcFullDir, srcDirCount);
 
+  // Which half of the parent direction: inner (closer to center) or outer
   let isInner = ((fullDirIdx & 1) == 0) != isUp;
 
   var result = vec4f(0.0);
 
-  if (slotIdx < numFrustumSlots) {
-    {
-      let srcLine = lineIdx * 2 - 2;
-      let probeOff = select(2 * (srcD + 1), 2 * srcD, isInner);
-      result += readSlot(srcLine, probeIdx + pSign * probeOff, srcFullDir, 0, srcFullDirCount);
-    }
-    {
-      let srcLine = lineIdx * 2 - 1;
-      let probeOff = select(srcD + 1, srcD, isInner);
-      result += readSlot(srcLine, probeIdx + pSign * probeOff, srcFullDir, 0, srcFullDirCount);
-    }
+  if (slotIdx < bandSlot) {
+    let oddOff = select(srcD + 1, srcD, isInner);
+    result += readSlot(lineIdx * 2 - 2, probeIdx + pSign * 2 * oddOff, srcFullDir, 0, srcFullDirCount);
+    result += readSlot(lineIdx * 2 - 1, probeIdx + pSign * oddOff,     srcFullDir, 0, srcFullDirCount);
   } else if (slotIdx == bandSlot) {
     {
       let srcLine = lineIdx * 2 - 2;
@@ -459,7 +439,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
         curLine = baseLineIdx - 1;
       }
 
-      let isEven = (curLine & 1) == 0;
+      let curStride = select(1, 2, (curLine & 1) == 0);
 
       for (var probeIdx = 0; probeIdx < i32(NUM_PROBES); probeIdx++) {
         for (var fdi = 0; fdi < i32(fullDirCount); fdi++) {
@@ -470,7 +450,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
               let val = readCascade(n, ai);
               if (any(val.rgb > vec3f(0.0))) {
                 if (showUnitShapes) {
-                  let isTri = isTriangleSlot(isEven, slotIdx);
+                  let isTri = isTriangleSlot(curStride, slotIdx);
                   let col = select(vec3f(0.85, 0.15, 0.55), vec3f(0.95, 0.55, 0.1), isTri);
                   total += vec4f(col, 0.0);
                 } else {
