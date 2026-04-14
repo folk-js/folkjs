@@ -36,6 +36,28 @@
         gap: 14px;
         opacity: 0.8;
       }
+      #cascade-grid {
+        margin-top: 2px;
+        font-family: monospace;
+        font-size: 9px;
+      }
+      .cascade-row {
+        display: flex;
+        align-items: center;
+        position: relative;
+      }
+      .cascade-label {
+        position: absolute;
+        left: -28px;
+        text-align: right;
+        width: 24px;
+        color: #888;
+      }
+      .cascade-cell {
+        height: 10px;
+        border: 1px solid rgba(0, 0, 0, 0.5);
+        opacity: 0.7;
+      }
       #error {
         color: #f44;
         margin: 20px;
@@ -45,235 +67,464 @@
   </head>
   <body>
     <canvas id="canvas"></canvas>
+    <div id="cascade-grid"></div>
     <div id="info"></div>
-    <div id="legend">
-      <span style="color: #e44">■ frustum even(1:3)</span>
-      <span style="color: #4e4">■ frustum odd(1:2)</span>
-      <span style="color: #44e">■ band even</span>
-      <span style="color: #ee4">■ band odd</span>
-    </div>
+    <div id="legend"></div>
     <div id="error"></div>
     <script type="module">
-      const SIZE = 256,
-        PS = 8,
-        LS0 = 8,
-        DC0 = 1,
-        NC = 5,
-        SCALE = 2;
-      const LINES = SIZE / LS0,
-        PROBES = SIZE / PS;
-      const MAX_DC = DC0 << (NC - 1);
-      const ATLAS_W = LINES * MAX_DC * 2,
-        ATLAS_H = PROBES;
+      const WORLD_SIZE = 256,
+        PROBE_SPACING = 8,
+        LINE_SPACING = 8,
+        NUM_CASCADES = 6,
+        DISPLAY_SCALE = 2,
+        SLOTS_PER_DIR = 4;
+      const NUM_LINES = WORLD_SIZE / LINE_SPACING,
+        NUM_PROBES = WORLD_SIZE / PROBE_SPACING;
+      const MAX_DIR_COUNT = 1 << (NUM_CASCADES - 1);
+      const MAX_FULL_DIR_COUNT = 2 * MAX_DIR_COUNT;
+      const ATLAS_W = NUM_LINES * MAX_FULL_DIR_COUNT * SLOTS_PER_DIR,
+        ATLAS_H = NUM_PROBES;
 
       const canvas = document.getElementById('canvas');
-      canvas.width = SIZE;
-      canvas.height = SIZE;
-      canvas.style.width = `${SIZE * SCALE}px`;
-      canvas.style.height = `${SIZE * SCALE}px`;
+      canvas.width = WORLD_SIZE;
+      canvas.height = WORLD_SIZE;
+      canvas.style.width = `${WORLD_SIZE * DISPLAY_SCALE}px`;
+      canvas.style.height = `${WORLD_SIZE * DISPLAY_SCALE}px`;
 
-      let mouseX = SIZE / 2,
-        mouseY = SIZE / 2,
+      const CASCADE_COLORS = ['#e63926', '#19cc26', '#264de6', '#e6bf19', '#cc26e6', '#26c4c4'];
+      {
+        const grid = document.getElementById('cascade-grid');
+        for (let n = 0; n < NUM_CASCADES; n++) {
+          const row = document.createElement('div');
+          row.className = 'cascade-row';
+          const label = document.createElement('span');
+          label.className = 'cascade-label';
+          label.textContent = `C${n}`;
+          label.style.color = CASCADE_COLORS[n];
+          row.appendChild(label);
+          const ls = LINE_SPACING << n;
+          const cellCount = WORLD_SIZE / ls;
+          const cellPx = ls * DISPLAY_SCALE;
+          for (let i = 0; i < cellCount; i++) {
+            const cell = document.createElement('span');
+            cell.className = 'cascade-cell';
+            cell.style.width = cellPx + 'px';
+            cell.style.background = CASCADE_COLORS[n];
+            row.appendChild(cell);
+          }
+          grid.appendChild(row);
+        }
+      }
+
+      let mouseX = WORLD_SIZE / 2,
+        mouseY = WORLD_SIZE / 2,
         paused = false,
         debugMode = 1,
-        maxCascade = NC - 1;
+        maxCascade = NUM_CASCADES - 1;
       canvas.addEventListener('mousemove', (e) => {
         const r = canvas.getBoundingClientRect();
-        mouseX = ((e.clientX - r.left) * SIZE) / r.width;
-        mouseY = ((e.clientY - r.top) * SIZE) / r.height;
+        mouseX = ((e.clientX - r.left) * WORLD_SIZE) / r.width;
+        mouseY = ((e.clientY - r.top) * WORLD_SIZE) / r.height;
       });
       canvas.addEventListener('click', () => {
         paused = !paused;
       });
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'd') debugMode = (debugMode + 1) % 3;
-        if (e.key >= '0' && e.key <= '9') maxCascade = Math.min(parseInt(e.key), NC - 1);
+        if (e.key === 'd') debugMode = (debugMode + 1) % 4;
+        if (e.key >= '0' && e.key <= '9') maxCascade = Math.min(parseInt(e.key), NUM_CASCADES - 1);
       });
 
-      const commonWGSL = `
-const SIZE=${SIZE}u;const PS=${PS}u;const LS0=${LS0}u;const DC0=${DC0}u;const NC=${NC}u;
-const LINES=${LINES}u;const PROBES=${PROBES}u;
-const ATL_W=${ATLAS_W}u;const ATL_H=${ATLAS_H}u;const ATL_SZ=${ATLAS_W * ATLAS_H}u;
+      // ================================================================
+      // TESSELLATION — 0:1 + 1:1 unit shapes, 90-degree cone
+      //
+      // fullDirCount = 2 * dirCount = 2^(n+1) per cascade.
+      // offset = fullDirIdx - dirCount.
+      //   offset >= 0 : downward.  D = offset.
+      //   offset <  0 : upward.    D = -offset - 1.  Mirror around P+0.5.
+      //
+      // Two center directions share the same 1:1 at D=0:
+      //   center_down (offset= 0): triangles expand downward.
+      //   center_up   (offset=-1): triangles expand upward via mirror.
+      // The overlap at the shared 1:1 is intentional — both carry
+      // independent angular data and must be addressable separately.
+      //
+      // Extend: srcFullDir = fullDirIdx / 2 (clean integer division).
+      //
+      // Shape layout per (line, probe, fullDir):
+      //   Even line: [1:1, 0:1, 0:1, 1:1]  (slots 0-2 = frustum, 3 = band)
+      //   Odd line:  [1:1, 0:1, 1:1, ---]  (slots 0-1 = frustum, 2 = band)
+      // ================================================================
+      const tessellationWGSL = `
+const SLOTS_PER_DIR = ${SLOTS_PER_DIR}u;
 
-struct Params{sx:f32,sy:f32,ci:u32,dbg:u32}
+fn slotShapeTest(pos: vec2f, lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
+                 slotIdx: i32, lineSpacing: u32, dirCount: u32) -> f32 {
+  let ps = f32(PROBE_SPACING);
+  let ls = f32(lineSpacing);
+  let P = f32(probeIdx);
+  let offset = fullDirIdx - i32(dirCount);
+  let D = f32(select(offset, -offset - 1, offset < 0));
+  let isEven = (lineIdx & 1) == 0;
+  let stride = select(1, 2, isEven);
 
-fn probeFunc(pos:vec2f,li:i32,pi:i32,di:i32,is_f:bool,ls:u32)->f32{
-  let ps=f32(PS);let lsf=f32(ls);let pf=f32(pi);let df=f32(di);
-  let lx=f32(li)*lsf;
-  let ly=vec2f(pf,pf+1.0)*ps;
-  let ext=(li&1)==0;
-  let stride=select(1,2,ext);
-  let sf=f32(stride);
-  let rx=f32(li+stride)*lsf;
-  var wmax:f32;
-  if(is_f){wmax=select(2.0,3.0,ext);}else{wmax=1.0;}
-  let ry=vec2f(pf+df*sf,pf+df*sf+wmax)*ps;
-  if(pos.x>=lx&&pos.x<rx){
-    let t=(pos.x-lx)/(rx-lx);
-    let yr=mix(ly,ry,vec2f(t));
-    if(pos.y>=yr.x&&pos.y<yr.y){return t;}
+  let leftX = f32(lineIdx) * ls + f32(LINE_SPACING);
+  let rightX = f32(lineIdx + stride) * ls + f32(LINE_SPACING);
+  if (pos.x < leftX || pos.x >= rightX) { return -1.0; }
+  let t = (pos.x - leftX) / (rightX - leftX);
+
+  var lY: vec2f;
+  var rY: vec2f;
+
+  if (isEven) {
+    let base = P + D * 2.0;
+    if (slotIdx == 0) {
+      lY = vec2f(P, P + 1.0);
+      rY = vec2f(base, base + 1.0);
+    } else if (slotIdx == 1) {
+      lY = vec2f(P + 1.0, P + 1.0);
+      rY = vec2f(base + 1.0, base + 2.0);
+    } else if (slotIdx == 2) {
+      lY = vec2f(P + 1.0, P + 1.0);
+      rY = vec2f(base + 2.0, base + 3.0);
+    } else if (slotIdx == 3) {
+      lY = vec2f(P, P + 1.0);
+      rY = vec2f(base, base + 1.0);
+    } else { return -1.0; }
+  } else {
+    let base = P + D;
+    if (slotIdx == 0) {
+      lY = vec2f(P, P + 1.0);
+      rY = vec2f(base, base + 1.0);
+    } else if (slotIdx == 1) {
+      lY = vec2f(P + 1.0, P + 1.0);
+      rY = vec2f(base + 1.0, base + 2.0);
+    } else if (slotIdx == 2) {
+      lY = vec2f(P, P + 1.0);
+      rY = vec2f(base, base + 1.0);
+    } else { return -1.0; }
   }
+
+  if (offset < 0) {
+    let c = 2.0 * P + 1.0;
+    lY = vec2f(c - lY.y, c - lY.x);
+    rY = vec2f(c - rY.y, c - rY.x);
+  }
+
+  let leftY = lY * ps;
+  let rightY = rY * ps;
+  let yRange = mix(leftY, rightY, vec2f(t));
+  if (yRange.x >= yRange.y) { return -1.0; }
+  if (pos.y >= yRange.x && pos.y < yRange.y) { return t; }
   return -1.0;
 }
 
-fn atlasIdx(li:i32,pi:i32,di:i32,is_f:bool,dc:u32)->i32{
-  let x=li*i32(dc*2u)+select(i32(dc),0,is_f)+di;
-  let y=pi;
-  if(x<0||x>=i32(ATL_W)||y<0||y>=i32(ATL_H)){return -1;}
-  return y*i32(ATL_W)+x;
+fn slotAtlasIndex(lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
+                  slotIdx: i32, fullDirCount: u32) -> i32 {
+  let x = lineIdx * i32(fullDirCount * SLOTS_PER_DIR) + fullDirIdx * i32(SLOTS_PER_DIR) + slotIdx;
+  let y = probeIdx;
+  if (x < 0 || x >= i32(ATLAS_W) || y < 0 || y >= i32(ATLAS_H)) { return -1; }
+  return y * i32(ATLAS_W) + x;
 }
 
-fn falloffRange(n:u32)->vec2f{
-  return vec2f(1.0)/vec2f(f32(1u<<n),f32(1u<<(n+1u)));
+fn isTriangleSlot(isEven: bool, slotIdx: i32) -> bool {
+  if (isEven) { return slotIdx == 1 || slotIdx == 2; }
+  return slotIdx == 1;
 }
 
-fn dbgCol(li:i32,is_f:bool,di:i32,n:u32)->vec3f{
-  let ext=(li&1)==0;
-  var col:vec3f;
-  if(is_f&&ext){col=vec3f(0.9,0.2,0.15);}
-  else if(is_f&&!ext){col=vec3f(0.15,0.8,0.15);}
-  else if(!is_f&&ext){col=vec3f(0.2,0.2,0.9);}
-  else{col=vec3f(0.85,0.85,0.15);}
-  if((di&1)==1){col*=0.6;}
-  return col;
+fn falloffRange(n: u32) -> vec2f {
+  return vec2f(1.0) / vec2f(f32(1u << n), f32(1u << (n + 1u)));
 }
+
+fn cascadeColor(n: u32) -> vec3f {
+  switch (n) {
+    case 0u: { return vec3f(0.9, 0.15, 0.1); }
+    case 1u: { return vec3f(0.1, 0.8, 0.15); }
+    case 2u: { return vec3f(0.15, 0.3, 0.9); }
+    case 3u: { return vec3f(0.9, 0.75, 0.1); }
+    case 4u: { return vec3f(0.8, 0.15, 0.9); }
+    case 5u: { return vec3f(0.15, 0.75, 0.75); }
+    default: { return vec3f(0.5); }
+  }
+}
+`;
+
+      const commonWGSL = `
+const WORLD_SIZE = ${WORLD_SIZE}u;
+const PROBE_SPACING = ${PROBE_SPACING}u;
+const LINE_SPACING = ${LINE_SPACING}u;
+const NUM_CASCADES = ${NUM_CASCADES}u;
+const NUM_LINES = ${NUM_LINES}u;
+const NUM_PROBES = ${NUM_PROBES}u;
+const ATLAS_W = ${ATLAS_W}u;
+const ATLAS_H = ${ATLAS_H}u;
+const ATLAS_SIZE = ${ATLAS_W * ATLAS_H}u;
+
+struct Params { sourceX: f32, sourceY: f32, cascadeIdx: u32, debug: u32 }
+
+${tessellationWGSL}
 `;
 
       const seedWGSL =
         commonWGSL +
         `
-@group(0)@binding(0) var<storage,read_write> cas:array<vec4f>;
-@group(0)@binding(1) var<uniform> par:Params;
-@compute @workgroup_size(16,16)
-fn main(@builtin(global_invocation_id) gid:vec3u){
-  let tx=i32(gid.x);let ty=i32(gid.y);
-  if(tx>=i32(ATL_W)||ty>=i32(ATL_H)){return;}
-  let dc=DC0;
-  let li=tx/i32(dc*2u);let rem=tx%i32(dc*2u);
-  let is_f=rem<i32(dc);let di=rem%i32(dc);let pi=ty;
-  let src=vec2f(par.sx,par.sy);
-  let sl=i32(floor(src.x/f32(LS0)));
-  let sp=i32(floor(src.y/f32(PS)));
-  let idx=ty*i32(ATL_W)+tx;
-  if(li==sl&&pi==sp&&di==0&&is_f){
-    if(par.dbg>0u){cas[idx]=vec4f(dbgCol(li,true,0,0u),0.0);}
-    else{cas[idx]=vec4f(1.0);}
-  }else{cas[idx]=vec4f(0.0);}
+@group(0) @binding(0) var<storage, read_write> cascade: array<vec4f>;
+@group(0) @binding(1) var<uniform> params: Params;
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = i32(gid.x); let ty = i32(gid.y);
+  if (tx >= i32(ATLAS_W) || ty >= i32(ATLAS_H)) { return; }
+
+  let fullDirCount = 2u;
+  let slotsPerLine = i32(fullDirCount * SLOTS_PER_DIR);
+  let lineIdx = tx / slotsPerLine;
+  let rem = tx % slotsPerLine;
+  let fullDirIdx = rem / i32(SLOTS_PER_DIR);
+  let slotIdx = rem % i32(SLOTS_PER_DIR);
+  let probeIdx = ty;
+
+  let source = vec2f(params.sourceX, params.sourceY);
+  let srcLine = i32(floor(source.x / f32(LINE_SPACING)));
+  let srcProbe = i32(floor(source.y / f32(PROBE_SPACING)));
+
+  let idx = ty * i32(ATLAS_W) + tx;
+  if (lineIdx == srcLine && probeIdx == srcProbe) {
+    if (params.debug == 3u) { cascade[idx] = vec4f(cascadeColor(0u), 0.0); }
+    else                    { cascade[idx] = vec4f(1.0); }
+  } else {
+    cascade[idx] = vec4f(0.0);
+  }
 }
 `;
 
       const extendWGSL =
         commonWGSL +
         `
-@group(0)@binding(0) var<storage,read> src:array<vec4f>;
-@group(0)@binding(1) var<storage,read_write> dst:array<vec4f>;
-@group(0)@binding(2) var<uniform> par:Params;
+@group(0) @binding(0) var<storage, read> src: array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> dst: array<vec4f>;
+@group(0) @binding(2) var<uniform> params: Params;
 
-fn readSrc(li:i32,pi:i32,di:i32,is_f:bool,dc:u32)->vec4f{
-  let i=atlasIdx(li,pi,di,is_f,dc);
-  if(i<0||i>=i32(ATL_SZ)){return vec4f(0.0);}
+fn readSlot(lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
+            slotIdx: i32, fullDirCount: u32) -> vec4f {
+  let i = slotAtlasIndex(lineIdx, probeIdx, fullDirIdx, slotIdx, fullDirCount);
+  if (i < 0 || i >= i32(ATLAS_SIZE)) { return vec4f(0.0); }
   return src[i];
 }
 
-@compute @workgroup_size(16,16)
-fn main(@builtin(global_invocation_id) gid:vec3u){
-  let tx=i32(gid.x);let ty=i32(gid.y);
-  if(tx>=i32(ATL_W)||ty>=i32(ATL_H)){return;}
-  let dn=par.ci;
-  let ddc=DC0<<dn;let sdc=DC0<<(dn-1u);
-  let li=tx/i32(ddc*2u);let rem=tx%i32(ddc*2u);
-  let is_f=rem<i32(ddc);let di=rem%i32(ddc);let pi=ty;
-  var res=vec4f(0.0);
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let tx = i32(gid.x); let ty = i32(gid.y);
+  if (tx >= i32(ATLAS_W) || ty >= i32(ATLAS_H)) { return; }
 
-  if(is_f){
-    {let sl=li*2-2;let sd=di/2;
-      if((di&1)==0){res+=readSrc(sl,pi-di,sd,true,sdc);}
-      else{res+=readSrc(sl,pi-(di+1),sd,true,sdc);}}
-    {let sl=li*2-1;let sd=di/2;
-      if((di&1)==0){res+=readSrc(sl,pi-sd,sd,true,sdc);}
-      else{res+=readSrc(sl,pi-sd-1,sd,true,sdc);}}
-  }else{
-    {let sl=li*2-2;let sd=di/2;
-      if((di&1)==1){res+=readSrc(sl,pi-di,sd,true,sdc);}
-      else{res+=readSrc(sl,pi-di,sd,false,sdc);}}
-    if((di&1)==0){let sl=li*2-1;let sd=di/2;
-      res+=readSrc(sl,pi-sd,sd,false,sdc);}
+  let cascadeN = params.cascadeIdx;
+  let dstDirCount = 1u << cascadeN;
+  let srcDirCount = 1u << (cascadeN - 1u);
+  let dstFullDirCount = 2u * dstDirCount;
+  let srcFullDirCount = 2u * srcDirCount;
+
+  let slotsPerLine = i32(dstFullDirCount * SLOTS_PER_DIR);
+  let lineIdx = tx / slotsPerLine;
+  let rem = tx % slotsPerLine;
+  let fullDirIdx = rem / i32(SLOTS_PER_DIR);
+  let slotIdx = rem % i32(SLOTS_PER_DIR);
+  let probeIdx = ty;
+
+  let isEven = (lineIdx & 1) == 0;
+  let numFrustumSlots = select(2, 3, isEven);
+  let bandSlot = select(2, 3, isEven);
+
+  let offset = fullDirIdx - i32(dstDirCount);
+  let isUp = offset < 0;
+  let pSign = select(-1, 1, isUp);
+  let D = select(offset, -offset - 1, isUp);
+
+  let srcFullDir = fullDirIdx / 2;
+  let srcOffset = srcFullDir - i32(srcDirCount);
+  let srcD = select(srcOffset, -srcOffset - 1, srcOffset < 0);
+
+  let isInner = ((fullDirIdx & 1) == 0) != isUp;
+
+  var result = vec4f(0.0);
+
+  if (slotIdx < numFrustumSlots) {
+    {
+      let srcLine = lineIdx * 2 - 2;
+      let probeOff = select(2 * (srcD + 1), 2 * srcD, isInner);
+      result += readSlot(srcLine, probeIdx + pSign * probeOff, srcFullDir, 0, srcFullDirCount);
+    }
+    {
+      let srcLine = lineIdx * 2 - 1;
+      let probeOff = select(srcD + 1, srcD, isInner);
+      result += readSlot(srcLine, probeIdx + pSign * probeOff, srcFullDir, 0, srcFullDirCount);
+    }
+  } else if (slotIdx == bandSlot) {
+    {
+      let srcLine = lineIdx * 2 - 2;
+      if ((D & 1) == 1) {
+        result += readSlot(srcLine, probeIdx + pSign * D, srcFullDir, 0, srcFullDirCount);
+      } else {
+        result += readSlot(srcLine, probeIdx + pSign * D, srcFullDir, 3, srcFullDirCount);
+      }
+    }
+    if ((D & 1) == 0) {
+      let srcLine = lineIdx * 2 - 1;
+      result += readSlot(srcLine, probeIdx + pSign * srcD, srcFullDir, 2, srcFullDirCount);
+    }
   }
 
-  let idx=ty*i32(ATL_W)+tx;
-  if(par.dbg>0u&&any(res.rgb>vec3f(0.0))){
-    dst[idx]=vec4f(dbgCol(li,is_f,di,dn),0.0);
-  }else{dst[idx]=res;}
+  let idx = ty * i32(ATLAS_W) + tx;
+  if (params.debug == 3u && any(result.rgb > vec3f(0.0))) {
+    dst[idx] = vec4f(cascadeColor(cascadeN), 0.0);
+  } else if (params.debug > 0u && any(result.rgb > vec3f(0.0))) {
+    dst[idx] = vec4f(1.0);
+  } else {
+    dst[idx] = result;
+  }
 }
 `;
 
       const gatherWGSL =
         commonWGSL +
         `
-@group(0)@binding(0) var<storage,read> c0:array<vec4f>;
-@group(0)@binding(1) var<storage,read> c1:array<vec4f>;
-@group(0)@binding(2) var<storage,read> c2:array<vec4f>;
-@group(0)@binding(3) var<storage,read> c3:array<vec4f>;
-@group(0)@binding(4) var<storage,read> c4:array<vec4f>;
-@group(0)@binding(5) var<storage,read_write> flu:array<vec4f>;
-@group(0)@binding(6) var<uniform> gpar:Params;
+@group(0) @binding(0) var<storage, read> c0: array<vec4f>;
+@group(0) @binding(1) var<storage, read> c1: array<vec4f>;
+@group(0) @binding(2) var<storage, read> c2: array<vec4f>;
+@group(0) @binding(3) var<storage, read> c3: array<vec4f>;
+@group(0) @binding(4) var<storage, read> c4: array<vec4f>;
+@group(0) @binding(5) var<storage, read> c5: array<vec4f>;
+@group(0) @binding(6) var<storage, read_write> fluence: array<vec4f>;
+@group(0) @binding(7) var<uniform> gatherParams: Params;
 
-fn readC(n:u32,i:i32)->vec4f{
-  if(i<0||i>=i32(ATL_SZ)){return vec4f(0.0);}
-  switch(n){case 0u:{return c0[i];}case 1u:{return c1[i];}case 2u:{return c2[i];}case 3u:{return c3[i];}case 4u:{return c4[i];}default:{return vec4f(0.0);}}
+fn readCascade(n: u32, i: i32) -> vec4f {
+  if (i < 0 || i >= i32(ATLAS_SIZE)) { return vec4f(0.0); }
+  switch (n) {
+    case 0u: { return c0[i]; }
+    case 1u: { return c1[i]; }
+    case 2u: { return c2[i]; }
+    case 3u: { return c3[i]; }
+    case 4u: { return c4[i]; }
+    case 5u: { return c5[i]; }
+    default: { return vec4f(0.0); }
+  }
 }
 
-@compute @workgroup_size(16,16)
-fn main(@builtin(global_invocation_id) gid:vec3u){
-  let px=i32(gid.x);let py=i32(gid.y);
-  if(px>=i32(SIZE)||py>=i32(SIZE)){return;}
-  let pos=vec2f(f32(px)+0.5,f32(py)+0.5);
-  var tot=vec4f(0.0);
-  let nEnd=gpar.ci+1u;
-  for(var n=0u;n<nEnd;n++){
-    let ls=LS0<<n;let dc=DC0<<n;let fo=falloffRange(n);
-    let bli=px/i32(ls);
-    for(var lp=0u;lp<2u;lp++){
-      var cl=bli;
-      if(lp==1u){if((bli&1)==0){continue;}cl=bli-1;}
-      for(var pi=0;pi<i32(PROBES);pi++){
-        for(var di=0;di<i32(dc);di++){
-          {let pf=probeFunc(pos,cl,pi,di,true,ls);
-            if(pf>=0.0){let ai=atlasIdx(cl,pi,di,true,dc);tot+=readC(n,ai)*mix(fo.x,fo.y,pf);}}
-          {let pf=probeFunc(pos,cl,pi,di,false,ls);
-            if(pf>=0.0){let ai=atlasIdx(cl,pi,di,false,dc);tot+=readC(n,ai)*mix(fo.x,fo.y,pf);}}
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  let px = i32(gid.x); let py = i32(gid.y);
+  if (px >= i32(WORLD_SIZE) || py >= i32(WORLD_SIZE)) { return; }
+
+  let pos = vec2f(f32(px) + 0.5, f32(py) + 0.5);
+  var total = vec4f(0.0);
+  let cascadeEnd = gatherParams.cascadeIdx + 1u;
+  let showUnitShapes = gatherParams.debug == 1u;
+
+  // C0: single 0:1 triangle from source probe center to probe right edge
+  {
+    let ls0 = f32(LINE_SPACING);
+    let ps = f32(PROBE_SPACING);
+    let srcLine = i32(floor(gatherParams.sourceX / ls0));
+    let srcProbe = i32(floor(gatherParams.sourceY / ps));
+    let c0Left = (f32(srcLine) + 0.5) * ls0;
+    let c0Right = f32(srcLine + 1) * ls0;
+    if (pos.x >= c0Left && pos.x < c0Right) {
+      let t = (pos.x - c0Left) / (c0Right - c0Left);
+      let centerY = (f32(srcProbe) + 0.5) * ps;
+      let halfH = 0.5 * ps * t;
+      if (pos.y >= centerY - halfH && pos.y < centerY + halfH) {
+        let ai = slotAtlasIndex(srcLine, srcProbe, 0, 0, 2u);
+        let val = readCascade(0u, ai);
+        if (any(val.rgb > vec3f(0.0))) {
+          if (showUnitShapes) {
+            total += vec4f(0.95, 0.55, 0.1, 0.0);
+          } else {
+            total += val * mix(1.0, 0.5, t);
+          }
         }
       }
     }
   }
-  flu[py*i32(SIZE)+px]=tot;
+
+  for (var n = 0u; n < cascadeEnd; n++) {
+    let lineSpacing = LINE_SPACING << n;
+    let dirCount = 1u << n;
+    let fullDirCount = 2u * dirCount;
+    let falloff = falloffRange(n);
+
+    let baseLineIdx = (px - i32(LINE_SPACING)) / i32(lineSpacing);
+
+    for (var linePass = 0u; linePass < 2u; linePass++) {
+      var curLine = baseLineIdx;
+      if (linePass == 1u) {
+        if ((baseLineIdx & 1) == 0) { continue; }
+        curLine = baseLineIdx - 1;
+      }
+
+      let isEven = (curLine & 1) == 0;
+
+      for (var probeIdx = 0; probeIdx < i32(NUM_PROBES); probeIdx++) {
+        for (var fdi = 0; fdi < i32(fullDirCount); fdi++) {
+          for (var slotIdx = 0; slotIdx < i32(SLOTS_PER_DIR); slotIdx++) {
+            let t = slotShapeTest(pos, curLine, probeIdx, fdi, slotIdx, lineSpacing, dirCount);
+            if (t >= 0.0) {
+              let ai = slotAtlasIndex(curLine, probeIdx, fdi, slotIdx, fullDirCount);
+              let val = readCascade(n, ai);
+              if (any(val.rgb > vec3f(0.0))) {
+                if (showUnitShapes) {
+                  let isTri = isTriangleSlot(isEven, slotIdx);
+                  let col = select(vec3f(0.85, 0.15, 0.55), vec3f(0.95, 0.55, 0.1), isTri);
+                  total += vec4f(col, 0.0);
+                } else {
+                  total += val * mix(falloff.x, falloff.y, t);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  fluence[py * i32(WORLD_SIZE) + px] = total;
 }
 `;
 
       const blitWGSL = `
-const SIZE=${SIZE}u;const PS=${PS}u;
-@group(0)@binding(0) var<storage,read> flu:array<vec4f>;
-@group(0)@binding(1) var<uniform> bp:vec4f;
-@vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4f{
-  let p=array(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));return vec4f(p[i],0,1);}
-@fragment fn fs(@builtin(position) pos:vec4f)->@location(0) vec4f{
-  let px=i32(pos.x);let py=i32(pos.y);
-  if(px>=i32(SIZE)||py>=i32(SIZE)){return vec4f(0,0,0,1);}
-  let f=flu[py*i32(SIZE)+px];
-  let checker=0.03+0.015*f32(((px/i32(PS))+(py/i32(PS)))&1);
-  let bg=vec3f(checker);
-  let exposure=bp.x;let debug=bp.y;
-  let mc=vec2i(i32(bp.z)/i32(PS),i32(bp.w)/i32(PS));
-  let pc=vec2i(px/i32(PS),py/i32(PS));
-  let isMC=all(mc==pc);
-  let loc=vec2i(px%i32(PS),py%i32(PS));
-  let onB=loc.x==0||loc.y==0||loc.x==i32(PS)-1||loc.y==i32(PS)-1;
-  let hdr=f.rgb*exposure;
-  var mapped:vec3f;
-  if(debug>0.5){mapped=hdr;}else{mapped=hdr/(hdr+vec3f(1.0));}
-  var result=max(bg,pow(mapped,vec3f(1.0/2.2)));
-  if(isMC&&onB){result=mix(result,vec3f(0.0,1.0,0.9),0.85);}
-  return vec4f(result,1.0);
+const WORLD_SIZE = ${WORLD_SIZE}u;
+const PROBE_SPACING = ${PROBE_SPACING}u;
+
+@group(0) @binding(0) var<storage, read> fluence: array<vec4f>;
+@group(0) @binding(1) var<uniform> blitParams: vec4f;
+
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let p = array(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));
+  return vec4f(p[i], 0, 1);
+}
+
+@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let px = i32(pos.x); let py = i32(pos.y);
+  if (px >= i32(WORLD_SIZE) || py >= i32(WORLD_SIZE)) { return vec4f(0, 0, 0, 1); }
+
+  let f = fluence[py * i32(WORLD_SIZE) + px];
+  let checker = 0.03 + 0.015 * f32(((px / i32(PROBE_SPACING)) + (py / i32(PROBE_SPACING))) & 1);
+  let bg = vec3f(checker);
+
+  let exposure = blitParams.x;
+  let debug = blitParams.y;
+  let mouseCell = vec2i(i32(blitParams.z) / i32(PROBE_SPACING), i32(blitParams.w) / i32(PROBE_SPACING));
+  let pixelCell = vec2i(px / i32(PROBE_SPACING), py / i32(PROBE_SPACING));
+  let isMouseCell = all(mouseCell == pixelCell);
+
+  let localPos = vec2i(px % i32(PROBE_SPACING), py % i32(PROBE_SPACING));
+  let onBorder = localPos.x == 0 || localPos.y == 0 ||
+                 localPos.x == i32(PROBE_SPACING) - 1 || localPos.y == i32(PROBE_SPACING) - 1;
+
+  let hdr = f.rgb * exposure;
+  var mapped: vec3f;
+  if (debug > 0.5) { mapped = hdr; } else { mapped = hdr / (hdr + vec3f(1.0)); }
+
+  var result = max(bg, pow(mapped, vec3f(1.0 / 2.2)));
+  if (isMouseCell && onBorder) { result = mix(result, vec3f(0.0, 1.0, 0.9), 0.85); }
+  return vec4f(result, 1.0);
 }
 `;
 
@@ -282,126 +533,148 @@ const SIZE=${SIZE}u;const PS=${PS}u;
           document.getElementById('error').textContent = 'WebGPU not supported';
           return;
         }
-        const ad = await navigator.gpu.requestAdapter();
-        if (!ad) {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
           document.getElementById('error').textContent = 'No adapter';
           return;
         }
-        const dev = await ad.requestDevice();
+        const device = await adapter.requestDevice();
         const ctx = canvas.getContext('webgpu');
-        const fmt = navigator.gpu.getPreferredCanvasFormat();
-        ctx.configure({ device: dev, format: fmt, alphaMode: 'premultiplied' });
+        const format = navigator.gpu.getPreferredCanvasFormat();
+        ctx.configure({ device, format, alphaMode: 'premultiplied' });
 
-        const S = GPUBufferUsage.STORAGE,
-          U = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          D = GPUBufferUsage.COPY_DST;
-        const AB = ATLAS_W * ATLAS_H * 16;
+        const STORAGE = GPUBufferUsage.STORAGE,
+          UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
+        const ATLAS_BYTES = ATLAS_W * ATLAS_H * 16;
 
-        const cB = Array.from({ length: NC }, (_, i) => dev.createBuffer({ label: `c${i}`, size: AB, usage: S | D }));
-        const fB = dev.createBuffer({ label: 'flu', size: SIZE * SIZE * 16, usage: S | D });
-        const bpB = dev.createBuffer({ label: 'bp', size: 16, usage: U });
-        const pB = Array.from({ length: NC }, (_, i) => {
-          const b = dev.createBuffer({ label: `p${i}`, size: 16, usage: U });
-          const d = new ArrayBuffer(16);
-          new DataView(d).setUint32(8, i, true);
-          dev.queue.writeBuffer(b, 0, d);
-          return b;
+        const cascadeBuffers = Array.from({ length: NUM_CASCADES }, (_, i) =>
+          device.createBuffer({ label: `cascade${i}`, size: ATLAS_BYTES, usage: STORAGE | GPUBufferUsage.COPY_DST }),
+        );
+        const fluenceBuffer = device.createBuffer({
+          label: 'fluence',
+          size: WORLD_SIZE * WORLD_SIZE * 16,
+          usage: STORAGE | GPUBufferUsage.COPY_DST,
         });
-        const gparB = dev.createBuffer({ label: 'gpar', size: 16, usage: U });
+        const blitParamBuffer = device.createBuffer({ label: 'blitParams', size: 16, usage: UNIFORM });
+        const paramBuffers = Array.from({ length: NUM_CASCADES }, (_, i) => {
+          const buf = device.createBuffer({ label: `params${i}`, size: 16, usage: UNIFORM });
+          const data = new ArrayBuffer(16);
+          new DataView(data).setUint32(8, i, true);
+          device.queue.writeBuffer(buf, 0, data);
+          return buf;
+        });
+        const gatherParamBuffer = device.createBuffer({ label: 'gatherParams', size: 16, usage: UNIFORM });
 
-        function comp(code, label) {
-          return dev.createComputePipeline({
+        function createComputePipeline(code, label) {
+          return device.createComputePipeline({
             label,
             layout: 'auto',
-            compute: { module: dev.createShaderModule({ code }), entryPoint: 'main' },
+            compute: { module: device.createShaderModule({ code }), entryPoint: 'main' },
           });
         }
 
-        const seedP = comp(seedWGSL, 'seed'),
-          extP = comp(extendWGSL, 'extend'),
-          gatP = comp(gatherWGSL, 'gather');
-        const bm = dev.createShaderModule({ code: blitWGSL });
-        const blitP = dev.createRenderPipeline({
+        const seedPipeline = createComputePipeline(seedWGSL, 'seed'),
+          extendPipeline = createComputePipeline(extendWGSL, 'extend'),
+          gatherPipeline = createComputePipeline(gatherWGSL, 'gather');
+        const blitModule = device.createShaderModule({ code: blitWGSL });
+        const blitPipeline = device.createRenderPipeline({
           label: 'blit',
           layout: 'auto',
-          vertex: { module: bm, entryPoint: 'vs' },
-          fragment: { module: bm, entryPoint: 'fs', targets: [{ format: fmt }] },
+          vertex: { module: blitModule, entryPoint: 'vs' },
+          fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format }] },
           primitive: { topology: 'triangle-list' },
         });
 
-        function bg(pipe, entries) {
-          return dev.createBindGroup({
-            layout: pipe.getBindGroupLayout(0),
+        function bindGroup(pipeline, entries) {
+          return device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
             entries: entries.map((resource, binding) => ({ binding, resource })),
           });
         }
 
-        const seedBG = bg(seedP, [{ buffer: cB[0] }, { buffer: pB[0] }]);
-        const extBG = [];
-        for (let n = 0; n < NC - 1; n++)
-          extBG.push(bg(extP, [{ buffer: cB[n] }, { buffer: cB[n + 1] }, { buffer: pB[n + 1] }]));
-        const gatBG = bg(gatP, [
-          { buffer: cB[0] },
-          { buffer: cB[1] },
-          { buffer: cB[2] },
-          { buffer: cB[3] },
-          { buffer: cB[4] },
-          { buffer: fB },
-          { buffer: gparB },
+        const seedBindGroup = bindGroup(seedPipeline, [
+          { buffer: cascadeBuffers[0] },
+          { buffer: paramBuffers[0] },
         ]);
-        const blitBG = bg(blitP, [{ buffer: fB }, { buffer: bpB }]);
+        const extendBindGroups = [];
+        for (let n = 0; n < NUM_CASCADES - 1; n++)
+          extendBindGroups.push(
+            bindGroup(extendPipeline, [
+              { buffer: cascadeBuffers[n] },
+              { buffer: cascadeBuffers[n + 1] },
+              { buffer: paramBuffers[n + 1] },
+            ]),
+          );
+        const gatherBindGroup = bindGroup(gatherPipeline, [
+          { buffer: cascadeBuffers[0] },
+          { buffer: cascadeBuffers[1] },
+          { buffer: cascadeBuffers[2] },
+          { buffer: cascadeBuffers[3] },
+          { buffer: cascadeBuffers[4] },
+          { buffer: cascadeBuffers[5] },
+          { buffer: fluenceBuffer },
+          { buffer: gatherParamBuffer },
+        ]);
+        const blitBindGroup = bindGroup(blitPipeline, [
+          { buffer: fluenceBuffer },
+          { buffer: blitParamBuffer },
+        ]);
 
-        const WA = Math.ceil(ATLAS_W / 16),
-          WAH = Math.ceil(ATLAS_H / 16),
-          WS = Math.ceil(SIZE / 16);
-        const sd = new Float32Array(2);
+        const atlasWGX = Math.ceil(ATLAS_W / 16),
+          atlasWGY = Math.ceil(ATLAS_H / 16),
+          screenWG = Math.ceil(WORLD_SIZE / 16);
+        const sourceXY = new Float32Array(2);
 
         function frame() {
           if (!paused) {
-            sd[0] = mouseX;
-            sd[1] = mouseY;
-            for (let i = 0; i < NC; i++) {
-              dev.queue.writeBuffer(pB[i], 0, sd);
-              dev.queue.writeBuffer(pB[i], 12, new Uint32Array([debugMode]));
+            sourceXY[0] = mouseX;
+            sourceXY[1] = mouseY;
+            for (let i = 0; i < NUM_CASCADES; i++) {
+              device.queue.writeBuffer(paramBuffers[i], 0, sourceXY);
+              device.queue.writeBuffer(paramBuffers[i], 12, new Uint32Array([debugMode]));
             }
-            dev.queue.writeBuffer(bpB, 0, new Float32Array([debugMode > 0 ? 1 : 5, debugMode, mouseX, mouseY]));
+            device.queue.writeBuffer(
+              blitParamBuffer,
+              0,
+              new Float32Array([debugMode > 0 ? 1 : 5, debugMode, mouseX, mouseY]),
+            );
             {
-              const d = new ArrayBuffer(16);
-              const v = new DataView(d);
-              v.setFloat32(0, mouseX, true);
-              v.setFloat32(4, mouseY, true);
-              v.setUint32(8, maxCascade, true);
-              v.setUint32(12, debugMode, true);
-              dev.queue.writeBuffer(gparB, 0, d);
+              const data = new ArrayBuffer(16);
+              const view = new DataView(data);
+              view.setFloat32(0, mouseX, true);
+              view.setFloat32(4, mouseY, true);
+              view.setUint32(8, maxCascade, true);
+              view.setUint32(12, debugMode, true);
+              device.queue.writeBuffer(gatherParamBuffer, 0, data);
             }
 
-            const e = dev.createCommandEncoder();
-            for (const b of cB) e.clearBuffer(b);
-            e.clearBuffer(fB);
+            const encoder = device.createCommandEncoder();
+            for (const buf of cascadeBuffers) encoder.clearBuffer(buf);
+            encoder.clearBuffer(fluenceBuffer);
             {
-              const p = e.beginComputePass();
-              p.setPipeline(seedP);
-              p.setBindGroup(0, seedBG);
-              p.dispatchWorkgroups(WA, WAH);
-              p.end();
+              const pass = encoder.beginComputePass();
+              pass.setPipeline(seedPipeline);
+              pass.setBindGroup(0, seedBindGroup);
+              pass.dispatchWorkgroups(atlasWGX, atlasWGY);
+              pass.end();
             }
-            if (debugMode < 2)
-              for (let n = 0; n < Math.min(NC - 1, maxCascade); n++) {
-                const p = e.beginComputePass();
-                p.setPipeline(extP);
-                p.setBindGroup(0, extBG[n]);
-                p.dispatchWorkgroups(WA, WAH);
-                p.end();
+            if (debugMode !== 2)
+              for (let n = 0; n < Math.min(NUM_CASCADES - 1, maxCascade); n++) {
+                const pass = encoder.beginComputePass();
+                pass.setPipeline(extendPipeline);
+                pass.setBindGroup(0, extendBindGroups[n]);
+                pass.dispatchWorkgroups(atlasWGX, atlasWGY);
+                pass.end();
               }
             {
-              const p = e.beginComputePass();
-              p.setPipeline(gatP);
-              p.setBindGroup(0, gatBG);
-              p.dispatchWorkgroups(WS, WS);
-              p.end();
+              const pass = encoder.beginComputePass();
+              pass.setPipeline(gatherPipeline);
+              pass.setBindGroup(0, gatherBindGroup);
+              pass.dispatchWorkgroups(screenWG, screenWG);
+              pass.end();
             }
             {
-              const p = e.beginRenderPass({
+              const pass = encoder.beginRenderPass({
                 colorAttachments: [
                   {
                     view: ctx.getCurrentTexture().createView(),
@@ -411,15 +684,31 @@ const SIZE=${SIZE}u;const PS=${PS}u;
                   },
                 ],
               });
-              p.setPipeline(blitP);
-              p.setBindGroup(0, blitBG);
-              p.draw(3);
-              p.end();
+              pass.setPipeline(blitPipeline);
+              pass.setBindGroup(0, blitBindGroup);
+              pass.draw(3);
+              pass.end();
             }
-            dev.queue.submit([e.finish()]);
+            device.queue.submit([encoder.finish()]);
           }
+          const modeNames = ['off', 'shapes', 'seed-only', 'cascades'];
           document.getElementById('info').textContent =
-            `D=debug(${debugMode}) 0-4=cascade(${maxCascade}) | Fixed grid, PS=${PS}, LS0=${LS0}, atlas=${ATLAS_W}x${ATLAS_H}`;
+            `D=debug:${modeNames[debugMode]}(${debugMode}) 0-${NUM_CASCADES - 1}=cascade(${maxCascade}) | PS=${PROBE_SPACING}, LS=${LINE_SPACING}, atlas=${ATLAS_W}x${ATLAS_H}`;
+          const legend = document.getElementById('legend');
+          if (debugMode === 3) {
+            legend.innerHTML =
+              '<span style="color:#e42">■ C0</span>' +
+              '<span style="color:#1c3">■ C1</span>' +
+              '<span style="color:#35e">■ C2</span>' +
+              '<span style="color:#ec2">■ C3</span>' +
+              '<span style="color:#c3e">■ C4</span>' +
+              '<span style="color:#2bb">■ C5</span>' +
+              '<span style="color:#aaa"> (additive: overlap = mixed colors)</span>';
+          } else {
+            legend.innerHTML =
+              '<span style="color:#d9268d">■ 1:1 parallelogram</span>' +
+              '<span style="color:#f28c1a">■ 0:1 triangle</span>';
+          }
           requestAnimationFrame(frame);
         }
         requestAnimationFrame(frame);

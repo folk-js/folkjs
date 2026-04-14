@@ -1,0 +1,877 @@
+Holographic Radiance Cascades for 2D Global Illumination
+Rouli Freeman
+University of Oxford
+United Kingdom
+rouli.freeman@gmail.com
+
+Path Traced — 52spp
+98.6 ms, RMSE 0.0667
+
+Adrian Margel
+adrianmargel.ca
+
+Holographic Radiance Cascades — 52spp
+7.67 ms, RMSE 0.00630
+
+PT–600spp
+
+Path Traced — 600spp
+1080 ms, RMSE 0.00962
+
+Alexander Sannikov
+Grinding Gear Games
+New Zealand
+
+PT–52spp
+HRC
+PT–600spp
+PT–52spp
+HRC
+Fig. 1. A 1024 × 1024 pixel scene with multiple emissive objects, rendered using naive path tracing and Holographic Radiance Cascades (HRC). Our algorithm
+improves the root mean squared error (RMSE) by 10x compared to naive path tracing with an equal number of samples, where we calculate spp for HRC as
+the number of ray intervals calculated divided by the total number of pixels.
+Efficiently calculating global illumination has always been one of the great
+est challenges in computer graphics. Algorithms for approximating global
+illumination have always struggled to run in realtime for fully dynamic
+scenes, and have had to rely heavily on stochastic raytracing, spatialtemporal
+denoising, or undersampled representations, resulting in much lower quality
+of lighting compared to reference solutions. Even though the problem of
+calculating global illumination in 2D is significantly simpler than that of 3D,
+most contemporary approaches still struggle to accurately approximate 2D
+global illumination under realtime constraints.
+We present Holographic Radiance Cascades: a new single shot scene
+agnostic radiance transfer algorithm for global illumination, which is capable
+of achieving results visually indistinguishable from the 2D reference solution
+at realtime framerates. Our method uses a multi level radiance probe system,
+and computes rays via combining short ray intervals as a replacement for
+conventional raytracing. It runs at constant cost for a given scene size, taking
+1.85 ms for a 512 × 512 pixel image and 7.67 ms for 1024 × 1024 on an RTX
+3080 Laptop.
+
+1 Introduction
+The field of computer graphics has primarily focused on 3D
+Global Illumination (GI). Unfortunately, contemporary realtime
+approaches for 3D GI are very far from the reference solution in the
+general case of fully dynamic scenes without significant temporal
+reuse. In fact, even though the problem of 2D GI — computing the
+light traveling through points in a finite grid, such as in Fig. 1 — is
+significantly simpler than that of 3D GI, it still has no acceptable
+realtime single shot solution.
+We introduce a new method for this called Holographic Radiance
+Cascades, which can provide results nearly identical to reference in
+realtime for arbitrary scenes contained within the grid boundaries.
+It is a variant of the Radiance Cascades algorithm [Sannikov 2023],
+so it does not use stochastic raytracing and therefore is noiseless
+and does not need any temporal caching. Our algorithm improves
+
+2 • Rouli Freeman, Alexander Sannikov, and Adrian Margel
+
+over RC by removing redundancies in the radiance field encoding,
+making it more efficient and capable of handling hard shadows. We
+also provide a specialized acceleration structure that approximates
+long rays by combining short ones. This provides performance
+independent of scene complexity, which allows for our algorithm
+to handle detailed volumetrics and shapes without slowdown.
+
+∞
+
+𝐿(𝒑, 𝜔)⃗ = ∫
+
+𝑇𝑟 (𝒑 ← 𝒑 + 𝑡𝜔)𝐿
+⃗ 𝑠 (𝒑 + 𝑡𝝎, −𝜔)𝑑𝑡
+⃗
+
+Following the Radiance Cascades framework [Sannikov 2023], we
+define the radiance interval 𝐿𝑟 (𝒑 ← 𝒒) as the radiance contributed
+by the line segment from 𝒒 to 𝒑 rather than an infinite ray:
+𝑑
+
+𝐿𝑟 (𝒑 ← 𝒒) ≔ ∫ 𝑇𝑟 (𝒑 ← 𝒑 + 𝑡𝜔)𝐿
+⃗ 𝑠 (𝒑 + 𝑡𝜔,⃗ −𝜔)𝑑𝑡
+⃗
+
+2 Related Work
+
+(3)
+
+0
+
+(4)
+
+0
+
+Jarosz et al. [2012] is one of the best papers on 2D Global Illumi
+nation. It discusses how to formulate standard rendering concepts
+in two dimensions, and adapts path tracing, photon mapping, and
+irradiance caching to 2D. However, it does not concern itself with
+calculating fluence at non surface points.
+Radiance Cascades (RC) is a new method for global illumination
+introduced by Sannikov [2023], which is currently used in the
+game Path of Exile 2 [Grinding Gear Games 2024] for screenspace
+illumination. Its approach is very well suited to 2D, as the simplest
+formulation of its algorithm tracks the fluence across space, rather
+than on surfaces. RC works somewhat similarly to irradiance probe
+methods [Majercik et al. 2019], although it stores values in multi
+ple cascades with varying spatial and angular resolutions, which
+allows the algorithm to handle both ambient occlusion effects and
+large scale environmental lighting with the same approach. In its
+default formulation, it has noticeable artifacts manifesting as rings
+around light sources, but there are ways to remove these, such
+as the “Bilinear Fix” described in Osborne and Sannikov [2024].
+Radiance Cascades is particularly good at handling diffuse GI, as its
+behavior is independent of the number of light sources, however it
+has errors when resolving small penumbras.
+
+3 Background
+We seek to calculate the fluence 𝐹 at positions in a 2D world,
+defined as the radiance integrated across all directions at a point:
+2𝜋
+
+𝐹 (𝒑) ≔ ∫
+
+𝐿(𝒑, 𝜔(𝜃))𝑑𝜃
+⃗
+
+where 𝑑 = ‖𝒒 − 𝒑‖ and 𝜔⃗ = (𝒒 − 𝒑)/𝑑 is the normalized direction
+vector. Then, 𝐿(𝒑, 𝜔)⃗ = lim𝑑→∞ 𝐿𝑟 (𝒑 ← 𝒑 + 𝑑𝜔)⃗ simply by the
+definition of the integral (although this would not be the case if
+there was an environment map).
+Now, let 𝒑, 𝒒, and 𝒓 be colinear points, with 𝒒 in the middle. By
+𝑐
+𝑏
+𝑐
+expanding Eq. 2 and using ∫ ⋅ = ∫ ⋅ + ∫ ⋅, we get that
+𝑎
+𝑎
+𝑏
+𝑇𝑟 (𝒑 ← 𝒓) = 𝑇𝑟 (𝒑 ← 𝒒) ⋅ 𝑇𝑟 (𝒒 ← 𝒓)
+(5)
+Using Eq. 4 and Eq. 5, we can also get a similar rule for radiance
+intervals:
+𝐿𝑟 (𝒑 ← 𝒓) = 𝐿𝑟 (𝒑 ← 𝒒) + 𝑇𝑟 (𝒑 ← 𝒒) ⋅ 𝐿𝑟 (𝒒 ← 𝒓) (6)
+So, we can compute the radiance and transmittance of an interval
+by decomposing it into smaller intervals. We show an example of
+this in Fig. 2. Also notice that we can use Eq. 6 when 𝒒 is arbitrarily
+far away, which allows us to compute 𝐿(𝒑, 𝜔)⃗ using the value at
+𝐿(𝒑 + 𝑡𝜔,⃗ 𝜔)⃗ and the radiance and transmittance of the in between
+interval. Defining ⟨𝑟, 𝑡⟩ to be the combined radiance interval and
+transmittance pair, we express these as two formulas:
+𝐌𝐞𝐫𝐠𝐞(⟨𝑟𝑛 , 𝑡𝑛 ⟩, ⟨𝑟𝑓 , 𝑡𝑓 ⟩) ≔ ⟨𝑟𝑛 + 𝑡𝑛 ⋅ 𝑟𝑓 , 𝑡𝑛 ⋅ 𝑡𝑓 ⟩ (7)
+𝐌𝐞𝐫𝐠𝐞𝒓 (⟨𝑟𝑛 , 𝑡𝑛 ⟩, 𝑟𝑓 ) ≔ 𝑟𝑛 + 𝑡𝑛 ⋅ 𝑟𝑓
+
+Notice how these are identical to the formulas for premultiplied
+alpha blending, where the transmittance is 1 − 𝛼 [Porter and Duff
+1984].
+For convenience, we will define
+𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒒) = ⟨𝐿𝑟 (𝒑 ← 𝒒), 𝑇𝑟 (𝒑 ← 𝒒)⟩
+(9)
+
+(1)
+
+0
+
+where 𝐿(𝒑, 𝜔)⃗ is the radiance at 𝒑 arriving from the normalized
+direction vector 𝝎, and 𝜔(𝜃)
+is the direction at angle 𝜃. In compari
+⃗
+son to irradiance, this does not have a cosine term, as there may not
+be a surface at 𝒑. For simplicity, we will not concern ourselves with
+multiple wavelengths of light, as they are typically independent.
+In our model, we assume the world consists entirely of partic
+ipating media, as surfaces can be modelled using highly dense
+volumes by taking a modified version of the BRDF as the source
+function. Thus, we define the transmittance 𝑇𝑟 as the fraction of
+radiance transmitted between two points [Pharr et al. 2023, sec
+11.2]:
+𝑑
+
+𝑇𝑟 (𝒑 ← 𝒒) ≔ exp(− ∫ 𝜎𝑡 (𝒑 + 𝑡𝜔,⃗ −𝜔)𝑑𝑡)
+⃗
+
+(8)
+
+(2)
+
+0
+
+where 𝑑 = ‖𝒒 − 𝒑‖, 𝜔⃗ = (𝒒 − 𝒑)/𝑑 is the normalized direction
+vector, and 𝜎𝑡 (𝒑, 𝜔)⃗ is the attenuation coefficient for the volume at
+position 𝒑 in direction 𝜔.⃗
+We can then compute the radiance by integrating the source
+function 𝐿𝑠 (𝒑, 𝜔),
+⃗ describing the emission and in scattering at 𝒑
+in direction 𝜔⃗ over the ray:
+
+𝒂 𝐿𝑟
+
+=
+
+.5
+2, 𝑇𝑟 = 0
+𝐿𝑟 = 0, 𝑇
+
+𝑟 =1
+
+𝒃
+
+𝐿 𝑟 = 2, 𝑇𝑟
+
+𝒄
+
+𝐿𝑟 = 2, 𝑇
+
+= 0.5
+
+𝒅
+
+𝑟 = 0.5
+
+𝒆
+Fig. 2. In this scene, both blocks attenuate the ray by 50%, and have
+an emission of 𝐿𝑠 (𝒑, 𝜔)⃗ ⋅ 𝜎𝑡 (𝒑, 𝜔)⃗ = 4. Then, we have 𝐿𝑟 (𝒂 ← 𝒆) = 2,
+𝑇𝑟 (𝒂 ← 𝒆) = 0.5, 𝑇𝑟 (𝒂 ← 𝒅) = 0.25, and 𝐿𝑟 (𝒂 ← 𝒅) = 3.
+
+3.1 Radiance Cascades
+Assume that all objects in the world have a minimum size of 1,
+and that they are within 𝑎 distance from the origin. In order to
+accurately approximate the fluence at the origin, we must use at
+least 2𝜋𝑎 samples at the furthest edge to ensure that no features
+are missed. The simplest way of doing this is by dividing the world
+into 𝐼 = ⌈2𝜋𝑎⌉ cones:
+𝐼−1
+
+𝐹 (𝟎) = ∑ 𝐹𝑖
+
+(10)
+
+𝑖=0
+
+where 𝐹𝑖 is the angular fluence for the 𝑖th cone, being the radiance
+integrated from 2𝜋(𝑖 − 1)/𝐼 to 2𝜋𝑖/𝐼. We approximate it by sam
+
+Holographic Radiance Cascades for 2D Global Illumination • 3
+
+within an exponentially increasing interval (with the exception of
+the base grid, which starts at 0), with an angular discretization
+proportional to the starting distance, as in Fig. 3. We compute each
+cascade from the next higher cascade, by tracing from the starting
+point and then merging as in Eq. 12, with bilinear interpolation
+used when probes are at different positions. The most common
+setting for RC in 2 dimensions is to have each cascade level’s probe
+grid have half the spatial resolution of the previous level — using
+the observation that under most conditions, light from far away
+sources is slowly varying — and quadruple the angular resolution
+(which means that to make the ray spacing uniform, the starting
+distance also increases in powers of 4). For a fixed area of interest,
+this makes each cascade store the same number of values. We then
+pick the number of cascades such that the combined ray length
+exceeds the area of interest size.
+However, standard RC cannot handle distant lights with a low
+angular resolution. Let the base probe spacing be 𝐴 and ray length
+be 𝐵, and then consider a light of a small size 𝑌 at a distance of 𝑋 ⋅
+𝐵, occluded by an object at distance 𝑋⋅𝐵
+2 such that the origin is in
+the penumbra, as shown in Fig. 5. This penumbra will have width
+𝑌 near the origin, however the probes that resolve the occluder
+√
+will be in cascade ≈ √
+log4 (𝑋), and as such have spacing 𝑋 ⋅ 𝐴,
+which means that if 𝑋 ⋅ 𝐴 > 𝑌 , RC is incapable of resolving it
+accurately and produces interpolation artifacts, as can be seen in
+Fig. 8.
+
+Fig. 3. The conical frustums used to approximate the fluence at a point
+in Radiance Cascades (left), and the rays used for three separate layers
+of probes (right) — shrunken for visibility. Note that each cascade has a
+quarter the probes of the previous level.
+
+pling the radiance in the center of the cone (where 𝜔(𝜃)
+is the
+⃗
+direction at angle 𝜃):
+2𝜋
+2𝜋(𝑖 + 0.5)
+𝐹𝑖 =
+𝐿(𝟎, 𝜔(
+))
+(11)
+⃗
+𝐼
+𝐼
+However this is inefficient, as at a distance of 𝑎2 , there only needs
+to be 𝜋𝑎 samples to resolve the scene. Instead, assuming that 𝐼 is
+even, we may separate the world into 𝐽 = 2𝐼 cones, each of which
+is then further subdivided into 2 conical frustums after passing a
+distance of 𝑎2 , and approximate all of these with single ray casts.
+Consider the 𝑗th cone, with central axis 𝝎, and let 𝐹+ and 𝐹− be
+the angular fluence of the frustums, approximated by tracing the
+centers of them starting from 𝑎2 . We then approximate the angular
+fluence and transmittance of the cone from 0 to 𝑎2 as ⟨𝑓𝑛 , 𝑡𝑛 ⟩ =
+2𝜋
+𝑎
+⃗ where 𝐴 × ⟨𝑟, 𝑡⟩ = ⟨𝐴𝑟, 𝑡⟩ converts the radi
+𝐼 × 𝐓𝐫𝐚𝐜𝐞(𝟎, 2 𝜔)
+ance into angular fluence with arc 𝐴 and leaves the transmittance
+unchanged, and 𝐓𝐫𝐚𝐜𝐞 is defined in Eq. 9.
+The total angular fluence is then calculated as
+𝐹𝑗 = 𝐌𝐞𝐫𝐠𝐞𝒓 (⟨𝑓𝑛 , 𝑡𝑛 ⟩, 𝐹+ + 𝐹− )
+(12)
+as 𝐌𝐞𝐫𝐠𝐞 can also operate on fluence values if they have the same
+angular size.
+We may then recursively repeat this for the 0 to 𝑎2 cone, stopping
+when the cone length is less than the feature resolution, as shown
+in Fig. 3 (left).
+In standard Radiance Cascades (RC) [Sannikov 2023; Osborne
+and Sannikov 2024], we discretize the world into multiple cascades
+of grids of probes, each of which stores the fluence accumulated
+
+𝑅0
+
+𝑅1
+
+√
+
+𝑋⋅𝐴
+
+𝑌
+
+𝑋 ⋅ 𝐵/2
+
+𝑋 ⋅ 𝐵/2
+
+Fig. 5. The penumbra of a small light source. It’s impossible to reconstruct
+the penumbra accurately near the left side
+√ by interpolating values at these
+probes when 𝑋 > 𝑌 .
+
+4 Methodology
+In Holographic Radiance Cascades (HRC), we solve this problem
+by adjusting the probe positions so that there is always a high
+spatial resolution of probes perpendicular to the angles the probe
+is gathering from — we do not need to do this in both directions, as
+a penumbra that is varying in both axes fast must be from a nearby
+light source, and so is picked up by a lower cascade.
+
+𝑅2
+
+Fig. 4. The spatial positioning and extent of the first three cascades of probes in HRC, where the 𝑥-axis is vertical.
+
+4 • Rouli Freeman, Alexander Sannikov, and Adrian Margel
+
+To do this, we split the fluence arriving at the base layer of probes
+into 4 quadrants, which can be combined at the end. Without loss of
+generality, assume that we are only considering the angular fluence
+between − 𝜋4 and 𝜋4 . In contrast to normal RC, which reduces the
+spatial resolution in both directions every cascade level, we only
+reduce the spatial resolution in the direction parallel to the probe’s
+facing — so the 𝑛th level has probes at positions 𝒑 = (𝑥 ⋅ 2𝑛 , 𝑦), for
+integer 𝑥, 𝑦. We then increase the angular resolution by a factor of 2
+every level, as well as the distance each level traces before merging,
+resulting in the same spacing between ray ends at every level.
+More specifically, for the 𝑛th cascade, let 𝑖 be the index of the
+direction taking on half integer values between 12 and 2𝑛 − 12 ,
+inclusive. Then, let 𝑅𝑛 (𝒑, 𝑖) be our approximation to the angular
+fluence of the cone starting at the probe 𝒑, with edges passing
+through 𝒑 + 𝑣𝑛⃗ (𝑖 + 12 ) and 𝒑 + 𝑣𝑛⃗ (𝑖 − 12 ), as shown in Fig. 4,
+where 𝑣𝑛⃗ (𝑘) ≔ (2𝑛 , 2𝑘 − 2𝑛 ) is the offset of the next probe in
+direction 𝑘. For a given probe, the combination of all of its
+cones then spans the entire arc between − 𝜋4 and 𝜋4 . If we define
+angle([𝑥, 𝑦]) ≔ tan−1 (𝑦/𝑥) as the angle of a point from the origin,
+we may compute the angular size of the cone in the 𝑖th direction
+of a probe at cascade 𝑛 using this formula:
+1
+1
+𝐴𝑛 (𝑖) ≔ angle(𝑣𝑛⃗ (𝑖 + )) − angle(𝑣𝑛⃗ (𝑖 − )) (13)
+2
+2
+To compute our approximation to the angular fluence, we define
+𝑅𝑛 recursively in terms of 𝑅𝑛+1 ; conceptually, we do this by
+splitting the cone through the middle, and then approximating
+each side by a thinner cone in the next cascade level: For a fixed
+𝒑 = (𝑥 ⋅ 2𝑛 , 𝑦) and 𝑖, let 𝑅𝑛 (𝒑, 𝑖) = 𝐹+ + 𝐹− , where 𝐹+ and 𝐹−
+are the contributions from the upper and lower halves of the cone
+respectively. This has to be handled differently for odd and even 𝑥.
+For odd 𝑥, there is no information for the 𝑛 + 1th cascade at 𝒑, so
+we compute the cones by tracing along the edges of the cone until
+we hit a probe in the higher cascade, which happens at 𝒒± = 𝒑 +
+𝑣𝑛⃗ (𝑖 ± 12 ) (with an x coordinate of (𝑥 + 1) ⋅ 2𝑛 ) and then merging
+it with the angular fluence at that point in the closest direction,
+which has index 𝑗± = 2𝑖 ± 12 , as shown in Fig. 6:
+𝐹± = 𝐌𝐞𝐫𝐠𝐞𝒓 (𝐴𝑛+1 (𝑗± ) × 𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒒± ), 𝑅𝑛+1 (𝒒± , 𝑗± )) (14)
+For even 𝑥, it would be obvious to simply use 𝐹± = 𝑅𝑛+1 (𝒑, 𝑗± ),
+since those perfectly match up with the upper and lower halves
+of the 𝑅𝑛 (𝒑, 𝑖) cone. Unfortunately, this causes artifacts: the value
+of 𝑅𝑛 computed using the previous formula for odd 𝑥 has a bias
+towards the edges of the cone, so simply combining two cones
+would cause a bias towards the middle that cannot be corrected
+later. Instead, since 𝑅𝑛+1 does not exist at (𝑥 + 1) ⋅ 2𝑛 , we generate
+the fluence by interpolating along the line from 𝒑 to 𝒒± = 𝒑 +
+2𝑣𝑛⃗ (𝑖 ± 12 ) as follows:
+𝐹± = (𝐹±0 + 𝐹±1 )/2
+(15)
+
+𝑅0 𝑅1
+
+𝑅3
+
+𝑅2
+𝑗+ =
+
+11
+2
+
+𝒒+
+9
+
+5
+
+𝑗− = 2
+
+𝑖= 2
+
+𝒑
+
+𝒒−
+
+Fig. 6. The first 4 cascades of 𝑅 used to calculate 𝑅0 ([0, 1], 0), showing in
+particular the values used to compute 𝑅2 (𝒑 = [4, 1], 52 ) using Eq. 14.
+
+4.1 Acceleration Structure
+It is also possible to approximate the rays traced to generate the
+HRC angular fluence values in an efficient manner:
+For integers 𝑛, 𝑥, 𝑦, and 𝑘 ≤ 2𝑛 , let 𝑇𝑛 (𝒑, 𝑘) store an approxi
+mation of 𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒑 + 𝑣𝑛⃗ (𝑘)), where 𝒑 = (𝑥 ⋅ 2𝑛 , 𝑦). Then, for
+odd 𝑥, we can replace the use of 𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒑 + 𝑣𝑛⃗ (𝑖 ± 12 )) in 𝐹±
+with 𝑇𝑛 (𝒑, 𝑖 ± 12 ). Similarly, for even 𝑥, 𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒑 + 2𝑣𝑛⃗ (𝑖 ±
+1
+⃗ (𝑘) = 𝑣𝑛+1
+⃗ (2𝑘).
+2 )) can be replaced with 𝑇𝑛+1 (𝒑, 2𝑖 ± 1), since 2𝑣𝑛
+Now, we define 𝑇𝑛+1 recursively in terms of 𝑇𝑛 similarly to our
+definition of 𝑅𝑛 , as shown in Fig. 7. If 2𝑘 is even, we can calculate
+𝑇𝑛+1 (𝒑, 2𝑘) without any further approximation:
+𝑇𝑛+1 (𝒑, 2𝑘) = 𝐌𝐞𝐫𝐠𝐞(𝑇𝑛 (𝒑, 𝑘), 𝑇𝑛 (𝒑 + 𝑣𝑛⃗ (𝑘), 𝑘)) (18)
+as we can represent any ray as a combination of the near and far
+halves. If 2𝑘 is odd, then the direction 𝑘 is not an integer, so we
+cannot perform this. Instead, we blend the two closest approxima
+tions: Let
+𝐹± ≔ 𝐌𝐞𝐫𝐠𝐞(𝑇𝑛 (𝒑, 𝑘 ± 12 ),
+(19)
+𝑇𝑛 (𝒑 + 𝑣𝑛⃗ (𝑘 ± 12 ), 𝑘 ∓ 12 ))
+and then we can compute 𝑇𝑛+1 as:
+𝑇𝑛+1 (𝒑, 2𝑘) = (𝐹− + 𝐹+ )/2
+
+(20)
+
+where:
+𝐹±0 ≔ 𝑅𝑛+1 (𝒑, 𝑗± )
+
+(16)
+
+𝐹±1 ≔ 𝐌𝐞𝐫𝐠𝐞𝒓 (𝐴𝑛+1 (𝑗± ) × 𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒒± ), 𝑅𝑛+1 (𝒒± , 𝑗± )) (17)
+
+Fig. 7. Combining rays from 𝑇2 to generate 𝑇3 , where the 𝑥-axis is vertical.
+
+Holographic Radiance Cascades for 2D Global Illumination • 5
+
+4.2 Implementation
+Algorithm 1: Single bounce lighting using HRC
+Procedure HRC(𝑋, 𝑌 ):
+for 𝑛 in 0 to 2:
+for 𝑥 in 0..⌈𝑋/2𝑛 ⌉, 𝑦 in 0..𝑌 , 𝑘 in 0..2𝑛 + 1:
+let 𝒑 = (𝑥 ⋅ 2𝑛 , 𝑦)
+𝑇𝑛 (𝒑, 𝑘) ≔ 𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒑 + 𝑣𝑛⃗ (𝑘))
+for 𝑛 in 3 to ⌈log2 (𝑋)⌉:
+for 𝑥 in 0..⌈𝑋/2𝑛 ⌉, 𝑦 in 0..𝑌 , 𝑘 in 0..2𝑛 + 1:
+let 𝒑 = (𝑥 ⋅ 2𝑛 , 𝑦)
+if 𝑘 is even:
+Compute 𝑇𝑛 (𝒑, 𝑘) from 𝑇𝑛−1 using Eq. 18
+else:
+Compute 𝑇𝑛 (𝒑, 𝑘) from 𝑇𝑛−1 using Eq. 20
+for 𝑛 in ⌈log2 (𝑋)⌉ − 1 to 0:
+for 𝑥 in 0..⌈𝑋/2𝑛 ⌉, 𝑦 in 0..𝑌 , 𝑖 in 0..2𝑛 :
+let 𝒑 = (𝑥 ⋅ 2𝑛 , 𝑦)
+if 𝑥 is even:
+Compute 𝐹+ , 𝐹− from 𝑅𝑛+1 , 𝑇𝑛+1 using Eq. 15
+else:
+Compute 𝐹+ , 𝐹− from 𝑅𝑛+1 , 𝑇𝑛 using Eq. 14
+𝑅𝑛 (𝒑, 𝑖) = 𝐹+ + 𝐹−
+return 𝑅0
+Procedure Lighting(𝑋, 𝑌 ):
+for dir in 0..4:
+𝑅0 ≔ HRC(𝑋, 𝑌 )
+for 𝑥 in 0..𝑋, 𝑦 in 0..𝑌 :
+𝐿([𝑥, 𝑦]) += 𝑅0 ([𝑥 + 1, 𝑦], 0)
+Rotate world by 90°.
+Rotate 𝐿 by 90°.
+Swap 𝑋, 𝑌 .
+return 𝐿
+
+Assume that we want to compute fluence for a 𝑋 × 𝑌 grid, where
+all light sources are positioned within it. In order to do this, we split
+the fluence into the four quadrants, which we handle separately.
+Consider the angular fluence arriving from the +x quadrant. For an
+integer position [𝑥, 𝑦], we can approximate this using the first level
+cascade information, 𝑅0 ([𝑥 + 1, 𝑦], 0) — this offset is necessary
+to prevent bias as can be seen in Fig. 12: if it was removed, the
+diagonal rays of different quadrants would overlap, which results
+in crosses of increased brightness. 𝑅0 then depends on values
+𝑅1 …𝑅𝑁−1 where 𝑁 = ⌈log2 (𝑋)⌉ — any lookups of 𝑅𝑁 or greater
+would be at 𝑥 = 2𝑁 , and so are uniformly 0 as there are no lights
+beyond the region.1 In order to compute these, we approximate
+the 𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒑 + 𝑣𝑛⃗ (𝑘)) values using the acceleration structure
+described in Section 4.1. We manually initialize 𝑇𝑛 (𝒑, 𝑘) =
+𝐓𝐫𝐚𝐜𝐞(𝒑, 𝒑 + 𝑣𝑛⃗ (𝑘)) using a standard raytracing method for 𝑛 =
+0, 1, 2 to reduce error, as the cost to trace the short rays is relatively
+small and the error from odd direction merging is magnified the
+shorter the ray is.2 For 𝑛 = 3…𝑁 , we compute 𝑇𝑛 from 𝑇𝑛−1 using
+Eq. 18 and Eq. 20 — note that we need 𝑇𝑁 in order to evaluate even
+1 Handling offscreen lights can then be done by simply computing 𝑅
+
+𝑁 via a different
+method such as cone tracing. For environment map use (assuming no occluders
+outside of bounds), simply look up the value of the map in the direction of 𝑣𝑁
+⃗ (𝑖).
+2 Importantly, the total number of directions of outgoing radiance from an object is
+limited by the number of rays traced (in contrast to the values generated via merging),
+which in this case is 4 ⋅ (22 + 1) = 20. This can result in degraded quality of specular
+reflections as the BRDF is functionally blurred.
+
+𝑥 values of 𝑅𝑁−1 . Then, from 𝑛 = 𝑁 − 1 to 𝑛 = 0, we evaluate 𝑅𝑛
+using 𝑅𝑛+1 , 𝑇𝑛 , and 𝑇𝑛+1 , using Eq. 14 and Eq. 15 (treating 𝑅𝑁 as
+uniformly 0). Finally, after summing up all 4 quadrants of fluence,
+we apply a 1px cross blur, using the kernel
+0 1 0
+1[
+]
+1 4 1]
+(21)
+8[
+0
+1
+0
+[
+]
+and ignoring the probes that differ significantly in opacity from the
+target. This is necessary, as Holographic Radiance Cascades results
+in checkerboard artifacts — notice that 𝑣𝑛⃗ (𝑘) is always a multiple
+of 2 for any 𝑛 ≥ 1, which results in the probes with odd and even 𝑦
+values not interacting; for example, in Fig. 6, all probes except for
+the first level have odd 𝑦 values.
+For multiple diffuse bounces, we can simply feed the output
+fluence values into another iteration of the algorithm (which can
+be done temporally). However, the output fluence only has 4 direc
+tions, which prevents it from being used for specular reflections.
+This could be solved by looking up the higher cascade angular
+fluence values instead, although we have not implemented that.
+
+4.3 Performance Analysis
+We will compute the theoretical time and space for this implemen
+tation. For a 𝑋 × 𝑋 size grid, where 𝑋 = 2𝑁 for an integer 𝑁 ,
+𝑅𝑛 has 2𝑁−𝑛 ⋅ 2𝑁 ⋅ 2𝑛 = 4𝑁 = 𝑋 2 values, and 𝑇𝑛 has 2𝑁−𝑛 ⋅ 2𝑁 ⋅
+(2𝑛 + 1) = 4𝑁 ⋅ (1 + 2−𝑛 ) ≤ 2𝑋 2 values, and there are 𝑁 total
+cascades of 𝑅, and 𝑁 + 1 cascades of 𝑇 .
+
+4.3.1 Speed. Each cascade requires executing a constant time
+algorithm per value within 𝑅𝑛 to compute it from 𝑅𝑛+1 , which
+requires 𝑂(𝑁 ⋅ 𝑋 2 ) total time. This also depends on computing
+𝑇𝑛 , which requires 𝑂((𝑁 + 1) ⋅ 2𝑋 2 ) time as well, resulting in
+𝑂(𝑋 2 log 𝑋) total time. Computing 𝑇0 to 𝑇2 also requires 4 ⋅ 𝑋 2 ⋅
+(3 + 1 + 12 + 14 ) = 19𝑋 2 invocations of an unaccelerated 𝐓𝐫𝐚𝐜𝐞
+(multiplying
+by the number of quadrants), for ray lengths no longer
+√
+than 4 2, with the majority of them being at most half as long.
+4.3.2 Memory. Let 𝑉𝑟 and 𝑉𝑡 be the size in bytes of a single fluence
+or radiance value and a single transmittance value, respectively.
+Then, the size of 𝑅𝑛 is 4𝑁 ⋅ 𝑉𝑟 , and the size of 𝑇𝑛 is 4𝑁 ⋅ (1 +
+2−𝑛 ) ⋅ (𝑉𝑟 + 𝑉𝑡 ). We only need to store 2 layers of 𝑅 at a single
+time, since our output only needs to be 𝑅0 , and each layer only
+depends on the next higher one, so the storage for the fluence is 2 ⋅
+4𝑁 ⋅ 𝑉𝑟 . However, each layer of 𝑅𝑛 depends on 𝑇𝑛 and 𝑇𝑛+1 , so we
+must store each layer of the acceleration structure separately, re
+𝑁
+sulting in total storage for it being ∑0 4𝑁 ⋅ (1 + 2−𝑛 ) ⋅ (𝑉𝑟 + 𝑉𝑡 )
+−𝑁
+𝑁
+= (𝑁 + 3 + 2 ) ⋅ 4 ⋅ (𝑉𝑟 + 𝑉𝑡 ) ≈ 𝑁 ⋅ 4𝑁 ⋅ (𝑉𝑟 + 𝑉𝑡 ) for large
+𝑁 . This makes up the majority of the memory cost, but can be
+avoided via use of a different acceleration structure such as a BVH
+for 𝐓𝐫𝐚𝐜𝐞, which would bring it down to 2 ⋅ 4𝑁 ⋅ 𝑉𝑟 (discounting
+the cost for that acceleration structure). Note that each of the four
+quadrants can reuse the same memory if the grid is square.
+4.3.3 Ray Count. Each element of 𝑇𝑛 is a ray interval used to
+compute the result, so we need a total of 4(𝑁 + 3 + 2−𝑁 ) ray
+calculations per output fluence value, assuming no use of the
+acceleration structure. This works out to 52 per base probe for a
+1024 × 1024 sized grid. With our acceleration structure settings,
+
+6 • Rouli Freeman, Alexander Sannikov, and Adrian Margel
+
+HRC
+
+1.85 ms, RMSE 0.0184
+PT + NEE — 10spp
+
+Reference
+
+1.55 ms, RMSE 0.00711
+PT — 600spp
+
+RC
+
+109 ms, RMSE 0.0260
+
+1.96 ms, RMSE 0.0354
+
+Fig. 8. The penumbra of a 14 pixel wide occluder illuminated using a 10 pixel circular light, shown using HRC, path tracing (PT), and standard RC. All results
+simulated on a 512 × 512 grid, with RMSE computed on the displayed area to accentuate differences in the penumbra.
+
+we only need 19 rays per base probe, which are all less than 6 times
+the base spacing.
+
+5 Results
+We implement our algorithm in Rust, using the LuisaCompute
+framework [Zheng et al. 2022] as an abstraction over CUDA, and
+execute on a NVIDIA RTX 3080 Laptop GPU. We take in the
+scene as a 512 × 512 or 1024 × 1024 pixel image, and produce
+an equal resolution fluence grid. To generate 𝑇0 ..𝑇2 , we trace the
+rays using the DDA algorithm by Amanatides and Woo [1987], and
+integrate the radiance and transmittance analytically within each
+pixel of the scene, treating it as a square of uniform extinction and
+emission [Pharr et al. 2023, sec 11.2]. We store the radiance and
+transmittance values using 3 vectors of 16 bit floats without any
+compression. As our algorithm does not branch based on the scene
+data, it has constant time for a given size, as shown in Table 1.
+Note that in an actual renderer, the output fluence would likely
+be interpolated from these probes onto a screen 2x or 4x the size
+(merging with rays traced to the probes to avoid light leaks); this
+makes the algorithm significantly more feasible to run in combi
+nation with other GPU usage. However, we have decided to avoid
+this, as it detracts from the actual results.
+As there are no standard test scenes for 2D, we choose to
+make our own. In contrast to guided path tracing algorithms,
+HRC functions independently from the quantity of light sources
+or the complexity of the geometry, so, we’ve chosen to test simple
+Table 1. Performance timings for HRC on a 3080 Laptop GPU. “Merge Up”
+represents the computation of 𝑇0 ..𝑇𝑁 , while “Merge Down” represents
+computing 𝑅𝑁−1 ..𝑅0
+Size
+
+Merge Up
+
+Merge Down
+
+Total
+
+256 × 256
+
+0.30 ms
+
+0.25 ms
+
+0.55 ms
+
+512 × 512
+
+1.00 ms
+
+0.85 ms
+
+1.85 ms
+
+1024 × 1024
+
+4.10 ms
+
+3.57 ms
+
+7.67 ms
+
+2048 × 2048
+
+18.1 ms
+
+15.8 ms
+
+33.9 ms
+
+scenes, as that makes it easier to understand the effectiveness of
+our approach. Similarly, we also do not run multiple iterations
+for multibounce GI, apart from in Fig. 14, as that generally makes
+things blurrier and harder to compare.
+For comparison, we implement a path tracer, which uses the
+golden ratio low discrepancy sequence for generating rays [Wolfe
+2020], and two level DDA with 8 × 8 pixel blocks to trace them
+[Museth 2014]. We also show use of next event estimation (NEE)
+[Pharr et al. 2023, sec 13.2], which we perform by sampling rays
+within the angle subtended by the bounding box of the light. Note
+that this requires knowledge about the scene, which usually would
+require additional computation to produce.
+
+5.0.1 Occluder. Our first scene is a single light source and
+occluder, shown in Fig. 8. In comparison to the reference, HRC
+blurs the shadow by around 4 pixels, but produces nearly identical
+results otherwise.
+We show two different path traced images. This is the best scene
+for a NEE based tracer due to the simplicity, and indeed it has the
+lowest error, however it still has noticeable noise in the penumbra.
+The naive path tracer takes a long time to converge, as the light
+source has a small angular size, and correspondingly has a large
+error. However, since it isn’t guided, increasing the complexity of
+the scene would not reduce the quality of the output.
+We also compare to an optimized Radiance Cascades implemen
+tation [Sannikov 2023], which we have adjusted for an equal time
+comparison. The background gradient resolves accurately, as RC
+uses a similar method to ensure full coverage of the scene. How
+ever, the shadow quality is significantly worse, resulting in twice
+the RMSE of HRC — towards the right of the scene, the cascade
+level that picks up the light is increased, which results in not
+enough spatial resolution to pick up the penumbra.
+5.0.2 Pinhole. In Fig. 9, we test a pinhole camera scene. For this,
+we compare to a path traced image using an equal number of
+samples per pixel; while it produces a distinguishable image, it still
+has plenty of noise — the majority of the light source is occluded,
+which results in the next event estimation producing poor results.
+
+Holographic Radiance Cascades for 2D Global Illumination • 7
+
+In contrast, HRC resolves this without any noise in a quarter of the
+time, which shows that it is capable of efficiently simulating large
+light sources and light transfer through small gaps.
+HRC — 52spp
+
+7.67 ms, RMSE 0.0095
+PT + NEE — 52spp
+
+30.5 ms, RMSE 0.0139
+Fig. 9. Light passing through a 10 pixel wide pinhole, simulated using HRC
+and path tracing with next event estimation (PT + NEE), both on a 1024 ×
+1024 grid.
+
+5.0.3 Artifacts. Our algorithm demonstrates two forms of arti
+facts apart from over blurring. The most noticeable one is that it
+has checkerboard patterns. For example, using the scene in Fig. 8,
+we can see a pattern near the edge of the shadow, as in Fig. 10 (a).
+This is significantly lessened after applying the cross blur in Eq. 21,
+which results in Fig. 10 (b).
+
+(a) Without filtering
+(b) With filtering
+Fig. 10. View of the occluder in Fig. 8, showing the checkerboard pattern.
+
+It also demonstrates Moiré pattern like behavior, especially with
+small lights. This is due to aliasing from the ray segments being
+fixed — a small change in the displayed pixel could result in a
+significant change in brightness, as the light could change from
+intersecting 2 rays to 3, for example. This can be seen in Fig. 11.
+Luckily, this is much less of an issue for large light sources as
+they have more samples, and generally ceases to be a concern for
+sources larger than 8 times the base probe resolution: see how Fig. 1
+does not have this, and in Fig. 8, it is barely visible.
+
+Fig. 11. A 2x2-pixel light, rendered using HRC (left), as well as the difference
+between it and a reference image, with the scale measuring from −0.2%
+to 0.2% of the light intensity.
+
+5.0.4 Volumetrics. A major benefit of our algorithm is that it
+can handle detailed volumetrics efficiently. Common acceleration
+structures rely on empty space skipping, which does not work for
+volumes that continuously vary in material, such as clouds. For ex
+ample, the scene in Fig. 13 has high detail across the entire domain,
+due to the varying levels of opacity and the fractal surface. This
+results in path tracing taking 12x as long for the same number of
+samples (1310 ms for 600spp), compared to a mostly empty scene
+such as Fig. 8, while our algorithm is unchanged.
+
+6 Conclusion
+We have demonstrated a new method for 2D Global Illumination
+that provides consistent high quality for all scenes with a large
+enough feature size. We do this by reformulating Radiance Cas
+cades using a grid that decreases in resolution in only one direction
+to avoid shadow artifacts, and provide an acceleration structure
+that does not rely upon empty space skipping, which allows for
+consistent performance and simple volumetric handling.
+The primary limitation of the current formulation of HRC is
+the artifacts that become visible when light sources are smaller
+than 8 times the base probe resolution. It also has poor scaling in
+3 dimensions, taking up 𝑁 4 memory for a 𝑁 × 𝑁 × 𝑁 scene —
+although it remains feasible for small volumes, as seen in Fig. 15.
+For future work, it is worth investigating methods of distributing
+the computation across frames, such as caching unchanged parts
+of the world, or jittering rays in order to increase accuracy. The
+acceleration structure currently takes up almost all the memory
+footprint, so compressing it, or using a different method would
+allow for larger scenes. Finally, combining HRC with a glossy GI
+method would significantly improve sharp reflections.
+
+Acknowledgements
+We would like to thank Christopher Osborne, Asbjørn Lystrup, and
+Manu Udupa for their assistance in proofreading.
+
+8 • Rouli Freeman, Alexander Sannikov, and Adrian Margel
+
+𝑅3
+
+𝑅2
+
+𝑅1
+𝑅0
+
+Fig. 12. The cones that make up the fluence at a single pixel computed
+using HRC, using the merging strategy for odd 𝑥 — the equivalent for RC
+is shown in Fig. 3 (left), although interpolation would be used at every
+level. Note how the traced rays (the cone edges) cover the entire area semiuniformly.
+
+Fig. 13. A rendering of the Julia set for 𝑐 = −0.835 − 0.2321𝑖 with
+volumetric parameters determined by the escape iteration of the pixel
+(left), and the occupied blocks in the 2-level DDA acceleration structure
+(right). HRC produces results indistinguishable from the reference (RMSE
+0.00498). Simulated on a 512 × 512 grid.
+
+Fig. 14. A 512 × 512 cornell box with a solid circle and a volumetric
+scattering rectangle, with diffuse reflecting walls. The shadows are not
+perfectly dark due to the reflections off of the sides. Converged after 6
+bounces (temporally accumulated).
+
+Fig. 15. A single-bounce rendering of a 128 × 128 × 128 voxel scene using
+an experimental 3D HRC implementation. Note that the volumetrics can be
+done without any added cost. Surface normals have not been implemented,
+which results in the irregular shadowing.
+
+Holographic Radiance Cascades for 2D Global Illumination • 9
+
+References
+John Amanatides and Andrew Woo. 1987. A Fast Voxel Traversal Algorithm for Ray
+Tracing. Proceedings of EuroGraphics 87 (Aug. 1987). http://www.cse.yorku.ca/~
+amana/research/grid.pdf.
+Grinding Gear Games. 2024. Path of Exile 2. https://pathofexile2.com/.
+Wojciech Jarosz, Volker Schönefeld, Leif Kobbelt, and Henrik Wann Jensen. 2012.
+Theory, Analysis and Applications of 2D Global Illumination. ACM Transactions
+on Graphics (Proceedings of SIGGRAPH) 31, 5 (Sep. 2012), 125:1–125:21. https://
+doi.org/10/gbbrkb.
+Zander Majercik, Jean Philippe Guertin, Derek Nowrouzezahrai, and Morgan
+McGuire. 2019. Dynamic Diffuse Global Illumination with Ray Traced Irradiance
+Fields. Journal of Computer Graphics Techniques (JCGT) 8, 2 (Jun. 2019), 1–30.
+http://jcgt.org/published/0008/02/01/.
+Ken Museth. 2014. Hierarchical digital differential analyzer for efficient ray marching
+in OpenVDB. ACM SIGGRAPH 2014 Talks (2014), Article 40. https://doi.org/10.
+1145/2614106.2614136.
+Christopher M. J. Osborne and Alexander Sannikov. 2024. Radiance Cascades: A
+Novel High Resolution Formal Solution for Multidimensional Non LTE Radiative
+Transfer. https://arxiv.org/abs/2408.14425.
+Matt Pharr, Wenzel Jakob, and Greg Humphreys. 2023. Physically Based Rendering:
+From Theory To Implementation. https://pbr book.org/4ed/Light_Transport_I_
+Surface_Reflection/Path_Tracing.
+Thomas Porter and Tom Duff. 1984. Compositing digital images. Computer Graphics
+18, 3 (Jan. 1984), 253–259. https://doi.org/10.1145/964965.808606.
+Alexander Sannikov. 2023. Radiance Cascades: A Novel Approach to Calculating
+Global Illumination. https://github.com/Raikiri/RadianceCascadesPaper.
+Alan Wolfe. 2020. Irrational Numbers. https://blog.demofox.org/2020/07/26/
+irrational numbers/.
+Shaokun Zheng, Zhiqian Zhou, Xin Chen, et al. 2022. LuisaRender: A High Perfor
+mance Rendering Framework with Layered and Unified Interfaces on Stream
+Architectures. ACM Transactions on Graphics (Proceedings of SIGGRAPH) 41, 6
+(Nov. 2022), 232:1–232:19. https://doi.org/10.1145/3550454.3555463.
+
+
