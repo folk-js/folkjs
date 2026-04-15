@@ -78,8 +78,8 @@ each angular step falls between two coarse-grid positions. The error bit
 
 Two independent propagation chains carry the two rounding modes:
 
-- **Ceil chain** (shapeInDir < outerSeg): uses `oddOff = ceil(D/2) = (D+1)/2`
-- **Floor chain** (shapeInDir == outerSeg): uses `D` directly or `floor(D/2)`
+- **Ceil chain** (substep < floorIdx): uses `oddOff = ceil(D/2) = (D+1)/2`
+- **Floor chain** (substep == floorIdx): uses `D` directly or `floor(D/2)`
 
 Together they provide both Bresenham neighbors at every angular step. This is
 analogous to 2× MSAA for the angular sampling: two samples at each position
@@ -90,20 +90,35 @@ This maps directly to the HRC paper's bias correction:
 - **Eq. 14 (odd x)**: trace cone edges → ceil chain behavior
 - **Eq. 15 (even x)**: average sub-probes → floor chain behavior
 
-The floor chain cross-pollinates at odd D: it reads from the ceil chain's
-shape 0 instead of its own outerSeg. This alternation IS the Bresenham
+The floor chain cross-pollinates at odd D (err=1): it reads from the ceil chain's
+substep 0 instead of its own floorIdx entry. This alternation IS the Bresenham
 correction step — when the error accumulates past threshold, you peek at
 the neighboring cell to prevent systematic drift.
 
-### Why outerSeg Can't Be Dropped
+### Why the Floor Chain Can't Be Dropped
 
-Shape 0 and outerSeg share identical geometry but carry independent data
-because they maintain the two rounding chains. Dropping outerSeg removes
+Substep 0 and floorIdx share identical geometry but carry independent data
+because they maintain the two rounding chains. Dropping floorIdx removes
 the floor chain, leaving only ceil rounding — equivalent to aliased
 Bresenham rendering. The systematic ceil-only bias compounds multiplicatively
 across cascade levels, causing progressive angular drift.
 
-The outerSeg IS the antialiasing.
+The floor chain IS the antialiasing.
+
+## Shape Identity
+
+Every shape is decoded from `angleIdx` via `decodeShape(angleIdx, dirMid)`:
+
+```wgsl
+struct Shape { D: i32, substep: i32, isUp: bool, srcBase: i32 }
+```
+
+| Field | Meaning |
+|-------|---------|
+| **D** | Angular distance from center (Bresenham step index). |
+| **substep** | Position within D-step: 0=ceil-band, 1..stride=triangles, floorIdx=floor-band. |
+| **isUp** | Direction half: true=upward (mirrored geometry), false=downward. |
+| **srcBase** | Extend source angleIdx base (maps to parent cascade's D-step). |
 
 ## Terminology
 
@@ -112,14 +127,13 @@ The outerSeg IS the antialiasing.
 | **cascade** | Hierarchy level (C0–C5). Higher = coarser spatial, finer angular. |
 | **lineIdx** | Spatial position along X in the probe grid. |
 | **probeIdx** | Spatial position along Y in the probe grid. |
-| **angleIdx** | Flat index for one angular sample. `angleIdx = dirGroup * SEGS_PER_DIR + shapeInDir`. |
-| **dirGroup** | Direction group = `angleIdx / SEGS_PER_DIR`. Groups of 4 shapes share extend logic. |
-| **shapeInDir** | Shape within direction group = `angleIdx % SEGS_PER_DIR`. |
-| **dirCount** | Number of direction groups per cascade = `2^(n+1)`. |
-| **dirMid** | Midpoint of direction range = `dirCount / 2 = 2^n`. Pivot for `angularDist`. |
+| **angleIdx** | Flat index for one angular sample (encodes D, substep, and direction half). |
+| **D** | Angular distance from center direction. Decoded by `decodeShape`. |
+| **substep** | Shape within D-step = `angleIdx % SEGS_PER_DIR`. |
+| **dirCount** | Number of D-steps × 2 (both halves) per cascade = `2^(n+1)`. |
+| **dirMid** | Midpoint = `dirCount / 2 = 2^n`. Pivot for the up/down fold. |
 | **stride** | 1 or 2, from line parity: `select(1, 2, (lineIdx & 1) == 0)`. |
-| **outerSeg** | Index of floor-chain shape within group = `stride + 1`. |
-| **D** | Angular distance from center direction. `D = angularDist(dirGroup, dirMid)`. |
+| **floorIdx** | Index of floor-chain shape within D-step = `stride + 1`. |
 | **err** | Bresenham error bit = `D & 1`. Controls bias correction (HRC even/odd x). |
 | **oddOff** | Ceil-chain probe offset = `(D + 1) / 2 = srcD + err`. |
 
@@ -133,17 +147,15 @@ Given **(cascadeN, lineIdx, probeIdx, angleIdx)**, everything is pure arithmetic
 | dirMid | `1 << cascadeN` |
 | lineSpacing | `LINE_SPACING << cascadeN` |
 | stride | `select(1, 2, (lineIdx & 1) == 0)` |
-| dirGroup | `angleIdx / SEGS_PER_DIR` |
-| shapeInDir | `angleIdx % SEGS_PER_DIR` |
-| outerSeg | `stride + 1` |
-| shape type | `shapeInDir >= 1 && shapeInDir < outerSeg` → triangle, else → parallelogram |
-| D | `angularDist(dirGroup, dirMid)` |
-| shape exists? | `shapeInDir <= outerSeg` |
+| D, substep, isUp, srcBase | `decodeShape(angleIdx, dirMid)` |
+| floorIdx | `stride + 1` |
+| shape type | `substep >= 1 && substep <= stride` → triangle, else → parallelogram |
+| shape exists? | `substep <= floorIdx` |
 | full geometry | determined by above (see `segmentTest`) |
 | err | `D & 1` — Bresenham error bit |
 | oddOff | `(D + 1) / 2` — ceil-chain probe offset |
 | buffer offset | `probeIdx * CASCADE_W + lineIdx * dirCount * SEGS_PER_DIR + angleIdx` |
-| extend sources | `srcBase = (dirGroup / 2) * SEGS_PER_DIR`, err-based arithmetic |
+| extend sources | `srcBase`, err-based arithmetic |
 
 No geometry buffers, no shape type flags, no vertex data stored.
 The address IS the geometry. Only radiometric payload `(r, g, b, t)` lives in the buffer.
@@ -168,28 +180,27 @@ Note: odd lines use 3 of 4 segment slots (1 wasted). ~12.5% padding, acceptable.
 
 ## Direction Scheme — 90° Cone
 
-`dirCount = 2^(n+1)` direction groups per cascade (always even).
+`dirCount = 2^(n+1)` D-steps × 2 halves per cascade (always even).
 `dirMid = dirCount / 2` is the center pivot.
 
-- `offset = dirGroup - dirMid`
-- `offset >= 0`: downward. Triangles expand downward from probe.
-- `offset < 0`: upward. Geometry mirrored around `P + 0.5`.
-- Two center direction groups (offset=0 and offset=-1) share the same 1:1 at D=0
+- `isUp = true`: upward half. Geometry mirrored around `P + 0.5`.
+- `isUp = false`: downward half. Triangles expand downward from probe.
+- Two center D-steps (D=0 up and D=0 down) share the same 1:1 geometry
   but carry independent data.
 
-## Shape Layout per Direction Group
+## Shape Layout per D-Step
 
-Per direction group (4 entries, `shapeInDir` 0–3):
+Per D-step (4 entries, `substep` 0–3):
 
-- Even line (stride=2): `[1:1, 0:1, 0:1, 1:1]` — shapeInDir 0,1,2,3
-- Odd line (stride=1): `[1:1, 0:1, 1:1, ---]` — shapeInDir 0,1,2 (3 unused)
+- Even line (stride=2): `[band, tri, tri, floor-band]` — substep 0,1,2,3
+- Odd line (stride=1): `[band, tri, floor-band, ---]` — substep 0,1,2 (3 unused)
 
-Shape 0 and outerSeg (`stride+1`) are 1:1 parallelograms (shared geometry, independent data).
-Shapes 1..`outerSeg-1` are 0:1 triangles.
+Substep 0 and floorIdx (`stride+1`) are 1:1 parallelograms (shared geometry, independent data).
+Substeps 1..stride are 0:1 triangles.
 
-Bresenham interpretation: per direction group, the walk does 1 H-step (shape 0 = band)
-then `stride` V-steps (shapes 1..stride = triangles). outerSeg is a second H-sample
-at the same position — the floor-chain complement of shape 0's ceil-chain sample.
+Bresenham interpretation: per D-step, the walk does 1 H-step (substep 0 = band)
+then `stride` V-steps (substeps 1..stride = triangles). floorIdx is a second H-sample
+at the same position — the floor-chain complement of substep 0's ceil-chain sample.
 
 ## Extend Rules
 
@@ -197,22 +208,22 @@ Each destination shape reads from two source lines: `lineIdx*2 - 2` (even, strid
 and `lineIdx*2 - 1` (odd, stride=1). The Bresenham error bit `err = D & 1` controls
 bias correction, directly analogous to HRC paper Eq. 14 (odd x) / Eq. 15 (even x).
 
-**Ceil chain** (shapeInDir < outerSeg):
+**Ceil chain** (substep < floorIdx):
 - `oddOff = (D + 1) / 2 = srcD + err`
-- Even source line: probe offset `2 * oddOff`, same shapeInDir
-- Odd source line: probe offset `oddOff`, shapeInDir clamped to 1
+- Even source line: probe offset `2 * oddOff`, same substep
+- Odd source line: probe offset `oddOff`, substep clamped to 1
 
-**Floor chain** (shapeInDir == outerSeg):
-- Even source line: probe offset `D`, source shape = outerSeg (err=0) or shape 0 (err=1)
-- Odd source line (err=0 only): probe offset `D / 2`, source shape = outerSeg of odd line
+**Floor chain** (substep == floorIdx):
+- Even source line: probe offset `D`, source shape = floorIdx (err=0) or substep 0 (err=1)
+- Odd source line (err=0 only): probe offset `D / 2`, source shape = floorIdx of odd line
 
 The floor chain exists because 1:1 shapes span a nonzero left-edge height,
 requiring two independent spatial samples. Merging them causes progressive blur
 (averaging before propagating is lossy across cascades). This is specific to the
 dual (scatter) formulation — primal HRC avoids it by computing top-down.
 
-Cross-pollination at odd D (err=1): the floor chain reads from ceil chain shape 0
-instead of its own outerSeg. This is the Bresenham corrective step that prevents
+Cross-pollination at odd D (err=1): the floor chain reads from ceil chain substep 0
+instead of its own floorIdx. This is the Bresenham corrective step that prevents
 systematic rounding bias.
 
 ## C0 — Special Case
@@ -236,6 +247,7 @@ Merge formula (from HRC paper, premultiplied alpha):
 - [x] Independent angular data per segment (extend reads from matching source segments)
 - [x] Simplify extend rules: oddOff = (D+1)/2, eliminate isInner/srcD/srcDirGroup
 - [x] Bresenham equivalence proof and documentation
+- [x] Extract Shape struct + decodeShape, kill dirGroup/shapeInDir/angularDist
 - [ ] Right-size cascade buffers (256-wide, not 8192-wide)
 - [ ] Per-cascade dispatch sizing (32 workgroups, not 1024)
 - [ ] Implement transmittance (r,g,b,t) with proper merge

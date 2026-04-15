@@ -80,7 +80,7 @@
         SEGS_PER_DIR = 4;
       const NUM_LINES = WORLD_SIZE / LINE_SPACING,
         NUM_PROBES = WORLD_SIZE / PROBE_SPACING;
-      // lines × dirCount × SEGS_PER_DIR = constant for every cascade (spatial-angular tradeoff)
+      // lines × dirCount × SEGS_PER_DIR = constant per cascade (spatial-angular tradeoff)
       const CASCADE_W = NUM_LINES * 2 * SEGS_PER_DIR,
         CASCADE_H = NUM_PROBES;
 
@@ -136,16 +136,16 @@
       // ================================================================
       // TESSELLATION — Bresenham walks in linespace
       //
-      // The tiling is a Bresenham line rasterization in (intercept, slope)
+      // The tiling is Bresenham line rasterization in (intercept, slope)
       // space. Each shape is one step:
       //   1:1 parallelogram (band) = H-step (advance intercept)
       //   0:1 triangle             = V-step (advance slope)
       //
-      // Per direction group: [1 band, stride triangles, 1 floor-chain band]
-      //   Even line (stride=2): [1:1, 0:1, 0:1, 1:1]  shapeInDir 0–3
-      //   Odd  line (stride=1): [1:1, 0:1, 1:1, ---]  shapeInDir 0–2
+      // Per D step: [band, stride×tri, floor-band]  (SEGS_PER_DIR=4 slots)
+      //   Even line (stride=2): [band, tri, tri, floor-band]  substep 0–3
+      //   Odd  line (stride=1): [band, tri, floor-band, ---]  substep 0–2
       //
-      // Shape 0 and outerSeg (stride+1) share geometry but carry
+      // Substep 0 and floorIdx (stride+1) share geometry but carry
       // independent data — the ceil and floor Bresenham rounding chains.
       // Together they prevent angular aliasing across cascades.
       //
@@ -156,45 +156,42 @@
       const tessellationWGSL = `
 const SEGS_PER_DIR = ${SEGS_PER_DIR}u;
 
-fn angularDist(dirIdx: i32, dirMid: u32) -> i32 {
-  let offset = dirIdx - i32(dirMid);
-  return select(offset, -offset - 1, offset < 0);
+struct Shape { D: i32, substep: i32, isUp: bool, srcBase: i32 }
+
+fn decodeShape(angleIdx: i32, dirMid: u32) -> Shape {
+  let dg = angleIdx / i32(SEGS_PER_DIR);
+  let offset = dg - i32(dirMid);
+  return Shape(
+    select(offset, -offset - 1, offset < 0),
+    angleIdx % i32(SEGS_PER_DIR),
+    offset < 0,
+    (dg / 2) * i32(SEGS_PER_DIR)
+  );
 }
 
 fn segmentTest(pos: vec2f, lineIdx: i32, probeIdx: i32, angleIdx: i32,
                lineSpacing: u32, dirMid: u32) -> f32 {
-  let dirGroup = angleIdx / i32(SEGS_PER_DIR);
-  let shapeInDir = angleIdx % i32(SEGS_PER_DIR);
+  let s = decodeShape(angleIdx, dirMid);
   let ps = f32(PROBE_SPACING);
   let ls = f32(lineSpacing);
   let P = f32(probeIdx);
-  let offset = dirGroup - i32(dirMid);
-  let D = f32(angularDist(dirGroup, dirMid));
   let stride = select(1, 2, (lineIdx & 1) == 0);
+  let floorIdx = stride + 1;
+
+  if (s.substep > floorIdx) { return -1.0; }
 
   let leftX = f32(lineIdx) * ls + f32(LINE_SPACING);
   let rightX = f32(lineIdx + stride) * ls + f32(LINE_SPACING);
   if (pos.x < leftX || pos.x >= rightX) { return -1.0; }
   let t = (pos.x - leftX) / (rightX - leftX);
 
-  var lY: vec2f;
-  var rY: vec2f;
+  let base = P + f32(s.D) * f32(stride);
+  let isBand = s.substep == 0 || s.substep == floorIdx;
+  let k = select(f32(s.substep), 0.0, isBand);
+  var lY = vec2f(select(P + 1.0, P, isBand), P + 1.0);
+  var rY = vec2f(base + k, base + k + 1.0);
 
-  let base = P + D * f32(stride);
-  let outerSeg = stride + 1;
-  let k = f32(shapeInDir);
-
-  if (shapeInDir == 0 || shapeInDir == outerSeg) {
-    lY = vec2f(P, P + 1.0);
-    rY = vec2f(base, base + 1.0);
-  } else if (shapeInDir < outerSeg) {
-    lY = vec2f(P + 1.0, P + 1.0);
-    rY = vec2f(base + k, base + k + 1.0);
-  } else {
-    return -1.0;
-  }
-
-  if (offset < 0) {
+  if (s.isUp) {
     let c = 2.0 * P + 1.0;
     lY = vec2f(c - lY.y, c - lY.x);
     rY = vec2f(c - rY.y, c - rY.x);
@@ -215,9 +212,8 @@ fn cascadeIndex(lineIdx: i32, probeIdx: i32, angleIdx: i32, dirCount: u32) -> i3
   return y * i32(CASCADE_W) + x;
 }
 
-fn isTriangle(stride: i32, angleIdx: i32) -> bool {
-  let shapeInDir = angleIdx % i32(SEGS_PER_DIR);
-  return shapeInDir >= 1 && shapeInDir < stride + 1;
+fn isTri(substep: i32, stride: i32) -> bool {
+  return substep >= 1 && substep <= stride;
 }
 
 fn falloffRange(n: u32) -> vec2f {
@@ -303,40 +299,33 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   if (tx >= i32(CASCADE_W) || ty >= i32(CASCADE_H)) { return; }
 
   let cascadeN = params.cascadeIdx;
-  let dstDirMid = 1u << cascadeN;
-  let dstDirCount = 2u * dstDirMid;
-  let srcDirCount = dstDirCount / 2u;
+  let dirMid = 1u << cascadeN;
+  let dirCount = 2u * dirMid;
+  let srcDirCount = dirCount / 2u;
 
-  let anglesPerLine = i32(dstDirCount * SEGS_PER_DIR);
+  let anglesPerLine = i32(dirCount * SEGS_PER_DIR);
   let lineIdx = tx / anglesPerLine;
   let angleIdx = tx % anglesPerLine;
   let probeIdx = ty;
 
-  let dirGroup = angleIdx / i32(SEGS_PER_DIR);
-  let shapeInDir = angleIdx % i32(SEGS_PER_DIR);
-
+  let s = decodeShape(angleIdx, dirMid);
   let stride = select(1, 2, (lineIdx & 1) == 0);
-  let outerSeg = stride + 1;
-
-  let isUp = dirGroup < i32(dstDirMid);
-  let pSign = select(-1, 1, isUp);
-  let D = angularDist(dirGroup, dstDirMid);
-  let err = D & 1; // Bresenham error bit (= HRC even/odd x parity)
-
-  let srcBase = (dirGroup / 2) * i32(SEGS_PER_DIR);
+  let floorIdx = stride + 1;
+  let pSign = select(-1, 1, s.isUp);
+  let err = s.D & 1; // Bresenham error bit (= HRC even/odd x parity)
 
   var result = vec4f(0.0);
 
-  if (shapeInDir < outerSeg) {
+  if (s.substep < floorIdx) {
     // Ceil chain: oddOff = ceil(D/2) = srcD + err
-    let oddOff = (D + 1) / 2;
-    result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * 2 * oddOff, srcBase + shapeInDir, srcDirCount);
-    result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * oddOff,     srcBase + min(shapeInDir, 1), srcDirCount);
-  } else if (shapeInDir == outerSeg) {
+    let oddOff = (s.D + 1) / 2;
+    result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * 2 * oddOff, s.srcBase + s.substep, srcDirCount);
+    result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * oddOff,     s.srcBase + min(s.substep, 1), srcDirCount);
+  } else if (s.substep == floorIdx) {
     // Floor chain: uses exact D. Cross-reads from ceil chain at err=1.
-    result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * D, srcBase + select(0, 3, err == 0), srcDirCount);
+    result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * s.D, s.srcBase + select(0, 3, err == 0), srcDirCount);
     if (err == 0) {
-      result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * (D / 2), srcBase + 2, srcDirCount);
+      result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * (s.D / 2), s.srcBase + 2, srcDirCount);
     }
   }
 
@@ -438,8 +427,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
             let val = readCascade(n, idx);
             if (any(val.rgb > vec3f(0.0))) {
               if (showUnitShapes) {
-                let isTri = isTriangle(curStride, ai);
-                let col = select(vec3f(0.85, 0.15, 0.55), vec3f(0.95, 0.55, 0.1), isTri);
+                let tri = isTri(ai % i32(SEGS_PER_DIR), curStride);
+                let col = select(vec3f(0.85, 0.15, 0.55), vec3f(0.95, 0.55, 0.1), tri);
                 total += vec4f(col, 0.0);
               } else {
                 total += val * mix(falloff.x, falloff.y, t);
