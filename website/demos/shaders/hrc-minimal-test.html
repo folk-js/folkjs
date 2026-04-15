@@ -151,7 +151,8 @@
       //   Shape 0 and outerSeg share geometry but carry independent
       //   propagation chains (inner vs boundary angular sampling).
       //
-      // Extend: srcDirGroup = dirGroup / 2.
+      // Extend: srcDirGroup = dirGroup / 2. D parity (even/odd)
+      //   controls bias correction (HRC Eq. 14/15 analogue).
       // ================================================================
       const tessellationWGSL = `
 const SEGS_PER_DIR = ${SEGS_PER_DIR}u;
@@ -304,9 +305,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   let cascadeN = params.cascadeIdx;
   let dstDirMid = 1u << cascadeN;
-  let srcDirMid = 1u << (cascadeN - 1u);
   let dstDirCount = 2u * dstDirMid;
-  let srcDirCount = 2u * srcDirMid;
+  let srcDirCount = dstDirCount / 2u;
 
   let anglesPerLine = i32(dstDirCount * SEGS_PER_DIR);
   let lineIdx = tx / anglesPerLine;
@@ -319,29 +319,25 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let stride = select(1, 2, (lineIdx & 1) == 0);
   let outerSeg = stride + 1;
 
-  let offset = dirGroup - i32(dstDirMid);
-  let isUp = offset < 0;
-  let pSign = select(-1, 1, isUp); // +1 upward, -1 downward in probe space
+  let isUp = dirGroup < i32(dstDirMid);
+  let pSign = select(-1, 1, isUp);
   let D = angularDist(dirGroup, dstDirMid);
+  let dEven = (D & 1) == 0;
 
-  let srcDirGroup = dirGroup / 2;
-  let srcD = angularDist(srcDirGroup, srcDirMid);
-
-  // Which half of the parent direction: inner (closer to center) or outer
-  let isInner = ((dirGroup & 1) == 0) != isUp;
-  let srcBase = srcDirGroup * i32(SEGS_PER_DIR);
+  let srcBase = (dirGroup / 2) * i32(SEGS_PER_DIR);
 
   var result = vec4f(0.0);
 
   if (shapeInDir < outerSeg) {
-    let oddOff = select(srcD + 1, srcD, isInner);
+    // Inner chain: oddOff = (D + 1) / 2, even-line offset = 2 * oddOff
+    let oddOff = (D + 1) / 2;
     result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * 2 * oddOff, srcBase + shapeInDir, srcDirCount);
     result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * oddOff,     srcBase + min(shapeInDir, 1), srcDirCount);
   } else if (shapeInDir == outerSeg) {
-    let dEven = (D & 1) == 0;
+    // Boundary chain: reads at D-based offsets
     result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * D, srcBase + select(0, 3, dEven), srcDirCount);
     if (dEven) {
-      result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * srcD, srcBase + 2, srcDirCount);
+      result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * (D / 2), srcBase + 2, srcDirCount);
     }
   }
 
