@@ -77,13 +77,12 @@
         LINE_SPACING = 8,
         NUM_CASCADES = 6,
         DISPLAY_SCALE = 2,
-        SLOTS_PER_DIR = 4;
+        SEGS_PER_DIR = 4;
       const NUM_LINES = WORLD_SIZE / LINE_SPACING,
         NUM_PROBES = WORLD_SIZE / PROBE_SPACING;
-      const MAX_DIR_COUNT = 1 << (NUM_CASCADES - 1);
-      const MAX_FULL_DIR_COUNT = 2 * MAX_DIR_COUNT;
-      const ATLAS_W = NUM_LINES * MAX_FULL_DIR_COUNT * SLOTS_PER_DIR,
-        ATLAS_H = NUM_PROBES;
+      // lines × dirCount × SEGS_PER_DIR = constant for every cascade (spatial-angular tradeoff)
+      const CASCADE_W = NUM_LINES * 2 * SEGS_PER_DIR,
+        CASCADE_H = NUM_PROBES;
 
       const canvas = document.getElementById('canvas');
       canvas.width = WORLD_SIZE;
@@ -135,40 +134,42 @@
       });
 
       // ================================================================
-      // TESSELLATION — 0:1 + 1:1 unit shapes, 90-degree cone
+      // TESSELLATION — 0:1 triangles + 1:1 parallelograms, 90° cone
       //
-      // fullDirCount = 2 * dirCount = 2^(n+1) per cascade.
-      // offset = fullDirIdx - dirCount.
-      //   offset >= 0 : downward.  D = offset.
-      //   offset <  0 : upward.    D = -offset - 1.  Mirror around P+0.5.
+      // Addressing: (lineIdx, probeIdx, angleIdx) per cascade.
+      // angleIdx = dirGroup * SEGS_PER_DIR + shapeInDir.
+      //   dirGroup = angleIdx / SEGS_PER_DIR  (direction group index)
+      //   shapeInDir = angleIdx % SEGS_PER_DIR  (shape within group)
       //
-      // Two center directions share the same 1:1 at D=0:
-      //   center_down (offset= 0): triangles expand downward.
-      //   center_up   (offset=-1): triangles expand upward via mirror.
-      // The overlap at the shared 1:1 is intentional — both carry
-      // independent angular data and must be addressable separately.
+      // dirCount = 2^(n+1) direction groups per cascade.
+      // dirMid = dirCount / 2 = 2^n (center pivot for angularDist).
       //
-      // Extend: srcFullDir = fullDirIdx / 2 (clean integer division).
+      // Shape layout per direction group:
+      //   Even line (stride=2): [1:1, 0:1, 0:1, 1:1]  shapeInDir 0–3
+      //   Odd  line (stride=1): [1:1, 0:1, 1:1, ---]  shapeInDir 0–2
+      //   outerSeg = stride + 1.  Shapes 0 and outerSeg are 1:1s.
+      //   Shape 0 and outerSeg share geometry but carry independent
+      //   propagation chains (inner vs boundary angular sampling).
       //
-      // Shape layout per (line, probe, fullDir):
-      //   Even line: [1:1, 0:1, 0:1, 1:1]  (slots 0-2 = frustum, 3 = band)
-      //   Odd line:  [1:1, 0:1, 1:1, ---]  (slots 0-1 = frustum, 2 = band)
+      // Extend: srcDirGroup = dirGroup / 2.
       // ================================================================
       const tessellationWGSL = `
-const SLOTS_PER_DIR = ${SLOTS_PER_DIR}u;
+const SEGS_PER_DIR = ${SEGS_PER_DIR}u;
 
-fn angularDist(fullDirIdx: i32, dirCount: u32) -> i32 {
-  let offset = fullDirIdx - i32(dirCount);
+fn angularDist(dirIdx: i32, dirMid: u32) -> i32 {
+  let offset = dirIdx - i32(dirMid);
   return select(offset, -offset - 1, offset < 0);
 }
 
-fn slotShapeTest(pos: vec2f, lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
-                 slotIdx: i32, lineSpacing: u32, dirCount: u32) -> f32 {
+fn segmentTest(pos: vec2f, lineIdx: i32, probeIdx: i32, angleIdx: i32,
+               lineSpacing: u32, dirMid: u32) -> f32 {
+  let dirGroup = angleIdx / i32(SEGS_PER_DIR);
+  let shapeInDir = angleIdx % i32(SEGS_PER_DIR);
   let ps = f32(PROBE_SPACING);
   let ls = f32(lineSpacing);
   let P = f32(probeIdx);
-  let offset = fullDirIdx - i32(dirCount);
-  let D = f32(angularDist(fullDirIdx, dirCount));
+  let offset = dirGroup - i32(dirMid);
+  let D = f32(angularDist(dirGroup, dirMid));
   let stride = select(1, 2, (lineIdx & 1) == 0);
 
   let leftX = f32(lineIdx) * ls + f32(LINE_SPACING);
@@ -180,13 +181,13 @@ fn slotShapeTest(pos: vec2f, lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
   var rY: vec2f;
 
   let base = P + D * f32(stride);
-  let bandSlot = stride + 1;
-  let k = f32(slotIdx);
+  let outerSeg = stride + 1;
+  let k = f32(shapeInDir);
 
-  if (slotIdx == 0 || slotIdx == bandSlot) {
+  if (shapeInDir == 0 || shapeInDir == outerSeg) {
     lY = vec2f(P, P + 1.0);
     rY = vec2f(base, base + 1.0);
-  } else if (slotIdx < bandSlot) {
+  } else if (shapeInDir < outerSeg) {
     lY = vec2f(P + 1.0, P + 1.0);
     rY = vec2f(base + k, base + k + 1.0);
   } else {
@@ -207,16 +208,16 @@ fn slotShapeTest(pos: vec2f, lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
   return -1.0;
 }
 
-fn slotAtlasIndex(lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
-                  slotIdx: i32, fullDirCount: u32) -> i32 {
-  let x = lineIdx * i32(fullDirCount * SLOTS_PER_DIR) + fullDirIdx * i32(SLOTS_PER_DIR) + slotIdx;
+fn cascadeIndex(lineIdx: i32, probeIdx: i32, angleIdx: i32, dirCount: u32) -> i32 {
+  let x = lineIdx * i32(dirCount * SEGS_PER_DIR) + angleIdx;
   let y = probeIdx;
-  if (x < 0 || x >= i32(ATLAS_W) || y < 0 || y >= i32(ATLAS_H)) { return -1; }
-  return y * i32(ATLAS_W) + x;
+  if (x < 0 || x >= i32(CASCADE_W) || y < 0 || y >= i32(CASCADE_H)) { return -1; }
+  return y * i32(CASCADE_W) + x;
 }
 
-fn isTriangleSlot(stride: i32, slotIdx: i32) -> bool {
-  return slotIdx >= 1 && slotIdx < stride + 1;
+fn isTriangle(stride: i32, angleIdx: i32) -> bool {
+  let shapeInDir = angleIdx % i32(SEGS_PER_DIR);
+  return shapeInDir >= 1 && shapeInDir < stride + 1;
 }
 
 fn falloffRange(n: u32) -> vec2f {
@@ -243,9 +244,9 @@ const LINE_SPACING = ${LINE_SPACING}u;
 const NUM_CASCADES = ${NUM_CASCADES}u;
 const NUM_LINES = ${NUM_LINES}u;
 const NUM_PROBES = ${NUM_PROBES}u;
-const ATLAS_W = ${ATLAS_W}u;
-const ATLAS_H = ${ATLAS_H}u;
-const ATLAS_SIZE = ${ATLAS_W * ATLAS_H}u;
+const CASCADE_W = ${CASCADE_W}u;
+const CASCADE_H = ${CASCADE_H}u;
+const CASCADE_SIZE = ${CASCADE_W * CASCADE_H}u;
 
 struct Params { sourceX: f32, sourceY: f32, cascadeIdx: u32, debug: u32 }
 
@@ -261,21 +262,19 @@ ${tessellationWGSL}
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let tx = i32(gid.x); let ty = i32(gid.y);
-  if (tx >= i32(ATLAS_W) || ty >= i32(ATLAS_H)) { return; }
+  if (tx >= i32(CASCADE_W) || ty >= i32(CASCADE_H)) { return; }
 
-  let fullDirCount = 2u;
-  let slotsPerLine = i32(fullDirCount * SLOTS_PER_DIR);
-  let lineIdx = tx / slotsPerLine;
-  let rem = tx % slotsPerLine;
-  let fullDirIdx = rem / i32(SLOTS_PER_DIR);
-  let slotIdx = rem % i32(SLOTS_PER_DIR);
+  let dirCount = 2u;
+  let anglesPerLine = i32(dirCount * SEGS_PER_DIR);
+  let lineIdx = tx / anglesPerLine;
+  let angleIdx = tx % anglesPerLine;
   let probeIdx = ty;
 
   let source = vec2f(params.sourceX, params.sourceY);
   let srcLine = i32(floor(source.x / f32(LINE_SPACING)));
   let srcProbe = i32(floor(source.y / f32(PROBE_SPACING)));
 
-  let idx = ty * i32(ATLAS_W) + tx;
+  let idx = ty * i32(CASCADE_W) + tx;
   if (lineIdx == srcLine && probeIdx == srcProbe) {
     if (params.debug == 3u) { cascade[idx] = vec4f(cascadeColor(0u), 0.0); }
     else                    { cascade[idx] = vec4f(1.0); }
@@ -292,67 +291,61 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 @group(0) @binding(1) var<storage, read_write> dst: array<vec4f>;
 @group(0) @binding(2) var<uniform> params: Params;
 
-fn readSlot(lineIdx: i32, probeIdx: i32, fullDirIdx: i32,
-            slotIdx: i32, fullDirCount: u32) -> vec4f {
-  let i = slotAtlasIndex(lineIdx, probeIdx, fullDirIdx, slotIdx, fullDirCount);
-  if (i < 0 || i >= i32(ATLAS_SIZE)) { return vec4f(0.0); }
+fn readSegment(lineIdx: i32, probeIdx: i32, angleIdx: i32, dirCount: u32) -> vec4f {
+  let i = cascadeIndex(lineIdx, probeIdx, angleIdx, dirCount);
+  if (i < 0 || i >= i32(CASCADE_SIZE)) { return vec4f(0.0); }
   return src[i];
 }
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) gid: vec3u) {
   let tx = i32(gid.x); let ty = i32(gid.y);
-  if (tx >= i32(ATLAS_W) || ty >= i32(ATLAS_H)) { return; }
+  if (tx >= i32(CASCADE_W) || ty >= i32(CASCADE_H)) { return; }
 
   let cascadeN = params.cascadeIdx;
-  let dstDirCount = 1u << cascadeN;
-  let srcDirCount = 1u << (cascadeN - 1u);
-  let dstFullDirCount = 2u * dstDirCount;
-  let srcFullDirCount = 2u * srcDirCount;
+  let dstDirMid = 1u << cascadeN;
+  let srcDirMid = 1u << (cascadeN - 1u);
+  let dstDirCount = 2u * dstDirMid;
+  let srcDirCount = 2u * srcDirMid;
 
-  let slotsPerLine = i32(dstFullDirCount * SLOTS_PER_DIR);
-  let lineIdx = tx / slotsPerLine;
-  let rem = tx % slotsPerLine;
-  let fullDirIdx = rem / i32(SLOTS_PER_DIR);
-  let slotIdx = rem % i32(SLOTS_PER_DIR);
+  let anglesPerLine = i32(dstDirCount * SEGS_PER_DIR);
+  let lineIdx = tx / anglesPerLine;
+  let angleIdx = tx % anglesPerLine;
   let probeIdx = ty;
 
-  let stride = select(1, 2, (lineIdx & 1) == 0);
-  let bandSlot = stride + 1;
+  let dirGroup = angleIdx / i32(SEGS_PER_DIR);
+  let shapeInDir = angleIdx % i32(SEGS_PER_DIR);
 
-  let offset = fullDirIdx - i32(dstDirCount);
+  let stride = select(1, 2, (lineIdx & 1) == 0);
+  let outerSeg = stride + 1;
+
+  let offset = dirGroup - i32(dstDirMid);
   let isUp = offset < 0;
   let pSign = select(-1, 1, isUp); // +1 upward, -1 downward in probe space
-  let D = angularDist(fullDirIdx, dstDirCount);
+  let D = angularDist(dirGroup, dstDirMid);
 
-  let srcFullDir = fullDirIdx / 2;
-  let srcD = angularDist(srcFullDir, srcDirCount);
+  let srcDirGroup = dirGroup / 2;
+  let srcD = angularDist(srcDirGroup, srcDirMid);
 
   // Which half of the parent direction: inner (closer to center) or outer
-  let isInner = ((fullDirIdx & 1) == 0) != isUp;
+  let isInner = ((dirGroup & 1) == 0) != isUp;
+  let srcBase = srcDirGroup * i32(SEGS_PER_DIR);
 
   var result = vec4f(0.0);
 
-  if (slotIdx < bandSlot) {
+  if (shapeInDir < outerSeg) {
     let oddOff = select(srcD + 1, srcD, isInner);
-    result += readSlot(lineIdx * 2 - 2, probeIdx + pSign * 2 * oddOff, srcFullDir, 0, srcFullDirCount);
-    result += readSlot(lineIdx * 2 - 1, probeIdx + pSign * oddOff,     srcFullDir, 0, srcFullDirCount);
-  } else if (slotIdx == bandSlot) {
-    {
-      let srcLine = lineIdx * 2 - 2;
-      if ((D & 1) == 1) {
-        result += readSlot(srcLine, probeIdx + pSign * D, srcFullDir, 0, srcFullDirCount);
-      } else {
-        result += readSlot(srcLine, probeIdx + pSign * D, srcFullDir, 3, srcFullDirCount);
-      }
-    }
-    if ((D & 1) == 0) {
-      let srcLine = lineIdx * 2 - 1;
-      result += readSlot(srcLine, probeIdx + pSign * srcD, srcFullDir, 2, srcFullDirCount);
+    result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * 2 * oddOff, srcBase + shapeInDir, srcDirCount);
+    result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * oddOff,     srcBase + min(shapeInDir, 1), srcDirCount);
+  } else if (shapeInDir == outerSeg) {
+    let dEven = (D & 1) == 0;
+    result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * D, srcBase + select(0, 3, dEven), srcDirCount);
+    if (dEven) {
+      result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * srcD, srcBase + 2, srcDirCount);
     }
   }
 
-  let idx = ty * i32(ATLAS_W) + tx;
+  let idx = ty * i32(CASCADE_W) + tx;
   if (params.debug == 3u && any(result.rgb > vec3f(0.0))) {
     dst[idx] = vec4f(cascadeColor(cascadeN), 0.0);
   } else if (params.debug > 0u && any(result.rgb > vec3f(0.0))) {
@@ -376,7 +369,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 @group(0) @binding(7) var<uniform> gatherParams: Params;
 
 fn readCascade(n: u32, i: i32) -> vec4f {
-  if (i < 0 || i >= i32(ATLAS_SIZE)) { return vec4f(0.0); }
+  if (i < 0 || i >= i32(CASCADE_SIZE)) { return vec4f(0.0); }
   switch (n) {
     case 0u: { return c0[i]; }
     case 1u: { return c1[i]; }
@@ -411,7 +404,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       let centerY = (f32(srcProbe) + 0.5) * ps;
       let halfH = 0.5 * ps * t;
       if (pos.y >= centerY - halfH && pos.y < centerY + halfH) {
-        let ai = slotAtlasIndex(srcLine, srcProbe, 0, 0, 2u);
+        let ai = cascadeIndex(srcLine, srcProbe, 0, 2u);
         let val = readCascade(0u, ai);
         if (any(val.rgb > vec3f(0.0))) {
           if (showUnitShapes) {
@@ -426,8 +419,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
   for (var n = 0u; n < cascadeEnd; n++) {
     let lineSpacing = LINE_SPACING << n;
-    let dirCount = 1u << n;
-    let fullDirCount = 2u * dirCount;
+    let dirMid = 1u << n;
+    let dirCount = 2u * dirMid;
     let falloff = falloffRange(n);
 
     let baseLineIdx = (px - i32(LINE_SPACING)) / i32(lineSpacing);
@@ -441,21 +434,20 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
       let curStride = select(1, 2, (curLine & 1) == 0);
 
+      let anglesPerLine = i32(dirCount * SEGS_PER_DIR);
       for (var probeIdx = 0; probeIdx < i32(NUM_PROBES); probeIdx++) {
-        for (var fdi = 0; fdi < i32(fullDirCount); fdi++) {
-          for (var slotIdx = 0; slotIdx < i32(SLOTS_PER_DIR); slotIdx++) {
-            let t = slotShapeTest(pos, curLine, probeIdx, fdi, slotIdx, lineSpacing, dirCount);
-            if (t >= 0.0) {
-              let ai = slotAtlasIndex(curLine, probeIdx, fdi, slotIdx, fullDirCount);
-              let val = readCascade(n, ai);
-              if (any(val.rgb > vec3f(0.0))) {
-                if (showUnitShapes) {
-                  let isTri = isTriangleSlot(curStride, slotIdx);
-                  let col = select(vec3f(0.85, 0.15, 0.55), vec3f(0.95, 0.55, 0.1), isTri);
-                  total += vec4f(col, 0.0);
-                } else {
-                  total += val * mix(falloff.x, falloff.y, t);
-                }
+        for (var ai = 0; ai < anglesPerLine; ai++) {
+          let t = segmentTest(pos, curLine, probeIdx, ai, lineSpacing, dirMid);
+          if (t >= 0.0) {
+            let idx = cascadeIndex(curLine, probeIdx, ai, dirCount);
+            let val = readCascade(n, idx);
+            if (any(val.rgb > vec3f(0.0))) {
+              if (showUnitShapes) {
+                let isTri = isTriangle(curStride, ai);
+                let col = select(vec3f(0.85, 0.15, 0.55), vec3f(0.95, 0.55, 0.1), isTri);
+                total += vec4f(col, 0.0);
+              } else {
+                total += val * mix(falloff.x, falloff.y, t);
               }
             }
           }
@@ -525,10 +517,10 @@ const PROBE_SPACING = ${PROBE_SPACING}u;
 
         const STORAGE = GPUBufferUsage.STORAGE,
           UNIFORM = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
-        const ATLAS_BYTES = ATLAS_W * ATLAS_H * 16;
+        const CASCADE_BYTES = CASCADE_W * CASCADE_H * 16;
 
         const cascadeBuffers = Array.from({ length: NUM_CASCADES }, (_, i) =>
-          device.createBuffer({ label: `cascade${i}`, size: ATLAS_BYTES, usage: STORAGE | GPUBufferUsage.COPY_DST }),
+          device.createBuffer({ label: `cascade${i}`, size: CASCADE_BYTES, usage: STORAGE | GPUBufferUsage.COPY_DST }),
         );
         const fluenceBuffer = device.createBuffer({
           label: 'fluence',
@@ -600,12 +592,20 @@ const PROBE_SPACING = ${PROBE_SPACING}u;
           { buffer: blitParamBuffer },
         ]);
 
-        const atlasWGX = Math.ceil(ATLAS_W / 16),
-          atlasWGY = Math.ceil(ATLAS_H / 16),
+        const cascadeWGX = Math.ceil(CASCADE_W / 16),
+          cascadeWGY = Math.ceil(CASCADE_H / 16),
           screenWG = Math.ceil(WORLD_SIZE / 16);
         const sourceXY = new Float32Array(2);
+        let lastTime = performance.now(), fps = 0, frameCount = 0;
 
         function frame() {
+          frameCount++;
+          const now = performance.now();
+          if (now - lastTime >= 500) {
+            fps = (frameCount / (now - lastTime) * 1000).toFixed(0);
+            frameCount = 0;
+            lastTime = now;
+          }
           if (!paused) {
             sourceXY[0] = mouseX;
             sourceXY[1] = mouseY;
@@ -635,7 +635,7 @@ const PROBE_SPACING = ${PROBE_SPACING}u;
               const pass = encoder.beginComputePass();
               pass.setPipeline(seedPipeline);
               pass.setBindGroup(0, seedBindGroup);
-              pass.dispatchWorkgroups(atlasWGX, atlasWGY);
+              pass.dispatchWorkgroups(cascadeWGX, cascadeWGY);
               pass.end();
             }
             if (debugMode !== 2)
@@ -643,7 +643,7 @@ const PROBE_SPACING = ${PROBE_SPACING}u;
                 const pass = encoder.beginComputePass();
                 pass.setPipeline(extendPipeline);
                 pass.setBindGroup(0, extendBindGroups[n]);
-                pass.dispatchWorkgroups(atlasWGX, atlasWGY);
+                pass.dispatchWorkgroups(cascadeWGX, cascadeWGY);
                 pass.end();
               }
             {
@@ -673,7 +673,7 @@ const PROBE_SPACING = ${PROBE_SPACING}u;
           }
           const modeNames = ['off', 'shapes', 'seed-only', 'cascades'];
           document.getElementById('info').textContent =
-            `D=debug:${modeNames[debugMode]}(${debugMode}) 0-${NUM_CASCADES - 1}=cascade(${maxCascade}) | PS=${PROBE_SPACING}, LS=${LINE_SPACING}, atlas=${ATLAS_W}x${ATLAS_H}`;
+            `${fps}fps | D=debug:${modeNames[debugMode]}(${debugMode}) 0-${NUM_CASCADES - 1}=cascade(${maxCascade}) | PS=${PROBE_SPACING}, LS=${LINE_SPACING}, buf=${CASCADE_W}x${CASCADE_H}`;
           const legend = document.getElementById('legend');
           if (debugMode === 3) {
             legend.innerHTML =
