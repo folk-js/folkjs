@@ -134,25 +134,24 @@
       });
 
       // ================================================================
-      // TESSELLATION — 0:1 triangles + 1:1 parallelograms, 90° cone
+      // TESSELLATION — Bresenham walks in linespace
       //
-      // Addressing: (lineIdx, probeIdx, angleIdx) per cascade.
-      // angleIdx = dirGroup * SEGS_PER_DIR + shapeInDir.
-      //   dirGroup = angleIdx / SEGS_PER_DIR  (direction group index)
-      //   shapeInDir = angleIdx % SEGS_PER_DIR  (shape within group)
+      // The tiling is a Bresenham line rasterization in (intercept, slope)
+      // space. Each shape is one step:
+      //   1:1 parallelogram (band) = H-step (advance intercept)
+      //   0:1 triangle             = V-step (advance slope)
       //
-      // dirCount = 2^(n+1) direction groups per cascade.
-      // dirMid = dirCount / 2 = 2^n (center pivot for angularDist).
-      //
-      // Shape layout per direction group:
+      // Per direction group: [1 band, stride triangles, 1 floor-chain band]
       //   Even line (stride=2): [1:1, 0:1, 0:1, 1:1]  shapeInDir 0–3
       //   Odd  line (stride=1): [1:1, 0:1, 1:1, ---]  shapeInDir 0–2
-      //   outerSeg = stride + 1.  Shapes 0 and outerSeg are 1:1s.
-      //   Shape 0 and outerSeg share geometry but carry independent
-      //   propagation chains (inner vs boundary angular sampling).
       //
-      // Extend: srcDirGroup = dirGroup / 2. D parity (even/odd)
-      //   controls bias correction (HRC Eq. 14/15 analogue).
+      // Shape 0 and outerSeg (stride+1) share geometry but carry
+      // independent data — the ceil and floor Bresenham rounding chains.
+      // Together they prevent angular aliasing across cascades.
+      //
+      // Extend = recursive Bresenham at half resolution.
+      //   err = D & 1 (Bresenham error bit, = HRC even/odd x parity).
+      //   The bits of D are the complete error history across cascades.
       // ================================================================
       const tessellationWGSL = `
 const SEGS_PER_DIR = ${SEGS_PER_DIR}u;
@@ -322,21 +321,21 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   let isUp = dirGroup < i32(dstDirMid);
   let pSign = select(-1, 1, isUp);
   let D = angularDist(dirGroup, dstDirMid);
-  let dEven = (D & 1) == 0;
+  let err = D & 1; // Bresenham error bit (= HRC even/odd x parity)
 
   let srcBase = (dirGroup / 2) * i32(SEGS_PER_DIR);
 
   var result = vec4f(0.0);
 
   if (shapeInDir < outerSeg) {
-    // Inner chain: oddOff = (D + 1) / 2, even-line offset = 2 * oddOff
+    // Ceil chain: oddOff = ceil(D/2) = srcD + err
     let oddOff = (D + 1) / 2;
     result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * 2 * oddOff, srcBase + shapeInDir, srcDirCount);
     result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * oddOff,     srcBase + min(shapeInDir, 1), srcDirCount);
   } else if (shapeInDir == outerSeg) {
-    // Boundary chain: reads at D-based offsets
-    result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * D, srcBase + select(0, 3, dEven), srcDirCount);
-    if (dEven) {
+    // Floor chain: uses exact D. Cross-reads from ceil chain at err=1.
+    result += readSegment(lineIdx * 2 - 2, probeIdx + pSign * D, srcBase + select(0, 3, err == 0), srcDirCount);
+    if (err == 0) {
       result += readSegment(lineIdx * 2 - 1, probeIdx + pSign * (D / 2), srcBase + 2, srcDirCount);
     }
   }

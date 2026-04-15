@@ -1,0 +1,1728 @@
+Alexander: @RadianceCausality @AdrianM new home
+RadianceCausality: It's line time
+AdrianM: it has become its own rabbit hole
+Alexander: so in flatland we store N values associated with each HRC probe. in usual HRC these values are radiance coming from the center of the probe in N directions. however, if we use any of our linespace encoding techniques, then these N values encode radiance in a _volume_ associated with the probe. or they encode a bundle associated with that probe
+Alexander: what does that mean
+Alexander: is that a useful property or just a quirk?
+Alexander: is this what's causing aliasing in sparse 3d? the fact that we(I?) treat each ray origin as the center of its probe?
+Alexander: should we be doing interpolation between blocks/rings or should that not be a problem? quite surprisingly so far it was not a problem for me, i don't know why
+Alexander: i don't see any seams between blocks, even though each block encodes its linespace chunk in complete isolation from its neighbours
+Alexander: so I was wondering. what is the difference between a good and a bad discretization pattern?
+Alexander: like, what's the difference between vanilla 2x vs vanilla 4x scaling?
+Alexander: what if we did something clearly sub-optimal with probe scaling (for example, imagine HRC where we reduce the number of probes 2x and increase the number of directions 4x while spacing between planes is kept the same?
+Alexander: i think linespace has the potential to answer this question
+Alexander: there has to be some notion of uniformity of our sampling pattern, and it has to stay in some sense uniform from cascade to cascade
+AdrianM: Yes, I believe as we increase the grid resolution the falloff decreases. If you imagine the line being infinitely thin then only the single point would line up with it and all other alignments would have 0 effect
+Alexander: i think line space discretization like this should be legal
+Alexander: essentially the number of discrete directions and the number of discrete positions that we have should not necessarily be the same
+Alexander: in fact, I don't even know if c0 probes should be what we see on the left or what we see on the right:
+Alexander: we have always been doing what's on the right. but is that the right call?
+Alexander: i wonder what HRC does if we were to formulate as the left diagram
+Alexander: hmm... i also just now realized that these two are basically equivalent:
+tomatopaste: looks like a double slit experiment
+Alexander: so... do we ever need this? because if the answer is that we can always find an equivalent arrangement that has the same number of points on the left/right line, then it just makes everything much easier and have fewer parameters
+Alexander: if it turns out that it's not equivalent, then life is pain again
+Alexander: i just realized that for an arbitrary arrangement of HRC probes (with any spacing and any number of directions per probe), we can always construct an equivalent line indexing scheme between two vertical lines that have evenly spaced indices and left-right line indexing for them
+Alexander: so no matter how many directions each probe has, no matter the distance, there are always 2 planes with uniformly spaced points that if you connect them you'll get the same spacial and angular sampling density
+Alexander: i wonder if the way of encoding it with lines gives us the answer of where we should be using that interpolation. does it mean in order for interpolation to work like interpolation and not extrapolation (with additional losses) we should be reconstructing radiance between those planes and not outside of them?
+Alexander: does this mean that there are always 2 "focal planes" for which we can reconstruct radiance with the best accuracy?
+Alexander: testing linespace discretization per block
+Alexander: i wonder why there are segments with two brightness levels o_O
+Alexander: interesting. this is what's happening inside of one block/probe with angle + distance from center encoding scheme
+Alexander: fewer lines per block
+Alexander: i don't think it's broken. i think it's doing what it's meant to be doing, it's just what the angle+distance basis does
+Alexander: man.. apparently just encoding radiance within a box in an efficient way is already not easy
+Alexander: how do we map the space of (0..1)x(0..1) onto the space of all lines in a square in a way that's efficient?
+Alexander: even using 4 cardinal directions this is not easy if you want every line to be visible at least partially
+Alexander: @fad sounds like the kind of self contained problem that you're good at solving
+AdrianM: Whoops
+AdrianM: [image]
+Alexander: Adrian, you too. i think sampling all lines in a box is an important thing that we should have a solution for
+Alexander: and it's a building block (no pun intended) for many things we can build on top of it
+Alexander: it's literally rings that you were inventing, but rings have a bunch of rays unused
+Alexander: [image]
+Alexander: hmm... i wonder what if we generate 2 circle points on 2 random circle segments that have non-matching colors?
+AdrianM: I'm thinking about solving it in 1 direction
+AdrianM: Classic HRC
+AdrianM: Reproject the penumbra to be defined at different planes as a way of changing basis functions between cascades
+AdrianM: Still not sure if that's possible or quite what the limitations might be
+Alexander: you mean one quadrant? even that is not easy to define in a box
+Alexander: how do you define the set of all lines within one quadrant in a box?
+AdrianM: [image]
+AdrianM: Easy peasy
+Alexander: not at all
+AdrianM: It won't give a circular fall off
+AdrianM: But that's fine for now
+Alexander: [image]
+Alexander: none of these lines are represented
+AdrianM: One second
+AdrianM: I have things taken apart to do some testing
+Alexander: tl;dr, to cover the entire box you don't need 2 of these, you need 6 (also connecting all sets of edges at 90 degrees)
+AdrianM: [image]
+AdrianM: You can see how it all adds up and click together
+AdrianM: I'm sure you are ahead of me on this
+AdrianM: I just want to solve the simple diamond case before considering more complicated cases
+AdrianM: If a lossless way to shift basis functions can't be found for even the default case then I need to do some rethinking
+AdrianM: Any shape in line space which we can create a geometric defintion for in real space is fair game
+AdrianM: As long as we can manipulate that shape in order to build a bigger version of itself
+Alexander: yes it's 6 zones like these
+AdrianM: There may be some other hidden requirements
+AdrianM: 6 zones, but really only 2 unique cases. The corners and the main 2 edges.
+Alexander: yes but i'm not sure how to map one uv range (0..1)x(0..1) into 6x zones (0..1)x(0..1) each in a way that's uniform
+AdrianM: This is stepping ahead of what I've been thinking about.
+AdrianM: But right now splitting into these zones is basically just connecting all the nodes on the boundary of a box
+AdrianM: I believe you've found from your testing that that isn't uniform
+AdrianM: But a circle is uniform
+AdrianM: Both a circular boundary and a square boundary contain all lines within some arbitrary scene. But they contain different weightings for those lines.
+AdrianM: So I'd assume we can just reweight the lines in the square boundary to match the circular boundary
+AdrianM: Also as a quick side note. Covering the entire unit square in linespace isn't that useful. It's just the same as covering all angles in some range for all points in some y range.
+AdrianM: [image]
+Alexander: hmm... what if we overlapped them
+Alexander: by 1/2
+Alexander: what if we tile the line space with rectangles like that
+AdrianM: Yeah, that is possible
+Alexander: wait a minute, this is what classic HRC basis is
+AdrianM: As a side note, look at this
+AdrianM: This is basically drawing the two connected lines as an X through the square
+AdrianM: No idea if it's useful but it's certainly interesting
+AdrianM: It hints at other geometric definitions for basic functions we could use to tile the scene in linespace
+AdrianM: [image]
+AdrianM: This might help you see how I'm making it
+Alexander: hmm.. how do we tile the space with rhombi?..
+Alexander: what does that grid look like?
+AdrianM: Oh that's easy
+Alexander: no how does the grid look like in realspace vs linespace?
+AdrianM: Easy
+Alexander: ok i think i know how to formulate that question. can we have a tiling in realspace such that bundles associated with every tile also form a tiling in the linespace?
+AdrianM: [image]
+Alexander: hmm.. i see
+AdrianM: Literally moving the yellow line is a translation
+Alexander: so these are 2 intersecting diagonals defining a linespace bundle?
+AdrianM: And the pink line is a different translation
+Alexander: i want realspace tiles to be squares
+AdrianM: And if you stretch the pink/yellow then that's the same as stretching the rhombus in that direction
+Alexander: to build an octree
+AdrianM: That doesn't give us shadows
+Alexander: why do you think so
+AdrianM: Well, hmmm
+AdrianM: Okay let me show you what that does exactly
+Alexander: i do want to implement it with occlusion
+Alexander: in fact, all lines contained within a given square is how you add occlusion
+Alexander: this is interesting
+Alexander: deranged but interesting
+Alexander: intersecting diagonals bundle, hmm...
+Alexander: annoyingly it samples a bunch of lines outside of the rhombus?
+AdrianM: [image]
+AdrianM: Here you can see what the linespace tiling looks like and the geometric definition
+AdrianM: [image]
+AdrianM: And here you can see what happens if we scale it up a cascade
+AdrianM: Well the geometric definition is still between the same two x planes
+AdrianM: So it isn't splitting up the real space in a way that gives us shadows
+AdrianM: At least I'm not seeing how it would
+AdrianM: If we want to change squish the geometric definition to be between two different x planes then it stretches the linespace
+AdrianM: [image]
+AdrianM: You can pretty clearly see that that changes the angle in linespace though, so we need a way to achieve that new angle
+AdrianM: Obviously just translation isn't going to cut it
+AdrianM: Which is brings us back to what I was ranting about before
+AdrianM: What if we literally cut it
+AdrianM: Cut the rhombus in half
+AdrianM: Which if we consider the rhombus to be an umbra then a triangle turns out to be equivalent to a penumbra
+AdrianM: And now we get to think about triangles in linespace instead of rhombus
+AdrianM: Anyways, I already gave this rant and I already think I've lost everyone on this rabbit hole lol
+AdrianM: I'll keep going and let you all know if I find anything at the bottom
+Alexander: hmm... triangular tiling
+Alexander: sounds like a pain in 3d
+AdrianM: Wonder what the 3D equivalent is
+AdrianM: I suppose it'd be slicing a box in half
+AdrianM: A tetrahedron
+AdrianM: Eh, let's just get it solved for 2D first
+AdrianM: I want to know if even in the best case a lossless solution can exist
+AdrianM: Ignoring these questions doesn't change the problem, linespace lets us see the complexity of the problem pretty directly
+Alexander: apparently this works reasonably well
+AdrianM: [image]
+AdrianM: Boom
+AdrianM: These are all the ways we can reproject a rhombus
+AdrianM: Technically there are 6 in total, but the first two are use the same planes as the original (red) definition
+AdrianM: [image]
+AdrianM: Here is what it looks like
+AdrianM: All the other definitions look exactly the same by definition since they are just different ways of geometrically capturing the same data
+AdrianM: I know what you are thinking "what about projections in the opposite direction?"
+AdrianM: [image]
+AdrianM: It turns out it is symetrical
+AdrianM: The distances we can project to are dependent on the relative sizes of the two defining edges
+AdrianM: So if the right edge is bigger than the left then we can only project towards the left
+AdrianM: [image]
+AdrianM: Interesting, the penumbra (triangle) can be split in half allowing for another projection option
+AdrianM: Although that would require twice as many shapes to describe
+AdrianM: Here's what the rendered penumbra looks like
+AdrianM: [image]
+AdrianM: Hmmm that's actually very odd
+AdrianM: [image]
+AdrianM: We can reproject to this plane
+AdrianM: But what's so special about that plane?
+AdrianM: In the case of a full umbra it makes sense for that point to be special since it's where the lines cross
+AdrianM: [image]
+AdrianM: But for a penumbra that point doesn't look particularly special at all
+AdrianM: I wonder if that implies arbitrary reprojection of penumbra is possible by splitting them into smaller pieces?
+AdrianM: The answer to that question is yes!
+AdrianM: [image]
+fad: maybe something like: for a given line, find where it intersects the boundaries of the square. choose the intersection where the angle the line makes with the normal of that intersection is -45º < angle < 45º. now use (angle, intersectionPosition)?
+
+intersectionPosition can be compressed to 1D since it lies on the boundary of a square
+Alexander: the mapping is the other way round, from two 0..1 components of uv that define a ray to a ray in realspace
+Alexander: well, we need mapping to work both ways
+Alexander: can you make an illustration? maybe i'm missing what you're trying to do
+AdrianM: This same logic extends to any arbitrary distance
+AdrianM: Looks like we can reproject at least one of the planes to any distance we want just by splitting the penumbra into two smaller penumbra
+AdrianM: Any obviously if each of those two penumbra are split in half again then with 4 penumbra we can reproject both planes
+AdrianM: Not sure if it is possible to do better than that. There are special distances where a penumbra can be reprojected without being split. There might also be a way to do reprojection of both lines without requiring two splits.
+AdrianM: Though in the context of implementing HRC that may not matter
+AdrianM: Hmmm actually it seems there may be some restrictions on penumbra reprojection
+AdrianM: I'm not entirely sure what those restrictions are
+Alexander: testing different bases(basises?)
+Alexander: [image]
+Alexander: found the right weights
+Alexander: wow the difference with circular basis is pretty dramatic
+Alexander: i think there's something special about this basis that makes it appear very regular, interesting. they have the same number of lines but just appear to look different
+Alexander: i don't immediately see how to generalize this basis to 3d yet, unfortunately
+RadianceCausality: which basis is this?
+Alexander: like this
+Alexander: points are spaced equally on the diagonal, same number of lines regardless of direction
+Alexander: angle is chosen uniformly
+Alexander: so ray angle is one coordinate, the other coordinate is a point on the nearest diagonal
+Alexander: for some reason this works much better than picking points on the perimeter
+RadianceCausality: huh
+Alexander: i think one important property is to make lines change as little as possible with any coordinate change
+Alexander: and putting it on a diagonal sort of balances that
+Goobley: This is starting to look like method of characteristics solvers from neutron transport...
+Alexander: well... there is no advection happening really
+Goobley: characteristics is kind of a silly name, but it's to do with the way they oversample each cell with rays to extract the right average flux
+Alexander: i thought characteristic methods is methods that use the property of some hyperbolic systems that they look like advection/diffusion after some transformation
+Alexander: where advection happens along characteristics
+Alexander: is it something else?
+Goobley: It is in hydrodynamics, but for neutron transport it just refers to lots of ray samples
+Alexander: hm diagram is indeed similar for some reason
+Alexander: okay yeah there is some randomly happening resemblance in the method too
+Goobley: It's the same concept I guess, oversampling to get the average through a control volume, that for you just happens to be a pixel
+Alexander: i don't have pixels btw
+Alexander: well, almost
+Alexander: these are just boxes and discretized bundles of lines in them
+Alexander: pixels only happen when i enter c0 and then gather per pixel fluence once i'm done
+Goobley: Oh right
+Goobley: Are you assigning some "track width" to each ray when filling the boxes?
+Alexander: since lines are indexed by integer indices, the "track" that corresponds to each line is the set of all lines that have indices in the -0.5..+0.5 range from it
+Alexander: but the track is 2d because the indices are 2d
+Alexander: https://discord.com/channels/1277053173764460625/1304556173671927878/1471463788459851870 this is what these tracks look like
+Alexander: so it's like a ribbon with a twist rather than a rectangle
+Goobley: Ah, it's still that basis then, right. It's interesting how smooth it looks yeah
+Alexander: well there is literally no other choice, that basis will appear any time you try to enumerate lines in a continuous way
+Alexander: it's just the set of all lines that connect two surface elements
+Goobley: I guess the difference between this and the neutron MOC stuff is that they assume a fixed angular discretisation, so the set looks quite different. I feel like this is more general though
+Alexander: fixed angular discretization should also result in the same shape, because if you consider the set of all rays that start on a surface element ds and are contained inside of angle dtheta, they'll form the same shape
+Alexander: maybe they just never felt the need to visualize them?
+Goobley: I guess specifically thinking in terms of pairs of edges is new to me
+Alexander: so curiously the bundle shape is different if you think of two surface elements vs surface element + angle. and i still don't understand what that means.
+Goobley: @IronFist maybe knows more about whether people have thought more about these bases in MOC stuff
+Alexander: basically classic HRC uses surface element + angle. i have now switched to two surface elements because it's more contained/spreads less
+Goobley: I feel like the two surface elements should give a better description of the average, rather than the pointwise flux, yeah
+Alexander: exploring 3 bases where all rays are drawn
+Alexander: circular (2 points on a sphere):
+Alexander: diagonal (point on a diagonal + angle)
+Alexander: up/down: one point on the upper line, one point on the lower line
+Alexander: lower line + angle
+Alexander: even though the last 2 look more uniform-ish, they actually don't cover the full 360 space of line directions, unfortunately. the first 2 do
+fad: rediscovery https://discord.com/channels/1277053173764460625/1280001146932559972/1284029401524211722
+fad: pretty genius, i completely forgot about that diagonal approach
+fad: for whatever reason, placing points equally spaced sqrt(2)px apart on the diagonal like that (i.e., 1 point in each pixel) makes it so the lines drawn from them intersect all the pixels in the image exactly once without duplicates
+fad: i'm guessing that's what makes it look good, even if you don't space them out exactly sqrt(2) distance apart
+fad: i'm guessing now that you found the diagonal thing it's not too hard to create this mapping?
+Alexander: oh cool didn't realize it also worsk for non-squares
+Alexander: there are multiple ways to create such a mapping
+Alexander: and they seem to have pretty wild impact on the end result that i can't explain
+Alexander: also we need somethign that works for 3d
+Alexander: because none of this does
+fad: in your mapping, do you have different points for going forwards/backwards along a given line?
+fad: is the ray from A to B different than the ray from B to A?
+Alexander: yes they have to be different
+Alexander: because they have different occlusion
+AdrianM: [image]
+AdrianM: Been thinking some more about the restrictions on penumbra reprojection
+AdrianM: Above you can see a basic example of a penumbra
+AdrianM: [image]
+AdrianM: And here you can see how it can be reprojected to a different plane
+AdrianM: As mentioned earlier, each penumbra actually have 3 different ways to be described geometrically with two half planes, so if we want to use the same type of definition for both split penumbras then the second one becomes this
+AdrianM: The problem comes if we try to reproject to a plane closer than the original definition, say this one:
+AdrianM: [image]
+AdrianM: You can see that the triangle doesn't fit
+AdrianM: [image]
+AdrianM: Even making it into a thin slice and moving it up and down it doesn't fit
+Alexander: ngl i have lost what you're trying to show or achieve a while ago
+AdrianM: \*sigh\*
+AdrianM: I shall continue regardless
+AdrianM: It turns out there is a way to do reprojection with subtraction though.
+AdrianM: In this case subtracting the right from the left gives us the triangle we want but with a different defining plane.
+AdrianM: Okay. Let's see if I can figure out how to explain...
+Yaazarai: Your diagrams are starting to make as much sense as mine.
+AdrianM: Okay, so in linespace we have some area that we care about
+AdrianM: Honestly for now I don't even care what that area is
+AdrianM: Could be any shape
+AdrianM: The point is we have some area in linespace which we want to simulate the lighting within
+AdrianM: In order to do this we want to be able to divide and conquer. So we need a way to recursively split that area into smaller sub areas.
+AdrianM: You might think "okay, so what's the problem? Just split it up like you would a quadtree"
+AdrianM: [image]
+AdrianM: [image]
+AdrianM: Unfortunately this doesn't give us a way to add shadows to it (at least not one I can see)
+AdrianM: I already explained what an quadtree does in linespace, but I'll explain again
+AdrianM: The highest level is equivalent to two connected planes in real space
+AdrianM: (quick illustration incase that isn't clear what I mean)
+AdrianM: [image]
+AdrianM: Now when I split it it's equivalent to splitting the two planes in half and then connecting all the segments
+Alexander: the only way is to subdivide in realspace
+AdrianM: What do you mean?
+Alexander: in order to introduce occlusion, we need to subdivide realspace, not the linespace
+Alexander: because we need to have multiple representations for the same line, but at different hit distances
+AdrianM: Correct!
+AdrianM: But when we divide up real space that is also going to create splits in our linespace
+AdrianM: So we are splitting up both spaces
+AdrianM: We have an infinite number of lines, and we want to create groupings for them.
+Alexander: some subdivisions of realspace don't really subdivide the line space
+AdrianM: And we want those groupings to have geometric definitions that can map to different cascades in physical space
+Alexander: or rather they produce linespace chunks that overlap
+AdrianM: I'm thinking about if it is possible to do it losslessly
+Alexander: [image]
+AdrianM: For that to be possible there should be a 1-to-1 mapping between realspace and linespace
+Alexander: i don't think it even should be a goal, because we do want to have multiple representations for the same line, but that only store occlusion within one realspace tile or the other realspace tile, so that we can merge them in a well defined order
+AdrianM: Sure we can
+AdrianM: If we are doing the lighting in one direction (say a quadrant) and the same ray exists in two different groupings which corrispond to two different planes then we can merge them in the order of the direction
+AdrianM: [image]
+AdrianM: Here the red and blue line are the same
+AdrianM: But they are defined using different planes
+AdrianM: So if we want to merge/simulate the shadows from left to right then we can merge them by applying blue over top of red
+AdrianM: Which is why I've been thinking so much about defining the same group of rays using different planes
+AdrianM: If we can reproject the same group of lines to be defined using any arbitrary planes then we can do lossless HRC
+Alexander: i've also been doing that in my quadtree implementation: i use realspace quadtree cells to produce linespace bases
+fad: here's what i came up with for the diagonal line thing: https://www.desmos.com/geometry/ewgzxps1zy
+
+it's a continuous mapping between realspace lines passing through the unit square (red) and linespace points in `[0,1] × [-π,π]` (blue). linespace is cylindrical since it wraps around from `y = -π` back to `y = π`
+
+enable the first folder to drag a realspace line and see what linespace point it maps to
+enable the second folder to drag a linespace point and see what realspace line it maps too
+
+in this version there's a bit of nonlinearity due to the use of trigonometry but you could replace that with some piecewise linear version of tan/atan2 and it'd become piecewise linear again if that's important
+AdrianM: Exactly, we are talking about shifting basis functions
+Alexander: but you can already do that: you for any two lines you can enumerate all lines within a bundle. so you can just iterate over every line in a bundle in one basis and find which bundle it belongs to in the other basis
+AdrianM: Well but that mixes the data together
+AdrianM: It isn't 1-to-1
+AdrianM: It isn't reversible
+AdrianM: It isn't lossless
+AdrianM: But I'm curious if there's a clever way we can set up our bundles to fix that
+Alexander: but it has to be, because a lower cascade tiling of realspace will always have fewer lines than a realspace tiling of higer cascade
+Alexander: lower cascades just have fewer lines
+Alexander: maybe that's a problem that needs to be fixed, i'm not sure
+Alexander: but it's a fact
+AdrianM: I don't quite follow. I see it like this
+AdrianM: [image]
+AdrianM: [image]
+AdrianM: If we start out with the pink to define our basis, and now want to shift to the red and blue for our  definition then we lose data
+AdrianM: Every ray from pink can be bundled into either red or blue
+AdrianM: But then once they are in red or blue we can't reconstruct pink anymore
+Alexander: imagine a quadtree in realspace. say, c0 has 4 blocks, each block has 2x2 lines
+Alexander: both have 16 lines in total
+Alexander: but half of lines on the left are actually the same line represented at different hit distances
+Alexander: so the number of unique lines actually increases 2x if you go from the left one to the right one
+Alexander: and that's fine, i think it has to increase
+Alexander: because you can't capture occlusion otherwise
+AdrianM: Well yeah, if it is the same exact line then it should go in the same bundle always
+AdrianM: Has to be grouped with itself
+AdrianM: And I agree that there has to be some redundancy to capture shadows
+AdrianM: That's a useful observation
+Alexander: i think with this quadtree-based approach there are no fundamental questions
+Alexander: it should work
+Alexander: there are no questions unanswered
+Alexander: it's just unclear exactly which basis to pick and how exactly to merge them fast
+Alexander: and how to minimize the error in the end
+AdrianM: You are talking about connecting all the edges of the quadtree with lines. Not dealing with the area of the quadtree.
+Alexander: area of the quadtree is equal to the number of lines it can represent
+AdrianM: Which I also think will work. I expect the error will be similar to HRC but with different artifacts
+Alexander: yes but apparently the error is wildly different depending on the basis
+Alexander: and also it has some artifacts that i don't know where they're coming from
+AdrianM: I think I see where we diverged
+AdrianM: You are defining some space of all lines and then thinking about discretizing those lines and then using those for your basis to do HRC
+Alexander: yes, there's many ways to do that
+AdrianM: I'm thinking about how to discretize the physical areas in linespace
+Alexander: i'm not sure how doing that would result in a method that supports occlusion
+AdrianM: .
+Alexander: if anything it should be some some sort of a mipping scheme for the linespace. where multiple tiles in linespace merge together to be represented with one value or something
+Alexander: yes but this requires storing every line more than once, which you can't do if you do a lossless tiling on top of it
+AdrianM: As long as the physical shapes we are using to split up the linespace can be defined between two planes then we can run HRC on it.
+AdrianM: I'm not even thinking about storing lines
+AdrianM: There are no lines. Only groupings of the linespace made up of infinite lines
+AdrianM: Splitting infinity into smaller groups of infinity
+Alexander: that's fine
+Alexander: any shape in the linespace corresponds to a bundle of lines in the realspace
+AdrianM: Yes, but if they can't be defined geometrically in real space then that by itself isn't that useful
+Alexander: so we plan to store one value for every shape like that, assuming all lines in that shape have the same radiance
+Alexander: yes every bundle has to be in some way spatially localized in the realspace in order for merging to work
+AdrianM: Yup
+Alexander: i'm not quite sure what the actual requirement is, but it needs to be in some sense compact. like, all lines in a bundle should be intersecting as tight realspace area as possible or something of that sort
+AdrianM: All the lines passing through a point in real space are a line in linespace
+AdrianM: So "spatially localized" corrisponds to a line in linespace
+Alexander: hmm.. what if for any shape in linespace there is a corresponding smallest shape in the realspace that all those lines intersect?
+Alexander: can we find such a mapping?
+Alexander: and then the task becomes to create a tiling that works in both spaces at the same time
+AdrianM: Now you are seeing the vision
+AdrianM: I think that this will end up being possible, but I suspect that each time we subdivide the space the data required to hold it losslessly will double or something
+AdrianM: My worry is that it won't actually end up giving us a solution which is faster than brute force ray tracing
+Alexander: well did we even ever have that mapping from a tile in linespace to a tile in realspace such that every line intersects that realspace tile?
+Alexander: is it always a convex shape around the two edges that produce the bundle?
+Alexander: because for bundles that are created from two edges in realspace it is definitely just that: a quad made of those two edges
+Alexander: but can we generalize it past bundles made of two uniformly sampled realspace edges?
+AdrianM: I am curious about the same thing
+AdrianM: If there are other shapes/patterns that we could create in linespace which might be useful
+AdrianM: I have no idea how to approach that one though
+AdrianM: right now I'm working with half bundles (penumbra) which are triangles in linespace which can be defined in 3 different ways using two two planes
+AdrianM: Any polygon can be described with triangles so this feels pretty fundamental.
+AdrianM: But there could be other weirder methods out there.
+Alexander: there might be a realspace shape that a half bundle corresponds to
+Alexander: such that every line in that bundle crosses that shape
+Alexander: or does it mean that both full bundle and half bundle correspond to the same trapezoid?
+Alexander: if so, lame
+AdrianM: Yes and no
+AdrianM: It corrisponds to 3 different trapezoids
+Alexander: maybe their union means something
+Alexander: and full bundle corresponds to one trapezoid?
+Alexander: so bundles that have fewer lines correspond to a larger shape?
+AdrianM: A full bundle is one rhombus
+AdrianM: And you can cut that in half to get a triangle
+Alexander: in realspace a full bundle is one trapezoid
+AdrianM: But since a triangle is 3 sides that means there are 3 rhombuses that could have been cut in half to make the triangle
+Alexander: right, sure
+Alexander: so you can definitely re-tile one tiling into another tiling
+AdrianM: [image]
+AdrianM: [image]
+Alexander: stuff like this
+Alexander: [image]
+Alexander: you can regroup adjacent triangles into tiles in different ways
+AdrianM: That's the vision
+Alexander: but what does it give us i'm not sure
+AdrianM: It gives us options
+AdrianM: (sorry, posted the same one twice, here's the corrected version)
+Alexander: i think the truth lies in how to find the most information we can lose that doesn't matter to us, to use that all for occlusion, not how to not lose any information
+AdrianM: I'd like to see how to avoid losing any information
+AdrianM: What does a lossless solution look like
+AdrianM: And then we can decide where to add the loss
+Alexander: well just make 2 different tilings by splitting rhombuses in 2 different ways, see what that looks like in realspace
+AdrianM: That's just going to corrispond to two different projections
+AdrianM: Which is what I've been thinking about so much
+Alexander: doesn't have to be rhombuses btw. can also try this:
+Alexander: i just am curious to see what different linespace tilings look like in reaslapce
+AdrianM: I don't see how that  gives us a useful geometric definition
+Alexander: well i think it's a bit of a theme here
+Alexander: ok well, does that even look regular in realspace or not?
+Alexander: i think the answer might be a no
+Alexander: do we want to find a regular linespace tiling that is also regular in realspace?
+AdrianM: [image]
+AdrianM: Squishing the rhombus is the same as projecting between one different plane
+AdrianM: If you change the x position of both planes you can do rotations
+AdrianM: Well more of a skew anyways
+AdrianM: [image]
+AdrianM: Actually, exactly a skew, moving the planes together in +-x is a y-skew of the linespace
+Alexander: I think if we try to actually implement any of these, we'd discover that the problems that we encounter might be different from the kinds of problems that we expect
+Alexander: says me after fighting discretization issues for the past couple days
+Alexander: all sorts of them too
+AdrianM: First I need to see a clear path to an implementation
+AdrianM: Which with the approach I'm thinking about right now requires reprojection
+AdrianM: And I still don't full understand the options I have for reprojection, though maybe what I have right now is good enough
+Decetive: this is all very interesting, too bad im far too stupid to help at all:thonk:
+AdrianM: Oh don't worry, there's a chance this all ends up in a big dead end
+AdrianM: That's always the risk when exploring new ground
+sweg: does this get us closer to 3d hrc or not :KEKW:
+sweg: thats all i care about
+Alexander: https://discord.com/channels/1277053173764460625/1304556173671927878/1416331830574977024 3d hrc is yesterday's news
+Alexander: today's news is sparse 3d hrc
+AdrianM: We're never going to get anything nearly as clean as what we can get with 2D HRC in 3D which still runs in real time
+AdrianM: 3D just has too much data
+AdrianM: We have to give something up somewhere. So it's about finding where we can make those cuts
+AdrianM: At least for online rendering
+Cody Bennett: Does giving up my sanity count?
+Cody Bennett: I am halfway there with SSRC.
+Cody Bennett: I did not read up on this channel, but does linespace open up sparse HRC in 3D or how did that come to be?
+AdrianM: Linespace is just a general tool for thinking about any kind of ray tracing problem
+Yaazarai: Can we get a tl;dr explanation of the point of linespace.
+Yaazarai: For pinned comments.
+AdrianM: You have an infinite line, in linespace that line is a point
+AdrianM: To be more specific, the y coordinate of that point is the y-intercept and the x coordinate is the slope
+AdrianM: If instead you use distance to the origin and angle then you get radon space which is used by radon transforms and hough transforms.
+AdrianM: But the lines in radon space aren't straight which makes them harder to work with/reason about.
+AdrianM: For convenience, this is the point where we figured out that linespace wasn't something we invented.
+AdrianM: Huh, that was only a week ago? Crazy.
+Alexander: these diagrams without axes and the origin are not understandable by people who are not in the loop
+AdrianM: [image]
+Alexander: yeah that's probably more understandable but connecting slope to the x-position is still going to be impossible for people
+Alexander: this is how we encode lines in line space: one line in realspace (black) corresponds to one point in linespace (red). coordinates of that point is (x, y)
+AdrianM: Ah there you go, I was just going to show two graphs with the point shifted right so you could swap back and forth
+AdrianM: Diagram is hopefully more clear
+Yaazarai: Yeah that makes perfect sense.
+Alexander: hmm.. what if we did it like this?
+Fluxxi: does that mean that perfectly vertical lines cannot be represented?
+Alexander: this way x of the line is x of the point, y of the line is y of the point
+Alexander: correct, with this way of encoding lines you can't. but we already have like 3 million other ways to represent any line (including vertical ones) with 2 numbers, and we still don't know which one should be preferred
+Alexander: @AdrianM i think you did something similar to this initially
+Alexander: in your linespace exploration web thing
+Fluxxi: thinking about it, couldn't you store the slope as an angle relative to the x axis which would allow for all possible directions? maybe this has already been thought of, idk
+Alexander: that's one of the many ways we tried doing it
+Fluxxi: makes sense
+AdrianM: Isn't that just swapping the x and y axis? (maybe with a reflection)
+Alexander: you can see some of them here https://entropylost.github.io/hrcviz/
+Alexander: not exactly, because x becomes the x-intercept instead of y-intercept
+Alexander: at least moving the line horizontally becomes moving the linespace point horizontally and sloping it up becomes moving the linespace point up
+AdrianM: Rotate by 90 degrees and then y intercept becomes x intercept
+Alexander: yeah sure it's just a rotation-mirroring-translation thing
+Alexander: just if you look at a rotated, mirrored and translated something, it's harder to understand what you're looking at
+AdrianM: You can shift the space around any way which is most convenient
+AdrianM: The properties are the exact same
+Alexander: yes but i'm trying to find the most understandable way to show it to people who're out of the loop
+AdrianM: I find y intercept convinient to think about. Then a point at x=0 in linespace is a horizontal line at the same y value
+Alexander: i guess if we stored 1/intercept then this could work
+Alexander: it's just intercept is proportional to y, so we store it on the y axis. cool. but slope is also proportional to y, but we store it on the x-axis. that's why i think it might be easier to understand if we store either (x-intercept, y-slope) or (x-slope, y-intercept)
+AdrianM: So then a vertical line is x=0 and a horizontal line is x=infinity
+AdrianM: Which is the opposite of what we have been using
+Alexander: both of them are in some sense the opposite
+Alexander: but at least axes align somewhat
+AdrianM: I'd have to draw all my merge diagrams vertically
+Alexander: not saying we should do it, just if we plan to explain it to people, something like this might be more approachable
+Alexander: mine already ended up vertical
+Alexander: because i put probes on the x-axis for some reason
+AdrianM: Im not too concerned with what conventions people want to use
+AdrianM: The rabbit hole is just as deep either way
+Alexander: me neither, but they'll keep asking
+AdrianM: I'd pin this, and we can pin any additional explanation required if people ask questions
+Alexander: actually, this is interesting. i've been using (x-intercept, x-slope) in my impl. maybe i should try (x-slope, y-intercept). it actually does change the bundle shape
+Alexander: Pinned a message.
+AdrianM: Why not both?
+AdrianM: y intercept x intercept
+Alexander: https://tenor.com/view/ohh-oh-damn-oh-daymn-daym-damn-gif-2649905700736798302
+Alexander: good fucking question
+Alexander: wait (-1..1, -1..1) is the space of all possible lines, right?
+Alexander: with x-intercept y-intercept
+Alexander: this is the same as my diagonals thing, right, but rotated 45 degrees
+AdrianM: yup
+Alexander: wait no it can only represent all lines in a rhombus
+Alexander: 45 degrees rotated
+Alexander: but instead of encoding position on a diagonal + angle i can encode 2 positions on 2 diagonals maybe?
+AdrianM: Well the x y intercepts have to be between +- infinity
+AdrianM: Hmmmmmm actually that depends
+Alexander: nah that's no good i want a compact representation that maps all lines in a realspace square to a square in linespace
+AdrianM: If you have a limited area of space you care about then... maybe?
+AdrianM: Ah no, a horizontal line still goes out to infinity on the x intercept
+AdrianM: Same for a vertical line
+Alexander: wdym no? for x-intercept y-intercept horizontal lines are (0, 1) and (1, 0)
+AdrianM: You are rotating the axis by 45 degrees?
+Alexander: [image]
+Alexander: y-intercept is 0, x-intercept is 1
+AdrianM: What about a horizontal line at y=0.5 ?
+Alexander: this encodes lines only in a rhombus
+Alexander: 45 degrees rotated
+Alexander: so either use diagonal intercepts to encode lines in axis-aligned square, or use cardinal axis intercepts to encode lines in a 45 degree rotated diamond
+Alexander: why does it have to be so difficult
+AdrianM: hmmmm
+AdrianM: Interesting, I wonder if this gives us a nice way to solve the diagonals
+AdrianM: Oh well, one thing at a time
+fad: ax+by=1 with linespace point (a,b) is another representation of lines, this one can't represent lines passing through the origin
+Alexander: i think i see something interesting about how we discretize HRC in linespace. you know guys how we can have a line that connects pixels (p1, p2) in linespace which represents a cN+1 probe. then we can have two lines (p3, p4) and (p5, p6) that represents say two probes of cN. we merge them if (p1, p2) can be accurately enough represented by connecting segments (p3, p4) and (p5, p6). but in reality there are many ways to rasterize a line, so they'll always end up not quite matching, and because of that there will be aliasing issues.
+
+so I'm thinking that we can actually ***define line rasterization rules*** such that (p3, p4) + (p5, p6) _exactly_ line up with (p1, p2). how? well, instead of doing DDA or brezenham we can define every line bundle as two points of cN linespace and a distance range. here's an illustration
+Alexander: so this is going back to the idea of having a global indexing scheme to avoid aliasing issues
+Alexander: we can also define line rasterization rules in a very deterministic way: instead of doing dda, we can keep subdividing and rounding every line segment until we reach a single pixel. this way there's no floating point-like ambiguity happening and every line that goes through the same pair of pixels will always share a segment in its entirety
+Alexander: also interesting to note that aliasing errors in linespace result in lines that don't focus exactly at the same point, which is not the same as realspace where it results in lines not being quite straight
+Alexander: there is definitely something to this way of rasterizing a line where we divide it into two and round the endpoints of formed segments to pixel centers. there is something this will guarantee, but i'm not quite sure what
+Alexander: yes i now think this is the "lossless" part that we were talking about, @AdrianM
+Alexander: because two cN segments exactly form one cN+1 segment. the only "inexactness" here is not because merging is inexact, it's because we define lines to be not quite straight
+Alexander: here is an illustration how this works visually. we can ***define*** line AB as lines AC and DB connected together. this process can be subdivided recursively until we reach 1x1 pixel line segments
+Alexander: this way the process of figuring out if a given pixel belongs to a given line is actually non-trivial and requires log N computation, but that's fine. in other words, it can not be replaced with dda, line vs box check or anything of that sort. it can only be subdivided recursively.
+Alexander: also nothing happens in line space in this approach. everything is realspace, just geometrically subdividing things
+Alexander: i'm not quite sure what merging entails, but extensions should be "lossless", if we define "lossless" as "the result of doing extensions exactly matches the result of casting them analytically", we just define what a ray is by what we can calculate via extensions
+Alexander: there is also a dual process to doing extensions which should result in merging, but I have not quite figured out how that works yet, but it has to use exactly the same math
+Alexander: i tried to find a solution how to do linespace accurately and accidentally found one that does not invole the linespace at all
+Alexander: hmmm.... i wonder. should we express this entire algo in integers?
+Alexander: subdividing lines recursively can be done in just integers
+Alexander: @fad then the problem that we need to solve becomes the same line basis problem, but discrete: in a pixelated box of size NxN (N is a power of 2), how do we define NxN (maybe 2Nx2N?) unique lines? ideally we should define them in a way such that after rasterizing all those lines they add up to exactly the same fluence at every pixel
+Alexander: note that we can define both the way we enumerate lines and also the way we rasterize them, the only requirement is that after rasterizing all lines in a box they should add up to the same fluence and they should look as straight as we can, but that's more of a bonus rather than a hard requirement
+Alexander: sounds like every line needs to cover exactly N pixels is one of the must-have requirements, interesting
+Alexander: i guess they don't have to cover every pixel the same number of times, but then we need to come up with weights such that if we overlap all lines with those weights then they do add up
+fad: do you mean cN-1, not cN+1?
+Alexander: yeah you're right
+fad: you should edit your message to correct that, otherwise it becomes pretty confusing to follow until the reader realises the typo
+Alexander: i did already
+Alexander: wait what
+Alexander: ok i edited the other one too
+Alexander: how did i make the same mistake twice? (rhetorical question)
+Alexander: actually the reason why i made that typo is because the first post i was writing about the linespace: there cN+1 lines are shorter and I was thinking about combining them into a longer realspace line. but in realspace it's the other way round, interestingly. and only after finishing the second post I realized that it can be run entirely in the realspace
+Alexander: so whether you use it to create cN+1 by combining two cN segments in realspace or you combine two cN+1 segments into one cN segment in linespace: it's actually unclear which one would produce artifacts that are more desireable
+Alexander: this means that merging can be thought of as extensions in line space. so merging and extensions are completely equivalent processes, just one works in realspace the other works in linespace
+fad: did you see https://discord.com/channels/1277053173764460625/1304556173671927878/1471762143341842630
+fad: they define line rasterization recursively in a similar way
+Alexander: nope didnt read
+Alexander: i have a feeling nobody would have the same requirement as we do though
+Alexander: so that every pixel is covered by the same number of lines
+Alexander: checked the paper
+Alexander: yeah it's very similar to what i thought
+Alexander: they're doing one pass that covers 45 degrees
+Alexander: also they count diagonals and horizontals twice
+Alexander: resulting in nasty double counting factors
+Alexander: i want to see if there's a way to formulate it in a 2d way
+Alexander: instead of connecting 1d points on lines, maybe we can connect 2d points on a box
+Alexander: they're definitely doing a lot of similar things to what i just reinvented though
+Alexander: it's a good sign means it's not stupid
+Alexander: especially the recursive discretization part, i'm not convinced that it's the only way to do it correctly
+Alexander: anything that involves actual lines or ray vs aabb tests is bound to fail due to nasty discretization artifacts
+Alexander: they are also doing it between two "long" planes. we have to do it with boxes not planes in order to make sparse rc work and to make occlusion work too. those two properties are connected
+Alexander: the implicit choice that they made is that they assume lines connect pixel centers. then it gets really nasty with all the extra members, double counted diagonals and such. but it's possible to consider lines that connect pixel edges. then there is no duplication
+Alexander: maybe the move is to just store 4N^2 lines and just ignore some of them during summation?
+Alexander: anyway i think it's worth trying both the pixel-centered version and edge-centered version
+Alexander: not sure if vertex-centered version makes any sense
+fad: yet somehow they're able to make inverting work. that proves there are ways to deal with the double counting and still get a correct result, which at least gives some hope that there are solutions
+Alexander: yes it's not an algorithmic problem
+Alexander: it's "it just looks ugly" problem
+Alexander: where did you find that paper btw?
+fad: i was googling "discrete radon transform" and "inverse discrete radon transform"
+Alexander: i feel like there has to be a sane framework here how to manage all of this gracefully
+Alexander: i'm not seeing it right now
+Alexander: but the direction is definitely very self-consistent and imo makes sense
+Alexander: just like actually implementing functions like "split line in a box into its child boxes"
+Alexander: it needs to be very precise and deliberate with rounding, negative number handling etc
+Alexander: looks like the only way to implement it is in rational maths. everything is a fraction of 2 integers
+Alexander: line vs box intersections etc
+Alexander: same as floating points, but a/b > c/d becomes ad > cb
+Alexander: why do you even need ray vs aabb intersection? when there's a line in a box and you subdivide the box into 4 parts, how does the line subdivide?
+Alexander: this is what a hierarchically rasterized line looks like
+Alexander: this is definitely not exactly straight
+Alexander: and it gives me hope seeing how different it is from dda or raycasting
+Alexander: man.. negative integer division strikes again
+Alexander: this is so annoying
+fad: just define floor_div(x,y) function and use that instead of thinking about negative integer division
+Alexander: yeah i had to
+Alexander: but even that, how do i actually properly write it? i produced this, but it's pretty ugly ngl:
+```cpp
+  int RoundDiv(int a, int b)
+  {
+    int d = b * 100000;
+    return (a + (b - 1) / 2 + d) / b - d / b;
+  }
+```
+:KEKW:
+fad: idk just copy whatever stack overflow says lol
+fad: what does line from (0,0) to (32,1) look like
+fad: aka almost but not quite horizontal line
+Alexander: will have a bend in the center
+Alexander: also tried (32, -1), (-32, 1) and (-32, -1)
+Alexander: seem to all have the bend in the center
+Alexander: but (1, 32) currently doesn't work :KEKW:
+Alexander: truly this requires writing these functions once and never touching them ever again
+Alexander: maybe a unit test of some sort
+fad: why does it prefer bending down from the true line?
+Alexander: it was a floor instead of round
+fad: what does it look like with round and what does it look like with ceil?
+Alexander: (32, 14) line
+Alexander: lower round, ceil, floor, upper round
+Alexander: upper round as in 5/2 = 3, lower round 5/2 = 2
+Alexander: want to have a way to take images into the clipboard directly
+Alexander: i wonder if webgl allows that
+fad: right click canvas and copy image?
+Alexander: doesn't have that. but conveniently has this:
+Alexander: i guess this sort of works
+fad: does it work for you on shadertoy?
+Alexander: [image]
+Alexander: can summarize the page though
+fad: "save image as" i guess
+Cody Bennett: <https://stackoverflow.com/questions/27863617/is-it-possible-to-copy-a-canvas-image-to-the-clipboard>
+fad: i just checked, on chrome i get the option to both copy or save, while firefox only lets me save
+Cody Bennett: :briannaPls:
+fad: but like, it's a built in feature for canvases. you shouldn't have to implement this yourself
+fad: i just tried on one of my own web pages that uses webgl to draw on a canvas and it lets me right click > copy/save image there as well and i didn't manually implement it
+Alexander: the "take screenshot" thing in firefox allows you to select either the whole page or one div
+Alexander: so i guess that sort of works
+fad: here are aligned versions :KEKW:
+fad: how come only the left third of the upper/lower round versions differ while the rest is identical?
+Alexander: i guess the rest didn't struggle rounding anything?
+Alexander: i mean it only matters if you actually hit the case where you divide an odd number by 2
+Alexander: apparently, just splitting a line into 2 by a vertical line is not easy
+Alexander: as in, into section that's to the left from x=2 and to the right
+Alexander: because if a line is too vertical, then both segments still need to connect, there's like 69 different sign combinations and i'm bad at integer maths
+Alexander: programming integer maths feels like speaking turkish: it's clearly a whole language of its own and i clearly have no idea how to use it
+Alexander: progress with line (32, 26)
+Alexander: this is actually rasterized with aabb's already, not with binary divisions
+Alexander: so i can render bad lines now too. like vertical ones
+Alexander: wow.. the code is pretty nasty. so i doubt it will be fully symmetric. like, i'm not sure my lines react correctly to being flipped vertically/horizontally/diagonally. i don't even know what it means to be correct in those cases
+Alexander: I ended up writing a bunch of unit tests right in the shader, like this:
+```cpp
+  vec4 UnitTest()
+  {
+    vec4 color = vec4(0.0f);
+    {
+      LineSegments2 s = SplitLineX(ivec4(0, 0, 1, 1), 1);
+      if(s.segment_points[0] != ivec4(0))
+      {
+        color += vec4(1.0f, 0.0f, 0.0f, 0.0f);
+      }
+      if(s.segment_points[1] != ivec4(1))
+      {
+        color += vec4(1.0f, 0.0f, 0.0f, 0.0f);
+      }
+    }
+    {
+      LineSegments2 s = SplitLineX(ivec4(0, 1, 1, 0), 1);
+      if(s.segment_points[0] != ivec4(0, 1, 0, 1))
+      {
+        color += vec4(0.0f, 0.0f, 1.0f, 0.0f);
+      }
+      if(s.segment_points[1] != ivec4(1, 0, 1, 0))
+      {
+        color += vec4(0.0f, 0.0f, 1.0f, 0.0f);
+      }
+    }
+    ...
+  return color;
+}
+```
+and that actually helped a lot
+Alexander: because every change i made broke something
+Alexander: so just a bunch of simple tests for all building blocks helped me find regressions fast
+Alexander: lesson learnt, i should cover all code that can be covered (horizontal/vertical/diagonal lines, lines split in half, etc) with tests right in the shader, because that's something integer math is actually really well suited for
+Alexander: "white furnace"
+Alexander: "point source" :KEKW:
+Alexander: alright, it is now technically working, i'll just need to figure out all the bugs
+Alexander: this is just connecting left wall to the right wall. clearly something is less uniform than it should be
+Alexander: some of the rays. seems fine?
+Alexander: ahh nice, found the bug. parallel rays are not really parallel. should be fixable
+AdrianM: This feels a little similar to how I was looking at doing extensions before
+AdrianM: Very interesting
+AdrianM: Actually I'm not sure that holds true for occlusions
+Alexander: hmm... i realized that i'm on much harder mode than radon transform, because i'm splitting my lines by boxes, not by parallel planes, so making sure lines are always identical regardless of translation is going to be harder
+Alexander: yeah so just a clarification what the current state is and what i'm trying to get. this new way of rasterizing lines produces lines that are not quite straight, and those lines don't yet produce a uniform enough basis yet, so it looks worse than the alternatives so far. however, this basis is lossless, which means i can do extensions O(N^2 log N) time and achieve exactly the same look as I can with doing it bruteforce (like I currently do), it is spatially local which allows me to do occlusion, it's defined by blocks rather than lines, which allows me to do sparse RC with it and it also allows exact merging, which means merging it produces the same exact result as bruteforce gathering. but there's a lot of ways i could tweak it to make it look better, especially if i knew what i was doing (which i don't)
+Alexander: found the simplest problematic case of two lines that are meant to be parallel that don't align
+Alexander: hmm... is there a way to implement sparse with planes, rather than blocks? because blocks absolutely make everything 10x more complicated
+AdrianM: I've been thinking about planes this entire time
+Alexander: well it's much easier to think of planes, but it's not going to help 3d
+AdrianM: In your case you get to choose which lines get indexed to which planes so I don't see why planes would be an issue
+AdrianM: You mean sparse
+Alexander: 3d has to be sparse
+AdrianM: Also who said we can't do sparse RC with planes?
+Alexander: i don't see how to keep planes sparse when we go to higher cascades
+AdrianM: It'd be weird and probably janky. But the surface of our planes could be quadtrees or somethin'
+Alexander: the problem is that dense cells of that quadtree will diverge in a cone
+Alexander: and become wider
+AdrianM: I don't see how that's a problem
+Alexander: if any ray is occupied in a wider cone, then whole cone becomes occupied
+Alexander: so it reduces sparsity fast
+Alexander: what i like about block-based is that it uses the same exact sparse block structure we already tried with sparse vanilla
+Alexander: we know that that works
+AdrianM: Really there's no restrictions on how we store data onto those planes.
+AdrianM: We've been using rays but that might not be our only option
+AdrianM: In any case I haven't thought much about that yet
+AdrianM: I haven't entirely ruled out planes for sparse RC though
+Alexander: the rasterization problem that i have is 100% because of boxes and i'm not sure if it's possible to fix
+Alexander: it's because rays are not guaranteed to preserve their shape if you translate them perpendicularly to the plane that cuts them
+Alexander: they only preserve it if you translate them in that plane
+AdrianM: Can you get it to work with planes? I'm curious how that works
+Alexander: that would work but that'd be a defeat for me
+AdrianM: "work" as in no artifacts?
+Alexander: yeah it would produce 100% uniform fluence
+Alexander: for white furnace
+AdrianM: Great, what about point lights and shadows?
+Alexander: shadows should work fine
+Alexander: point lights can't predict yet
+Alexander: i think i can make it work, but it's a bit annoying. essentially all lines needs to be indexed by their starting position on the opposite sides, even if those positions are outside of the box
+AdrianM: I'm very curious to see this work
+AdrianM: Even if it is working with planes
+Alexander: me too, but i'm not going to bring myself down to test, because testing on planes is not not a trivial change, and if i can't make it work on boxes then i'm not interested in it
+AdrianM: If I understand correctly you basically want to define some fininte number the rays for entire scene which are defined with a line drawing function so that adding them all together produces a completely uniform covering
+AdrianM: AKA each pixel gets hit by exactly the same number (or total weight) of rays
+Alexander: the uniform covering thing is something i realized after trying it yes
+Alexander: i feel like this has to be a requirement
+Alexander: which is something we never really enforced
+AdrianM: You've probably already figured this out, but if you can for any angle uniformly cover the plane then you can do it for all angles
+Alexander: ofc
+Alexander: this is what will guarantee white furnace test, i'm sure of it
+Alexander: but idk how to define yet what makes point lights look good
+Alexander: because that's the harder question
+AdrianM: And if I am understanding, the issue you are having is how to take those line definitions and define them with smaller cascades/boxes?
+AdrianM: Taking the same line and cutting it to be defined on a smaller cascade
+Alexander: well currently i'm realizing that the way i've been defining lines (by their 2 points on the box perimeter) is not invariant to translation
+AdrianM: How is it not?
+Alexander: so lines change shapes if you translate them vertically
+AdrianM: Oh, you mean if you try to redefine it using a new parimeter of a smaller box?
+Alexander: yes i currently use perimeter points
+Alexander: and looks like that's a mistake
+AdrianM: Question, doesn't that mean that the smallest cascade will have a lot of redundancy? A 1 pixel box intercepts with a lot of rays
+Alexander: so yes looks like what's important is to use line indexing scheme that we use for planes, but that indexing scheme can be used inside boxes
+AdrianM: Or are you merging rays which are similar angles as you merge down?
+Alexander: every NxN box currently has 2Nx2N rays in my implementation. which means 1x1 box will have 16 rays, I didn't bother removing redundant rays
+Alexander: there is no merging of similar rays, everything is exact
+Alexander: you just construct longer lines from shorter lines
+Alexander: and you can store line segments of all possible lengths, you have enough memory for that in 2d
+Alexander: the only price you pay is the way you discretize lines which is not exactly geometrically straight
+AdrianM: "NxN box currently has 2Nx2N rays" how do you get 16 from that?
+Alexander: sorry it's 4Nx4N
+AdrianM: Lol, okay
+AdrianM: Got you
+AdrianM: And that's just an arbitrary constant you can adjust right?
+Alexander: the non-redundant way is something like `2N*N + 2(N-2)*2N + 2(N-2)*(N-2)` which has to be 1 for 1x1, but it's really stupid
+Alexander: every time you see N-2 there it's actually `max(N-2, 0)`
+Alexander: no, it's the number of rays you can define on a perimeter of a box of size NxN pixels
+Alexander: without double counting corner rays etc, without counting rays that start and end on the same side, etc etc
+Alexander: it's really quite annoying for small boxes, so i just over-allocate as if all those rays are unique and will figure it out later
+AdrianM: For a 1x1 box I count 12
+Alexander: for 1x1 box it should be 1
+AdrianM: [image]
+Alexander: no rays don't start on edges in this implementation
+Alexander: they start at pixel centers
+Alexander: at least that's what the discrete radon transform paper does
+Alexander: i have a mild suspicion it's sub optimal
+AdrianM: [image]
+AdrianM: Now I count 8
+Alexander: i use inner perimeter points
+Alexander: so for a 1x1 box all perimeter points are 1 point, so the only ray is that starts at that point and ends at that same point
+Alexander: i think this makes more sense though
+Alexander: btw another takeaway is that shader-based rational maths thing is the only way to make all of this exact.
+```cpp
+  ivec2 MinRatio(ivec2 r0, ivec2 r1)
+  {
+    //r0.x / r0.y < r1.x / r1.y ? r0 : r1
+    ivec2 u0 = r0 * Sign(r0.y);
+    ivec2 u1 = r1 * Sign(r0.y);
+    return (u0.x * u1.y < u1.x * u0.y) ? r0 : r1;
+  }
+```
+Alexander: here r0 is representing a fraction r0.x/r0.y etc
+Alexander: and the function returns `min(r0.x/r0.y, r1.x/r1.y)`
+Alexander: you can rewrite ray vs aabb test with these in integers
+AdrianM: Does the definition of the line even mater?
+Alexander: yes, unfortunately for aabb children
+Alexander: but if i use plane indices then it shouldn't matter
+AdrianM: We have some abstract global definition of all lines, and we can just index into that
+Alexander: when you have a line in a parent box and you need to figure out if a given child receives a segment of that line, you have to do an integer aabb vs ray test
+AdrianM: As long as I have a function that can take some index and give me a line definition it shouldn't matter where that definition is stored or comes from
+Alexander: i think using plane indices in a box should really make these parts simpler
+Alexander: but it would make it slightly more nebulous of what it even means "line with these coordinates belongs to this box", because it's no longer obvious if a given line is in a box or not
+Alexander: i guess for lines under 45 degrees it is obvious
+Alexander: so maybe we can just store them per axis
+AdrianM: Why not a compound index that encodes two points on a circle around the entire scene? We already know that's uniform
+Alexander: ok well, simple question then. how many plane-indexed lines are there in a box?
+Alexander: that is uniform in the continuous limit
+Alexander: what we need here is uniform in discrete representation
+Alexander: it's more like discrete line sweeping and less like integration
+Alexander: basically as you said earlier, it needs to be uniform for any given line direction
+Alexander: and circular/ring representation doesn't have the notion of "given direction"
+Alexander: so there will be aliasing there for sure
+Alexander: alright mate when are you going to start programming
+Alexander: you've been theorycrafting a lot
+AdrianM: No time right now unfortunately
+AdrianM: And I don't have a clear image in my head of what the code needs to be
+Alexander: i have a very clear image of what it has to do, but it's not quite clear how to implement it. like, on signed division level it needs to be very deliberate and precise
+Alexander: you can't just throw more samples at it until it converges
+Alexander: it's like watertight triangle rasterization. it's really nasty to implement, it's very easy to use once you have the boilerplate
+Alexander: but the boilerplate functions are terrifying
+Alexander: i'm also a bit sad that we went too much ahead of everybody else in this direction and others (RC, fad) have kind of lost track at some point and now it's going to be much harder for them to catch up and get them interested enough to implement stuff
+Alexander: unless i present them something that "just works". but that'll take a lot of effort
+RadianceCausality: I still think linespace is just not worth it
+Alexander: i'm literally not using anything from linespace in this iteration
+Alexander: it's only connecting lines in realspace
+RadianceCausality: Uhhuh?
+RadianceCausality: Wait is this just extensions
+Alexander: all line diagrams you see above are realspace lines
+Alexander: yes it's just extensions
+RadianceCausality: Okaaaay?
+Alexander: and i plan to use the exact same algo later in linespace to do merging
+RadianceCausality: But anyways I don't think lines are worth it
+RadianceCausality: Yeah that's the harder part
+Alexander: i think it's literally the same exact code
+Alexander: there is actually no difference
+RadianceCausality: I mean making it not have artifacts
+RadianceCausality: Also isn't merging still messy? Linespace doesn't describe intervals
+Alexander: i don't even know what kind of artifacts it has, because getting to that point is non-trivial
+Alexander: if merging happens for bundles that are contained within realspace boxes, it's fine
+Alexander: same with extensions
+Alexander: i'm now thinking that the only correct line indexing scheme for boxes that can work for 360 rays is to define a line as two numbers: first one is point index on the perimeter (for NxN box it's 4N or 4(N-1) points) and for each point there's 2N line raise values that define direction as offset to its index when it hits the opposite wall of the box in the counter clockwise direction
+Alexander: [image]
+Alexander: this way each diagonal gets counted once because j is [-(N-1)..N] inclusive, so diagonals avoid double counting and it should be clean around the entire circle
+Alexander: i think attempting to index lines that end on 90 degree edges was a mistake
+Alexander: we should only use indices on opposing sides, even for lines that end on 90 degree edges
+Alexander: and just truncate those lines to the inside of the box
+Alexander: this i mean
+Alexander: kind of annoyingly though, also rays like this exist and we need to index them too:
+Alexander: uh... i think everything goes back to diagonal being the only way to go in 2d. but diagonals don't work in 3d. i think i'll implement the simplest (although over-specified) way of encoding rays first (3Nx3N*4 total storage) and optimize it later
+fad: have you ever managed to render an artefact-free 1px point light? like, forget about cascades and recursively and doing it optimally, but still using a discrete global indexing scheme and no cheating with continuous rays
+Alexander: there were multiple variants that looked reasonably well
+Alexander: the one with diagonal line indexing for example
+Alexander: but it doesn't really matter, because changing the way you rasterize lines will affect that pretty dramatically, and there's no way to tell if the change is going to make it look better or worse
+Alexander: so it's not about doing it with a global indexing scheme first and then trying to match that with a discrete transform. it's going to be just different
+fad: sure but if you can’t get it to work with a global indexing scheme first then it’s basically impossible with an efficient logn approach
+Alexander: as i said, it's not about matching that. you can have an indexing scheme that sucks with casting straight rays and that lines up really well if you subdivide them
+Alexander: well i don't really know how realistic that is, but the goal isn't to get a perfect looking point light. in fact, i'd be more than happy to get an HRC point light from this. the goal is that this can be done in sparse 3d
+Alexander: and there's a chance it might look better under some circumstances, but i really don't know
+Alexander: i think i'll get to test a point light soon, at least for one quadrant
+Alexander: implemented the parallel-line-block thing
+Alexander: it should be numerically equivalent to discrete radon transform (i think?) although it uses blocks and not planes
+Alexander: this is much simpler than my previous implementation, no rational math required
+Alexander: ```cpp
+  int IsPointOnBoxLine(ivec2 point, BoxLine box_line)
+  {
+    BoxLine curr_line = box_line;
+    for(int i = 0; i < 10; i++)
+    {
+      if(!IsPointInAabb(point, curr_line.aabb_min, curr_line.aabb_size)) return -1;
+      if(!IsBoxLineContained(curr_line)) return -2;
+      if(curr_line.aabb_size.x <= 1 && curr_line.aabb_size.y <= 1) return i;
+      uint child_idx = GetAabbChildIdx(point, curr_line.aabb_min, curr_line.aabb_size);
+      curr_line = GetChildLine(curr_line, child_idx);
+    }
+    return -3;
+  }
+```
+Alexander: this is the core (recursive line subdivision). i use different fail codes as negative numbers to detect various failure modes, that was also pretty useful for debugging cases that should not be possible
+Alexander: white furnace works (in one 45 degree sector, but anyway)
+Alexander: point light falloff
+Alexander: yeah getting some very HRC-inspired patterns
+Alexander: now i can try some indexing schemes that are very different from HRC. like the diagonal one
+Alexander: curiously, the entire line layout geometry is contained within a single function that splits a line in parent aabb into its child aabb. there's nothing else about the shape of the lines exposed anywhere else
+Alexander: i think for merging we'd also need the other way round: from a child line to get its parent line
+Alexander: but that's literally it
+Alexander: @AdrianM  i think i now understand the meaning of what it means to be lossless. if at any point you average any 2 intervals, you're losing information
+AdrianM: tldr?
+Alexander: that's an irreversible operation
+Alexander: well you know how in hrc sometimes a cN interval sits between two other cN+1 intervals and we average them before merging
+Alexander: i think that's an irreversible operation
+AdrianM: I wonder if it strictly matters if it is reversible
+Alexander: yeah me too
+Alexander: because we do that all the time
+Alexander: actually hmm... in line space that operation is actually concatenating line segments together. so it's not the same thing
+Alexander: by concatenating them together we're not averaging anything
+AdrianM: I think as long as the 'buckets' you are using to store the data lines up across cascades then it should be fine to average them
+AdrianM: I think the artifacts come from where those buckets dont perfectly line up so you get some leaking
+Alexander: i think maybe it means that during merging you can average 2 directions, because that's integration. but you can't interpolate two probe positions, that loses information
+Alexander: because you know sometimes you extend cN ray and it lands between two cN+1 probes
+Alexander: yeah i think that's avoidable
+Alexander: and you're not really integrating probe positions, that's just straight up lost information
+Alexander: yes when their positions don't line up you have to interpolate
+AdrianM: I've been thinking about how we could reproject to make the buckets line up
+Alexander: so what i'm doing is mostly equivalent to picking one of the two probes with specific rounding rules instead of averaging
+Alexander: which is similar to what you've been doing
+Alexander: with that checkerboard thing
+Alexander: i wonder if the way i'm doing it results in a perfect falloff under some specific circumstances, like light position aligns with (-1, -1) or something of that sort
+AdrianM: Thats frustrating that you are getting artifacts with this approach
+Alexander: nah there's a lot of thing to try
+Alexander: it's not defined in one specific way
+Alexander: the cool thing is that it should result in the same exact image if i do it with extensions and if i add merging
+Alexander: @fad i think i finally see how to enumerate line directions using the diagonal method
+Alexander: so N samples covers the angle [0, 90)
+Alexander: N+1 samples would cover [0, 90] inclusively
+fad: did you see this?
+fad: i guess now you’re dealing with the specifics of how to discretize it
+Yaazarai: *ahem* the method I explained.
+AdrianM: I really wish I understood
+AdrianM: You've got the secrets to all the universe in you hands but I'm too dumb to understand
+Yaazarai: TL;DR is you reproject the near plane by building extra cones to fill the gaps.
+AdrianM: Have you got that working yet or is it still just a theory?
+Alexander: yes i did the same with my continuous thing. but it's not obvious how to discretize it nicely
+Alexander: apparently that second diagonal line can be also placed at a different distance. if you place it 2x farther, then N points discretize [0..45) interval. if you place it like on the image, then it's [0..90)
+Yaazarai: I am working on it, yeah, but still theory.
+Alexander: interesting, because the line splitting also works differently for them
+Alexander: i think one insight from this is that you can in fact render extensions all the way using no interpolation, and always connecting rays 1 to 1. and this approach fundamentally can't produce a smooth falloff, because the falloff is defined as ***the number of lines*** that overlap at any given point in space, and since all lines have either 0 or 1 radiance, the falloff will also have to be discrete to the same degree
+Alexander: and the only way that i can see to work around that is to not have N single-px lines intersecting at the source
+Youssef Af: I have been trying to understand whats going on here and couldnt really get some points
+Whats the advantage of this and how do we handle occlusions ?
+Alexander: advantage of what
+Alexander: there is a lot of things we discussed here and it's mostly just another way to view what we've always been doing
+Alexander: but also each of us here is implementing something to further expand our understanding of how to inplement various gi schemes using this new interpretation
+Alexander: i guess it's literally that, an interpretation
+Alexander: i guess it's like we'be always been using newton's second law, and now we've discovered a lagrangian. technically, they're equivalent, but that equivalence is in itself profound and you can really do some things much easier with one interpretation and not the other
+Youssef Af: Oooh thought we have a new algorithm
+Alexander: there are multiple
+Alexander: Guys, I found something. I think I see now how to construct a radiance encoding algorithm that will reproduce a pixel-perfect point light falloff, or in fact an arbitrary fluence field, including non-physical ones, and I will also tell you how to do it with any line basis, including discrete, anti-aliased, raycast, straight bent or otherwise. But I don't want to straight up tell you how to do it, because I think it's interesting to go through the journey of a couple questions that you can think about. You will probably think that it's stupid at first, then that it's obvious and then you'll realize that it can't be any way other than this.
+
+So the first question I want you to think about is about radon transform or discrete linespace transform, but if you don't know what it is it's not a big deal just skip it, it's not terribly consequential but interesting to ponder about if you're in the loop. We have this thing that we call discrete radon transform or this discrete linespace transformation that we're trying to create/recreate/adapt/think about. We want to give it a point source in realspace, then we want to apply this transform that would give us its linespace representation (presumably it should convert that point source to radiance) and then we want to convert that representation losslessly back and obtain a.. point light falloff? Excuse me, but if it's lossless, shouldn't we expect to obtain a single point without a falloff back? Why do we expect to get a point light back from a point, how is that lossless in any sense?
+
+Second question is, well how many probes and how many directions do we actually need to exactly represent a 2d pixel scene? What if we use too many? What if we use too few? Is there an optimal number? I'm sure you know the answer exactly already. If there is a block of NxN pixels, then you can encode it with NxN lines. And you can't use any fewer lines than that and there's no reason to use any more than that
+
+<sorry discord cutoff>
+Alexander: Next question I wondered is: we struggle to represent accurate point light falloff in HRC. Is it maybe because we're paying the cost of losing the falloff but getting sharp shadows? I'll straight up answer you: no. Why? Again, because there are NxM pixels in total between two planes and we use NxM intervals in total to encode them in HRC, I hope you see the theme at this point.
+
+Well then the final and the most important mental experiment to imagine is this: imagine we have an ***arbitrary*** pixelized fluence field in a box and a bunch of lines indexed in some way that we define and rasterized in a way we define (with antialiasing, with dda, recursively, it doesn't even matter). Question: can we find radiance associated with every line, such that they reproduce that fluence field losslessly? You know the answer: there are NxN pixels and NxN lines and lines that overlap on top of each other are just additive, so we can always construct a system of NxN equations, one equation per pixel that says "all lines passing through this pixel add up to this pixel's fluence", and we can solve it, at least in theory, even if that solution would be very slow at first. But it would be a reference solution that would give us ***exact*** decomposition of an arbitrary fluence field that we can think of, including arbitrary point source falloff functions, located at arbitrary points in space.
+Alexander: What does it give us? For any set of lines (left-right, intercept-slope, circles, it doesn't even matter) and any way of rasterizing them (dda, raycasting, antialised or not) it gives us the reference solution of what the brightness of each line has to be in order to add up to a falloff of a perfect point light. Note that this should result in some rays having ***negative*** radiance in order to produce nonphysical fluence, and a lonely point in space with no falloff is actually nonphysical and should result in exactly that.
+Alexander: @AdrianM @RadianceCausality @fad  https://discord.com/channels/1277053173764460625/1472580758706065501/1475760136734900346
+Alexander: I'll attach an image to make it a bit less boring to look at
+Alexander: Natually, this gives us a trivial way to tell a good line basis vs a bad one. Or a good way of rasterizing lines vs a bad one. If a given line basis creates a (NxN) x (NxN) matrix that is non-invertible, then it's bad. If it is invertible, then it's workable. And the only thing that should make them different is how useful (or not) each basis is at representing occlusion. ***any*** good basis should be able to represent a perfect point light located at an arbitrary location in space with an arbitrary falloff, including those that are user-defined.
+Alexander: Pinned a message.
+Alexander: Then the goal of HRC isn't to do merging. It's not to do extensions. The goal of HRC is to solve that system faster than bruteforce. And I bet you there will be an up-down or push-pull solution that will have two distinct phases bottom-up and top-down which will involve adding lines of adjacent directions and then merging lines of the same direcitons, these phases will correspond to extensions and merging. But my point is, we should be able to get that solution in a dumb way first, and then try to find the same exact solution faster by constructing an RC-like algorithm, which should also be able to handle occlusion, if we do the push-pull correctly without violating the order of merging rays along the direction of their propagation.
+fad: > Excuse me, but if it's lossless, shouldn't we expect to obtain a single point without a falloff back?
+i always just thought of it as: you transform to linespace, apply some operation in linespace, and then transform back to realspace. and that in our implementations, the extensions/raytracing step did both the transform to linespace and that magical operation, and then the merging step just transformed back to realspace. i think if you had just a true transform from realspace to linespace that didn't also do that magical operation in the process, then a lot of the resulting pixels in the linespace image would be negative
+Alexander: yup, the fact that we have no negative rays is a mistake. or at least the fact that we don't have a version that does produce negative rays
+fad: at the very least, extension and merging are not inverses. (by "extensions" i don't specifically imply any algorithm for doing that like log n extensions, you could do raytracing or whatever, not important). in the discrete radon transform paper, they do extension and also present an inverse to extensions which is actually a true inverse. their true inverse is iterative though which doesn't bring me hope
+Alexander: i think what it will give us is we will have the reference of what cN should look like after extensions, such that if we apply our existing way of merging it, it produces the exact solution that we want
+Alexander: so we were always trying to find a merging scheme that produces the right falloff. but what we can do instead is to do the opposite: find what radiance field encoded and merged in our way produces the exact fluence that we want
+Alexander: for any merging scheme
+Alexander: but honestly i'm mostly interested in a merging-free version first. just explore a single cascade
+fad: also this is a pretty sus image because obviously you are dropping some lines there to make the number of lines and number of pixels match
+fad: in the DRT paper they even discuss how they end up with more  lines than pixels so it's not really a true inverse operation https://www.pnas.org/doi/10.1073/pnas.0609228103#sec-4
+Alexander: i didn't drop any lines. this literally means that 9 lines connecting left and right borders is what we need to encode an arbitrary fluence field.
+fad: oh, you're only connecting left to right
+Alexander: if this means that we can't encode radiance propagating in all directions, means we need to index lines differently, but there has to only be NxN lines
+Alexander: it really might mean that we've been pretty dramatically oversampling (using too many lines)
+fad: still weird though becuase those lines only cover a subset of directions and you've already used them all up, add any more lines and you'll start having more lines than pixels
+Alexander: yes which means that the inversion is non-unique
+Alexander: as in, multiple line arrangements will correspond to the same fluence
+Alexander: i wonder if we can do 1-3 relaxation operations to reduce the number of artifacts and which might be equivalent to what they did with inversion
+fad: have you tried brute forcing the reference solution for any scenes yet?
+Alexander: not yet
+Alexander: i just thought about this an hour ago
+Alexander: i want to do this with relaxation, should be really easy to test
+fad: what is "relaxation"?
+Alexander: it's satisfying the system of equations one by one. in this case pixel by pixel
+Alexander: every time ignoring all other equations/pixels
+Alexander: and you can prove that this converges iteratively
+fad: i'm sure you could formulate the problem and shove it into some python library lol
+fad: unless you're doing this for the love of implementing it yourself
+Alexander: it's just easier to do in shadertoy
+Alexander: but it's pretty dumb, maybe there's a slightly less dumb way to do that
+fad: the kind of thing LLMs would make quick prototyping of
+Alexander: alright, i think there are a lot of things to try here. like what does it mean if we use just NxN rays in an NxN block instead of the typical HRC way that uses 4NxN? it should still give us the exact falloff but with less accurate occluison
+Alexander: which is a failure mode we've never observed in HRC, our occlusion accuracy has always been directly tied with our falloff accuracy
+Alexander: sure, if you like that kind of stuff. i prefer my programming nice and organic, unless i'm programming something i hate :KEKW:
+fad: i'm not particularly fond of figuring out those python libraries which is why it's something i'd chuck at an LLM lol
+Alexander: very simple iterative solver
+Alexander: can't converge unfortunately
+Alexander: uhhh it converges very slowly
+Alexander: but i think if i had a better solver than this jacobi relaxation it would converge to the exact result
+RadianceCausality: what is this?
+RadianceCausality: the line space for a point?
+Alexander: gave it some more time to converge and set the radiance function that it can actually represent with that basis
+Alexander: no, i'm approximating a 1/r fluence falloff in line space
+Alexander: with an iterative solver
+Alexander: note how it does not quite converge to represent the black background
+Alexander: but with an analytic solver it totally would
+RadianceCausality: mm alright
+RadianceCausality: so is this a line-space display or real-space?
+Alexander: realspace
+Alexander: realspace light approximation, but solved for lines
+Alexander: same solver used for a custom falloff
+Alexander: no falloff just the cone (converges very slowly)
+Alexander: it's literally a matrix inversion
+Alexander: from line space to realspace pixels to lines
+Alexander: KxK system where K=NxN is the total number of lines/pixels
+Alexander: so we can convert any fluence field (any desired falloff or any custom image really) into HRC encoded radiance field
+Alexander: honestly i feel like now there are multiple ways we could make this work. for example, one way is to use a fixed line rasterization method and find a way to assign radiance to every line to get perfect point sources. this can be done with analytic matrix inversion (slowly) and we can find a way to do this in a block way similar to how HRC works.
+
+
+a completely different way would be to instead find a way to rasterize lines such that they add up to point source with the desired falloff. i'm not quite sure, but if we assume that all lines are rasterized the same way, it should produce a linear system of the same size. this way we might find something that looks like a special way to anti-alias lines such that they rasterize into perfect point sources.
+Alexander: but crucially each problem of this sort can be solved accurately to verify that it can work, and then the problem would be how to get to that answer faster
+Alexander: @fad any luck with the python thing?
+fad: nah i never tried
+Alexander: sigh, it's alright there's a lot of things to try and i'll keep chipping away at them slowly
+AdrianM: Oh man what did I come back to?
+Alexander: oh look who woke up
+AdrianM: I'm nearing the end of a year long project at work and we're working to hit the final dead line, got much less energy than usual.
+Alexander: alright guys RC are not going anywhere
+Alexander: you can get back to it if/when you feel like it
+AdrianM: All good, this is what I do for fun
+Alexander: but you might return to an arbitrary falloff problem solved already
+AdrianM: Where did the negative radiance come from?
+Alexander: the question is how did we get this far convincing ourselves we have some sort of lossless linear transformation that should not produce negative numbers
+Alexander: some fluence configurations in empty space should not be possible to obtain with only positive radiance (non-physical ones)
+AdrianM: To be fair the b-rays were negative
+Alexander: nah there's way more of them
+Alexander: like, there is no configuration of positive radiance rays that creates a single lit pixel in realspace
+AdrianM: Doesn't that make sense? There's no way to effect only a single pixel without that light also creating falloff around it
+Alexander: it only doesn't make sense from physics point of view if you assume there can be no negative radiance rays
+Alexander: but if you do allow negative radiance rays, it should be possible
+Alexander: because line transform is just a linear transformation from NxN pixels into NxN lines
+Alexander: and linear transformations don't care about signs
+AdrianM: Is there a reason why we want to consider cases like that which aren't physically possible? Is this related to representing shadows or is that separate?
+Alexander: the only reason we want to consider that is because the fact we're not considering it means we're making a mistake
+Alexander: it has to work for any arrangement of pixels and to convert them into an arrangement of lines
+Alexander: positive or negative lines/pixels doesn't matter
+AdrianM: Oh, I see. That's why a FFT is a valid solution to lighting without occlusion. Is that right?
+AdrianM: Hmmmmm
+Alexander: btw fft perfectly supports negative numbers and produces negative harmonics all the time
+AdrianM: So we want different kind of transform like an FFT that gives us a way to also calculate shadows - am I following?
+Alexander: i think shadows we already know how to solve. just do line transforms per block. what we don't know is how to do line transform in a block that would recreate a point light falloff perfectly in empty space with no aliasing or artifacts
+AdrianM: And I suppose that whatever we end up using as a solution by definition has to be a kind of linear tranformation since it's discretized
+Alexander: light is all additive, hence it's linear
+Alexander: so any HRC implementation can only be linear in that sense
+Alexander: the reason why we can't do occlusion with FFT is because the FFT basis is not based on lines, and we can only introduce occlusion into something that looks and acts like lines/intervals. as in, things that occlude each other in the order of their relative location. this is not the case with sin/cos basis, but is the case for anythign that resembles rays
+Alexander: so we need an exact transform that transforms a set of NxN pixels into something that looks like NxN rays in a way that's exact. and that can be done very reliably (although slowly) with a direct inversion if you just define any set of NxN functions that vaguely resemble rays. or anything else really, as long as they're linearly independent
+Alexander: i think there can't be any other way to think about this in a way that's exact
+Alexander: anything else would be an approximation or rely on introducing assumptions of some sort
+AdrianM: And the cascades in RC doing this way would be the implementation of the transform. Same as the logN in an FFT. Right?
+Alexander: yes, it's a mathematical trick to cache computations that reoccur
+AdrianM: Huh, it's nice to finally have connected those ideas. HRC and FFTs
+Alexander: but yes it's a good way to think about it, it's like N^2 discrete cosine transform that's trivial to implement first
+Alexander: and then replace it with an FFT
+Alexander: but the answer won't change at all
+AdrianM: So what's stopping us from using a radon transform (which uses an FFT under the hood)?
+AdrianM: Radon transform, then we can change the coordinate system any way we want if we'd like to see it in straight line space
+Alexander: is that exact? does it actually reproduce a single standalone pixel if you apply it and then the inverse?
+Alexander: I can see a potential N log^2 N solution using fft
+Alexander: but i think we can make it faster
+AdrianM: They use it for reconstructing medical images and those are sharp
+AdrianM: I assume there's some way they've got it solved
+Alexander: i think we're at the point where we know enough to reinvent the same algorithm first and then to make a better one
+Alexander: for example, i want to be able to support antialiased line basis which they don't support
+Alexander: this will help us later produce smoother shadows once we start occluding individual rays
+Alexander: but yes, curiously it should have literally 0 effect on point light falloff in empty space. it doesn't matter how we rasterize lines or which line basis we use, it should look exactly the way we want it to
+AdrianM: What do you mean?
+AdrianM: Above weren't you talking about being able to match any arbitrary falloff?
+Alexander: but radon transform is defined for one very specific way of rasterizing lines
+Alexander: which i'd argue is an unnecessary restriction on what we can do
+Alexander: and we can achieve any falloff exactly with any algorithm of line rasterization
+AdrianM: That's weird, I wonder why they'd use a restriction like that? The real world data they're processing shouldn't be any different from simulating rays of light.
+Alexander: because that way of rasterizing lines leads to an easy way to implement an FFT-like algorithm to transform them fast
+AdrianM: Hold on, if I'm following then if you solve this problem then you also get a better algorithm for medical imaging.
+Alexander: i think we should actually implement the FFT way, just so that we'd stop thinking about merging as a process of connecting rays, because that's entirely irrelevant
+Alexander: the problem that i want to solve is doing it with precise accuracy for lines that are rasterized in an arbitrary ways. it does not mean that for any way of rasterizing lines there is going to be a solution that's fast enough for practical purposes. but i want to show first that we can do it
+Alexander: and then find a way to rasterize lines that looks good and one that we can solve for fast
+AdrianM: Sounds almost like we want a way to do completely arbitrary discrete transforms
+Alexander: we can, just slowly
+Alexander: and maybe there is no way to do an arbitrary transform liek that in O(N log N)
+Alexander: but that's not the point. i just want to show that we can do it accurately first
+AdrianM: N log N or N^2 log N?
+Alexander: because we've been looking for a long time at algorithms that work in the same amount of time but produce different results in terms of accuracy. i want to try the other way round, get an accurate result first using the same data, and then reformulate that in our way to make it faster
+Alexander: i'm talking 1D
+Alexander: but yes in 2D it's N^2 log N or N^2 log^2 N if we actually want it fft-based
+Alexander: because it's going to be N^2 log N per cascade, log N cascades
+AdrianM: Oh, that's rough. But I suppose as long as the memory scales the same as regular HRC then there's hope
+AdrianM: Actually I am more curious about the memory than the computation
+Alexander: the amount of memory is exactly the same
+Alexander: well anyway the solution will look and scale exactly like hrc
+Alexander: the final solution would have the form of HRC but with specific ways of doing extensions paired with merging or of HRC but with a very specific ways of rasterizing lines
+Alexander: but we'll cross that bridge when we get there
+AdrianM: I'm curious how the transforms between cascades will look like.
+JoshJers: (looking in and understanding very little of what's going on here) same, since that's where all the pain is 😄
+Alexander: i think we have totally cornered us by thinking too much about cascades
+Alexander: cascades are an acceleration structure that only exists to reduce the amount of computation
+Alexander: they should have no effect on what we're trying to calculate
+Alexander: i think we have spent way too much time trying to invent a merging scheme that results in a nice falloff, when in reality we should have achieved a nice falloff within one cascade first and then added cascades on top of it in a way that does not affect it
+JoshJers: don't we already effectively have a "nice falloff within one cascade", though? isn't that what "just trace the whole scene per pixel" is?
+Alexander: that produces aliasing
+Alexander: you should try that for a single pixel light and see what the result it
+JoshJers: no, I get it, you have to crank infinity rays to get it right 😄
+JoshJers: my GPU doesn't yet do infinite rays
+AdrianM: Did you try overclocking it?
+Alexander: just wait for the next generation
+Alexander: sure that'll do it
+Alexander: hmm... interesting
+Alexander: so imagine we have the simplest possible case, a 2x2 block with 4 pixels and 4 lines. we want to represent the red pixel exactly, while using the 4 green basis lines that I called a, b, c and d. this leads to a system that all pixels are supposed to be black except the top right one:
+
+a + c = 1
+a + d = 0
+c + b = 0
+b + d = 0
+v
+a + c = 1
+a + d = 0
+c - d = 0
+v
+a + c = 1
+a + c = 0
+
+this has no solution
+Alexander: this means that this arrangement of lines that we use is non invertible
+Alexander: interesting, i wonder if there are easy ways to find a way to rasterize lines that is invertible
+Alexander: interesting, anti-aliased lines is also non invertible
+fad: i feel like it's something to do with that pattern only having lines connecting left side to right side
+fad: that's only a subset of the directions so i think it makes sense it can't reproduce arbitrary fluence fields
+Alexander: but it's 4 lines
+Alexander: i'm trying different arrangements
+fad: they aren't linearly independnt though, c+d-a=b
+fad: by + and - i mean superimposing the images you have on the right
+fad: not the radiance of the lines
+Alexander: oh interesting these are linearly independent
+Alexander: yeah you're right
+Alexander: so interestingly for this line pattern there is actually an O(N) solution where we can deduce them one after another
+Alexander: very interseting
+Alexander: this is the "upper 45 degrees cone basis" i should probably clarify
+fad: ~~this also linearly independent:~~
+a:```[#][#]
+[ ][ ]```b:```[ ][ ]
+[#][#]```c:```[#][ ]
+[#][ ]```d:```[ ][#]
+[ ][#]
+```
+tomatopaste: c is just -b
+Alexander: but a+b = c+d?
+fad: you're right, nvm
+Alexander: no, they're are 0/1 not -1/1
+tomatopaste: ~b then?
+Alexander: does this mean that the only way to make HRC exact is to do it in the upper 45 degree triangle at a time?
+Alexander: not one quadrant at a time?
+Alexander: should test larger patterns like 4x4
+tomatopaste: b = 1 - c
+fad: yeah i think 2x2 is too small to make any conclusions
+Alexander: but all nice/symmetric patterns are totally fucked
+Alexander: especially all patterns that just produce a uniform fill for every direction
+Alexander: like line sweeping type patterns are all fucked
+Alexander: because whenever you sweep for one direction you fill the whole area, which is the same as filling it in some other sweep direction
+fad: i have a hunch that it's okay to have more lines than pixels, and in that case line sweep patterns are back on the table. but i don't have any proof of that
+Alexander: yes it should be ok to have more, but then the other way is going to be non invertible
+fad: like, discrete radon transform is able to make more lines than pixels work and they just have a pseudoinverse instead of a real inverse
+Alexander: it can probably work with more sweep directions than necessary
+Alexander: but if we restrict to only lnes in certain directions maybe it can be made unique?
+Alexander: ok going through the 4x4 pain
+fad: are you restricting yourself to lines for the weight matrices? because otherwise obviously it's trivial to find invertible weight matrices (e.g. just have each correspond to a pixel basis function)
+Alexander: fuck me that's hard
+Alexander: 16 unknowns
+Alexander: ofc it specifically needs to be lines in order to add occlusion later
+Alexander: the better the lines, the better shadows we'll get later
+fad: i feel like for good shadows you'll definitely end up needing more lines than pixels
+Alexander: i feel like good shadows should be obtainable with anti-aliased lines
+Alexander: note that if it's the same number of lines as pixels but for one 45 degree sector, it's total 8x more lines than pixels, all directions concerned
+Alexander: how peculiar
+fad: what do you mean "one 45 degree sector"?
+like only including lines travelling in a 45 degree sector?
+Alexander: so if we use left-right encoding scheme then lines that connect points (p, p + q) where p, q = 0..N
+Alexander: or lines that start at every y-intercept point and then have any slope 0, 1/N-1, 2/N-1, ... N-1/N-1
+Alexander: i don't think this is invertible for 4x4
+fad: i mean it kind of make sense, how would lines only going from left to right recreate a fluence field that was a vertical line?
+Alexander: it would reproduce it in a way that's not travelling vertically
+Alexander: like a bunch of crosses that all intersect on that line and then a bunch of negative fluence rays to remove the rest
+Alexander: are you implying we should be looking for full coverage bases?
+fad: ok well if it did recreate a vertical line (and every other line crossing the image) then that's kind of sus isn't it?
+Alexander: you think it shouldn't be able to?
+Alexander: i think it should, as long as there are negative rays to represent a nonphysical situation
+Alexander: only physical fluence configurations should have all rays nonnegative
+fad: it feels weird to use a bunch of horizontal lines to recreate a light ray going vertically, and if that is possible then i feel that trying to add shadows to those basis lines would be crazy
+fad: but like, these are just intuitions, would be awesome to see it working
+Alexander: the reason why it's not crazy is because at every stage of the algorithm we have only rays that are travelling in a 45 degrees as cN+1 source and we merge only those rays onto cN, so it should always be representable
+Alexander: anyway i think the 45 degree thing is a red herring
+Alexander: i don't think  4x4 is invertible
+Alexander: there has to be a better way
+Alexander: maybe not involving 45 degrees
+Alexander: how do we construct a line basis that looks like lines and is still fully invertible?
+Alexander: oh hmm... maybe we also do that recursively?
+Alexander: imagine we start with a basis where each "line" corresponds to 1 pixel
+Alexander: and then we start combining them at every step
+Alexander: in some way that avoids linearly dependent combinations
+Alexander: because as you said, it's trivial to find a basis that's linearly independent. it's only hard to find one that also looks like lines at the same time
+fad: is it true that, as long as you're allowed to have negative lines, you can recreate any image?
+fad: maybe even with negative lines it still doesn't let you recreate any image
+Alexander: i think you should be able to. if it doesn't allow you to, it means it's not invertible and i think it should be invertible
+fad: i don't see a reason why you should be able to (and i also don't see a reason why you shouldn't be able to)
+Alexander: the reason why you should be able to is that clearly bases can be linearly independent and for NxN linearly independent basis functions it should be invertible
+Alexander: so you're arguing maybe lines shouldn't be linearly independent
+fad: yes, i think there's a chance that it's not possible to create NxN linearly independent lines
+fad: now, i don't think that's necessarily a problem, because physical fluence fields are not arbitrary
+Alexander: then what's the minimal number that allows to create a fully invertible basis that looks like lines?
+Alexander: would it be 4xNxN? 16xNxN? NxNxN?
+fad: if it's not possible to create NxN linearly independent lines then it's not possible to create M>NxN linearly independent lines either
+fad: i'm saying i think there's a chance that the total number of linearly independent lines that exist is <NxN
+Alexander: ok i mean how many lines do you need at mininum in order to represent any (including non-physical) fluence field?
+fad: what is a "non-physical" fluence field? just an arbitrary image? because i think it might be impossible to recreate an arbitrary image by just adding/subtracting lines
+Alexander: arbitrary image yes
+Alexander: [image]
+Alexander: Pinned a message.
+fad: i was literally about to send string art before you sent that :KEKW:
+fad: string art does not recreate the original input image, and that only includes positive weights
+Alexander: i'm sure with negative weights it can do anything
+fad: i'm not convinced
+Alexander: i think this sounds like a shadertoy project
+Alexander: keep splattering lines until it converges to an arbitrary image
+fad: might as well just try reproducing an arbitrary pixel instead
+fad: which is probably equally as hard, granted you don't pick an "easy" pixel like one of the 4 corner pixels
+Alexander: i think i know how to do it
+Alexander: well i already did just with non-random lines
+fad: and if you know how to reproduce an arbitrary pixel then you can recreate any arbitrary image
+fad: ok, say i have NxN image. what lines do i add up to recreate pixel (i,j) ?
+Alexander: all of them
+Alexander: but i can tell you what brightness to use for each one
+Alexander: that brightness is the current residual integrated over that line
+Alexander: where residual is pixel color that you want minus the current color of that pixel that you have accumulated from all the previous lines
+Alexander: there are much more efficient ways, this is very slow, but it should converge
+fad: how do you know that actually converges?
+Alexander: because i tried it
+fad: where?
+Alexander: these
+fad: btw these are interesting videos on string art (each only around 10mins long)
+https://www.youtube.com/watch?v=WGccIFf6MF8
+https://www.youtube.com/watch?v=dBlSmg5T13M
+
+second video uses radon transform
+Alexander: Pinned a message.
+fad: string art is like the circle perimeter indexing scheme
+Alexander: rings strike back yes
+fad: i'm not convinced this is converging
+fad: espcially this one, what is all the extra stuff at the top/bottom?
+Alexander: that's not a circular basis
+fad: for a single pixel, if it's possible then i think it should have an easy answer that you could give me, that's not some iterative procedure with no proof it actually converges besides "trust me bro"
+Alexander: > https://www.youtube.com/watch?v=WGccIFf6MF8
+this describes exactly what i was describing with inversion
+Alexander: ahhh... they do minimal least squares, looks like
+fad: yes, even they hypothesize the matrix isn't invertible lol
+Alexander: or pseudoinverse
+fad: but they don't give any proof that's its uninvertible
+Alexander: they just assume it's probably not
+fad: and also it wouldn't be useful for string art anyway since string art doesn't allow negative weights
+Alexander: interesting that they solve for binary lines
+Alexander: as in, lines either exist or not
+Alexander: okay pseudoinverse then
+Alexander: how
+fad: in that first video, the algorithm they use at the end doesn't actually do anything with matrices or minimal least squares. it's just some intuitive algorithm they came up with
+Alexander: it is very similar to what i said with random lines
+Alexander: just calculate error for every line you splat
+Alexander: and splat with that error times -1
+Alexander: it will converge
+Alexander: trust
+fad: anyway, i had an idea. i am going to put a bunch of lines bases that cover an NxN image into a matrix and then ask numpy to compute the rank of the matrix
+Alexander: maybe it's like N/2 or someting
+fad: if the rank is NxN then i am proven wrong, if the rank is less than NxN then line bases aren't capable of recreating arbitrary images
+Alexander: i hope you'll get some near constant rank decrease
+Alexander: like NxN/4 or something of that sort
+Alexander: which means we need 4x more lines than pixels to invert an arbitrary image or something of that sort
+Alexander: you can also keep adding more lines until you reach rank NxN
+fad: that's what i meant, i am going to put way more than NxN lines into the matrix to give it the best chance of finding a set of NxN linearly independent lines
+Alexander: so you're doubting that it will ever reach rank NxN?
+Alexander: obviously it can't get higher than NxN regardless of how many lines you give it
+Alexander: but you think you can't even get to NxN?
+fad: well that's my hypothesis
+fad: i don't have proof either way though
+fad: so i will try this numpy experiment
+Alexander: i think that's still perfectly fine if it turns out you can get something like NxN/2 or some round number
+Alexander: inb4 NxN/e or NxN/pi
+Alexander: nah it'll be NxN
+fad: believers vs doubters
+fad: who will win
+Alexander: oh yeah i think i can show you why you can do any pixel
+Alexander: basically what you'll try is using actually arbitrary lines. including any lines at irrational positions and going at irrational slopes, rasterized with dda
+Alexander: i think you can probably represent any pixel as a sum of two very similar lines that only differ by that pixel
+fad: ok, that's true
+Alexander: it's just really stupid
+Alexander: but possible
+fad: i think it's more interesting if you restrict yourself to antialiased lines which will stop you from relying on aliasing tricks
+Goobley: I dropped off the face of the world for a few days, so the latest development is recasting the whole thing as a mega system of equations for the ground truth solution?
+Alexander: that's the current direction that lured fad back
+fad: yes we want to find reference solutions via dumb brute force ways so that we know what we're aiming for
+Alexander: i just want to know the rank of the common line bases that we use
+Goobley: That makes complete sense, and for the occlusion free case, should be quite easily set up?
+Alexander: we have set it up, and currently struggling with the realization that all line bases that we use are linearly dependent
+Alexander: to what degree we don't know
+Goobley: Oh, so the system is underspecified?
+RadianceCausality: I'd bet it's around 2x
+RadianceCausality: Maybe a bit less
+Alexander: we need more lines than what we use to make it have rank NxN
+Alexander: or we need to find an interesting way to rasterize NxN lines that results in rank NxN
+Alexander: which i also think must be possible
+Goobley: SVD should give the minimum norm solution for an underspecified system
+Goobley: Is that useful?
+Alexander: we want to also play with pseudoinversion and such
+Alexander: but SVD is ultra pain on the GPU for systems as large as we have
+Alexander: so we'll probably need to resort to some numpy shenanigans or C++ bicycle reinvention
+Alexander: or rust if RC gets interested
+Alexander: but he's a line hater
+RadianceCausality: Actually isn't there literally that radon transformation inverse paper
+Alexander: they pseudoinverse
+RadianceCausality: Aw ok
+Alexander: because they just use some random way to rasterize and enumerate lines
+Alexander: without any concern for the rank of what they're building
+Goobley: Ahhh, I hadn't actually looked into how parallel SVD does(n't) work, since in my stuff we use it per thread on small matrices
+Alexander: large SVD bad
+Alexander: @fad i think you can generate NxN random lines, get the rank and then keep wiggling lines one by one randomly and save it if it increases the rank
+Alexander: i reckon you might be able to produce a rank NxN basis that way
+Goobley: <https://arxiv.org/abs/2508.11467v1> these people improve a bit over cuSolver, but it's still not something you'd want to do
+Goobley: To solve the underspecified system does this end up being a quadratic programming problem?
+Alexander: i think it can be done with minimal least squares
+Goobley: Yeah, different constraints lead to different ways of setting that up
+Goobley: Like, if we can get it cast as a symmetric positive definite matrix the Cholesky should mostly "fix" it
+fad: currently pulling my hair out because python throws a `ZeroDivisionError` if you try doing floating-point division by zero
+fad: bruh just give me infinity and let me move on
+Goobley: Use `np.float64`
+Goobley: Numpy will warn, but it will do it at least
+ion: wouldnt that result in a pair of pixels? a positive and negative one.
+ion: I'm probably completely misunsderstanding this. But shouldnt c+b be 0.5 instead of 0?
+fad: ok well i'm proven wrong :KEKW:
+fad: here is an example invertible line basis for 8x8 image
+Alexander: what is it
+Alexander: sorry i mean what's the formula for the lines
+fad: even with antialiasing, i think intuitively it uses this idea
+fad: i just generated way more lines than necessary (2500 lines) and asked numpy to find a linearly independent set amongst those
+Alexander: smart
+Alexander: what is special about that set
+fad: honestly i don't think there's anything remarkable about it
+Alexander: did you generate them arbitrarily before filtering or by some pattern?
+Alexander: i think what this means is that the bases that we usually use are almost invertible?
+Alexander: hmm.. i see
+Alexander: you have a lot of those lines that differ by one pixel
+Alexander: which is really too boring for practical means
+Alexander: how do we generate a better one
+Alexander: rank NxN
+fad: basically just uniform sweeps in 50 different directions
+Alexander: maybe
+Alexander: how come it picked up ones that are almost horizontal?
+Alexander: first ones it checked?
+Alexander: did you write this or an llm
+fad: this is the snippet i got from chatgpt
+```py
+independent_vectors = []
+
+for v in vectors:
+    candidate_set = np.array(independent_vectors + [v])
+    if np.linalg.matrix_rank(candidate_set) > len(independent_vectors):
+        independent_vectors.append(v)
+```
+i wrote everything else
+fad: well i also asked it how to save an image in python
+fad: but yeah
+fad: the fact it managed to find 64 independent lines within the first few kind of shows how boring it is
+Alexander: how long does it take it to find the answer?
+Alexander: how large of an image can you do an analytical inversion for?
+Alexander: can we adjust our rasterization algorithm slightly so that the bases that we usually use become linearly independent?
+fad: for this 8x8 thing it's like <50ms
+Alexander: what would be the criterion to find a basis that results in "the most positive coefficients for real fluence images"?
+fad: 16x16, 2500 candidate lines
+~500ms
+Alexander: how about you generate fewer lines initially so that they're more different?
+Alexander: also maybe try more restrictive bases? like only left right lines etc
+fad: 20 sweep directions (within each sweep direction it generates 50 lines with varying position). it actually failed to find 256th line
+fad: but i think this numpy thing is pretty numerically unstable. if i change the order the lines are fed (direction major instead of position major) then it only finds 193 lines. kinda sus
+Alexander: reliable and trustworthy
+fad: ok i set the magical `tol`erance optional parameter for the matrix rank function to `1e-20` and it found all of them again
+Alexander: if you set it to use non antialiased lines, does it still rely on tolerance?
+fad: left right basis with 30x30=900 candidate lines (30 steps along left/right sides)
+fad: i see what it's doing :KEKW:
+fad: btw my antialiasing strategy here is just coloring each pixel based on the length of line that passes through it. that's why those images look "aliased"
+fad: the lines would've just passed through liek this
+Alexander: do you want to try actually inverting some matrices?
+Alexander: and convert a bunch of arbitrary images into lines
+Alexander: then, try disabling random lines in it to see how it's constructed
+Alexander: also try actual point sources
+Alexander: imagine if a point source inverts into something that's not lines intersecting at its center :KEKW:
+fad: kinda almost certain that will be the case
+Alexander: kinda wanna see that
+fad: i'm having trouble inverting the matrix found by the matrix rank code because numpy is complaining it's singular :KEKW:
+fad: reliable and trustworthy
+Alexander: maybe dont use antialiasing?
+Alexander: should be more binary then
+RadianceCausality: Use least squares?
+Alexander: try with aa off
+fad: yes aa off worked
+fad: images in order:
+1. target image (which gets reconstructed exactly since the basis is invertible)
+2. line basis
+3. weights (red = positive, green = negative) (a lot are clipping because they are greater than 1)
+4. weights remapped by dividing by `max(abs(weights)) = 36.6`
+fad: this is left right line basis
+RadianceCausality: Can you do one pixel instead
+fad: https://discord.com/channels/1277053173764460625/1472580758706065501/1476184907859365908
+RadianceCausality: ?
+fad: it even does that for this point light. like it uses these two lines with one being positive weight and the other being negative weight. but the only difference between them is these 4 pixels. so it exploits that and basically ends up using these two lines to selectively color only those 4 pixels
+RadianceCausality: That's kinda weird
+fad: it's boring
+fad: and is a consequence of allowing negative weights
+fad: i don't think there's much insight to be had here from all this tbh
+fad: @Alexander
+fad: this is what we need to do next
+fad: positive coefficients makes more sense because the lights in our scene are only positive
+fad: if you allow negative coefficients then you start exploiting random aliasing pixel differences which i don't think is very insightful
+AdrianM: If we don't want to think about negative rays then we can add some default brightness to the scene
+AdrianM: For example a point light rendered over a .5 grey background
+AdrianM: In that case the default scene would have all rays lit up at a value of .5 then adding things to the scene some of the rays would decrease their brightness (down to a limit of 0) but still be positive
+AdrianM: Hmmm, a single point represented with a series of lines will have a falloff
+AdrianM: So to remove that falloff we can add negative light points around it which themselves have a falloff
+AdrianM: And we want it to cancel out the falloff without canceling out the point itself
+AdrianM: And if we can do that for a single pixel then by definition we can do it for all pixels and add it all together
+AdrianM: Doesn't that mean we can use a single pixel with falloff as our basic function since we already know that can be represented with lines?
+AdrianM: Sounds simple enough
+Alexander: i was sleeping
+Alexander: hmm.. what does this mean.. maybe we can show that if we use a better basis (for example, diagonal encoding, all directions included) we can show that there are fewer negative coefficients, and then find a limit for which point lights can be represented with no negative coefficients at all?
+Alexander: most of these lines intersect at the point light position
+Alexander: maybe we can see what various subsets of that look like? for example, what do just positive rays add up to? what do randomly selected half of those lines add up to?
+Alexander: i was thinking what this means. so currently we essentially gave it a point source and asked it "which lines represent it?". but as a matter of fact, the problem that we have in practice is the opposite: we actually know which lines _should_ represent any given pixel. in left-right encoding we can define a range on the left and a range on the right, and all rays in that "ribbon" are known to intersect exactly at the target point.
+Alexander: here bundles (p1, p2) and bundles (q1, q2) are known to intersect at point x, so we actually know that they should add up to its falloff exactly. what we don't know is how exactly we can rasterize rays in that range and even which rays technically count as belonging to that range, because some rays might not necessarily go through x
+Alexander: in fact, we don't even know how many rays intersect or should intersect at x
+Alexander: but i think we can actually define what rays _should be_ just by answering these simple question. for example, how many rays should intersect at x? i think the answer should always be exactly N rays, for any point x
+Alexander: so for a given point x we can enumerate exactly N rays and say that all of them have x in their rasterization pattern
+Alexander: this means we can define every point of every ray just because we know every point that that ray should pass through
+Alexander: note that this is distinct from defining rays individually. this condition where we're saying that exactly N rays should go through every point, means that we know these N rays should contain that point, but it also means that the same ray direction might be rasterized differently depending on its origin
+Alexander: or might result in some pattern of even/odd rays rasterization
+Alexander: we've never tried anything like this, i wonder what it would look like if we simply define rays by this quality
+Alexander: here i'm showing some vertical column of pixels. every pixel should actually not share any rays with any other pixel on that column. so we need to subdivide the set of all our NxN rays and assign exactly N rays to each pixel there
+Alexander: and that pixel must be in the rasterization pattern of every line that we assign to it
+Alexander: note that this property hold "automatically" for rays that are at good fractional points like 1/2 and 1/4 just because of how integer division works, but this is also the same exact region where we usually have zero error
+Alexander: the instruments that we need to solve this involve an operation like "pick K uniformly sampled points in an integer range [A..B]", which is a problem we never needed to solve before but that feels like something we should be addressing in one way or another
+Alexander: how did we get this far without ever doing it?
+Goobley: I feel like the complexity in the way you’re describing this is it has to be done for all pixels in the domain simultaneously, right? Because getting the falloff correct for a pixel is the same as computing the fluence in a pixel within that falloff pattern
+Alexander: i'm proposing doing it one column at a time. so doing it this way won't guarantee any falloff properties at all, but I wonder what kind of falloff it would result in
+Goobley: Ohhh right yeah, the rays are independent but the pixels are shared in that case
+Alexander: i have a feeling that constructing a basis this way might not result in a perfect falloff, but it should have some visual properties that we have never seen before
+Alexander: i can't quite predict what they are
+Goobley: I was just speaking to a colleague who’s tried a lot of things over the years and he was saying that for volume reconstruction (e.g. ct scans) with strongly varying opacity that the radon transform has never worked well but the core methods there are all Fourier based, but how you combine all the Fourier samples is super important
+Goobley: I feel like it should be smooth at least
+Goobley: …surely someone in medical imaging has worked on “how many samples in angle do we need to get a reasonable image” unless the default is to massively oversample or something
+Alexander: man, this is a combinatorical problem. i actually am not sure how to solve it. so we have a column of N pixels and we have total NxN rays. we need to split those NxN rays into N groups (one group associated with each pixel) such that every group contains exactly N rays that pass through that pixel
+Alexander: none of the bases that we've ever used satisfied this property
+Goobley: That’s kinda nuts, and in my head doesn’t immediately feel possible, but I also can’t sketch a counter example
+Alexander: it's definitely possible, it might just not exactly result in lines that look straight
+Alexander: or it might not result in a good falloff
+Alexander: but i mean obviously one solution is to just split NxN lines into groups [0..N-1][N-1...2N-1]... they just won't form lines at all, but this property would be satisfied
+Alexander: so we need to finesse them into groups that also resemble lines in space
+Alexander: it's entirely a combinatorical issue
+Goobley: If you start from each pixel on the line and trace lines outwards you might then be able to “snap” them to the NxN set without needing to do the whole combinatorial problem (at the cost of an expensive O(N) to trace against one side and do the snapping)
+Alexander: it's like snap direction needs to be chosen for every line such that exactly N lines intersect every pixel
+Goobley: I guess it can just be brute forced at low resolution
+Alexander: another interesting property that stems from this:
+Alexander: point A has to have exactly N lines passing through it, point B also has to have exactly N lines passing through it, but none of those lines can be shared between them
+Alexander: it's like each line can only belong to one pixel in that column
+Goobley: It’s also interesting how the line density is higher on the left boundary. It’s obvious that it has to be, but yes, that leads you to independent sets for every pixel in the NxN area (with few repeated rays, intuitively)
+Alexander: maybe it's easier to think about 45 degree cones:
+Alexander: here
+Alexander: here D = a + b. just setting b and then y-position uniquely defines the location of point A and all lines that pass trhough in that 45-degree double cone
+Alexander: but how do we even enumerate exactly N rays in that cone?
+Alexander: so we need to enumerate N rays in the range [0..b]x[0..a] where a+b = N
+Goobley: The simplest way would be evenly split angles, imo, but I don’t think it would work well
+Alexander: yes but it's all discretized
+Alexander: you can't even split angles because they'd often round and end up counting the same line multiple times that way
+Alexander: pixels are discrete on the left and on the right lines
+Goobley: Indeed, but if they’re fully discrete and b gets small enough, can you even get N valid lines?
+Alexander: so if b=0 then it's just these rays : [0, 0], [0, 1], ....[0, N-1]
+Alexander: if b = N, then it's these rays: [N-1, 0], [N-1, 1], [N-1, 2]...[N-1, N-1]
+Alexander: it's also easy to define for stuff like b = N/2
+Goobley: Oh right yeah of course
+Alexander: but how do we do that for an arbitrary pair of a, b where a+b = N?
+Goobley: The issue comes for random b. I don’t see an obvious recurrence relation to get the rays at b=n+1 from b=n
+Alexander: i think they should not depend on each other at all
+Alexander: we can solve them completely independently, maybe?
+Alexander: because rays can be shared for different values of a, b
+Goobley: The rays themselves are definitely independent
+Alexander: they only can't be shared for the same vales of a, b translated vertically
+Alexander: here A and B can't share any rays, but C can share rays with both A and B
+Goobley: Enumerating over all the pairs of end points in the cone is still O(N^2) worst case too
+Alexander: it's fine to find it slowly because we need to do it once
+Alexander: to figure out how to rasterize every lien
+Alexander: once we know which pixels belong to each line we can remember that knowledge and not re-calculate it every time
+Goobley: Yeah. So it can be calculated for all possible pairs of start/end points give an a,b pair then
+Goobley: And like you said is vertically translationally invariant
+Alexander: i wonder if it can be translationally invariant, in fact
+Alexander: because maybe it can't
+fad: :thonk: a majority of the lines don’t pass through the point light position
+Alexander: and then the set of lines defined for every a,b would also detect on y
+Alexander: that's why i think we should try the other way round. we know which lines should intersect at any given point. but we don't know what those lines should exactly look like
+Alexander: so we can calculate what each line has to look like, in order to add up to every point light at every position
+Alexander: @fad can you help us figure this out?
+Alexander: how do we subdivide lines that way?
+Goobley: If we have a=b=N/2 then we have N^2/4 lines available, and somehow have to pick N of those? Or… maybe any N of those is sufficient
+Alexander: for any a, b there are always N lines
+Alexander: why do you think it's N^2/4?
+Goobley: Just enumerating end point pairs
+Alexander: so i think we need to be thinking about this in a more global scale. the planes are infinite they have infinitely many points
+Goobley: So, a non discretised model?
+Alexander: yes you're right we need to be choosing N out of N^2/4
+Goobley: I think my brain has clocked off for the night. I will sleep on it
+Alexander: hmm... i think i need to try some really inefficient things just to get some answer
+Alexander: and see if it's worth trying to find it faster
+Alexander: @fad do you see where it's coming from?
+fad: so the goal is to find NxN lines paired with some rasterization method, such that for every column of pixels, each pixel has N of those lines passing through it, and none of the pixels in the column share any lines?
+Alexander: yes exactly
+Alexander: the thing is, this procedure _defines_ a way of rasterizing lines
+Alexander: because you enumerate which lines pass through each pixel
+Alexander: which also defines which pixels belong to each line
+fad: are the NxN lines chosen from a left/right encoding scheme?
+Alexander: i think it has to be y-intersept + rational slope
+Alexander: so slope is an integer, i think they also call it raise
+Alexander: yea i think it should be called y-intercept + raise
+Alexander: this is the classic HRC scheme
+fad: have you made any progress
+Alexander: i have not started yet
+Alexander: man i just realized it's a thing like 15 minutes ago
+Alexander: struggling to even define it for now
+Alexander: because this will define it for discretely rasterized lines. but what does it mean for antialiased lines? that woul be the next step
+Alexander: also, what kind of falloff would lines defined this way produce?
+Alexander: i think even this scheme would allow multiple ways to define lines that satisfy it. i'm hoping that among them there can be one that produces the right falloff
+Alexander: but this property would almost certainly have to hold if an arragnement of lines that always produces the right falloff exists at all
+fad: once again we found ourselves using NxN lines for only a subset of directions
+Alexander: yes it would be a 45/90 degree thing
+Alexander: so a vertical line defined this way would not correspond to a vertical ray, it would correspond to a vertical line of emissive points
+Alexander: what this could give us is a way of producing line rasterization rules that can work. but then among all such rules we might have to do some filtering afterwards to find ones that satisfy other properties that we care about
+fad: feels arbitrary. why do we need NxN lines per 45/90 degrees? why not NxN per 120 degrees or some other arbitrary number?
+Alexander: i don't understand enough about this to tell if it's obligatory or not
+Alexander: for some reason i think there is something special about this 45 degree arrangement, but maybe it's an illusion
+Alexander: if you're right and N lines spanning 120 degrees can also be made to satisfy this property then they clearly can't have anything that resembles a good falloff
+Alexander: because there will be gaps
+Alexander: alright i implemented the thing
+Alexander: [image]
+Alexander: [image]
+Alexander: it definitely produces some pretty nice falloffs
+RadianceCausality: Mmmmmmmoire
+Alexander: https://www.shadertoy.com/view/W3yfDK
+Alexander: there is still too much freedom here
+Alexander: rounding is all arbitrary and can be defined in infinitely many ways
+Alexander: there has to be a way to further constrain it
+Goobley: There's definitely potential there
+Alexander: i think maybe we need to implement the fft radon transform thing
+Alexander: just to have a reference
+Alexander: would fft radon transform produce a perfect falloff, i wonder?
+Goobley: I think the discretiation artifacts might prevent that
+Goobley: Tried a popular python library for CT stuff. Whatever interpolation they use in the tracing stage to get the sinogram messes with the reconstruction of the point source
+Alexander: produces a point source from a point
+Alexander: i mean that's kind of what we want in the empty space
+Alexander: can you inspect in greater detail its falloff? especially if you move the source
+Alexander: is that a 1/r falloff?
+Alexander: can you view that falloff greatly multiplied on a black background without a palette applied?
+Goobley: yep, will do. I just wanted to look at the case where the angular samples taken = N
+Goobley: Lots of rays in the reconstruction
+Alexander: it's really hard to see on a non-black background what's going on
+Alexander: the background is much brighter than the data
+Alexander: also might need an srgb conversion
+Goobley: With srgb conversion
+Alexander: riiight
+Alexander: can you play with parameters? what if there are more lines?
+Goobley: Yep. So the free parameters are the number of detector pixels (parallel rays), and the number of angles
+Alexander: what if you crank those up?
+Goobley: Oki doki. Let me make a script because doing this whole thing in the terminal was a mistake :KEKW:
+Alexander: their lines have a very interesting antialiasing pattern
+Alexander: there's a chance they overlap into something nice
+Goobley: This is the classic backprojection algorithm
+Goobley: There are more advanced ones too
+Alexander: yeah we should explore and see if there is any algorithm that has lines that add up to a nice falloff
+Alexander: ideally there should be no parameters, other than the image size
+Goobley: Mega oversampling (1024 rays per line, 1024 line angles)
+Alexander: well.. hmm there should be no parameter to oversample
+Alexander: that looks good though, so maybe there's a way to achieve that somehow with fewer lines, but each line representing a bundle?
+Alexander: not sure
+Goobley: I'll play with the parameters some more. The falloff looks to be 1/r though
+Goobley: All of the filtered reconstructions seem to explode into a mess of nans for a single point source (red=nan)
+Goobley: So this is reconstructed from an NxN sinogram for a 45 degree cone
+Goobley: Lots of Moiré again
+Alexander: hmmm
+Goobley: The associated sinogram is this. This is bringing back memories of a few weeks ago 😅
+Alexander: linespace flashbacks
+Goobley: Flicking through the code (which I will not invoke here directly as it's GPL), the projection in both directions is made using bilinear interpolation, and just takes steps of 1 in ray space
+Goobley: Curious that that leads to falloff like this
+Alexander: i don't know what's going on guys i have so many crazy ideas over the past week
+Alexander: i think i just stumbled upon another one
+Alexander: but it's really easier to implement than it is to explain
+RadianceCausality: Is it still linespace?
+fad: what is this? is it an implemetation of the every pixel in every column N distinct lines thing?
+RadianceCausality: huh, even merging just Does Not Work if the emitter is >0 and the probe is <0
+Alexander: https://discord.com/channels/318590007881236480/390264006402899979/1479514880238420022 people radon transforming
+Alexander: @MartysMods | Pascal i guess they're here
+Alexander: very cool that people are noticing radon transform now
+MartysMods | Pascal: :hellothere:
+AdrianM: [image]
+AdrianM: \:)
+AdrianM: I don't know if this even qualifies as HRC
+AdrianM: This is just running the line extension algorithm on itself
+AdrianM: Anyways, I'm going to hold off on ranting until I get something more promising. This is just an early proof of concept right now.
+AdrianM: By any sane metric this shouldn't work. But it does, ray extensions take pixel data and create lines from it, and a line in linespace is a point. So if we just run the ray extensions shader on itself then it simulates lighting.
+AdrianM: [image]
+AdrianM: Still artifacts, but different artifacts
+Alexander: yeah that's a bit unusual
+Alexander: i think even achieving the same result in a different way is useful, because it can be more general/more applicable to harder cases
+Alexander: like 3d
+AdrianM: I'm curious if there's a way to formulate this which doesn't lead to these pesky artifacts
+AdrianM: [image]
+AdrianM: So running the ray extensions algorithm (ignoring shadows) is equivalent to a realspace --> linespace converter
+AdrianM: Which means if we run it twice we go realspace --> linespace --> realspace but with lighting
+AdrianM: I am slightly simplifying
+AdrianM: But the basic idea is sound
+Alexander: technically, running it asccurately back and forth shouldn't change anything
+Alexander: if it does, means you're doing something else
+AdrianM: Which means that getting rid of artifacts is basically an issue of anti aliasing those lines???
+AdrianM: A point becomes a line in linespace
+AdrianM: A line becomes a point with falloff
+AdrianM: So just running it back and forth adds falloff (which is the lighting we want)
+Alexander: if the transformation is not reversible, means you're doing something else
+Alexander: realspace point in darkness does not correspond to a line. realspace point light source with a 1/r falloff does.
+AdrianM: Oh right, that was that negative ray value stuff you were thinking about / linear tranforms
+AdrianM: Did you get that figured out?
+AdrianM: What was the conclusion?
+Alexander: that the actual transform should be invertible and have negatives, but it's also not what we need for lighting
+AdrianM: Which channel was that in? (I don't have time right now, but eventually I may catch up on reading that)
+Alexander: i think you can just reinvent that
+Alexander: bu we've shown therea are actual invertible transforms with negatives
+AdrianM: That makes sense
+AdrianM: In any case, I'm interested in eliminating the artifacts, that's completely separate
+AdrianM: [image]
+AdrianM: So here's pretty close to the existing merge algorithm we have
+AdrianM: You can see if I take the same logic and apply it to the ray extensions the line isn't sharp at all
+AdrianM: But that blur seems to kind of smooth out the results
+AdrianM: [image]
+AdrianM: Meanwhile if I use a much more accurate ray extension algorithm then the merging it produces looks much worse
+AdrianM: I want to be clear here, there is only one algorithm being used here. There is no separate extension and merging algorithm. In this implementation the same algorithm is being used for both.
+AdrianM: Which I actually like conceptually, because it means we only have one problem to solve, but two ways of looking at it, sort of line a linespace dual
+Alexander: do you have multiple cascades or one?
+AdrianM: This is multiple cascades
+Alexander: i think that having more than one cascade just complicates things. i haven't come to a conclusion how to have even one cascade represent a point light accurately
+Alexander: like, how you construct a line basis that can represent a point light with the right falloff just inside of one cascade?
+AdrianM: I thought the circles you were playing with were the solution to that question
+Alexander: there is no satisfying line basis that i found that can represent a point light with an accurate falloff in a natural way
+Alexander: without crazy negative weights and such
+AdrianM: Come to think of it, if I can do a linespace transform (ignoring negatives) then there's no reason that should create artifacts.
+AdrianM: I should be able to run that twice and have it apply falloff to a point
+AdrianM: I don't have to use cascades to test that, it can be brute forced
+AdrianM: I'm wondering if having a perfectly accurate anti aliased line is enough, or if it is the fact we have finite pixels which is messing it up?
+AdrianM: If it turns out that we can solve it without artifacts using this approach with a brute force approach (but limited memory) then in theory it would just be a matter of replicating that exact line with a ray-extension type algorithm which can do it fast and apply shadows
+Alexander: i was trying to see what would it even look like in the linespace to represent a realspace point source with the correct falloff
+Alexander: and it really depends on how you define the lines. for most line definitions, there are lots of negatives, but some line spaces are better than others. so i'm sure there are some line spaces where indeed a point source with a perfect falloff is just a line in the linespace.
+AdrianM: I haven't been thinking about falloff
+AdrianM: Even if the falloff isn't circular but I can do it without artifacts then I count that as a win
+Alexander: sure, "correct" falloff here might mean manhattan distance or whatever
+Alexander: just without aliasing
+AdrianM: Maybe tomorrow I'll try brute forcing it without any cascades and see what I can get
+AdrianM: Hmmm actually I don't need to write any code to check that
+AdrianM: Paint.net lets me draw antialiased lines
+AdrianM: So in theory it would look something like this
+Alexander: too much depends on how exactly you draw your antialiased lines
+Alexander: it has to be a very deliberate process and who tf knows what paint.net does
+AdrianM: Well but that sort of doesn't matter
+AdrianM: The point is there exists some antialiased line drawing algorithm that produces this
+AdrianM: Unfortunately we need it to be recursive in a way that supports shadows
+AdrianM: Can I draw a perfectly smooth anti aliased line with a ray extensions algorithm? Hmmmmm
+Alexander: i think the exact way to antialias lines needs to be constructed so that the result can represent point light falloff exactly
+AdrianM: [image]
+AdrianM: I'm starting to feel like the guy on the bottom
+AdrianM: Feels like whatever I try is so close, but not right
+Alexander: the grind continues
+Alexander: so much stuff to try
+redxaxder: the projective planes over finite fields have the point-count-to-line-count correspondence you were looking for, with linearly independent lines
+redxaxder: the lines wrap around, though
+Alexander: what does it look like
+redxaxder: an example:
+we need to pick a prime number. lets use 5. (this could be a power of a prime instead, but it will have a different feel to it)
+a point is then a triple of integers mod 5, with the convention that nonzero scalar multiples of a point are the same.
+to fix a correspondence with an ordinary (non-projective) plane we'll pick a dimension (say z). points that can be scaled to 1 in that dimension have a corresponding plane point. the others are called "points at infinity".
+
+lines are given by equations (ax + by + cz = 0). each (a,b,c) (up to nonzero scalar multiple) gives a distinct line.
+this may look like an equation for a plane, but since scalar multiples of a point are the same it collapses down.
+
+I had an llm spit out tables of  points and lines:
+
+finite points make a 5x5 grid:
+(notation: [x:y:z] means (ax,ay,az) for nonzero a)
+```
+[0:0:1],[0:1:1],[0:2:1],[0:3:1],[0:4:1]
+[1:0:1],[1:1:1],[1:2:1],[1:3:1],[1:4:1]
+[2:0:1],[2:1:1],[2:2:1],[2:3:1],[2:4:1]
+[3:0:1],[3:1:1],[3:2:1],[3:3:1],[3:4:1]
+[4:0:1],[4:1:1],[4:2:1],[4:3:1],[4:4:1]
+```
+you get the corresponding non-projective ("affine") point by extracting x,y when z=1.
+
+infinite points:
+```
+[1:0:0],[1:1:0],[1:2:0],[1:3:0],[1:4:0],[0:1:0]
+```
+redxaxder: lines:
+redxaxder: the wraparound is the usual torroidal wraparound you get from mod 5
+redxaxder: for porting it to the real setting, it probably makes sense to xy-swap some of the lines.
+like `y = 3x+1` -> `2y = x + 2` -> `x = 2y + 3`
+these are the same line only in the modular setting. (because 2*3 = 1 is true mod 5 but not usually)
+Alexander: hmm.. i can't imagine in my head what those lines look like
+Alexander: but the idea of using prime numbers in RC
+Alexander: sounds interesting
+redxaxder: here's a [desmos plot](https://www.desmos.com/calculator/02lqgeg8xz)
+redxaxder: hmm now that i seen it drawn out it looks like there are more than two choices for making a continuous line out of the discrete line
+redxaxder: ah there are variants for every scalar multiple (mod 5) of the line
+redxaxder: ok, i guess there's probably no better way to pick variants than to try running a line from a lattice point to any other lattice point.
+i updated the plot to do that
+Alexander: it seems interesting
+Alexander: but i don't understand what's going on
+Alexander: is there some sort of an article that explains what's going on for idiots?
+redxaxder: i can write an explanation that assumes less shared context in a bit
