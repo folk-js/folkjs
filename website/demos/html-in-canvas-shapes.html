@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HTML-in-Canvas · folk-shape spatial canvas</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: #0a0a0f;
+        color: #d8d8e8;
+        font-family:
+          'Recursive', ui-sans-serif, -apple-system, 'SF Pro Text', sans-serif;
+        overflow: hidden;
+      }
+
+      /* The canvas fills the viewport and owns the spatial coord system:
+         folk-shapes' (x, y) are in CSS pixels, measured from this canvas's
+         origin. Their direct children positioning via CSS translate/rotate
+         doubles as our hit-testing source-of-truth — html-in-canvas only
+         ignores CSS transforms when *drawing*, not when *hit-testing*. */
+      #stage {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        cursor: default;
+      }
+
+      /* Direct children of <canvas layoutsubtree>. */
+      folk-shape {
+        /* The outline/handles from folk-shape render nicely inside the
+           captured texture because copyElementImageToTexture paints the
+           element the way the browser would (minus CSS transforms). */
+        background: transparent;
+      }
+
+      .note {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: linear-gradient(155deg, #1d1d2e 0%, #12121c 100%);
+        border: 1px solid #2a2a3d;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+        font-size: 14px;
+        line-height: 1.5;
+        color: #d8d8e8;
+        overflow: hidden;
+      }
+
+      .note h3 {
+        margin: 0 0 6px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+
+      .note p {
+        margin: 0;
+        color: #a8a8c0;
+      }
+
+      .note.cyan h3 {
+        color: #7df9ff;
+      }
+      .note.pink h3 {
+        color: #ff79c6;
+      }
+      .note.lime h3 {
+        color: #b8ff7e;
+      }
+      .note.amber h3 {
+        color: #ffc371;
+      }
+
+      .note .row {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .note input[type='text'] {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 8px;
+        font: inherit;
+        font-size: 13px;
+        color: #e8e8f8;
+        background: #0e0e16;
+        border: 1px solid #2a2a3d;
+        border-radius: 6px;
+        outline: none;
+      }
+
+      .note input[type='text']:focus {
+        border-color: #7df9ff;
+        box-shadow: 0 0 0 2px rgba(125, 249, 255, 0.15);
+      }
+
+      .note button {
+        padding: 6px 10px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        color: #0a0a0f;
+        background: #7df9ff;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+
+      .note button:hover {
+        background: #aefcff;
+      }
+
+      .note ul {
+        margin: 6px 0 0;
+        padding-left: 18px;
+        color: #a8a8c0;
+      }
+
+      .emoji {
+        font-size: 56px;
+        line-height: 1;
+        display: grid;
+        place-items: center;
+        height: 100%;
+      }
+
+      /* Top-left HUD. */
+      #hud {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: 380px;
+        padding: 12px 14px;
+        background: rgba(10, 10, 16, 0.7);
+        backdrop-filter: blur(8px);
+        border: 1px solid #2a2a3d;
+        border-radius: 10px;
+        font-size: 12px;
+        line-height: 1.45;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+
+      #hud h2 {
+        margin: 0;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #7df9ff;
+      }
+
+      #hud p {
+        margin: 0;
+        color: #a8a8c0;
+      }
+
+      #hud .warn {
+        color: #ff8080;
+      }
+
+      #hud code {
+        background: #1b1b2a;
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <h2>html-in-canvas · spatial folk-shapes</h2>
+      <p>
+        Each shape is a direct child of
+        <code>&lt;canvas layoutsubtree&gt;</code>. Drag, rotate, resize &mdash;
+        hit testing stays synced with the WebGPU-drawn image.
+      </p>
+      <label
+        ><input id="effectToggle" type="checkbox" /> ambient shader tint</label
+      >
+      <div id="status"></div>
+    </div>
+
+    <canvas id="stage" layoutsubtree>
+      <folk-shape x="120" y="120" width="260" height="170">
+        <div class="note cyan">
+          <h3>Spatial canvas</h3>
+          <p>
+            Drag me around, rotate from a corner, resize from a handle. My DOM
+            box follows the WebGPU-drawn image exactly.
+          </p>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="440" y="180" width="290" height="180" rotation="-6">
+        <div class="note pink">
+          <h3>Interactive HTML</h3>
+          <p>This card is still live HTML. The input below works.</p>
+          <div class="row">
+            <input type="text" placeholder="type here…" />
+            <button type="button">OK</button>
+          </div>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="800" y="120" width="240" height="220">
+        <div class="note lime">
+          <h3>Lists render too</h3>
+          <ul>
+            <li>one shape per direct child</li>
+            <li>CSS transforms are ignored for drawing</li>
+            <li>but still count for hit testing</li>
+            <li>so we render where the DOM sits</li>
+          </ul>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="180" y="380" width="140" height="140" rotation="10">
+        <div class="note amber">
+          <div class="emoji">🫧</div>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="420" y="450" width="340" height="160">
+        <div class="note">
+          <h3>How it works</h3>
+          <p>
+            On each <code>paint</code> event we snapshot every shape into its
+            own GPU texture, then a WebGPU pass draws each texture as a quad at
+            the shape's (x, y, rotation).
+          </p>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="820" y="400" width="240" height="200" rotation="4">
+        <div class="note">
+          <h3>Experiment zone</h3>
+          <p>
+            Add more shapes, swap the shader, try
+            <code>getElementTransform</code>, pipe shapes through post-process
+            passes…
+          </p>
+        </div>
+      </folk-shape>
+    </canvas>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-shape';
+
+      // --- feature detection (no silent fallbacks) ----------------------
+      const status = document.getElementById('status');
+      const canvas = document.getElementById('stage');
+      const effectToggle = document.getElementById('effectToggle');
+
+      function fail(msg) {
+        status.innerHTML = `<span class="warn">${msg}</span>`;
+        throw new Error(msg);
+      }
+
+      const missing = [
+        !('layoutSubtree' in HTMLCanvasElement.prototype) && 'layoutSubtree',
+        typeof HTMLCanvasElement.prototype.requestPaint !== 'function' && 'requestPaint',
+      ].filter(Boolean);
+      if (missing.length) {
+        fail(
+          `html-in-canvas APIs missing: <code>${missing.join(', ')}</code>. Enable <code>chrome://flags/#canvas-draw-element</code> and restart.`,
+        );
+      }
+      if (!navigator.gpu) fail('WebGPU not available in this browser.');
+
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) fail('No WebGPU adapter.');
+      const device = await adapter.requestDevice();
+
+      const ctx = canvas.getContext('webgpu');
+      const format = navigator.gpu.getPreferredCanvasFormat();
+      ctx.configure({ device, format, alphaMode: 'premultiplied' });
+
+      if (typeof device.queue.copyElementImageToTexture !== 'function') {
+        fail('GPUQueue.copyElementImageToTexture missing.');
+      }
+
+      // --- pipeline -----------------------------------------------------
+      // One pipeline, one draw call per shape. Each shape has its own
+      // uniform buffer + bind group + texture.
+      //
+      // Uniform layout (16-byte aligned, 48 bytes total):
+      //   0..8    canvasSize  : vec2<f32>   (canvas grid px)
+      //   8..16   shapeSize   : vec2<f32>   (shape box, grid px)
+      //  16..24   shapePos    : vec2<f32>   (shape top-left, grid px)
+      //  24..32   rot         : vec2<f32>   (cosθ, sinθ)
+      //  32..40   params      : vec2<f32>   (time, effect flag)
+      const shader = /* wgsl */ `
+        struct U {
+          canvasSize: vec2<f32>,
+          shapeSize:  vec2<f32>,
+          shapePos:   vec2<f32>,
+          rot:        vec2<f32>, // cos, sin
+          params:     vec2<f32>, // time, effect
+        };
+
+        @group(0) @binding(0) var<uniform> u: U;
+        @group(0) @binding(1) var samp: sampler;
+        @group(0) @binding(2) var tex:  texture_2d<f32>;
+
+        struct VsOut {
+          @builtin(position) pos: vec4<f32>,
+          @location(0) uv: vec2<f32>,
+        };
+
+        @vertex
+        fn vs(@builtin(vertex_index) vid: u32) -> VsOut {
+          // Unit quad, two triangles.
+          var quad = array<vec2<f32>, 6>(
+            vec2(0.0, 0.0),
+            vec2(1.0, 0.0),
+            vec2(0.0, 1.0),
+            vec2(0.0, 1.0),
+            vec2(1.0, 0.0),
+            vec2(1.0, 1.0),
+          );
+          let uv = quad[vid];
+
+          // Shape-local: centered on (0,0), spanning ±size/2.
+          let local = (uv - vec2(0.5, 0.5)) * u.shapeSize;
+
+          // Rotate around shape center.
+          let c = u.rot.x;
+          let s = u.rot.y;
+          let rotated = vec2(local.x * c - local.y * s,
+                             local.x * s + local.y * c);
+
+          // Translate so shape's (x, y) is its top-left in canvas grid.
+          let center = u.shapePos + u.shapeSize * 0.5;
+          let gridPos = rotated + center;
+
+          // To clip space (with Y flipped).
+          let ndc = (gridPos / u.canvasSize) * 2.0 - 1.0;
+
+          var out: VsOut;
+          out.pos = vec4(ndc.x, -ndc.y, 0.0, 1.0);
+          out.uv  = uv;
+          return out;
+        }
+
+        @fragment
+        fn fs(in: VsOut) -> @location(0) vec4<f32> {
+          let c = textureSample(tex, samp, in.uv);
+
+          if (u.params.y < 0.5) {
+            // Plain: just pass the sampled color through (premultiplied).
+            return vec4(c.rgb, c.a);
+          }
+
+          // Ambient tint: subtle animated hue shift, modulated by the
+          // shape's premultiplied alpha so transparent pixels stay clear.
+          let t = u.params.x;
+          let tint = vec3(
+            0.5 + 0.5 * sin(t * 0.5 + in.uv.x * 2.0),
+            0.5 + 0.5 * sin(t * 0.5 + in.uv.y * 2.0 + 2.094),
+            0.5 + 0.5 * sin(t * 0.5 + in.uv.x * 1.5 + 4.188),
+          );
+          let mixed = mix(c.rgb, c.rgb * tint * 1.4, 0.35);
+          return vec4(mixed, c.a);
+        }
+      `;
+
+      const module = device.createShaderModule({ code: shader });
+
+      const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module, entryPoint: 'vs' },
+        fragment: {
+          module,
+          entryPoint: 'fs',
+          targets: [
+            {
+              format,
+              blend: {
+                color: {
+                  srcFactor: 'one',
+                  dstFactor: 'one-minus-src-alpha',
+                  operation: 'add',
+                },
+                alpha: {
+                  srcFactor: 'one',
+                  dstFactor: 'one-minus-src-alpha',
+                  operation: 'add',
+                },
+              },
+            },
+          ],
+        },
+        primitive: { topology: 'triangle-list' },
+      });
+
+      const sampler = device.createSampler({
+        magFilter: 'linear',
+        minFilter: 'linear',
+      });
+
+      // --- per-shape view ----------------------------------------------
+      class ShapeView {
+        constructor(element) {
+          this.element = element;
+          this.texture = null;
+          this.texW = 0;
+          this.texH = 0;
+          this.uniformBuffer = device.createBuffer({
+            size: 48,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          });
+          this.bindGroup = null;
+        }
+
+        dispose() {
+          this.texture?.destroy();
+          this.uniformBuffer.destroy();
+        }
+
+        #ensureTexture(w, h) {
+          if (this.texture && this.texW === w && this.texH === h) return;
+          if (this.texture) this.texture.destroy();
+          this.texture = device.createTexture({
+            size: [w, h, 1],
+            format: 'rgba8unorm',
+            usage:
+              GPUTextureUsage.TEXTURE_BINDING |
+              GPUTextureUsage.COPY_DST |
+              GPUTextureUsage.RENDER_ATTACHMENT,
+          });
+          this.bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: { buffer: this.uniformBuffer } },
+              { binding: 1, resource: sampler },
+              { binding: 2, resource: this.texture.createView() },
+            ],
+          });
+          this.texW = w;
+          this.texH = h;
+        }
+
+        snapshot(dpr) {
+          // Snapshot the shape at its current natural size. CSS transforms
+          // (translate/rotate from folk-shape) are ignored by html-in-canvas
+          // so we get a clean unrotated image of the content.
+          const w = Math.max(1, Math.round(this.element.width * dpr));
+          const h = Math.max(1, Math.round(this.element.height * dpr));
+          this.#ensureTexture(w, h);
+          device.queue.copyElementImageToTexture(this.element, w, h, {
+            texture: this.texture,
+          });
+        }
+
+        render(pass, canvasW, canvasH, dpr, time, effectOn) {
+          if (!this.texture) return;
+          const shape = this.element;
+          const cos = Math.cos(shape.rotation);
+          const sin = Math.sin(shape.rotation);
+          const data = new Float32Array([
+            canvasW, canvasH,
+            shape.width * dpr, shape.height * dpr,
+            shape.x * dpr, shape.y * dpr,
+            cos, sin,
+            time, effectOn ? 1 : 0,
+            0, 0, // pad to 16-byte boundary
+          ]);
+          device.queue.writeBuffer(this.uniformBuffer, 0, data);
+          pass.setBindGroup(0, this.bindGroup);
+          pass.draw(6);
+        }
+      }
+
+      // --- shape registry ---------------------------------------------
+      const views = new Map(); // HTMLElement -> ShapeView
+
+      function collectShapes() {
+        const live = new Set();
+        for (const el of canvas.children) {
+          if (el.tagName !== 'FOLK-SHAPE') continue;
+          live.add(el);
+          if (!views.has(el)) views.set(el, new ShapeView(el));
+        }
+        // Drop views whose element is no longer a direct child.
+        for (const [el, view] of views) {
+          if (!live.has(el)) {
+            view.dispose();
+            views.delete(el);
+          }
+        }
+      }
+
+      // --- render state ------------------------------------------------
+      let texturesReady = false;
+
+      const resizeObserver = new ResizeObserver(([entry]) => {
+        const w =
+          entry.devicePixelContentBoxSize?.[0]?.inlineSize ??
+          Math.max(1, Math.round(canvas.clientWidth * devicePixelRatio));
+        const h =
+          entry.devicePixelContentBoxSize?.[0]?.blockSize ??
+          Math.max(1, Math.round(canvas.clientHeight * devicePixelRatio));
+        canvas.width = w;
+        canvas.height = h;
+        canvas.requestPaint();
+      });
+      resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+
+      // Only snapshot textures inside onpaint. No drawing, no requestPaint.
+      canvas.addEventListener('paint', () => {
+        const dpr = devicePixelRatio || 1;
+        collectShapes();
+        for (const view of views.values()) view.snapshot(dpr);
+        texturesReady = true;
+      });
+
+      // Render loop drives animation & reflects any folk-shape
+      // position/rotation changes (which do NOT fire paint events).
+      const startTime = performance.now();
+      function render() {
+        if (texturesReady) {
+          const w = canvas.width;
+          const h = canvas.height;
+          const dpr = devicePixelRatio || 1;
+          const t = (performance.now() - startTime) / 1000;
+          const effectOn = effectToggle.checked;
+
+          const enc = device.createCommandEncoder();
+          const pass = enc.beginRenderPass({
+            colorAttachments: [
+              {
+                view: ctx.getCurrentTexture().createView(),
+                loadOp: 'clear',
+                storeOp: 'store',
+                clearValue: { r: 0.04, g: 0.04, b: 0.06, a: 1 },
+              },
+            ],
+          });
+          pass.setPipeline(pipeline);
+          for (const view of views.values()) {
+            view.render(pass, w, h, dpr, t, effectOn);
+          }
+          pass.end();
+          device.queue.submit([enc.finish()]);
+        }
+        requestAnimationFrame(render);
+      }
+
+      canvas.requestPaint();
+      requestAnimationFrame(render);
+
+      // Refresh snapshots on any inbound DOM change in the canvas subtree
+      // (typing, focus ring, folk-shape handle visibility, etc.).
+      const mo = new MutationObserver(() => canvas.requestPaint());
+      mo.observe(canvas, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true,
+      });
+      // Interactive events that don't necessarily mutate DOM but do change
+      // painted output (focus outline, caret, hover styles).
+      for (const evt of ['focusin', 'focusout', 'input', 'click']) {
+        canvas.addEventListener(evt, () => canvas.requestPaint());
+      }
+
+      status.textContent =
+        'ready · ' + (adapter.info?.vendor || adapter.info?.architecture || 'webgpu');
+    </script>
+  </body>
+</html>

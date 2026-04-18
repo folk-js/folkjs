@@ -1,0 +1,1528 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HTML-in-Canvas · spatial warps (portals + shears)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --dock-bg: rgba(16, 16, 24, 0.78);
+        --dock-border: #2a2a3d;
+        --accent: #7df9ff;
+        --accent-warm: #ffc371;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: #0a0a0f;
+        color: #d8d8e8;
+        font-family:
+          ui-sans-serif, -apple-system, 'SF Pro Text', 'Segoe UI', sans-serif;
+        overflow: hidden;
+      }
+
+      #stage {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        cursor: default;
+      }
+
+      folk-shape {
+        background: transparent;
+      }
+
+      .card {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: linear-gradient(155deg, #1d1d2e 0%, #12121c 100%);
+        border: 1px solid #2a2a3d;
+        font-size: 14px;
+        line-height: 1.5;
+        color: #d8d8e8;
+        overflow: hidden;
+      }
+      .card h3 {
+        margin: 0 0 6px;
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .card p {
+        margin: 0;
+        color: #a8a8c0;
+      }
+      .card.cyan h3 { color: #7df9ff; }
+      .card.pink h3 { color: #ff79c6; }
+      .card.lime h3 { color: #b8ff7e; }
+      .card.amber h3 { color: #ffc371; }
+      .card.violet h3 { color: #b58bff; }
+
+      /* SVG overlay. Root has pointer-events: none; individual handles /
+         lines / gizmos re-enable pointer-events as needed. */
+      #tools {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+        z-index: 5;
+      }
+
+      #tools .portal-line,
+      #tools .shear-line {
+        stroke-width: 3;
+        stroke-linecap: round;
+        vector-effect: non-scaling-stroke;
+        pointer-events: none;
+      }
+      #tools .portal-line { opacity: 0.9; }
+      #tools .shear-line {
+        stroke: #ffc371;
+        stroke-dasharray: 6 4;
+        opacity: 0.95;
+      }
+      #tools .portal-arrow {
+        stroke-width: 2;
+        fill: none;
+        opacity: 0.9;
+        pointer-events: none;
+      }
+      #tools .shear-indicator {
+        stroke: #ffc371;
+        stroke-width: 2;
+        fill: none;
+        opacity: 0.55;
+        pointer-events: none;
+      }
+      #tools .preview {
+        stroke-dasharray: 4 5;
+        opacity: 0.7;
+      }
+
+      #tools .handle {
+        fill: #0a0a0f;
+        stroke-width: 2;
+        pointer-events: all;
+        cursor: grab;
+      }
+      #tools .handle:hover { fill: #1f1f33; }
+      #tools .handle:active { cursor: grabbing; }
+
+      #tools .shear-gizmo {
+        fill: #ffc371;
+        stroke: #1b1b2a;
+        stroke-width: 2;
+        pointer-events: all;
+        cursor: ew-resize;
+      }
+      #tools .shear-gizmo-rod {
+        stroke: #ffc371;
+        stroke-width: 2;
+        opacity: 0.7;
+        pointer-events: none;
+      }
+
+      /* A fullscreen capture layer that is present whenever we're in a
+         drawing mode (not for a specific click phase). It feeds pointer
+         events into the draw state machine and prevents folk-shape from
+         interpreting them as drags. Sits under the HUD z-index. */
+      #draw-capture {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        background: transparent;
+        cursor: crosshair;
+      }
+      #draw-capture.armed {
+        background: rgba(125, 249, 255, 0.03);
+      }
+
+      /* Bottom-center icon dock, tldraw-style. */
+      #dock {
+        position: fixed;
+        bottom: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 30;
+        display: flex;
+        gap: 4px;
+        padding: 6px;
+        background: var(--dock-bg);
+        backdrop-filter: blur(10px);
+        border: 1px solid var(--dock-border);
+        border-radius: 12px;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+      }
+      #dock button {
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        background: transparent;
+        color: #a8a8c0;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 120ms ease-out, color 120ms ease-out;
+      }
+      #dock button svg {
+        width: 22px;
+        height: 22px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.75;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      #dock button:hover { background: #252540; color: #d8d8e8; }
+      #dock button.active {
+        background: var(--accent);
+        color: #0a0a0f;
+      }
+      #dock button.danger:hover {
+        background: #3a1f26;
+        color: #ff9393;
+      }
+      #dock .sep {
+        width: 1px;
+        align-self: stretch;
+        margin: 6px 2px;
+        background: var(--dock-border);
+      }
+
+      /* Small status / hint line in the top-left, intentionally unobtrusive. */
+      #status {
+        position: fixed;
+        top: 14px;
+        left: 16px;
+        z-index: 30;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 11px;
+        color: #6d6d8c;
+        pointer-events: none;
+        max-width: 420px;
+        line-height: 1.5;
+      }
+      #status .warn { color: #ff8585; pointer-events: auto; }
+      #status code {
+        background: #1b1b2a;
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      #status .hint-strong { color: #d8d8e8; }
+    </style>
+  </head>
+  <body>
+    <div id="status"></div>
+
+    <canvas id="stage" layoutsubtree>
+      <folk-shape x="140" y="150" width="240" height="150">
+        <div class="card cyan">
+          <h3>Spatial canvas</h3>
+          <p>
+            Drag me. Draw a portal (two drags) or a shear (one drag) and
+            watch shapes ghost, split, or shear as they cross.
+          </p>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="500" y="200" width="260" height="160" rotation="-4">
+        <div class="card pink">
+          <h3>Interactive HTML</h3>
+          <p>
+            I'm still real HTML under each rendering. Ghosts are
+            visual-only; clicks land on my logical position.
+          </p>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="860" y="160" width="220" height="200">
+        <div class="card lime">
+          <h3>Rules of the space</h3>
+          <p>
+            Shear: a half-plane is sheared along its seam; pull the yellow
+            handle to change k. Portal: a pair; content straddling one
+            ghosts onto the other.
+          </p>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="200" y="430" width="200" height="150" rotation="6">
+        <div class="card amber">
+          <h3>Crossing semantics</h3>
+          <p>
+            Drag me through a portal. I can pass all the way through; when
+            I let go the canvas snaps me to whichever side holds the
+            majority of my area.
+          </p>
+        </div>
+      </folk-shape>
+
+      <folk-shape x="540" y="470" width="250" height="160">
+        <div class="card violet">
+          <h3>Next steps</h3>
+          <p>
+            Proxy-mirror hit targets, canvas-level event retargeting,
+            composing portals with shears. Each extends the sync loop in a
+            different direction.
+          </p>
+        </div>
+      </folk-shape>
+    </canvas>
+
+    <svg id="tools"></svg>
+
+    <div id="dock">
+      <button data-mode="select" class="active" title="Select / drag shapes (V)" aria-label="Select">
+        <svg viewBox="0 0 24 24"><path d="M5 3l6 16 2-7 7-2-15-7z"/></svg>
+      </button>
+      <div class="sep"></div>
+      <button data-mode="portal" title="Draw portal — two drags, A then B (P)" aria-label="Draw portal">
+        <svg viewBox="0 0 24 24">
+          <path d="M6 3v18"/>
+          <path d="M18 3v18"/>
+          <path d="M9 9l3 3-3 3"/>
+          <path d="M15 15l-3-3 3-3"/>
+        </svg>
+      </button>
+      <button data-mode="shear" title="Draw shear — one drag (S)" aria-label="Draw shear">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 18l16-12"/>
+          <path d="M9 16l6-4.5"/>
+        </svg>
+      </button>
+      <div class="sep"></div>
+      <button id="clearBtn" class="danger" title="Delete all warps" aria-label="Clear warps">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 7h16"/>
+          <path d="M10 7V4h4v3"/>
+          <path d="M6 7l1 13h10l1-13"/>
+          <path d="M10 11v6"/>
+          <path d="M14 11v6"/>
+        </svg>
+      </button>
+    </div>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-shape';
+
+      // -------------------------------------------------------------------
+      // 0. Feature detection — no silent fallbacks.
+      // -------------------------------------------------------------------
+      const canvas = document.getElementById('stage');
+      const tools = document.getElementById('tools');
+      const statusEl = document.getElementById('status');
+      const dock = document.getElementById('dock');
+      const clearBtn = document.getElementById('clearBtn');
+
+      function fail(msg) {
+        statusEl.innerHTML = `<span class="warn">${msg}</span>`;
+        throw new Error(msg);
+      }
+
+      const missing = [
+        !('layoutSubtree' in HTMLCanvasElement.prototype) && 'layoutSubtree',
+        typeof HTMLCanvasElement.prototype.requestPaint !== 'function' && 'requestPaint',
+      ].filter(Boolean);
+      if (missing.length) {
+        fail(
+          `html-in-canvas APIs missing: <code>${missing.join(', ')}</code>. Enable <code>chrome://flags/#canvas-draw-element</code> and restart.`,
+        );
+      }
+      if (!navigator.gpu) fail('WebGPU not available in this browser.');
+
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) fail('No WebGPU adapter.');
+      const device = await adapter.requestDevice();
+
+      const ctx = canvas.getContext('webgpu');
+      const format = navigator.gpu.getPreferredCanvasFormat();
+      ctx.configure({ device, format, alphaMode: 'premultiplied' });
+
+      if (typeof device.queue.copyElementImageToTexture !== 'function') {
+        fail('GPUQueue.copyElementImageToTexture missing.');
+      }
+
+      // -------------------------------------------------------------------
+      // 1. 2D vector + affine helpers. World is in CSS px from canvas (0, 0).
+      // -------------------------------------------------------------------
+      const V = {
+        sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+        add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+        scale: (a, k) => ({ x: a.x * k, y: a.y * k }),
+        dot: (a, b) => a.x * b.x + a.y * b.y,
+        len: (a) => Math.hypot(a.x, a.y),
+        norm: (a) => {
+          const l = Math.hypot(a.x, a.y) || 1;
+          return { x: a.x / l, y: a.y / l };
+        },
+        perp: (a) => ({ x: -a.y, y: a.x }),
+        lerp: (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }),
+      };
+
+      const A = {
+        apply: (m, p) => ({
+          x: m.a * p.x + m.b * p.y + m.tx,
+          y: m.c * p.x + m.d * p.y + m.ty,
+        }),
+        applyLinear: (m, v) => ({
+          x: m.a * v.x + m.b * v.y,
+          y: m.c * v.x + m.d * v.y,
+        }),
+      };
+
+      // -------------------------------------------------------------------
+      // 2. Warp state.
+      // -------------------------------------------------------------------
+      const portals = []; // { id, a: [p0, p1], b: [p0, p1] }
+      const shears = []; // { id, seam: [p0, p1], k }
+      let nextId = 1;
+
+      // Basic seam geometry from raw endpoint order (direction as drawn).
+      function seamGeom(p0, p1) {
+        const dir = V.norm(V.sub(p1, p0));
+        const nrm = V.perp(dir); // 90° ccw
+        const mid = V.lerp(p0, p1, 0.5);
+        const d = -V.dot(nrm, mid);
+        return { p0, p1, dir, nrm, mid, d };
+      }
+
+      // Orient a seam's (dir, nrm) so that nrm points toward `ref`. We flip
+      // both dir and nrm together so that nrm = perp(dir) is preserved —
+      // this keeps the perp-handedness consistent across the pair, which
+      // the portal affine below relies on.
+      function seamGeomToward(p0, p1, ref) {
+        let g = seamGeom(p0, p1);
+        const toRef = V.sub(ref, g.mid);
+        if (V.dot(g.nrm, toRef) < 0) {
+          g = {
+            p0,
+            p1,
+            dir: V.scale(g.dir, -1),
+            nrm: V.scale(g.nrm, -1),
+            mid: g.mid,
+            d: -V.dot(V.scale(g.nrm, -1), g.mid),
+          };
+        }
+        return g;
+      }
+
+      // Portal A→B affine, "doorway" semantics:
+      //   L(dA) = -dB,  L(nA) = -nB
+      // so L = -(dB ⊗ dA + nB ⊗ nA). det(L) = +1 (proper rotation, never
+      // a mirror reflection — that was the original "upside down" bug,
+      // which was a det = -1 reflection). Paired with auto-orient (each
+      // normal faces the partner), parallel-facing portals collapse to
+      // L = I (pure translation, no rotation), so a shape crossing A
+      // emerges in the gap between the portals at its natural orientation.
+      // Non-parallel portals get a genuine rotation L that aligns A's
+      // local frame with B's. The rotation extracted via atan2(L.c, L.a)
+      // is what teleportShape applies to shape.rotation — so the new home
+      // rendering after release matches the ghost render exactly, pixel
+      // for pixel, with the ghost via the partner portal lighting up at
+      // the old home position. No observable visual change on release.
+      function portalAffine(a, b) {
+        const L00 = -(b.dir.x * a.dir.x + b.nrm.x * a.nrm.x);
+        const L01 = -(b.dir.x * a.dir.y + b.nrm.x * a.nrm.y);
+        const L10 = -(b.dir.y * a.dir.x + b.nrm.y * a.nrm.x);
+        const L11 = -(b.dir.y * a.dir.y + b.nrm.y * a.nrm.y);
+        const tx = b.mid.x - (L00 * a.mid.x + L01 * a.mid.y);
+        const ty = b.mid.y - (L10 * a.mid.x + L11 * a.mid.y);
+        return { a: L00, b: L01, c: L10, d: L11, tx, ty };
+      }
+
+      // Oriented seam pair for a portal. Each normal faces the partner.
+      function portalSeams(portal) {
+        const rawMidA = V.lerp(portal.a[0], portal.a[1], 0.5);
+        const rawMidB = V.lerp(portal.b[0], portal.b[1], 0.5);
+        return {
+          aG: seamGeomToward(portal.a[0], portal.a[1], rawMidB),
+          bG: seamGeomToward(portal.b[0], portal.b[1], rawMidA),
+        };
+      }
+
+      // Shear affine around a seam. Linear part I + k·(dir⊗nrm); the
+      // translation cancels exactly on the seam itself (fixed line).
+      // On the + side the shear "pulls" points along dir by k·v.
+      function shearAffine(seam, k) {
+        const L00 = 1 + k * seam.dir.x * seam.nrm.x;
+        const L01 = k * seam.dir.x * seam.nrm.y;
+        const L10 = k * seam.dir.y * seam.nrm.x;
+        const L11 = 1 + k * seam.dir.y * seam.nrm.y;
+        const tx = k * seam.d * seam.dir.x;
+        const ty = k * seam.d * seam.dir.y;
+        return { a: L00, b: L01, c: L10, d: L11, tx, ty };
+      }
+
+      // -------------------------------------------------------------------
+      // 3. WebGPU pipeline. Uniform packing — five vec4s, 80 bytes:
+      //   row0: canvasSize.xy, origin.xy
+      //   row1: axisX.xy,      axisY.xy
+      //   row2: clipN0.xy,     clipD0, clip0Active
+      //   row3: clipN1.xy,     clipD1, clip1Active
+      //   row4: reserved       (4 floats)
+      //
+      // Every draw is a full quad covering the shape's parallelogram. The
+      // vertex shader computes gridPos via (uv - 0.5) * axes; the fragment
+      // shader discards pixels that violate either active clip plane.
+      // Ghost vs home look identical — the research is about geometry, not
+      // hue, and the earlier dimming made orientation bugs hard to read.
+      // -------------------------------------------------------------------
+      const UNIFORM_BYTES = 80;
+
+      const shader = /* wgsl */ `
+        struct U {
+          row0: vec4<f32>,
+          row1: vec4<f32>,
+          row2: vec4<f32>,
+          row3: vec4<f32>,
+          row4: vec4<f32>,
+        };
+
+        @group(0) @binding(0) var<uniform> u: U;
+        @group(0) @binding(1) var samp: sampler;
+        @group(0) @binding(2) var tex:  texture_2d<f32>;
+
+        struct VsOut {
+          @builtin(position) pos: vec4<f32>,
+          @location(0) uv: vec2<f32>,
+          @location(1) gridPos: vec2<f32>,
+        };
+
+        @vertex
+        fn vs(@builtin(vertex_index) vid: u32) -> VsOut {
+          var quad = array<vec2<f32>, 6>(
+            vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0),
+            vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0),
+          );
+          let uv = quad[vid];
+
+          let canvasSize = u.row0.xy;
+          let origin = u.row0.zw;
+          let axisX  = u.row1.xy;
+          let axisY  = u.row1.zw;
+
+          let centered = uv - vec2(0.5, 0.5);
+          let gridPos = origin + centered.x * axisX + centered.y * axisY;
+          let ndc = (gridPos / canvasSize) * 2.0 - 1.0;
+
+          var o: VsOut;
+          o.pos = vec4(ndc.x, -ndc.y, 0.0, 1.0);
+          o.uv = uv;
+          o.gridPos = gridPos;
+          return o;
+        }
+
+        @fragment
+        fn fs(in: VsOut) -> @location(0) vec4<f32> {
+          if (u.row2.w > 0.5) {
+            let s = dot(u.row2.xy, in.gridPos) + u.row2.z;
+            if (s < 0.0) { discard; }
+          }
+          if (u.row3.w > 0.5) {
+            let s = dot(u.row3.xy, in.gridPos) + u.row3.z;
+            if (s < 0.0) { discard; }
+          }
+          return textureSample(tex, samp, in.uv);
+        }
+      `;
+
+      const module = device.createShaderModule({ code: shader });
+
+      const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module, entryPoint: 'vs' },
+        fragment: {
+          module,
+          entryPoint: 'fs',
+          targets: [
+            {
+              format,
+              blend: {
+                color: {
+                  srcFactor: 'one',
+                  dstFactor: 'one-minus-src-alpha',
+                  operation: 'add',
+                },
+                alpha: {
+                  srcFactor: 'one',
+                  dstFactor: 'one-minus-src-alpha',
+                  operation: 'add',
+                },
+              },
+            },
+          ],
+        },
+        primitive: { topology: 'triangle-list' },
+      });
+
+      const sampler = device.createSampler({
+        magFilter: 'linear',
+        minFilter: 'linear',
+      });
+
+      // -------------------------------------------------------------------
+      // 4. Per-shape view: texture + pool of instance-uniform buffers.
+      // -------------------------------------------------------------------
+      class ShapeView {
+        constructor(element) {
+          this.element = element;
+          this.texture = null;
+          this.texW = 0;
+          this.texH = 0;
+          this.bindGroups = [];
+          this.buffers = [];
+        }
+
+        dispose() {
+          this.texture?.destroy();
+          for (const buf of this.buffers) buf.destroy();
+        }
+
+        #ensureTexture(w, h) {
+          if (this.texture && this.texW === w && this.texH === h) return;
+          if (this.texture) this.texture.destroy();
+          this.texture = device.createTexture({
+            size: [w, h, 1],
+            format: 'rgba8unorm',
+            usage:
+              GPUTextureUsage.TEXTURE_BINDING |
+              GPUTextureUsage.COPY_DST |
+              GPUTextureUsage.RENDER_ATTACHMENT,
+          });
+          this.texW = w;
+          this.texH = h;
+          this.bindGroups = [];
+        }
+
+        #ensureSlot(i) {
+          while (this.buffers.length <= i) {
+            this.buffers.push(
+              device.createBuffer({
+                size: UNIFORM_BYTES,
+                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+              }),
+            );
+          }
+          while (this.bindGroups.length <= i) {
+            this.bindGroups.push(
+              device.createBindGroup({
+                layout: pipeline.getBindGroupLayout(0),
+                entries: [
+                  { binding: 0, resource: { buffer: this.buffers[this.bindGroups.length] } },
+                  { binding: 1, resource: sampler },
+                  { binding: 2, resource: this.texture.createView() },
+                ],
+              }),
+            );
+          }
+        }
+
+        snapshot(dpr) {
+          const w = Math.max(1, Math.round(this.element.width * dpr));
+          const h = Math.max(1, Math.round(this.element.height * dpr));
+          this.#ensureTexture(w, h);
+          device.queue.copyElementImageToTexture(this.element, w, h, {
+            texture: this.texture,
+          });
+        }
+
+        writeInstance(i, data) {
+          this.#ensureSlot(i);
+          device.queue.writeBuffer(this.buffers[i], 0, data);
+        }
+
+        getBindGroup(i) {
+          return this.bindGroups[i];
+        }
+      }
+
+      const views = new Map();
+
+      function collectShapes() {
+        const live = new Set();
+        for (const el of canvas.children) {
+          if (el.tagName !== 'FOLK-SHAPE') continue;
+          live.add(el);
+          if (!views.has(el)) views.set(el, new ShapeView(el));
+        }
+        for (const [el, view] of views) {
+          if (!live.has(el)) {
+            view.dispose();
+            views.delete(el);
+          }
+        }
+      }
+
+      // -------------------------------------------------------------------
+      // 5. Shape geometry utilities.
+      // -------------------------------------------------------------------
+      function shapeBaseAxes(shape) {
+        const w = shape.width;
+        const h = shape.height;
+        const cx = shape.x + w / 2;
+        const cy = shape.y + h / 2;
+        const cos = Math.cos(shape.rotation);
+        const sin = Math.sin(shape.rotation);
+        return {
+          origin: { x: cx, y: cy },
+          axisX: { x: w * cos, y: w * sin },
+          axisY: { x: -h * sin, y: h * cos },
+        };
+      }
+
+      // Corners in perimeter order (TL → TR → BR → BL). Critical: the
+      // shoelace area, Sutherland-Hodgman clip, and segment/rect tests
+      // all assume the polygon is traversed in order around its boundary.
+      // The earlier TL/TR/BL/BR ordering traced an X across the rect,
+      // making polygonArea return ~0 and silently disabling the
+      // area-majority flip check (so teleport never fired).
+      function shapeCorners(axes) {
+        const hx = V.scale(axes.axisX, 0.5);
+        const hy = V.scale(axes.axisY, 0.5);
+        return [
+          V.sub(V.sub(axes.origin, hx), hy), // TL: o − hx − hy
+          V.sub(V.add(axes.origin, hx), hy), // TR: o + hx − hy
+          V.add(V.add(axes.origin, hx), hy), // BR: o + hx + hy
+          V.add(V.sub(axes.origin, hx), hy), // BL: o − hx + hy
+        ];
+      }
+
+      // Segments / rect overlap: rect corners straddle seam's infinite line
+      // AND either a rect edge crosses the seam segment, or the seam lies
+      // entirely inside the rect.
+      function segHitsRect(seg, corners) {
+        const n = V.perp(V.norm(V.sub(seg.p1, seg.p0)));
+        const d = -V.dot(n, seg.p0);
+        let pos = false,
+          neg = false;
+        for (const c of corners) {
+          const s = n.x * c.x + n.y * c.y + d;
+          if (s > 0) pos = true;
+          else if (s < 0) neg = true;
+          if (pos && neg) break;
+        }
+        if (!(pos && neg)) return false;
+        for (let i = 0; i < 4; i++) {
+          if (segmentsIntersect(corners[i], corners[(i + 1) % 4], seg.p0, seg.p1)) return true;
+        }
+        return pointInConvex(seg.p0, corners) || pointInConvex(seg.p1, corners);
+      }
+
+      function segmentsIntersect(a, b, c, d) {
+        function cross(o, p, q) {
+          return (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+        }
+        return (
+          (cross(c, d, a) > 0) !== (cross(c, d, b) > 0) &&
+          (cross(a, b, c) > 0) !== (cross(a, b, d) > 0)
+        );
+      }
+
+      function pointInConvex(p, corners) {
+        let sign = 0;
+        for (let i = 0; i < corners.length; i++) {
+          const a = corners[i];
+          const b = corners[(i + 1) % corners.length];
+          const c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+          if (c > 0) {
+            if (sign < 0) return false;
+            sign = 1;
+          } else if (c < 0) {
+            if (sign > 0) return false;
+            sign = -1;
+          }
+        }
+        return true;
+      }
+
+      // Signed area fraction of the rect on the + side of (n, d).
+      // Polygon-clips the rect at the infinite line, computes shoelace
+      // areas. Returns 0..1 where 1 means the whole rect is on +.
+      function areaFractionOnPositive(corners, n, d) {
+        const total = polygonArea(corners);
+        if (total <= 1e-6) return 0;
+        const positive = clipPolygonToHalfPlane(corners, n, d);
+        return Math.abs(polygonArea(positive)) / Math.abs(total);
+      }
+
+      function polygonArea(pts) {
+        let a = 0;
+        for (let i = 0; i < pts.length; i++) {
+          const p = pts[i];
+          const q = pts[(i + 1) % pts.length];
+          a += p.x * q.y - q.x * p.y;
+        }
+        return 0.5 * a;
+      }
+
+      // Sutherland–Hodgman clip against single half-plane n·p + d >= 0.
+      function clipPolygonToHalfPlane(poly, n, d) {
+        const out = [];
+        for (let i = 0; i < poly.length; i++) {
+          const curr = poly[i];
+          const prev = poly[(i - 1 + poly.length) % poly.length];
+          const currIn = n.x * curr.x + n.y * curr.y + d >= 0;
+          const prevIn = n.x * prev.x + n.y * prev.y + d >= 0;
+          if (currIn) {
+            if (!prevIn) out.push(lineHalfPlaneCross(prev, curr, n, d));
+            out.push(curr);
+          } else if (prevIn) {
+            out.push(lineHalfPlaneCross(prev, curr, n, d));
+          }
+        }
+        return out;
+      }
+
+      function lineHalfPlaneCross(a, b, n, d) {
+        const da = n.x * a.x + n.y * a.y + d;
+        const db = n.x * b.x + n.y * b.y + d;
+        const t = da / (da - db);
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      }
+
+      // -------------------------------------------------------------------
+      // 6. Drag tracking. We route pointerdown on a folk-shape through the
+      // canvas (capture-phase) so we know which shape is being dragged.
+      //
+      // While dragging, every portal the shape straddles uses a *frozen*
+      // side identity captured at drag start — home clips to that side,
+      // ghost clips to the partner's reciprocal side. The user sees the
+      // shape stay "attached" to the portal: the visible home portion
+      // shrinks as the shape slides through the seam while the ghost on
+      // the partner grows. Drag-in-and-back-out is a no-op.
+      //
+      // On pointerup we compare drag-start vs drag-end area majority per
+      // portal; if the majority side flipped, we teleport through the
+      // portal affine. Rotation delta is extracted from the affine's
+      // linear part so parallel-facing portals (L = I) leave rotation
+      // untouched while rotated portals rotate the shape accordingly.
+      // -------------------------------------------------------------------
+      let draggedShape = null;
+      // Map<portal, { aOnPlus, bOnPlus, touchedA, touchedB }>.
+      // `touchedA/B` are sticky during a drag — once the shape's bbox has
+      // overlapped a seam, that portal stays "active" until pointerup, so
+      // ghosts persist after the shape has fully crossed past the seam.
+      let dragState = null;
+
+      canvas.addEventListener(
+        'pointerdown',
+        (e) => {
+          const fs = e.target.closest('folk-shape');
+          if (fs && canvas.contains(fs)) {
+            draggedShape = fs;
+            dragState = snapshotPortalState(fs);
+          }
+        },
+        true,
+      );
+
+      function endDrag() {
+        if (draggedShape) {
+          finalizeShape(draggedShape);
+          draggedShape = null;
+          dragState = null;
+        }
+      }
+      window.addEventListener('pointerup', endDrag);
+      window.addEventListener('pointercancel', endDrag);
+
+      function snapshotPortalState(shape) {
+        const corners = shapeCorners(shapeBaseAxes(shape));
+        const map = new Map();
+        for (const p of portals) {
+          const { aG, bG } = portalSeams(p);
+          map.set(p, {
+            aOnPlus: areaFractionOnPositive(corners, aG.nrm, aG.d) >= 0.5,
+            bOnPlus: areaFractionOnPositive(corners, bG.nrm, bG.d) >= 0.5,
+            touchedA: segHitsRect({ p0: p.a[0], p1: p.a[1] }, corners),
+            touchedB: segHitsRect({ p0: p.b[0], p1: p.b[1] }, corners),
+          });
+        }
+        return map;
+      }
+
+      // Release rule: when any portal's area-majority side flipped over the
+      // course of the drag, teleport through that portal. The flip check
+      // is direction-agnostic (start.aOnPlus !== aNow) so it catches both
+      // "crossed in from +A side" and "crossed in from −A side." The portal
+      // affine is bidirectional — it maps +A↔−B and −A↔+B — so the same
+      // call works regardless of which way the area shifted.
+      function finalizeShape(shape) {
+        if (!dragState) return;
+        const corners = shapeCorners(shapeBaseAxes(shape));
+        for (const p of portals) {
+          const start = dragState.get(p);
+          if (!start) continue;
+          const { aG, bG } = portalSeams(p);
+          const aNow = areaFractionOnPositive(corners, aG.nrm, aG.d) >= 0.5;
+          if (start.aOnPlus !== aNow) {
+            teleportShape(shape, portalAffine(aG, bG));
+            return;
+          }
+          const bNow = areaFractionOnPositive(corners, bG.nrm, bG.d) >= 0.5;
+          if (start.bOnPlus !== bNow) {
+            teleportShape(shape, portalAffine(bG, aG));
+            return;
+          }
+        }
+      }
+
+      function teleportShape(shape, affine) {
+        const w = shape.width;
+        const h = shape.height;
+        const center = { x: shape.x + w / 2, y: shape.y + h / 2 };
+        const newCenter = A.apply(affine, center);
+        shape.x = newCenter.x - w / 2;
+        shape.y = newCenter.y - h / 2;
+        const rotDelta = Math.atan2(affine.c, affine.a);
+        let r = shape.rotation + rotDelta;
+        r = Math.atan2(Math.sin(r), Math.cos(r));
+        shape.rotation = r;
+      }
+
+      // -------------------------------------------------------------------
+      // 7. Instance computation for a shape.
+      // -------------------------------------------------------------------
+      function applyAffineAxes(axes, m) {
+        return {
+          origin: A.apply(m, axes.origin),
+          axisX: A.applyLinear(m, axes.axisX),
+          axisY: A.applyLinear(m, axes.axisY),
+        };
+      }
+
+      function clipForSeam(seamG, sign) {
+        return {
+          n: V.scale(seamG.nrm, sign),
+          d: seamG.d * sign,
+        };
+      }
+
+      function computeInstances(shape) {
+        const base = shapeBaseAxes(shape);
+        const corners = shapeCorners(base);
+        const isDragging = shape === draggedShape;
+
+        let homeAxes = base;
+        const homeClips = [];
+        const ghosts = [];
+
+        // Shears.  Mirrored-home pattern: if the center is in the sheared
+        // half-plane, "home" is the sheared rendering; otherwise identity.
+        // A straddling shape splits visually with one clip plane per side.
+        for (const s of shears) {
+          const seam = seamGeom(s.seam[0], s.seam[1]);
+          const centerSide =
+            V.dot(seam.nrm, homeAxes.origin) + seam.d >= 0 ? +1 : -1;
+          const crosses = segHitsRect(
+            { p0: s.seam[0], p1: s.seam[1] },
+            corners,
+          );
+          const shearAff = shearAffine(seam, s.k);
+
+          if (centerSide > 0) {
+            homeAxes = applyAffineAxes(homeAxes, shearAff);
+            if (homeClips.length < 2) homeClips.push(clipForSeam(seam, +1));
+            if (crosses) {
+              ghosts.push({
+                axes: base,
+                clips: [clipForSeam(seam, -1)],
+              });
+            }
+          } else if (crosses) {
+            if (homeClips.length < 2) homeClips.push(clipForSeam(seam, -1));
+            ghosts.push({
+              axes: applyAffineAxes(base, shearAff),
+              clips: [clipForSeam(seam, +1)],
+            });
+          }
+        }
+
+        // Portals. Clipping is always on — that's what makes a portal read
+        // as a portal. During a drag the side identity for each portal is
+        // frozen at drag start (so home stays "attached" instead of
+        // flipping at the midline), and once the shape has touched a seam
+        // the ghost keeps rendering for the rest of the drag even after
+        // the bbox has fully crossed past. Ghost partner-clip is the
+        // *same* sign as home, because under L = -(dB⊗dA + nB⊗nA) the
+        // mapping flips the normal: shape's portion on +A maps to ghost
+        // on -B, shape's portion on -A maps to ghost on +B. So the
+        // transmitted half (opposite of center side on A) lands on the
+        // matching side on B (sign(homeClipB) = sign(homeClipA)).
+        for (const p of portals) {
+          const { aG, bG } = portalSeams(p);
+          const liveHitA = segHitsRect({ p0: p.a[0], p1: p.a[1] }, corners);
+          const liveHitB = segHitsRect({ p0: p.b[0], p1: p.b[1] }, corners);
+
+          let touchedA = liveHitA;
+          let touchedB = liveHitB;
+          const ds = isDragging ? dragState?.get(p) : null;
+          if (ds) {
+            if (liveHitA) ds.touchedA = true;
+            if (liveHitB) ds.touchedB = true;
+            touchedA = ds.touchedA;
+            touchedB = ds.touchedB;
+          }
+
+          if (touchedA) {
+            const sideA = sideForPortal(p, 'a', aG, base);
+            if (homeClips.length < 2) homeClips.push(clipForSeam(aG, sideA));
+            const aToB = portalAffine(aG, bG);
+            ghosts.push({
+              axes: applyAffineAxes(base, aToB),
+              clips: [clipForSeam(bG, sideA)],
+            });
+          }
+          if (touchedB) {
+            const sideB = sideForPortal(p, 'b', bG, base);
+            if (homeClips.length < 2) homeClips.push(clipForSeam(bG, sideB));
+            const bToA = portalAffine(bG, aG);
+            ghosts.push({
+              axes: applyAffineAxes(base, bToA),
+              clips: [clipForSeam(aG, sideB)],
+            });
+          }
+        }
+
+        function sideForPortal(portal, which, seamG, baseAxes) {
+          if (isDragging) {
+            const ds = dragState?.get(portal);
+            if (ds) {
+              const onPlus = which === 'a' ? ds.aOnPlus : ds.bOnPlus;
+              return onPlus ? +1 : -1;
+            }
+          }
+          return V.dot(seamG.nrm, baseAxes.origin) + seamG.d >= 0 ? +1 : -1;
+        }
+
+        return { homeAxes, homeClips, ghosts };
+      }
+
+      function packUniform(canvasGridW, canvasGridH, axes, dpr, clip0, clip1) {
+        const data = new Float32Array(20);
+        data[0] = canvasGridW;
+        data[1] = canvasGridH;
+        data[2] = axes.origin.x * dpr;
+        data[3] = axes.origin.y * dpr;
+        data[4] = axes.axisX.x * dpr;
+        data[5] = axes.axisX.y * dpr;
+        data[6] = axes.axisY.x * dpr;
+        data[7] = axes.axisY.y * dpr;
+        if (clip0) {
+          data[8] = clip0.n.x;
+          data[9] = clip0.n.y;
+          data[10] = clip0.d * dpr;
+          data[11] = 1;
+        }
+        if (clip1) {
+          data[12] = clip1.n.x;
+          data[13] = clip1.n.y;
+          data[14] = clip1.d * dpr;
+          data[15] = 1;
+        }
+        return data;
+      }
+
+      // -------------------------------------------------------------------
+      // 8. Tool overlay (SVG) — renders world state and gizmos.
+      // -------------------------------------------------------------------
+      const PORTAL_COLORS = [
+        ['#ff79c6', '#b58bff'],
+        ['#7df9ff', '#8be8c8'],
+        ['#ffc371', '#ff9b71'],
+        ['#b8ff7e', '#7df9ff'],
+      ];
+
+      function svgEl(tag, attrs) {
+        const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+        return el;
+      }
+
+      function renderTools() {
+        tools.setAttribute(
+          'viewBox',
+          `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`,
+        );
+        tools.setAttribute('width', canvas.clientWidth);
+        tools.setAttribute('height', canvas.clientHeight);
+        tools.innerHTML = '';
+
+        for (let i = 0; i < portals.length; i++) {
+          const p = portals[i];
+          const [colorA, colorB] = PORTAL_COLORS[i % PORTAL_COLORS.length];
+          addPortalUI(p, colorA, colorB);
+        }
+        for (const s of shears) addShearUI(s);
+
+        // Live preview of a drag-in-progress.
+        if (draft && draft.preview) {
+          for (const [p0, p1, color, isShear] of draft.preview) {
+            tools.appendChild(
+              svgEl('line', {
+                x1: p0.x,
+                y1: p0.y,
+                x2: p1.x,
+                y2: p1.y,
+                class: isShear ? 'shear-line preview' : 'portal-line preview',
+                style: color ? `stroke: ${color}` : '',
+              }),
+            );
+          }
+        }
+      }
+
+      function addPortalUI(p, colorA, colorB) {
+        const { aG, bG } = portalSeams(p);
+        const group = svgEl('g', { 'data-id': String(p.id) });
+
+        group.appendChild(
+          svgEl('line', {
+            x1: p.a[0].x,
+            y1: p.a[0].y,
+            x2: p.a[1].x,
+            y2: p.a[1].y,
+            class: 'portal-line',
+            style: `stroke: ${colorA}`,
+          }),
+        );
+        group.appendChild(
+          svgEl('line', {
+            x1: p.b[0].x,
+            y1: p.b[0].y,
+            x2: p.b[1].x,
+            y2: p.b[1].y,
+            class: 'portal-line',
+            style: `stroke: ${colorB}`,
+          }),
+        );
+
+        for (const [seam, color] of [
+          [aG, colorA],
+          [bG, colorB],
+        ]) {
+          const tip = V.add(seam.mid, V.scale(seam.nrm, 16));
+          group.appendChild(
+            svgEl('path', {
+              d: `M ${seam.mid.x} ${seam.mid.y} L ${tip.x} ${tip.y}`,
+              class: 'portal-arrow',
+              style: `stroke: ${color}`,
+            }),
+          );
+        }
+
+        for (const [pt, role, color] of [
+          [p.a[0], 'a0', colorA],
+          [p.a[1], 'a1', colorA],
+          [p.b[0], 'b0', colorB],
+          [p.b[1], 'b1', colorB],
+        ]) {
+          const h = svgEl('circle', {
+            cx: pt.x,
+            cy: pt.y,
+            r: 7,
+            class: 'handle',
+            style: `stroke: ${color}`,
+          });
+          bindHandleDrag(h, p, role, 'portal');
+          group.appendChild(h);
+        }
+
+        tools.appendChild(group);
+      }
+
+      // Shear gizmo lives at seamMid + nrm·ANCHOR, with its visual "tip"
+      // offset along dir by k·GIZMO_SCALE. Dragging the tip along dir
+      // updates k; dragging perp to dir moves the anchor slightly but we
+      // clamp it to stay pinned on the seam's + side at a fixed offset.
+      const GIZMO_NRM_OFFSET = 36;
+      const GIZMO_SCALE = 40;
+
+      function shearGizmoTip(seamG, k) {
+        const anchor = V.add(seamG.mid, V.scale(seamG.nrm, GIZMO_NRM_OFFSET));
+        return V.add(anchor, V.scale(seamG.dir, GIZMO_SCALE * k));
+      }
+
+      function addShearUI(s) {
+        const seam = seamGeom(s.seam[0], s.seam[1]);
+        const group = svgEl('g', { 'data-id': String(s.id) });
+
+        group.appendChild(
+          svgEl('line', {
+            x1: s.seam[0].x,
+            y1: s.seam[0].y,
+            x2: s.seam[1].x,
+            y2: s.seam[1].y,
+            class: 'shear-line',
+          }),
+        );
+
+        // Hatches into the + side showing shear direction + magnitude.
+        for (const t of [0.3, 0.7]) {
+          const root = V.lerp(s.seam[0], s.seam[1], t);
+          const into = V.add(root, V.scale(seam.nrm, 22));
+          const tip = V.add(into, V.scale(seam.dir, 26 * s.k));
+          group.appendChild(
+            svgEl('path', {
+              d: `M ${root.x} ${root.y} L ${into.x} ${into.y} L ${tip.x} ${tip.y}`,
+              class: 'shear-indicator',
+            }),
+          );
+        }
+
+        // Gizmo: rod + pullable tip circle.
+        const anchor = V.add(seam.mid, V.scale(seam.nrm, GIZMO_NRM_OFFSET));
+        const tip = shearGizmoTip(seam, s.k);
+        group.appendChild(
+          svgEl('line', {
+            x1: anchor.x,
+            y1: anchor.y,
+            x2: tip.x,
+            y2: tip.y,
+            class: 'shear-gizmo-rod',
+          }),
+        );
+        const gz = svgEl('circle', {
+          cx: tip.x,
+          cy: tip.y,
+          r: 7,
+          class: 'shear-gizmo',
+        });
+        bindShearGizmo(gz, s);
+        group.appendChild(gz);
+
+        // Endpoint handles.
+        for (const [pt, role] of [
+          [s.seam[0], 'p0'],
+          [s.seam[1], 'p1'],
+        ]) {
+          const h = svgEl('circle', {
+            cx: pt.x,
+            cy: pt.y,
+            r: 7,
+            class: 'handle',
+            style: 'stroke: #ffc371',
+          });
+          bindHandleDrag(h, s, role, 'shear');
+          group.appendChild(h);
+        }
+
+        tools.appendChild(group);
+      }
+
+      // Handle drags use window-level listeners so we can re-render the
+      // overlay mid-drag without invalidating the capture target.
+      function bindHandleDrag(handleEl, obj, role, kind) {
+        handleEl.addEventListener('pointerdown', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const onMove = (ev) => {
+            const pt = clientToWorld(ev);
+            if (kind === 'portal') {
+              if (role === 'a0') obj.a[0] = pt;
+              else if (role === 'a1') obj.a[1] = pt;
+              else if (role === 'b0') obj.b[0] = pt;
+              else if (role === 'b1') obj.b[1] = pt;
+            } else if (kind === 'shear') {
+              if (role === 'p0') obj.seam[0] = pt;
+              else if (role === 'p1') obj.seam[1] = pt;
+            }
+            renderTools();
+          };
+          const onUp = () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+          };
+          window.addEventListener('pointermove', onMove);
+          window.addEventListener('pointerup', onUp);
+          window.addEventListener('pointercancel', onUp);
+        });
+      }
+
+      function bindShearGizmo(gzEl, s) {
+        gzEl.addEventListener('pointerdown', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const onMove = (ev) => {
+            const seam = seamGeom(s.seam[0], s.seam[1]);
+            const anchor = V.add(seam.mid, V.scale(seam.nrm, GIZMO_NRM_OFFSET));
+            const pt = clientToWorld(ev);
+            const offset = V.sub(pt, anchor);
+            s.k = V.dot(offset, seam.dir) / GIZMO_SCALE;
+            renderTools();
+          };
+          const onUp = () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            window.removeEventListener('pointercancel', onUp);
+          };
+          window.addEventListener('pointermove', onMove);
+          window.addEventListener('pointerup', onUp);
+          window.addEventListener('pointercancel', onUp);
+        });
+      }
+
+      function clientToWorld(ev) {
+        const rect = canvas.getBoundingClientRect();
+        return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+      }
+
+      // -------------------------------------------------------------------
+      // 9. Draw-state machine.
+      //   mode == 'select'   → no capture overlay; normal interaction.
+      //   mode == 'shear'    → one drag creates a seam. Stays in mode for
+      //                         another seam unless the user clicks Select.
+      //   mode == 'portal'   → first drag = seam A (previewed in situ);
+      //                         second drag = seam B, portal finalized.
+      // -------------------------------------------------------------------
+      const SHEAR_DEFAULT_K = -0.45;
+      const MIN_SEAM_LENGTH = 12; // px — shorter drags are treated as cancels
+
+      let mode = 'select';
+      let draft = null; // { step, a0, a1, b0?, active: { start, end }, preview: [[p0, p1, color, isShear]] }
+      let captureEl = null;
+
+      function setMode(next) {
+        mode = next;
+        draft = null;
+        for (const b of dock.querySelectorAll('button[data-mode]')) {
+          b.classList.toggle('active', b.dataset.mode === mode);
+        }
+        if (mode === 'select') {
+          teardownCapture();
+        } else {
+          ensureCapture();
+        }
+        updateHint();
+        renderTools();
+      }
+
+      function ensureCapture() {
+        if (captureEl) return;
+        captureEl = document.createElement('div');
+        captureEl.id = 'draw-capture';
+        captureEl.classList.add('armed');
+        document.body.appendChild(captureEl);
+
+        captureEl.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          captureEl.setPointerCapture(e.pointerId);
+          const start = clientToWorld(e);
+          if (!draft) draft = { step: 0, preview: [] };
+          draft.active = { start, end: start };
+          updateDraftPreview();
+
+          const onMove = (ev) => {
+            draft.active.end = clientToWorld(ev);
+            updateDraftPreview();
+            renderTools();
+          };
+          const onUp = () => {
+            captureEl.removeEventListener('pointermove', onMove);
+            captureEl.removeEventListener('pointerup', onUp);
+            captureEl.removeEventListener('pointercancel', onUp);
+            finalizeDraftDrag();
+          };
+          captureEl.addEventListener('pointermove', onMove);
+          captureEl.addEventListener('pointerup', onUp);
+          captureEl.addEventListener('pointercancel', onUp);
+        });
+      }
+
+      function teardownCapture() {
+        captureEl?.remove();
+        captureEl = null;
+      }
+
+      function updateDraftPreview() {
+        if (!draft) return;
+        draft.preview = [];
+        if (mode === 'portal') {
+          const [colorA, colorB] = PORTAL_COLORS[portals.length % PORTAL_COLORS.length];
+          if (draft.a0 && draft.a1) {
+            draft.preview.push([draft.a0, draft.a1, colorA, false]);
+          }
+          if (draft.active) {
+            const color = draft.step === 0 ? colorA : colorB;
+            draft.preview.push([draft.active.start, draft.active.end, color, false]);
+          }
+        } else if (mode === 'shear') {
+          if (draft.active) {
+            draft.preview.push([draft.active.start, draft.active.end, null, true]);
+          }
+        }
+      }
+
+      function finalizeDraftDrag() {
+        if (!draft || !draft.active) return;
+        const { start, end } = draft.active;
+        draft.active = null;
+        if (V.len(V.sub(end, start)) < MIN_SEAM_LENGTH) {
+          // Too short — treat as cancel of this step.
+          updateDraftPreview();
+          renderTools();
+          return;
+        }
+        if (mode === 'shear') {
+          shears.push({ id: nextId++, seam: [start, end], k: SHEAR_DEFAULT_K });
+          draft = null;
+          renderTools();
+          updateHint();
+        } else if (mode === 'portal') {
+          if (draft.step === 0) {
+            draft.a0 = start;
+            draft.a1 = end;
+            draft.step = 1;
+            updateDraftPreview();
+            updateHint();
+            renderTools();
+          } else {
+            portals.push({
+              id: nextId++,
+              a: [draft.a0, draft.a1],
+              b: [start, end],
+            });
+            draft = null;
+            renderTools();
+            setMode('select');
+          }
+        }
+      }
+
+      for (const b of dock.querySelectorAll('button[data-mode]')) {
+        b.addEventListener('click', () => setMode(b.dataset.mode));
+      }
+
+      clearBtn.addEventListener('click', () => {
+        portals.length = 0;
+        shears.length = 0;
+        draft = null;
+        renderTools();
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (e.target.closest('input, textarea, [contenteditable]')) return;
+        if (e.key === 'Escape' && mode !== 'select') setMode('select');
+        else if (e.key === 'v' || e.key === 'V') setMode('select');
+        else if (e.key === 'p' || e.key === 'P') setMode('portal');
+        else if (e.key === 's' || e.key === 'S') setMode('shear');
+      });
+
+      // -------------------------------------------------------------------
+      // 10. Status / hint text.
+      // -------------------------------------------------------------------
+      function updateHint() {
+        let hint;
+        if (mode === 'select') {
+          hint = `<span class="hint-strong">select</span> · drag shapes to move · drag portal/shear endpoints to reshape · drag the yellow dot on a shear line to change k`;
+        } else if (mode === 'shear') {
+          hint = `<span class="hint-strong">draw shear</span> · drag once to place a seam · <code>Esc</code> cancels`;
+        } else if (mode === 'portal') {
+          if (!draft || draft.step === 0)
+            hint = `<span class="hint-strong">draw portal · drag 1 of 2</span> · line A · <code>Esc</code> cancels`;
+          else
+            hint = `<span class="hint-strong">draw portal · drag 2 of 2</span> · line B (partner of A) · <code>Esc</code> cancels`;
+        }
+        statusEl.innerHTML = hint;
+      }
+      updateHint();
+
+      // -------------------------------------------------------------------
+      // 11. Render loop.
+      // -------------------------------------------------------------------
+      let texturesReady = false;
+
+      const resizeObserver = new ResizeObserver(([entry]) => {
+        const w =
+          entry.devicePixelContentBoxSize?.[0]?.inlineSize ??
+          Math.max(1, Math.round(canvas.clientWidth * devicePixelRatio));
+        const h =
+          entry.devicePixelContentBoxSize?.[0]?.blockSize ??
+          Math.max(1, Math.round(canvas.clientHeight * devicePixelRatio));
+        canvas.width = w;
+        canvas.height = h;
+        canvas.requestPaint();
+        renderTools();
+      });
+      resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+
+      canvas.addEventListener('paint', () => {
+        const dpr = devicePixelRatio || 1;
+        collectShapes();
+        for (const view of views.values()) view.snapshot(dpr);
+        texturesReady = true;
+      });
+
+      function render() {
+        if (texturesReady) {
+          const w = canvas.width;
+          const h = canvas.height;
+          const dpr = devicePixelRatio || 1;
+
+          const enc = device.createCommandEncoder();
+          const pass = enc.beginRenderPass({
+            colorAttachments: [
+              {
+                view: ctx.getCurrentTexture().createView(),
+                loadOp: 'clear',
+                storeOp: 'store',
+                clearValue: { r: 0.04, g: 0.04, b: 0.06, a: 1 },
+              },
+            ],
+          });
+          pass.setPipeline(pipeline);
+
+          for (const [el, view] of views) {
+            const { homeAxes, homeClips, ghosts } = computeInstances(el);
+            let slot = 0;
+            for (const g of ghosts) {
+              view.writeInstance(
+                slot,
+                packUniform(w, h, g.axes, dpr, g.clips[0], g.clips[1]),
+              );
+              pass.setBindGroup(0, view.getBindGroup(slot));
+              pass.draw(6);
+              slot++;
+            }
+            view.writeInstance(
+              slot,
+              packUniform(w, h, homeAxes, dpr, homeClips[0], homeClips[1]),
+            );
+            pass.setBindGroup(0, view.getBindGroup(slot));
+            pass.draw(6);
+          }
+          pass.end();
+          device.queue.submit([enc.finish()]);
+        }
+        requestAnimationFrame(render);
+      }
+
+      canvas.requestPaint();
+      requestAnimationFrame(render);
+      renderTools();
+
+      const mo = new MutationObserver(() => canvas.requestPaint());
+      mo.observe(canvas, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true,
+      });
+      for (const evt of ['focusin', 'focusout', 'input', 'click']) {
+        canvas.addEventListener(evt, () => canvas.requestPaint());
+      }
+    </script>
+  </body>
+</html>

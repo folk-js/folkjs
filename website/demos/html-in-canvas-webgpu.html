@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HTML-in-Canvas (WebGPU effect)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: #0a0a0f;
+        color: #d8d8e8;
+        font-family:
+          'Recursive', ui-monospace, 'SF Mono', Menlo, monospace;
+        overflow: hidden;
+      }
+
+      /* The canvas takes the whole viewport.
+         Its direct children are laid out & participate in hit testing,
+         but are invisible until drawn into the canvas. */
+      #stage {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+
+      /* Direct child of <canvas layoutsubtree>: an HTML "card" we'll
+         capture and route through a WebGPU shader.
+
+         The card is positioned at (0,0) with transform-origin: 0 0 so
+         that getElementTransform() has simple math to work with. Its
+         CSS transform is rewritten each paint to match where we've
+         drawn it in the canvas — that's what keeps hit-testing aligned
+         with the visual. */
+      #card {
+        box-sizing: border-box;
+        position: absolute;
+        top: 0;
+        left: 0;
+        transform-origin: 0 0;
+        width: min(560px, 90vw);
+        padding: 28px 32px;
+        border-radius: 14px;
+        background: linear-gradient(160deg, #1b1b2a 0%, #11111a 100%);
+        border: 1px solid #2a2a3d;
+        box-shadow:
+          0 30px 80px rgba(0, 0, 0, 0.6),
+          0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+        font-size: 16px;
+        line-height: 1.5;
+      }
+
+      #card h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        font-weight: 700;
+        background: linear-gradient(90deg, #7df9ff 0%, #ff79c6 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      #card p {
+        margin: 0 0 18px;
+        color: #a8a8c0;
+      }
+
+      #card .row {
+        display: flex;
+        gap: 8px;
+      }
+
+      #card input[type='text'] {
+        flex: 1;
+        padding: 10px 12px;
+        font: inherit;
+        color: #e8e8f8;
+        background: #0e0e16;
+        border: 1px solid #2a2a3d;
+        border-radius: 8px;
+        outline: none;
+      }
+
+      #card input[type='text']:focus {
+        border-color: #7df9ff;
+        box-shadow: 0 0 0 3px rgba(125, 249, 255, 0.15);
+      }
+
+      #card button {
+        padding: 10px 16px;
+        font: inherit;
+        font-weight: 600;
+        color: #0a0a0f;
+        background: #7df9ff;
+        border: 0;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      #card button:hover {
+        background: #aefcff;
+      }
+
+      #card .meta {
+        margin-top: 14px;
+        font-size: 12px;
+        color: #6e6e88;
+      }
+
+      /* Top-left HUD with controls and warnings. */
+      #hud {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: 360px;
+        padding: 12px 14px;
+        background: rgba(10, 10, 16, 0.7);
+        backdrop-filter: blur(8px);
+        border: 1px solid #2a2a3d;
+        border-radius: 10px;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      #hud h2 {
+        margin: 0;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #7df9ff;
+      }
+
+      #hud label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+      }
+
+      #hud .warn {
+        color: #ff8080;
+      }
+
+      #hud code {
+        background: #1b1b2a;
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <h2>html-in-canvas · webgpu</h2>
+      <label><input id="effectToggle" type="checkbox" checked /> shader effect</label>
+      <label><input id="animateToggle" type="checkbox" checked /> animate</label>
+      <div id="status"></div>
+    </div>
+
+    <canvas id="stage" layoutsubtree>
+      <div id="card">
+        <h1>HTML, in a canvas.</h1>
+        <p>
+          This card is real, live HTML &mdash; focus the input, type, click the
+          button. It's drawn into a
+          <code style="background:#11111a;padding:1px 4px;border-radius:4px">&lt;canvas layoutsubtree&gt;</code>
+          and routed through a WebGPU fragment shader.
+        </p>
+        <div class="row">
+          <input type="text" placeholder="type something…" />
+          <button type="button">Submit</button>
+        </div>
+        <div class="meta">
+          frames: <span id="frameCount">0</span> · paint events:
+          <span id="paintCount">0</span>
+        </div>
+      </div>
+    </canvas>
+
+    <script type="module">
+      const status = document.getElementById('status');
+      const canvas = document.getElementById('stage');
+      const card = document.getElementById('card');
+      const effectToggle = document.getElementById('effectToggle');
+      const animateToggle = document.getElementById('animateToggle');
+      const frameCountEl = document.getElementById('frameCount');
+      const paintCountEl = document.getElementById('paintCount');
+
+      function fail(msg) {
+        status.innerHTML = `<span class="warn">${msg}</span>`;
+        throw new Error(msg);
+      }
+
+      // Feature detection: html-in-canvas (Chrome behind
+      // chrome://flags/#canvas-draw-element). We require the full set
+      // of APIs this demo uses — no silent fallbacks, it's all
+      // experimental and we want loud failures.
+      const missing = [
+        !('layoutSubtree' in HTMLCanvasElement.prototype) && 'layoutSubtree',
+        typeof HTMLCanvasElement.prototype.requestPaint !== 'function' && 'requestPaint',
+        typeof HTMLCanvasElement.prototype.getElementTransform !== 'function' && 'getElementTransform',
+      ].filter(Boolean);
+      if (missing.length) {
+        fail(
+          `html-in-canvas APIs missing: <code>${missing.join(', ')}</code>. Enable <code>chrome://flags/#canvas-draw-element</code> and restart.`,
+        );
+      }
+
+      if (!navigator.gpu) fail('WebGPU not available in this browser.');
+
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) fail('No WebGPU adapter.');
+      const device = await adapter.requestDevice();
+
+      const ctx = canvas.getContext('webgpu');
+      const format = navigator.gpu.getPreferredCanvasFormat();
+      // 'premultiplied' matches the WICG jelly-slider reference and avoids
+      // premultiplied-alpha mismatch artifacts.
+      ctx.configure({ device, format, alphaMode: 'premultiplied' });
+
+      // copyElementImageToTexture lives on GPUQueue per the html-in-canvas IDL.
+      if (typeof device.queue.copyElementImageToTexture !== 'function') {
+        fail(
+          'GPUQueue.copyElementImageToTexture missing. Re-check the html-in-canvas flag in this Chrome build.',
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // Pipeline: fullscreen triangle that samples an "html texture"
+      // and applies a CRT-ish effect (chromatic aberration + scanlines
+      // + subtle wave + vignette).
+      // ---------------------------------------------------------------
+      const shader = /* wgsl */ `
+        struct Uniforms {
+          time: f32,
+          effect: f32,
+          resolution: vec2<f32>,
+        };
+
+        @group(0) @binding(0) var<uniform> u: Uniforms;
+        @group(0) @binding(1) var samp: sampler;
+        @group(0) @binding(2) var tex: texture_2d<f32>;
+
+        struct VsOut {
+          @builtin(position) pos: vec4<f32>,
+          @location(0) uv: vec2<f32>,
+        };
+
+        @vertex
+        fn vs(@builtin(vertex_index) vid: u32) -> VsOut {
+          // Fullscreen triangle.
+          var p = array<vec2<f32>, 3>(
+            vec2(-1.0, -3.0),
+            vec2(-1.0,  1.0),
+            vec2( 3.0,  1.0),
+          );
+          let xy = p[vid];
+          var out: VsOut;
+          out.pos = vec4(xy, 0.0, 1.0);
+          out.uv = vec2((xy.x + 1.0) * 0.5, 1.0 - (xy.y + 1.0) * 0.5);
+          return out;
+        }
+
+        fn vignette(uv: vec2<f32>) -> f32 {
+          let d = distance(uv, vec2(0.5, 0.5));
+          return smoothstep(0.85, 0.35, d);
+        }
+
+        @fragment
+        fn fs(in: VsOut) -> @location(0) vec4<f32> {
+          var uv = in.uv;
+
+          if (u.effect < 0.5) {
+            return textureSample(tex, samp, uv);
+          }
+
+          let wave = sin(uv.y * 90.0 + u.time * 2.0) * 0.0015;
+          uv.x = uv.x + wave;
+
+          let aberration = 0.0025 + 0.0015 * sin(u.time * 0.7);
+          let r = textureSample(tex, samp, uv + vec2( aberration, 0.0)).r;
+          let g = textureSample(tex, samp, uv).g;
+          let b = textureSample(tex, samp, uv - vec2( aberration, 0.0)).b;
+          let a = textureSample(tex, samp, uv).a;
+          var col = vec3(r, g, b);
+
+          let scan = 0.92 + 0.08 * sin(in.pos.y * 1.6);
+          col = col * scan;
+
+          col = col * mix(0.55, 1.0, vignette(in.uv));
+          col = col + vec3(0.01, 0.0, 0.02);
+
+          // Output premultiplied alpha (matches canvas alphaMode).
+          return vec4(col * a, a);
+        }
+      `;
+
+      const module = device.createShaderModule({ code: shader });
+
+      const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module, entryPoint: 'vs' },
+        fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+        primitive: { topology: 'triangle-list' },
+      });
+
+      const sampler = device.createSampler({
+        magFilter: 'linear',
+        minFilter: 'linear',
+      });
+
+      const uniformBuffer = device.createBuffer({
+        size: 16, // time, effect, resW, resH
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+
+      let htmlTexture = null;
+      let bindGroup = null;
+      let texW = 0;
+      let texH = 0;
+      let texReady = false;
+
+      function ensureHtmlTexture(w, h) {
+        if (htmlTexture && texW === w && texH === h) return;
+        if (htmlTexture) htmlTexture.destroy();
+        htmlTexture = device.createTexture({
+          size: [w, h, 1],
+          format: 'rgba8unorm',
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+        bindGroup = device.createBindGroup({
+          layout: pipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: uniformBuffer } },
+            { binding: 1, resource: sampler },
+            { binding: 2, resource: htmlTexture.createView() },
+          ],
+        });
+        texW = w;
+        texH = h;
+        texReady = false;
+      }
+
+      // Match the canvas's drawing buffer to the device-pixel size so
+      // the rendered HTML stays crisp. Only ask for a fresh paint on
+      // resize (we do *not* call requestPaint from inside onpaint).
+      const resizeObserver = new ResizeObserver(([entry]) => {
+        const w =
+          entry.devicePixelContentBoxSize?.[0]?.inlineSize ??
+          Math.max(1, Math.round(canvas.clientWidth * devicePixelRatio));
+        const h =
+          entry.devicePixelContentBoxSize?.[0]?.blockSize ??
+          Math.max(1, Math.round(canvas.clientHeight * devicePixelRatio));
+        canvas.width = w;
+        canvas.height = h;
+        ensureHtmlTexture(w, h);
+        canvas.requestPaint();
+      });
+      resizeObserver.observe(canvas, { box: 'device-pixel-content-box' });
+
+      let frame = 0;
+      let paintCount = 0;
+      const startTime = performance.now();
+
+      // Sync the card's CSS transform so its DOM box lines up with where
+      // we've drawn it in the canvas. Without this, hit-testing (clicks,
+      // focus, hover) would only cover the card's pre-transform box — a
+      // tiny region at the top-left — even though the visual fills the
+      // viewport.
+      //
+      // We're drawing the card stretched from its natural element-local
+      // grid size to the full canvas grid starting at (0,0). That's the
+      // "draw transform" we pass to getElementTransform; the canvas
+      // hands back the equivalent CSS transform for us to apply.
+      function syncTransform() {
+        const elemCssW = card.offsetWidth;
+        const elemCssH = card.offsetHeight;
+        if (elemCssW === 0 || elemCssH === 0) return;
+
+        const dpr = devicePixelRatio || 1;
+        const elemGridW = elemCssW * dpr;
+        const elemGridH = elemCssH * dpr;
+
+        const drawTransform = new DOMMatrix()
+          .translate(0, 0)
+          .scale(canvas.width / elemGridW, canvas.height / elemGridH);
+
+        card.style.transform = canvas
+          .getElementTransform(card, drawTransform)
+          .toString();
+      }
+
+      // `paint` is fired by the platform when canvas children's painted
+      // output has changed. We use it *only* to refresh the html snapshot
+      // texture and sync the DOM transform — we do NOT draw here, and
+      // we do NOT call requestPaint() from inside it (that would recurse
+      // update-the-rendering).
+      canvas.addEventListener('paint', () => {
+        paintCount++;
+        paintCountEl.textContent = String(paintCount);
+        const w = canvas.width;
+        const h = canvas.height;
+        if (w === 0 || h === 0) return;
+        ensureHtmlTexture(w, h);
+        device.queue.copyElementImageToTexture(card, w, h, {
+          texture: htmlTexture,
+        });
+        syncTransform();
+        texReady = true;
+      });
+
+      // The actual render loop — continuous, driven by rAF.
+      function render() {
+        if (texReady && htmlTexture) {
+          const w = canvas.width;
+          const h = canvas.height;
+          const t = (performance.now() - startTime) / 1000;
+          const effectOn = effectToggle.checked ? 1 : 0;
+          device.queue.writeBuffer(
+            uniformBuffer,
+            0,
+            new Float32Array([t, effectOn, w, h]),
+          );
+
+          const enc = device.createCommandEncoder();
+          const pass = enc.beginRenderPass({
+            colorAttachments: [
+              {
+                view: ctx.getCurrentTexture().createView(),
+                loadOp: 'clear',
+                storeOp: 'store',
+                clearValue: { r: 0.04, g: 0.04, b: 0.06, a: 1 },
+              },
+            ],
+          });
+          pass.setPipeline(pipeline);
+          pass.setBindGroup(0, bindGroup);
+          pass.draw(3);
+          pass.end();
+          device.queue.submit([enc.finish()]);
+
+          frame++;
+          frameCountEl.textContent = String(frame);
+        }
+
+        if (animateToggle.checked || !texReady) {
+          requestAnimationFrame(render);
+        }
+      }
+
+      // Kick things off: request an initial snapshot, then drive via rAF.
+      canvas.requestPaint();
+      requestAnimationFrame(render);
+
+      // When animation is re-enabled, resume the rAF loop.
+      animateToggle.addEventListener('change', () => {
+        if (animateToggle.checked) requestAnimationFrame(render);
+      });
+
+      // If the HTML content changes (typing, focusing, clicking), ask for
+      // a fresh snapshot. `input` covers typing; `change` / focus / blur
+      // cover button & input state.
+      for (const evt of ['input', 'change', 'focusin', 'focusout', 'click']) {
+        card.addEventListener(evt, () => canvas.requestPaint());
+      }
+
+      status.textContent =
+        'ready · ' + (adapter.info?.vendor || adapter.info?.architecture || 'webgpu');
+    </script>
+  </body>
+</html>
