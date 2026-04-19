@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Sparse Ideal Atlas — regions + draggable shapes</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+
+      folk-atlas {
+        position: absolute;
+        inset: 0;
+      }
+
+      #info {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(255, 255, 255, 0.92);
+        padding: 10px 12px;
+        border-radius: 6px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+        font-size: 12px;
+        line-height: 1.4;
+        max-width: 340px;
+        z-index: 10;
+        pointer-events: none;
+      }
+
+      #info b {
+        color: oklch(45% 0.16 277);
+      }
+
+      #info code {
+        background: rgba(0, 0, 0, 0.05);
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <folk-atlas>
+      <folk-atlas-shape x="140" y="120" width="120" height="60">NE quadrant</folk-atlas-shape>
+      <folk-atlas-shape x="350" y="180" width="160" height="60">NE far</folk-atlas-shape>
+      <folk-atlas-shape x="-260" y="80" width="160" height="80">NW quadrant</folk-atlas-shape>
+      <folk-atlas-shape x="-200" y="-180" width="160" height="80">SW quadrant</folk-atlas-shape>
+      <folk-atlas-shape x="100" y="-160" width="160" height="80">SE quadrant</folk-atlas-shape>
+    </folk-atlas>
+
+    <div id="info">
+      <b>Sparse Ideal Atlas — primitive splits.</b><br />
+      The seed atlas is 4 quadrant faces meeting at the origin, with ideal
+      vertices at the cardinal directions. Each face owns its own copies of
+      every vertex (un-shared); all edge transforms are identity so the canvas
+      behaves visually like a flat plane.
+      <br /><br />
+      <b>Shift + click</b> anywhere in the canvas to split the underlying face
+      at that point via <code>splitFaceAtInterior</code>. Each split adds 2
+      faces and re-anchors them to the inserted point as their canonical
+      <code>(0, 0)</code> origin. Atlas invariants are validated after every
+      mutation.
+      <br /><br />
+      <b>Drag</b> shapes around. They re-locate to whichever face contains
+      their origin — watch the <code>(N)</code> counts next to each face label
+      change as a shape crosses a face boundary.
+      <br /><br />
+      <b>Pan:</b> two-finger scroll. <b>Zoom:</b>
+      <code>⌘</code> / <code>Ctrl</code> + scroll.
+    </div>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-atlas';
+    </script>
+  </body>
+</html>
