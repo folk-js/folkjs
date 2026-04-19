@@ -17,7 +17,7 @@ The goal is a substrate for spatial canvases that supports rich space-altering o
 
 ## The structural claim
 
-An empty canvas is a small ring of faces with ideal "vertices" covering the whole plane. Adding a space operation adds a few faces and a few transforms, locally. Most of the canvas remains one or a few big faces with identity transforms — ~identical in cost and behavior to a flat canvas. The non-trivial structure only exists where the user has introduced it.
+An empty canvas is a single convex face whose boundary half-edges go to ideal directions, covering the whole plane with one frame. (The temporary triangle-only implementation has it as a small ring of wedge faces meeting at the origin — same plane coverage, just split into triangles by implementation requirement, not by anything semantic.) Adding a space operation adds a few faces and a few transforms, locally. Most of the canvas remains one or a few big faces with identity transforms — ~identical in cost and behavior to a flat canvas. The non-trivial structure only exists where the user has introduced it.
 
 This is the key engineering property: you pay for complexity you introduce, nothing else.
 
@@ -25,12 +25,16 @@ This is the key engineering property: you pay for complexity you introduce, noth
 
 A short list of model-level invariants the implementation must respect. Every operation preserves these.
 
-1. **No global Euclidean frame.** Every coordinate, vector, length and direction is expressed *relative to some specific face*. There is no canonical "world origin". The choice of root face for rendering is a *rendering* decision (it picks which face's frame the screen happens to be aligned with), not a property of the geometric data.
-2. **Edge-primary geometry.** The atlas is a graph of half-edges. Each half-edge carries its own intrinsic geometric data (a face-local vector for finite-target edges, or a unit direction for ideal-target edges). "Vertices" are not a primary concept: they are derived as the equivalence classes of half-edges that meet at a common physical point, recoverable by walking twin/next pointers. Vertex *positions in a face's frame* are derived by accumulating half-edge deltas around the face cycle.
-3. **Canonical face frame, by convention.** Each face has a designated "anchor" half-edge (`halfEdges[0]`). Its starting junction sits at face-local `(0, 0)`. This is purely a numbering convention — there is no special vertex object — but it pins down each face's local frame uniquely so that face-local coordinates are well-defined.
-4. **Triangle closure.** The deltas of a face's three half-edges sum to zero (modulo the convention that ideal-target half-edges contribute their direction in a separate channel). For 2-half-edge faces (both non-anchor edges go to ideal directions, the third side is at infinity and doesn't exist as data), only the two finite-target deltas exist and the closure condition is satisfied trivially.
-5. **No rotation in edge transforms.** Edge transforms are restricted to translations + (potentially non-uniform) scales. The rotational components of all stored affine matrices are zero. Rotational regions are out of scope for the foreseeable future; this restriction keeps transforms commutative in their dominant cases and rules out the discrete-curvature failure mode where walking a closed loop accumulates a rotation.
-6. **Composite transforms are derived, not stored.** Composite transforms (face-local → root-local) are recomputed from scratch each frame by walking the half-edge graph from a chosen root. They are never persisted. Only edge transforms (canonical primitives) and per-half-edge geometric data are stored, so stored data never accumulates floating-point drift.
+1. **No global Euclidean frame.** Every coordinate, vector, length and direction is expressed *relative to some specific face*. There is no canonical "world origin". Functions exposed by the atlas never accept or return a "root-local" or "world" coordinate; they traffic in `FaceLocalPoint`s (a `(face, x, y)` triple).
+2. **Root is a pointer, not part of the atlas's identity.** A choice of root face is required for rendering (it picks which face's frame the screen happens to be aligned with), but two atlases with identical face data and identical edge transforms but different roots are *the same atlas*. Re-rooting is an O(1) bookkeeping operation: `Atlas.switchRoot(newRoot)` returns a compensation matrix `C` (the new root's old composite) so the view transform can absorb the change without any face-local coordinate moving.
+3. **The atlas is a geometric structure, not a metric space.** There is no global notion of distance, area, or angle. Face-local distance is ordinary Euclidean on face-local coordinates. Distance between points in different faces is only meaningful once you pick a frame to express both in. Re-expressing through non-isometric transforms (eventual scale operations) would give different answers depending on frame choice. *Geometric* operations are well-defined; *metric* questions need an explicit choice of frame.
+4. **Edge-primary geometry; junction identity is derived, not enforced.** The atlas is a graph of half-edges. Each half-edge carries its own intrinsic geometric data (a face-local vector for finite-target edges, or a unit direction for ideal-target edges). "Vertices" / "junctions" are not primary objects: they are the equivalence classes of half-edges that meet at the same physical point, recoverable by walking `aroundJunction` (twin/next). Junction *consistency* is a derived property — the twin-transform invariants (`transform * h.next.origin = twin.origin`, etc.) are what make junction identity coherent. Intentionally relaxing this consistency at specific junctions is how future operations like cone points, branch cuts, and self-glued boundaries would be expressed.
+5. **Canonical face frame, by convention.** Each face has a designated "anchor" half-edge (`halfEdges[0]`). Its starting junction sits at face-local `(0, 0)`. This is purely a numbering convention — there is no special vertex object — but it pins down each face's local frame uniquely so that face-local coordinates are well-defined.
+6. **Faces are convex k-gons, k ≥ 3.** Every face is a convex polygon (possibly with some vertices at infinity, in which case the face extends to infinity in those directions). Operations that would produce non-convex regions are responsible for decomposing into convex sub-faces at mutation time; the data structure never holds a non-convex face. Cycle closure (sum of half-edge deltas around the face cycle is zero, modulo ideal-direction conventions) is a structural consequence.
+7. **Edge transforms are translations only, in the operational regime.** Each edge transform has the form `(x, y) ↦ (x + tx, y + ty)`. The linear part is the identity matrix; only the translation varies. This rules out scale, rotation, shear, and reflection from all current and near-term operations (expand, contract, drag, flatten). It keeps composites commutative, rules out the discrete-curvature failure mode where walking a closed loop accumulates a rotation, and means shapes never visually deform when re-anchored across an edge.
+
+   *Future extension.* Infinite-zoom and recursive-space operations (deferred) will require enabling **uniform scale** alongside translation — the group `(x, y) ↦ s · (x, y) + (tx, ty)` with `s > 0`. Rotation, shear, and anisotropic scale remain ruled out indefinitely; their absence is what keeps the structure conformal in the current regime and angle-preserving in the future regime. Operations that can accidentally introduce non-conformal transforms must be rejected.
+8. **Composite transforms are derived, not stored.** Composite transforms (face-local → root-local) are recomputed from scratch each frame by walking the half-edge graph from the current root. They are never persisted. Only edge transforms (canonical primitives) and per-half-edge geometric data are stored, so stored data never accumulates floating-point drift.
 
 ## Primitives
 
@@ -43,7 +47,7 @@ The atlas is a graph of half-edges. Each half-edge carries:
 - A **twin** pointer to the corresponding half-edge in the adjacent face, or `null` if there is no adjacent face. (This happens at the line at infinity: an ideal-ideal pair of half-edges within a face implies a boundary "between" them at infinity, which is not a real edge in the atlas.)
 - A **next** pointer to the next half-edge in the face cycle (CCW).
 - A **face** pointer to the owning face.
-- An **edge transform** (when twin is non-null): a 2D affine matrix mapping coordinates in `this.face`'s frame to `twin.face`'s frame. Translations and (potentially non-uniform) scales only — never a rotation.
+- An **edge transform** (when twin is non-null): a 2D affine matrix mapping coordinates in `this.face`'s frame to `twin.face`'s frame. Translations only in the current operational regime (invariant 7); future-extensible to translation + uniform scale, never to rotation, shear, anisotropic scale, or reflection.
 
 There is no `Vertex` class. A "vertex" or "junction" is the equivalence class of half-edges that meet at the same physical point — discoverable by walking `.next.twin.next.twin...` (or the reverse) until the cycle closes.
 
@@ -51,31 +55,39 @@ A "finite vertex" is the meeting point of two or more half-edges where at least 
 
 ### Faces
 
-A face is a triangular region of the atlas. It owns:
+A face is a convex polygonal region of the atlas. It owns:
 
-- A small CCW-ordered list of half-edges: 3 if at least one of its non-anchor junctions is finite, 2 if both non-anchor junctions are ideal directions (in which case the third "side" is at infinity and exists only as topology, not as a stored half-edge).
+- A CCW-ordered list of `k ≥ 3` half-edges forming its boundary cycle.
 - The set of shapes assigned to this face.
 
 A face's local frame is pinned by the convention that `halfEdges[0]`'s starting junction sits at face-local `(0, 0)`. The other junctions are derived by accumulating half-edge deltas around the cycle.
 
-A face with all-finite half-edges is a finite triangle. A face with at least one ideal-target half-edge is an infinite region (a wedge, a half-plane, a strip) extending to infinity in the ideal direction(s).
+A face is the **maximal region sharing a single local coordinate frame**, bounded by the edges where frame changes happen. That is the *semantic* definition; "triangle" or "polygon" is just the shape that falls out for a given operation. The empty canvas, for example, is a single face whose `k` boundary half-edges all go to ideal directions — one frame, no frame transitions, and the polygon just happens to span the entire plane.
+
+A face with all-finite half-edges is a bounded convex polygon. A face with one or more ideal-target half-edges is an unbounded convex region (a wedge, a strip, a half-plane, or the whole plane) extending to infinity in those directions. Adjacent ideal half-edges represent a piece of the line at infinity between them; that "closing" half-edge has no twin and no transform — it is a bookkeeping element so that face iteration is uniform.
+
+**Implementation status.** The current implementation pins `k = 3` everywhere (`Face.halfEdges` is a fixed 3-tuple). Generalizing to variable-`k` is the next planned refactor — see "Prototyping plan" below. The semantic and invariant model already assumes convex k-gons.
 
 ### Edges (twin pairs of half-edges)
 
-A pair of twin half-edges constitutes an "edge" of the atlas. Each carries a transform from its face's frame to its twin's. The twin half-edge carries the inverse transform, and the two are constrained: applied to one's delta (for ideal: applied as the linear part to one's direction), they must equal the negation of the other's delta (or twin direction). This is the discrete consistency condition that means "the same physical edge looks the same from both sides".
+A pair of twin half-edges constitutes an "edge" of the atlas. Each carries a translation `(tx, ty)` from its face's frame to its twin's; the twin carries the negation. The pair is constrained so that applying one's transform to one's stored junction data produces the twin's stored junction data — the discrete consistency condition that means "the same physical edge looks the same from both sides". Junction identity at the endpoints (invariant 4) is exactly this condition.
 
-For most edges in a canvas — those internal to flat, un-operated-on regions — the transform is the identity. Non-identity transforms exist only at operation boundaries. Walking from one face to another across an edge composes its transform.
+For most edges in a canvas — those internal to flat, un-operated-on regions — the transform is the zero translation (identity). Non-zero translations exist only at operation boundaries. Walking from one face to another across an edge adds its translation.
 
-**These primitives are never composed-and-decomposed into stored state.** Composite transforms (root → face) are recomputed per frame from the current root via a fresh walk, never persisted. This gives two important properties:
+There is **gauge freedom** in how a given physical configuration is represented: the same visible result can be expressed by translations living in shape positions, in edge transforms, or in the root's view transform. Re-anchoring (`switchRoot`) and rebase-at-point operations move budget between these representations without changing what the user sees.
+
+**Edges as the user-facing concept.** Half-edges are the implementation; "edges" (twin pairs) are the user-facing object. Selecting an edge — for instance to drag a transform gizmo — selects the twin pair, not one of its halves. At-infinity half-edges (no twin) are not selectable; there is nothing on the other side to translate relative to.
+
+**Composites are derived, not stored.** Composite transforms (face-local → root-local) are recomputed per frame from the current root via a fresh walk, never persisted. This gives:
 
 - A shape crossing an edge during a drag converts its face-local coordinates via that one edge's transform — O(1), exact, visually continuous.
-- Shifting the root face (e.g. for floating-origin precision) is also O(1) at the data-structure level; the next frame's walk computes new composites from the new root. Stored coordinates never drift.
+- Shifting the root face is O(1) at the data-structure level. `Atlas.switchRoot(newRoot)` returns the compensation matrix; the next frame's walk computes new composites from the new root. Stored coordinates never drift.
 
-### Patches (deferred optimization)
+### Patches (subsumed by convex k-gon faces)
 
-A **patch** is a maximal set of faces sharing the same local frame (all edges between them have identity transforms). A patch behaves like a single flat region: shapes move between faces in a patch without any coordinate changes, and all shapes in a patch can be rendered with a single composite transform.
+Earlier drafts of this design distinguished between *triangles* (the primitives) and *patches* (maximal triangle clusters with identity transforms between them — i.e. one logical region with one frame). With **convex k-gon faces** (invariant 6), the patch concept dissolves: a face simply *is* a maximal region with one frame. Operations introduce new faces only where new frames are needed, not because triangulation requires it.
 
-For prototyping we **omit patches as a first-class concept**. Every face is a triangle; the renderer walks each triangle independently. Patches re-enter later as either a render-time optimization (computed by union-find on identity edges) or as polygonal n-gon faces. Either way, the same atlas data structure and operation semantics apply.
+The `triangle` framing remains useful as the *initial implementation* (it's what the code currently does) and as the algorithmic fallback for non-convex outcomes. But the structural unit is the face-as-frame-region; triangles are an artifact, not a semantic.
 
 ### Shapes
 
@@ -93,7 +105,7 @@ No shape ever has "global" coordinates. Coordinates are always local to some fac
 
 ### Sparsity
 
-Empty canvas: O(1) faces (three or four faces covering the whole plane with ideal vertices).
+Empty canvas: O(1) faces — semantically a single all-ideal-boundary face under the convex k-gon model; currently a small wedge ring under the triangle-only implementation.
 
 Canvas with N operations of combined boundary complexity B: O(B) faces introduced. Shape count does not affect face count.
 
@@ -101,9 +113,9 @@ Storage: O(operations) independent of shape count or canvas extent.
 
 ### Locality of edits (claimed, needs validation in prototyping)
 
-Adding an operation modifies the triangulation only in a bounded region around the operation's boundary. Faces far from the operation are unchanged. Their stored data — local coordinates of contained shapes, transforms on their edges — remain bitwise identical.
+Adding an operation modifies the subdivision only in a bounded region around the operation's boundary. Faces far from the operation are unchanged. Their stored data — local coordinates of contained shapes, transforms on their edges — remain bitwise identical.
 
-The prototype starts with constrained Delaunay (CDT), whose locality is amortized but not worst-case. For the operation set we're targeting (sparse, convex, non-overlapping), this is acceptable. If worst-case locality becomes a measured problem, fall back to a bounded-flip variant or a custom incremental triangulation.
+Each operation supplies its own subdivision (it knows what sub-faces and edges it needs to introduce); we do not run a generic triangulator over the whole atlas. Locality is therefore inherent to operation design, not delegated to a triangulation algorithm's amortized properties.
 
 ### Precision
 
@@ -137,7 +149,15 @@ This gives "stretched regions push each other" for free. No explicit force calcu
 
 An operation is a local edit to the atlas. Operations are **first-class entities in the document** (DOM elements). Each operation owns the atlas pieces it created — the faces it inserted, the transforms it set on edges, the vertices it added — and mutates them in place when its parameters change. There is no derivation or replay: changing the operation's gizmo (e.g. dragging Δ larger) directly updates the relevant atlas state. Adding the operation element inserts its atlas pieces; removing it tears them down symmetrically.
 
-The current envisioned operations:
+Every operation decomposes into a **combinatorial rewrite** of the half-edge graph plus a **transform specification** for any new edges introduced. The decomposition is useful as a mental model and as a code-organization principle, though it isn't entirely free: the transform specification has to be globally consistent (translations around any cycle sum to zero), which is a non-local constraint. Operations are responsible for satisfying it.
+
+### Edge gizmo (exploratory primitive)
+
+The simplest interactive operation: select an edge (a twin pair) and drag its translation. With translation-only transforms this is a single 2D handle per edge — typically rendered at the edge's midpoint with an arrow showing the displacement. Dragging updates `(tx, ty)` on `h.transform` and `-(tx, ty)` on `h.twin.transform`, then triggers composite recomputation. All faces downstream of that edge in the BFS tree visually translate.
+
+This is intended as a sandbox for building intuition about how edge transforms compose, and for catching cycle-closure bugs visually before more structured operations are added. When uniform scale lands, the gizmo extends naturally: scroll on the handle for scale, drag for translation.
+
+The current envisioned higher-level operations:
 
 ### Expand a convex polygon by amount Δ (band-inside model)
 
@@ -145,7 +165,7 @@ Inserts a band of new faces between the original polygon interior and a new, out
 
 - The polygon's vertices are duplicated. The original vertices remain at their positions; new vertices are placed at the original positions plus Δ along their outward normals.
 - The original interior face is unchanged in shape and frame.
-- A band of trapezoidal faces (each split into two triangles) fills the ring between original and new boundary vertices.
+- A band of trapezoidal faces (one per polygon edge) fills the ring between original and new boundary vertices. With convex k-gon faces (invariant 6), each trapezoid is a single 4-gon face; under the temporary triangle-only implementation each trapezoid is split into two triangles.
 - The band's inner edges (against the original interior) carry identity transforms — the band is contiguous with the interior in the same frame.
 - The band's outer edges (against the exterior) carry transforms that translate by Δ in the outward normal direction. Walking from inside to outside through one of these edges accumulates +Δ outward; the exterior past the band is therefore offset by Δ outward in screen space.
 
@@ -185,12 +205,9 @@ Cut an arc into the atlas, introducing two new boundary edges. The two sides can
 
 ### The root face
 
-Rendering requires a choice of **root face** from which the walk begins. Several strategies:
+Rendering requires a choice of **root face** from which the walk begins. The current implementation uses a **viewport-following root**: whenever the viewport center crosses into a different face, `Atlas.switchRoot(newRoot)` re-anchors the atlas to that face and returns a compensation matrix `C` (the new root's old composite). The view's pan/zoom transform absorbs `C` so that no shape moves on screen — the change is purely a re-expression. This both keeps composites short (fewer transforms accumulated, better float precision) and makes face-relative gizmo math cheap (the focused region is, more often than not, near the root).
 
-- **Fixed root:** one face is designated as root forever. Simple. Composite transforms are stable.
-- **Viewport-local root:** the face containing the viewport center is the root. Changes as the viewport moves. Risk: shapes visually jump when the root changes if the transition is not handled correctly. This is effectively a floating-origin root and is likely the most correct and elegant solution long-term.
-
-Likely start with fixed root for simplicity.
+`switchRoot` is O(1) at the data-structure level: it only flips a pointer. The actual composite recomputation happens on the next render walk, from the new root.
 
 ### The walk
 
@@ -200,15 +217,29 @@ Composites are computed fresh per frame; they are **not persisted** as state on 
 
 The walk also acts as the spatial index. There is no separate BVH or grid: a face's composite-transformed extent against the viewport tells us whether to recurse into it and whether to render its shapes. For empty regions of the canvas the walk terminates after a handful of faces.
 
-Pan and zoom are a global affine on top of the root: they multiply into the root's "to-screen" matrix and don't touch any atlas data. Panning does nothing structural; it changes one matrix at the top of the walk.
+Pan and zoom are a global affine on top of the root: they multiply into the root's "to-screen" matrix and don't touch any atlas data. Panning does nothing structural; it changes one matrix at the top of the walk (and may trigger a `switchRoot` when the viewport center crosses a face boundary).
 
 Note that there are many optimizations which can be explored in the future. And long-term we should consider what the computational ideal is in terms of asymptotic complexity.
 
+### Per-face visibility (scalar)
+
+The walk associates each visited face with a scalar `visibility ∈ [0, 1]` rather than a boolean "in viewport / not." Visibility is the product of independent factors, each a smooth falloff:
+
+- **Screen-distance factor.** 1 inside the viewport rect; falls off smoothly to 0 over a buffer band beyond the viewport; exactly 0 past the buffer.
+- **Scale factor.** 1 at on-screen scales; falls off smoothly to 0 once the face's effective per-pixel size of one local unit drops below ~1 logical pixel. (Trivially 1 in the translation-only regime; only becomes interesting once uniform scale enters.)
+- Other factors can be added (e.g. opacity blend with depth in BFS).
+
+For the prototype the **threshold is `> 0`**: any face with non-zero visibility is rendered, period. The plumbing exists so that culling can be enabled later by raising the threshold (and shapes can use the scalar for opacity blending, LOD, throttled event handling, etc.) without restructuring the renderer. In recursive / self-similar atlases (deferred) the visibility scalar is what makes BFS terminate naturally — the same logical face appears multiple times in the visible set, once per BFS path, and paths whose accumulated composite drives visibility to zero are pruned.
+
+This is **per-face visibility only**. Per-shape visibility (a shape might be off-screen even though its face is on-screen) is a separate concern, not currently needed; if it becomes needed, it composes on top.
+
 ### Rendering shapes
 
-For each face in the viewport, apply the face's composite transform as a single uniform/matrix, then render all shapes in the face with their face-local coordinates. Standard GPU rendering. Each face is essentially a "layer" with its own transform, and shapes within the layer are simple 2D content.
+For each face in the viewport, apply the face's composite transform as a single matrix, then render all shapes in the face with their face-local coordinates. Each face is essentially a "layer" with its own transform, and shapes within the layer are simple 2D content. For the DOM, this is applied via CSS transforms.
 
-For the DOM, this can be applied via CSS transforms.
+A shape lives in **exactly one face** at a time. In the translation-only regime (invariant 7) this is unambiguous: translations preserve size and orientation, so a shape rendered through any composite looks the same regardless of which face it's anchored to — the only thing that changes when a shape transitions across an edge is the bookkeeping (face pointer + face-local position).
+
+Once uniform scale is enabled (future regime), one-face-per-shape produces "popping" at boundaries between faces of different effective scale: a shape's visible size pops when it transfers ownership across a non-trivial edge. The honest fix is **per-face clipped rendering**: split the shape against the face boundary it overlaps, render each piece through its own face's composite. The two pieces meet at the boundary with matching position but kinked size — which is the correct visualization of "you're crossing into a region with different local scale." This uses the same Sutherland-Hodgman polygon clipping the debug overlay already does for face polygons, so it's not exotic — just deferred until uniform scale lands.
 
 ### Cost per frame
 
@@ -251,13 +282,15 @@ The walk itself is the spatial index — face screen extents (composite transfor
 
 ## What's hard and needs prototyping
 
-### Triangulation algorithm
+### Subdivision algorithm
 
-Choice for the prototype: **constrained Delaunay (CDT)**, with operation polygon edges as forced constraints. Quality (well-shaped triangles) does matter here because vertices serve as origin points for face frames and are visible in debug rendering, and degenerate triangles produce ill-conditioned inverses for point-location.
+The historical framing was "triangulation algorithm" (constrained Delaunay over the polygon constraints). With convex k-gon faces (invariant 6) the question becomes "**convex planar subdivision** of the operation footprint." For our operation set — convex polygons with translation-only edge transforms — the subdivisions are constructive: each operation knows what sub-faces it needs to introduce and produces them directly, without going through a generic triangulator.
 
-CDT's update locality is amortized but not worst-case. For the operation set we're targeting (sparse, convex, non-overlapping), this is acceptable. If worst-case locality becomes a concern we can move to bounded-flip CDT or a custom incremental variant later.
+For example, expand-by-Δ on a convex k-gon produces k trapezoids around it, plus the unchanged interior face. Contract is symmetric. No CDT needed.
 
-Libraries to consider initially: `poly2tri`, `cdt2d`. Likely roll our own incremental Bowyer-Watson with constraint preservation eventually, for full control over ideal vertices and locality.
+CDT remains a useful tool for two ancillary cases: (a) the temporary triangle-only implementation, where the trapezoids are split into pairs of triangles, and (b) any future operation that needs to insert an interior vertex into an arbitrary face. For (b), libraries to consider: `poly2tri`, `cdt2d`. Likely roll our own incremental Bowyer-Watson with constraint preservation eventually, for full control over ideal vertices and locality.
+
+Convex decomposition for non-convex operation results (tears) is handled by each operation defining its own sub-face partition; the data structure never needs a generic non-convex decomposer.
 
 ### Anchor half-edge selection
 
@@ -288,33 +321,44 @@ Deferred but the data structure should accommodate them from the start to avoid 
 ## What's explicitly not attempted
 
 - **Smooth deformation fields:** no per-pixel smooth warping. The atlas is piecewise-flat with rigid transitions. Smooth deformations inside a region would be a separate layer (e.g., shader-based) and are out of scope for the core structure.
-- **Curved faces:** faces are flat triangles. Curves in the space come from many small faces, not from face geometry. This relates to the number of ideal vertices too, as for example expanding a circular region may look poor with only 4 ideal vertices.
-- **General non-convex regions:** operations are defined for convex polygons initially. Non-convex regions can be decomposed into convex pieces.
+- **Curved faces:** faces are flat convex polygons. Curves in the space come from many small faces, not from face geometry. This relates to the number of ideal vertices too: expanding a circular region looks better with more ideal vertices radiating outward.
+- **Non-convex faces.** Per invariant 6, every face is convex. Operations whose results would be non-convex (e.g. tears) are responsible for decomposing into convex sub-faces at mutation time.
+- **Rotation, shear, anisotropic scale, reflection in edge transforms.** Per invariant 7. These would break the conformal / angle-preserving property and reintroduce the discrete-curvature failure mode.
+- **Global metric.** The atlas has no canonical distance/area/angle. Per invariant 3.
+- **Per-shape stretching with face transforms.** A shape lives in one face and is rendered through that face's composite. Cross-face clipped rendering is deferred until uniform scale lands (at which point it becomes necessary, not just nice-to-have).
 
 ## Prototyping plan
 
-1. **Atlas substrate without operations.** A triangulation data structure (half-edge based) with finite and ideal vertices, face-local coordinates, identity transforms on every edge. Empty canvas = a small handful of triangles (a few ideal-vertex faces) covering the plane. Place shapes by face reference + local coords.
-2. **Walk + render.** From a fixed root face, BFS visible faces, accumulate composite transforms (all identity for now), render shapes per face. Verify output matches a flat canvas exactly. Add debug visualization for triangles, vertices, root, viewport. Pan/zoom on top as a global render affine.
-3. **Draw a region.** A `<folk-region>` (or similar) DOM element with a convex polygon attribute. Adding it inserts the polygon's vertices and locally re-triangulates (CDT) so the polygon's edges exist as edges in the atlas. All transforms remain identity. Render output is unchanged from step 2.
-4. **First operation: expand.** Adding `expand="20"` (or similar) to the region: insert the band faces (band-inside model), set the band's outer-edge transforms to translate by Δ in outward normals. Verify shapes inside don't move, exterior shapes render at offset positions, and walks past the boundary compose correctly. Verify the no-monodromy claim empirically by walking closed loops in the exterior.
-5. **Mutating the operation.** Drag a gizmo on the region to change Δ or polygon vertices. The operation element updates its atlas pieces in place — no replay. Verify visual continuity and locality (only the operation's own pieces change).
-6. **Shape dragging across boundaries.** Verify visual continuity (the shape stays under the cursor) and correct face reassignment when a shape crosses a band edge during drag.
-7. **Flatten.** Bake composite transforms into shape coords for a chosen region, replacing it with one identity-everywhere region. Visually a no-op; structurally a simplification. Sanity-checks transform math.
-8. **Contract.** The non-trivial inverse of expand (band removed from inside the polygon, exterior pulled in by Δ). Decide and implement policy for shapes in the removed band.
-9. **Multiple operations and stress test.** Verify two adjacent (non-overlapping) operations interact correctly via walks. Many operations, many shapes — measure per-frame cost and edit cost. Verify sparsity and locality claims empirically.
+Status as of writing: steps 1–3 complete and shape dragging (step 6) works for the trivial case. Edge gizmo and visibility plumbing are next, then the move to convex k-gons, then expand.
 
-Only after these work should we consider nested atlases, tearing, infinite zoom, non-convex regions, or more exotic features.
+1. ✅ **Atlas substrate without operations.** Edge-primary half-edge graph with finite and ideal junctions, face-local coordinates, identity translations on every edge. Empty canvas = four wedge faces covering the plane.
+2. ✅ **Walk + render.** BFS from root, accumulate composites, canvas-based debug overlay (clipped face polygons, edge strokes, centroid labels), pan/zoom on top as a global view transform. `switchRoot` re-anchors when the viewport center crosses a face boundary, with view compensation.
+3. ✅ **Split primitives.** `splitFaceAtInterior` and `splitFaceAlongEdge` as the imperative testbed for atlas mutation; shift-click in the demo invokes them. Shapes are reassigned across the split using anchor-frame physical-position preservation.
+4. ⏭ **Per-face visibility scalar.** Plumb the visibility scalar through the walk; renderer culls only at exact zero, but the value is available downstream (for opacity, LOD, recursion termination later).
+5. ⏭ **Move to convex k-gon faces.** Generalize `Face.halfEdges` from a fixed 3-tuple to a variable-length CCW list; replace `triangleContains` with `polygonContains` (n half-plane tests, with a convexity-invariant assertion). Update splits accordingly. The empty canvas becomes a single 4-gon face, and operation-introduced faces match the operation's natural shape (trapezoids, quads) without forced triangulation.
+6. ⏭ **Frame-change-at-point helper.** Factor out the duplicated rebase-at-point arithmetic from the split primitives into a single named operation. Generalize to handle non-translation transforms (in preparation for uniform scale, even though it isn't enabled yet).
+7. ⏭ **Edge gizmo.** Click an edge (twin pair), drag a midpoint handle to set its translation. Triggers composite recomputation. The first interactive way to *see* the transform graph behaving as more than a static subdivision.
+8. ⏭ **Region as operation host.** A `<folk-region>` DOM element with a convex polygon attribute. Adding it inserts the polygon's vertices and locally subdivides so the polygon's edges exist as edges in the atlas. All transforms remain identity. Render output is unchanged from before.
+9. ⏭ **First operation: expand.** Adding `expand="20"` to a region: insert the band faces, set the band's outer-edge transforms to translate by Δ in outward normals. Verify interior shapes don't move, exterior shapes render at offset positions, and walks past the boundary compose correctly. Empirically verify cycle closure (translations around any closed loop sum to zero).
+10. ⏭ **Mutating the operation.** Drag the region's gizmo to change Δ or polygon vertices. The operation element updates its atlas pieces in place — no replay. Verify visual continuity and locality (only the operation's own pieces change).
+11. ⏭ **Shape dragging across non-identity boundaries.** Verify visual continuity (shape stays under cursor) and correct face reassignment when a shape crosses a band edge during drag.
+12. ⏭ **Flatten.** Bake composite transforms into shape coords for a chosen region, replacing it with one identity-everywhere region. Visually a no-op; structurally a simplification. Sanity-checks transform math end-to-end.
+13. ⏭ **Contract.** The non-trivial inverse of expand. Decide and implement policy for shapes in the removed band.
+14. ⏭ **Multiple operations and stress test.** Verify two adjacent (non-overlapping) operations interact correctly via walks. Many operations, many shapes — measure per-frame cost and edit cost. Empirically verify sparsity and locality.
+
+Only after these work should we consider nested atlases, tearing, uniform scale (infinite zoom / recursive spaces), or more exotic features.
 
 ## Open questions to revisit
 
-- The UX model for operations beyond the basic expand/contract gizmo: how do users compose, group, select, and constrain them? How do operations relate to selections?
-- Policy for shapes inside the band when contracting: snap outward to new boundary, snap to nearest face, follow the inward transform, or allow the user to specify per-shape behavior.
-- Behavior when the user drags an expand gizmo's Δ negative (clamp at zero, switch to contract semantics, or disallow).
-- When and whether to introduce floating-origin root for deep-zoom precision.
-- When and whether patches re-enter as a first-class abstraction (render optimization or n-gon faces).
-- Collaborative editing: CRDT structure for operations and the atlas itself.
-- Text and complex content across face boundaries (likely: content stays in one face).
-- Adaptive ideal-vertex insertion: starting with 4 or 6 ideal vertices is fine, but very-elongated content extents may want adaptively-inserted directions.
+- **The UX model for operations beyond expand/contract.** How do users compose, group, select, and constrain operations? How do operations relate to selections? How does the edge gizmo coexist with region gizmos?
+- **Contract band shape policy.** Snap to new inner boundary, snap to nearest face, follow the inward transform (which collapses some shapes onto each other), or per-shape user choice.
+- **Behavior when an expand gizmo's Δ is dragged negative.** Clamp at zero, switch to contract semantics, or disallow.
+- **Per-shape visibility / opacity blending** as a layer over per-face visibility — needed only when shape counts grow large or when fade-edges are wanted as a UX cue.
+- **Collaborative editing.** CRDT structure for operations and the atlas itself. Atlas mutations are non-commutative; conflict resolution would need real thought.
+- **Persistence / serialization.** The half-edge graph with shared `twin`/`face` references is awkward to serialize directly. Likely the right format is the operation history, not the unrolled atlas.
+- **Adaptive ideal-vertex insertion.** Starting with 4 ideal directions is fine for the prototype; some operations (e.g. expanding a circular region) want denser radial coverage. Adaptive insertion is the long-term answer.
+- **Text and complex content across face boundaries.** Likely: content stays in one face for the foreseeable future. Per-face clipped rendering (deferred) is the principled answer.
+- **Enabling uniform scale.** When and with what UX. The data structure accommodates it without modification; the renderer needs per-face clipped shape rendering at that point.
 
 ## Related prior work
 

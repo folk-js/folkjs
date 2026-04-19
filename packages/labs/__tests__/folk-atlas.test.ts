@@ -7,7 +7,7 @@ import {
   createInitialAtlas,
   Face,
   HalfEdge,
-  isTriangleCCW,
+  isPolygonCCW,
   type Junction,
   splitFaceAlongEdge,
   splitFaceAtInterior,
@@ -92,13 +92,54 @@ describe('Face', () => {
     assert.equal(collected[1], f.halfEdges[1]);
     assert.equal(collected[2], f.halfEdges[2]);
   });
+
+  it('rejects construction with fewer than 3 half-edges', () => {
+    assert.throws(() => new Face([finite(0, 0), finite(10, 0)]), /at least 3/);
+  });
+
+  it('supports a convex quadrilateral face (k = 4) with finite vertices', () => {
+    const f = new Face([finite(0, 0), finite(10, 0), finite(10, 10), finite(0, 10)]);
+    assert.equal(f.halfEdges.length, 4);
+    assert.deepEqual(f.junctions(), [
+      { kind: 'finite', x: 0, y: 0 },
+      { kind: 'finite', x: 10, y: 0 },
+      { kind: 'finite', x: 10, y: 10 },
+      { kind: 'finite', x: 0, y: 10 },
+    ]);
+    // contains
+    assert.equal(f.contains({ x: 5, y: 5 }), true);
+    assert.equal(f.contains({ x: 11, y: 5 }), false);
+    assert.equal(f.contains({ x: 5, y: -1 }), false);
+    // cycle pointers
+    for (let i = 0; i < 4; i++) {
+      assert.equal(f.halfEdges[i].next, f.halfEdges[(i + 1) % 4]);
+      assert.equal(f.halfEdges[i].prev, f.halfEdges[(i + 3) % 4]);
+    }
+  });
+
+  it('supports a k = 4 face mixing finite and ideal junctions', () => {
+    const f = new Face([finite(0, 0), finite(10, 0), ideal(1, 0), ideal(0, 1)]);
+    assert.equal(f.halfEdges.length, 4);
+    assert.equal(f.contains({ x: 5, y: 5 }), true);
+    assert.equal(f.contains({ x: 100, y: 100 }), true);
+    assert.equal(f.contains({ x: -1, y: 5 }), false);
+    assert.equal(f.contains({ x: 5, y: -1 }), false);
+  });
+
+  it('wires prev pointers for triangle faces', () => {
+    const f = new Face([finite(0, 0), finite(10, 0), finite(0, 10)]);
+    for (let i = 0; i < 3; i++) {
+      assert.equal(f.halfEdges[i].prev, f.halfEdges[(i + 2) % 3]);
+      assert.equal(f.halfEdges[i].next.prev, f.halfEdges[i]);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
 // CCW orientation predicate
 // ---------------------------------------------------------------------------
 
-describe('isTriangleCCW', () => {
+describe('isPolygonCCW', () => {
   const fin = (x: number, y: number): Junction => ({ kind: 'finite', x, y });
   const idl = (x: number, y: number): Junction => {
     const len = Math.hypot(x, y);
@@ -106,26 +147,68 @@ describe('isTriangleCCW', () => {
   };
 
   it('returns true for CCW finite triangles', () => {
-    assert.equal(isTriangleCCW([fin(0, 0), fin(1, 0), fin(0, 1)]), true);
+    assert.equal(isPolygonCCW([fin(0, 0), fin(1, 0), fin(0, 1)]), true);
   });
 
   it('returns false for CW finite triangles', () => {
-    assert.equal(isTriangleCCW([fin(0, 0), fin(0, 1), fin(1, 0)]), false);
+    assert.equal(isPolygonCCW([fin(0, 0), fin(0, 1), fin(1, 0)]), false);
   });
 
   it('handles 1-ideal-vertex triangles', () => {
-    assert.equal(isTriangleCCW([fin(0, 0), idl(1, 0), fin(0, 1)]), true);
+    assert.equal(isPolygonCCW([fin(0, 0), idl(1, 0), fin(0, 1)]), true);
   });
 
   it('handles 2-ideal-vertex (wedge) triangles', () => {
-    assert.equal(isTriangleCCW([fin(0, 0), idl(1, 0), idl(0, 1)]), true);
-    assert.equal(isTriangleCCW([fin(0, 0), idl(0, 1), idl(1, 0)]), false);
+    assert.equal(isPolygonCCW([fin(0, 0), idl(1, 0), idl(0, 1)]), true);
+    assert.equal(isPolygonCCW([fin(0, 0), idl(0, 1), idl(1, 0)]), false);
   });
 
-  it('throws for all-ideal triangles', () => {
+  it('throws for all-ideal polygons', () => {
     assert.throws(
-      () => isTriangleCCW([idl(1, 0), idl(0, 1), idl(-1, 0)]),
+      () => isPolygonCCW([idl(1, 0), idl(0, 1), idl(-1, 0)]),
       /all-ideal/,
+    );
+  });
+
+  it('returns true for a CCW finite quadrilateral (k = 4)', () => {
+    assert.equal(
+      isPolygonCCW([fin(0, 0), fin(10, 0), fin(10, 10), fin(0, 10)]),
+      true,
+    );
+  });
+
+  it('returns false for a CW finite quadrilateral (k = 4)', () => {
+    assert.equal(
+      isPolygonCCW([fin(0, 0), fin(0, 10), fin(10, 10), fin(10, 0)]),
+      false,
+    );
+  });
+
+  it('returns false for a non-convex quadrilateral (one reflex angle)', () => {
+    // CCW outer hull would be (0,0), (10,0), (10,10), (0,10), but inserting
+    // a reflex vertex at (5, 5) breaks convexity.
+    assert.equal(
+      isPolygonCCW([fin(0, 0), fin(10, 0), fin(5, 5), fin(0, 10)]),
+      false,
+    );
+  });
+
+  it('handles a k = 4 face with two finite + two ideal vertices', () => {
+    // A "trapezoid going to infinity" where every interior angle is < π:
+    // (0, 0) → (10, 0) → +(1, 1) → +(-1, 1). Strictly convex.
+    assert.equal(
+      isPolygonCCW([fin(0, 0), fin(10, 0), idl(1, 1), idl(-1, 1)]),
+      true,
+    );
+  });
+
+  it('rejects a degenerate k = 4 with three colinear vertices', () => {
+    // (0, 0) → (10, 0) → ideal +x → ideal +y. The first three are colinear
+    // along the x-axis, so the (V0, V1, V2) triple has zero turn — fails
+    // strict-left-turn convexity.
+    assert.equal(
+      isPolygonCCW([fin(0, 0), fin(10, 0), idl(1, 0), idl(0, 1)]),
+      false,
     );
   });
 });

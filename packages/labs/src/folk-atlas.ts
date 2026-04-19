@@ -126,6 +126,19 @@ export class FolkAtlas extends ReactiveElement {
   #centeredOnce = false;
   /** Cached composites from the most recent render — used by point-locate helpers. */
   #lastComposites: Map<Face, M.Matrix2D> = new Map();
+  /**
+   * Cached per-face visibility ∈ [0, 1] from the most recent render.
+   *
+   * Visibility is the product of independent falloff factors (screen distance,
+   * effective scale, …). The threshold for "render this face" is currently
+   * `> 0` — anything non-zero renders, nothing is culled. The plumbing exists
+   * so that culling can be enabled later by raising the threshold and so that
+   * downstream consumers (opacity blending, LOD, throttled event handling)
+   * can read the scalar.
+   *
+   * See `sia.md` § "Per-face visibility (scalar)".
+   */
+  #lastVisibility: Map<Face, number> = new Map();
 
   // === DOM ===
   #content!: HTMLDivElement;
@@ -568,14 +581,55 @@ export class FolkAtlas extends ReactiveElement {
 
     const composites = this.#atlas.computeComposites();
     this.#lastComposites = composites;
+    this.#lastVisibility = this.#computeVisibilities(composites, view);
     this.#renderShapes(composites);
     this.#renderDebug(composites, view);
+  }
+
+  /**
+   * Compute per-face visibility ∈ [0, 1] from the current composites and view
+   * transform. Today both falloff factors are stubs that return 1 always —
+   * the plumbing exists so culling, opacity blending, and LOD can be added
+   * without restructuring the renderer. See `sia.md` § "Per-face visibility".
+   */
+  #computeVisibilities(
+    composites: Map<Face, M.Matrix2D>,
+    view: M.Matrix2DReadonly,
+  ): Map<Face, number> {
+    const out = new Map<Face, number>();
+    const rect = this.getBoundingClientRect();
+    const viewport: ClipRect = {
+      minX: 0,
+      minY: 0,
+      maxX: Math.max(0, rect.width),
+      maxY: Math.max(0, rect.height),
+    };
+    for (const [face, composite] of composites) {
+      const screen = M.multiply(view, composite);
+      const polygonScreen: Point[] = [];
+      for (const j of face.junctions()) {
+        const local =
+          j.kind === 'finite'
+            ? { x: j.x, y: j.y }
+            : { x: j.x * FolkAtlas.IDEAL_RADIUS, y: j.y * FolkAtlas.IDEAL_RADIUS };
+        polygonScreen.push(M.applyToPoint(screen, local));
+      }
+      const v = screenDistanceFalloff(polygonScreen, viewport) * scaleFalloff(screen);
+      out.set(face, v);
+    }
+    return out;
   }
 
   #renderShapes(composites: Map<Face, M.Matrix2D>) {
     for (const [shape, face] of this.#shapeFaces) {
       const composite = composites.get(face);
       if (!composite) continue;
+      const visibility = this.#lastVisibility.get(face) ?? 1;
+      if (visibility <= 0) {
+        shape.style.display = 'none';
+        continue;
+      }
+      shape.style.display = '';
       const m = M.translate(composite, shape.x, shape.y);
       shape.style.transform = M.toCSSString(m);
     }
@@ -638,6 +692,8 @@ export class FolkAtlas extends ReactiveElement {
       const face = this.#atlas.faces[i];
       const mf = composites.get(face);
       if (!mf) continue;
+      const visibility = this.#lastVisibility.get(face) ?? 1;
+      if (visibility <= 0) continue;
       const screen = M.multiply(view, mf);
       const polygon: Point[] = [];
       for (const j of face.junctions()) {
@@ -739,6 +795,39 @@ export class FolkAtlas extends ReactiveElement {
       ctx.fill();
     }
   }
+}
+
+// ----------------------------------------------------------------------------
+// Visibility falloff stubs
+// ----------------------------------------------------------------------------
+//
+// Per-face visibility ∈ [0, 1] is the product of independent falloff factors.
+// Today both factors are stubs that always return 1, so every reachable face
+// is fully visible — but the renderer reads the scalar through these helpers,
+// so enabling culling, opacity blending, or LOD later is a one-line change
+// to the body of each function. See `sia.md` § "Per-face visibility (scalar)".
+
+/**
+ * Falloff based on how far the face's screen-space polygon sits from the
+ * viewport rectangle. Should return 1 inside (or overlapping) the viewport,
+ * fall to 0 over a buffer band, and stay at 0 past the buffer.
+ *
+ * Stub: always 1.
+ */
+function screenDistanceFalloff(_facePolygonScreen: Point[], _viewport: ClipRect): number {
+  return 1;
+}
+
+/**
+ * Falloff based on the face's effective scale (per-pixel size of one face-
+ * local unit). Should fall to 0 once a face contributes less than ~1 logical
+ * pixel of detail. Trivially 1 in the translation-only edge-transform regime
+ * (invariant 7); becomes meaningful once uniform scale is enabled.
+ *
+ * Stub: always 1.
+ */
+function scaleFalloff(_screen: M.Matrix2DReadonly): number {
+  return 1;
 }
 
 // ----------------------------------------------------------------------------

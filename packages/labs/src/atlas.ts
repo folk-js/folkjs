@@ -16,11 +16,15 @@ import type { Point } from '@folkjs/geometry/Vector2';
 // "Vertices" / "junctions" are the equivalence classes of half-edges that
 // meet at the same physical point — recoverable by walking
 // `next-around-junction = he.twin?.next` (forward) and
-// `prev-around-junction = he.next.next.twin` (backward, used at boundaries).
+// `prev-around-junction = he.prev.twin` (backward, used at boundaries).
 //
-// **Canonical face frame.** Each `Face` owns three CCW half-edges. By
-// convention `halfEdges[0]` is the anchor: its origin is finite at face-local
-// `(0, 0)`. This pins down the face's local frame.
+// **Canonical face frame.** Each `Face` owns k ≥ 3 half-edges in CCW order
+// forming a convex polygonal boundary. By convention `halfEdges[0]` is the
+// anchor: its origin is finite at face-local `(0, 0)`. This pins down the
+// face's local frame. The implementation today only constructs triangle faces
+// (k = 3); the geometry layer is k-gon-ready so future operations (expand,
+// contract, polygon regions) can introduce higher-k faces without touching
+// the core invariants.
 //
 // **Edge transforms.** A non-null twin pair `(h, h.twin)` carries an affine
 // `transform` mapping `h.face`'s frame to `h.twin.face`'s frame. The pair is
@@ -88,6 +92,8 @@ export class HalfEdge {
   oy: number;
   /** Next half-edge CCW around `face`. */
   next!: HalfEdge;
+  /** Previous half-edge CCW around `face` (i.e. the `he` such that `he.next === this`). */
+  prev!: HalfEdge;
   /** Owning face. */
   face!: Face;
   /** Twin half-edge in the adjacent face, or null at a boundary. */
@@ -140,17 +146,26 @@ export class HalfEdge {
 // ----------------------------------------------------------------------------
 
 /**
- * A triangular face owning three CCW half-edges.
+ * A convex polygonal face owning k ≥ 3 CCW-ordered half-edges.
  *
  * Convention: `halfEdges[0]` is the canonical anchor — its origin is finite
  * at face-local `(0, 0)`. This pins down the face's local frame uniquely.
+ *
+ * Convexity (every interior angle < π) is a model-level invariant checked by
+ * {@link validateAtlas}; operations are responsible for producing only convex
+ * sub-faces (decomposing as needed). The implementation today only constructs
+ * triangle faces (k = 3), but every method here operates over the full k-gon
+ * cycle.
  */
 export class Face {
-  halfEdges: [HalfEdge, HalfEdge, HalfEdge];
+  halfEdges: HalfEdge[];
   /** Shapes assigned to this face (managed by the atlas's owner). */
   shapes: Set<Element> = new Set();
 
-  constructor(halfEdges: [HalfEdge, HalfEdge, HalfEdge]) {
+  constructor(halfEdges: HalfEdge[]) {
+    if (halfEdges.length < 3) {
+      throw new Error(`Face needs at least 3 half-edges, got ${halfEdges.length}`);
+    }
     if (halfEdges[0].originKind !== 'finite') {
       throw new Error('halfEdges[0] (anchor) must have finite origin');
     }
@@ -160,19 +175,18 @@ export class Face {
       );
     }
     this.halfEdges = halfEdges;
-    for (let i = 0; i < 3; i++) {
-      halfEdges[i].next = halfEdges[(i + 1) % 3];
-      halfEdges[i].face = this;
+    const k = halfEdges.length;
+    for (let i = 0; i < k; i++) {
+      const he = halfEdges[i];
+      he.next = halfEdges[(i + 1) % k];
+      he.prev = halfEdges[(i - 1 + k) % k];
+      he.face = this;
     }
   }
 
-  /** This face's three junctions (origins of its half-edges) in CCW order. */
-  junctions(): [Junction, Junction, Junction] {
-    return [
-      this.halfEdges[0].origin(),
-      this.halfEdges[1].origin(),
-      this.halfEdges[2].origin(),
-    ];
+  /** This face's k junctions (origins of its half-edges) in CCW order. */
+  junctions(): Junction[] {
+    return this.halfEdges.map((h) => h.origin());
   }
 
   /** Iterate this face's half-edges in CCW order, starting at the anchor. */
@@ -186,7 +200,7 @@ export class Face {
 
   /** Test whether `p` (in this face's local frame) lies inside the face. */
   contains(p: Point): boolean {
-    return triangleContains(this.junctions(), p);
+    return polygonContains(this.junctions(), p);
   }
 }
 
@@ -212,13 +226,14 @@ export function* aroundJunction(he: HalfEdge): IterableIterator<HalfEdge> {
     cur = t ? t.next : null;
   }
   if (cur === he) return; // closed cycle
-  // Backward from `he`: he.prev.twin, he.prev.twin.prev.twin, ...
-  // (prev = .next.next in a 3-cycle.)
-  cur = he.next.next.twin;
+  // Backward from `he`: he.prev.twin, then keep stepping prev.twin.
+  // (Uses the explicit `prev` pointer wired by Face's constructor; works
+  // uniformly for any k-gon face.)
+  cur = he.prev.twin;
   while (cur && !seen.has(cur)) {
     seen.add(cur);
     yield cur;
-    cur = cur.next.next.twin;
+    cur = cur.prev.twin;
   }
 }
 
@@ -278,38 +293,50 @@ export function leftOfDirectedEdgeStrict(a: Junction, b: Junction, p: Point): bo
 }
 
 /**
- * Test whether `p` lies inside (or on the boundary of) the CCW triangle
- * defined by `verts`. Junctions may be finite or ideal.
+ * Test whether `p` lies inside (or on the boundary of) the CCW convex polygon
+ * defined by `verts` (k ≥ 3). Junctions may be finite or ideal.
+ *
+ * Implementation: n half-plane tests. Correctness assumes the polygon is
+ * convex and CCW (both invariants enforced elsewhere — see {@link isPolygonCCW}
+ * and the convexity check in {@link validateAtlas}).
  */
-export function triangleContains(
-  verts: [Junction, Junction, Junction],
-  p: Point,
-): boolean {
-  for (let i = 0; i < 3; i++) {
-    if (!leftOfDirectedEdge(verts[i], verts[(i + 1) % 3], p)) return false;
+export function polygonContains(verts: ReadonlyArray<Junction>, p: Point): boolean {
+  const n = verts.length;
+  if (n < 3) return false;
+  for (let i = 0; i < n; i++) {
+    if (!leftOfDirectedEdge(verts[i], verts[(i + 1) % n], p)) return false;
   }
   return true;
 }
 
 /** Strict version: returns `true` only if `p` is strictly interior. */
-export function triangleContainsStrict(
-  verts: [Junction, Junction, Junction],
+export function polygonContainsStrict(
+  verts: ReadonlyArray<Junction>,
   p: Point,
 ): boolean {
-  for (let i = 0; i < 3; i++) {
-    if (!leftOfDirectedEdgeStrict(verts[i], verts[(i + 1) % 3], p)) return false;
+  const n = verts.length;
+  if (n < 3) return false;
+  for (let i = 0; i < n; i++) {
+    if (!leftOfDirectedEdgeStrict(verts[i], verts[(i + 1) % n], p)) return false;
   }
   return true;
 }
 
 /**
- * Whether the triangle `(a, b, c)` is wound CCW. Handles 0, 1, or 2 ideal
- * vertices (3 ideals are not produced by our operations and not supported).
+ * Whether the convex polygon defined by `verts` (k ≥ 3) is wound CCW. Handles
+ * any mix of finite and ideal vertices except an all-ideal cycle (not produced
+ * by our operations and not supported).
+ *
+ * Implementation: every consecutive triple `(a, b, c)` must satisfy
+ * `c` lies strictly left of directed edge `a → b`. For a CCW *convex* polygon
+ * this is equivalent to "every interior angle is < π", which is what we want
+ * for both the orientation and convexity invariants.
  */
-export function isTriangleCCW(verts: [Junction, Junction, Junction]): boolean {
-  const idealCount = verts.filter((v) => v.kind === 'ideal').length;
-  if (idealCount >= 3) {
-    throw new Error('isTriangleCCW: all-ideal triangle not supported');
+export function isPolygonCCW(verts: ReadonlyArray<Junction>): boolean {
+  const n = verts.length;
+  if (n < 3) return false;
+  if (verts.every((v) => v.kind === 'ideal')) {
+    throw new Error('isPolygonCCW: all-ideal polygon not supported');
   }
   // Pick a "far enough" R for ideal-vertex stand-ins. Sign is preserved
   // for any sufficiently large R.
@@ -317,10 +344,10 @@ export function isTriangleCCW(verts: [Junction, Junction, Junction]): boolean {
   const asFinite = (v: Junction): Point =>
     v.kind === 'finite' ? { x: v.x, y: v.y } : { x: v.x * R, y: v.y * R };
 
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < n; i++) {
     const a = verts[i];
-    const b = verts[(i + 1) % 3];
-    const c = verts[(i + 2) % 3];
+    const b = verts[(i + 1) % n];
+    const c = verts[(i + 2) % n];
     if (!leftOfDirectedEdgeStrict(a, b, asFinite(c))) return false;
   }
   return true;
@@ -499,8 +526,9 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
 
   // ---- per-face checks ----
   for (const f of atlas.faces) {
-    if (f.halfEdges.length !== 3) {
-      errs.push(`face has ${f.halfEdges.length} half-edges, expected 3`);
+    const k = f.halfEdges.length;
+    if (k < 3) {
+      errs.push(`face has ${k} half-edges, expected at least 3`);
       continue;
     }
 
@@ -515,13 +543,19 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
       );
     }
 
-    // Half-edge cycle integrity.
-    for (let i = 0; i < 3; i++) {
+    // Half-edge cycle integrity (next/prev consistency).
+    for (let i = 0; i < k; i++) {
       const he = f.halfEdges[i];
       if (!allHESet.has(he)) errs.push('half-edge in face not in atlas.halfEdges');
       if (he.face !== f) errs.push('half-edge in face has wrong .face');
-      if (he.next !== f.halfEdges[(i + 1) % 3]) {
-        errs.push(`face.halfEdges[${i}].next !== face.halfEdges[${(i + 1) % 3}]`);
+      if (he.next !== f.halfEdges[(i + 1) % k]) {
+        errs.push(`face.halfEdges[${i}].next !== face.halfEdges[${(i + 1) % k}]`);
+      }
+      if (he.prev !== f.halfEdges[(i - 1 + k) % k]) {
+        errs.push(`face.halfEdges[${i}].prev !== face.halfEdges[${(i - 1 + k) % k}]`);
+      }
+      if (he.next.prev !== he) {
+        errs.push(`face.halfEdges[${i}].next.prev !== self`);
       }
     }
 
@@ -535,9 +569,11 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
       }
     }
 
-    // CCW orientation.
+    // CCW + convexity. `isPolygonCCW` returns true iff every consecutive
+    // triple makes a strict left turn, which for a closed polygon is equivalent
+    // to "CCW *and* convex" — so this single check enforces both invariants.
     try {
-      if (!isTriangleCCW(f.junctions())) errs.push('face junctions not in CCW order');
+      if (!isPolygonCCW(f.junctions())) errs.push('face junctions not in CCW convex order');
     } catch (e) {
       errs.push(`face CCW check failed: ${(e as Error).message}`);
     }
@@ -640,16 +676,17 @@ function junctionImageMatches(
 
 export interface SplitInteriorResult {
   /**
-   * The three new sub-faces. `faces[i]` touches the old face's edge between
-   * old-junctions `i` and `(i+1) % 3` (i.e. the one originally bounded by
-   * `oldFace.halfEdges[i]`).
+   * The k new sub-faces (one per side of the original face). `faces[i]`
+   * touches the old face's edge between old-junctions `i` and `(i+1) % k`
+   * (i.e. the side originally bounded by `oldFace.halfEdges[i]`).
    */
-  faces: [Face, Face, Face];
+  faces: Face[];
 }
 
 /**
- * Split `face` by inserting a finite junction at `point` strictly inside it.
- * Replaces the single face with 3 new sub-faces fanning around the point.
+ * Split `face` (a convex k-gon, k ≥ 3) by inserting a finite junction at
+ * `point` strictly inside it. Replaces the single face with k triangle
+ * sub-faces fanning around the point.
  *
  * `point` is in `face`'s local frame and must lie strictly inside (use
  * {@link splitFaceAlongEdge} for points on a boundary).
@@ -664,36 +701,38 @@ export function splitFaceAtInterior(
   point: Point,
 ): SplitInteriorResult {
   if (!atlas.faces.includes(face)) throw new Error('face not in atlas');
-  if (!triangleContainsStrict(face.junctions(), point)) {
+  if (!polygonContainsStrict(face.junctions(), point)) {
     throw new Error('splitFaceAtInterior: point is not strictly interior to face');
   }
+
+  const k = face.halfEdges.length;
 
   // Capture the old face's junctions and external twins (in neighbour faces)
   // and their old transforms BEFORE we mutate.
   const oldJunctions = face.junctions();
   const oldHEs = face.halfEdges;
   // For each side i = old half-edge oldHEs[i] going from oldJunctions[i] to
-  // oldJunctions[(i+1)%3], capture its twin and twin-direction transform.
+  // oldJunctions[(i+1)%k], capture its twin and twin-direction transform.
   const externalTwins: Array<{ ext: HalfEdge | null; T_old: M.Matrix2DReadonly | null }> = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < k; i++) {
     externalTwins.push({
       ext: oldHEs[i].twin,
       T_old: oldHEs[i].twin ? oldHEs[i].transform : null,
     });
   }
 
-  // Build the three sub-faces. Each is anchored at the inserted point (which
+  // Build the k sub-triangles. Each is anchored at the inserted point (which
   // sits at (0, 0) in each sub-face's frame). The other two junctions are
   // re-coordinated copies of the old face's corresponding pair.
   //
-  // Convention:  subFaces[i]'s CCW corners are (p, oldJ[i], oldJ[(i+1)%3])
-  //              => halfEdges[0] = p → oldJ[i]      (anchor)
-  //                 halfEdges[1] = oldJ[i] → oldJ[(i+1)%3]   (matches old side i)
-  //                 halfEdges[2] = oldJ[(i+1)%3] → p
+  // Convention:  subFaces[i]'s CCW corners are (p, oldJ[i], oldJ[(i+1)%k])
+  //              => halfEdges[0] = p → oldJ[i]            (anchor)
+  //                 halfEdges[1] = oldJ[i] → oldJ[(i+1)%k]   (matches old side i)
+  //                 halfEdges[2] = oldJ[(i+1)%k] → p
   const subFaces: Face[] = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < k; i++) {
     const a = oldJunctions[i];
-    const b = oldJunctions[(i + 1) % 3];
+    const b = oldJunctions[(i + 1) % k];
     const aShifted = junctionInTranslatedFrame(a, point);
     const bShifted = junctionInTranslatedFrame(b, point);
 
@@ -706,10 +745,10 @@ export function splitFaceAtInterior(
 
   // Internal twins between adjacent sub-faces (all share a single frame, so
   // identity transforms throughout):
-  //   subFaces[i].halfEdges[2] (b_i → p)  ↔  subFaces[(i+1)%3].halfEdges[0] (p → a_{i+1})
+  //   subFaces[i].halfEdges[2] (b_i → p)  ↔  subFaces[(i+1)%k].halfEdges[0] (p → a_{i+1})
   //   where b_i = a_{i+1} physically.
-  for (let i = 0; i < 3; i++) {
-    const next = (i + 1) % 3;
+  for (let i = 0; i < k; i++) {
+    const next = (i + 1) % k;
     const h2 = subFaces[i].halfEdges[2]; // b_i → p
     const h0 = subFaces[next].halfEdges[0]; // p → a_{i+1}
     setTwin(h2, h0, M.fromValues(), M.fromValues());
@@ -724,7 +763,7 @@ export function splitFaceAtInterior(
   //   ⇒ T_sub_to_ext = T_old · translate(p)
   //
   // and going ext → sub: T_ext_to_sub = translate(-p) · inv(T_old).
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < k; i++) {
     const ext = externalTwins[i].ext;
     if (!ext) continue;
     const T_old = externalTwins[i].T_old!;
@@ -741,7 +780,7 @@ export function splitFaceAtInterior(
 
   if (atlas.root === face) atlas.root = subFaces[0];
 
-  return { faces: [subFaces[0], subFaces[1], subFaces[2]] };
+  return { faces: subFaces };
 }
 
 export interface SplitEdgeResult {
@@ -758,7 +797,8 @@ export interface SplitEdgeResult {
 
 /**
  * Split a half-edge by inserting a finite junction on it. The two faces
- * incident to the edge each become two new triangles.
+ * incident to the edge each become two new triangles via an interior edge
+ * from the inserted point to the opposite vertex.
  *
  * `point` is in `halfEdge.face`'s local frame and must lie strictly between
  * the two endpoints of `halfEdge` (not coincident with either, both of which
@@ -766,6 +806,14 @@ export interface SplitEdgeResult {
  *
  * If `halfEdge.twin` is null (e.g. an at-infinity boundary) only
  * `halfEdge.face` is split.
+ *
+ * NOTE: Currently restricted to triangle faces (k = 3) on each side of the
+ * edge. Generalising to k-gon inputs requires choosing a strategy for the
+ * interior cut: in a k-gon "the opposite vertex" isn't unambiguous. The
+ * simplest k-gon strategy — insert the vertex without cutting, turning the
+ * face into a (k+1)-gon — is a *different* primitive and not implemented
+ * here. TODO: revisit once the first non-triangle face exists in the atlas
+ * (likely once the expand operation lands).
  */
 export function splitFaceAlongEdge(
   atlas: Atlas,
@@ -779,6 +827,14 @@ export function splitFaceAlongEdge(
   // For now we require both endpoints of the splitting edge to be finite.
   if (halfEdge.originKind !== 'finite' || halfEdge.next.originKind !== 'finite') {
     throw new Error('splitFaceAlongEdge: only finite-finite edges are supported');
+  }
+
+  // Triangle-only restriction (see header comment).
+  if (halfEdge.face.halfEdges.length !== 3) {
+    throw new Error('splitFaceAlongEdge: only triangle faces are supported (k = 3)');
+  }
+  if (halfEdge.twin && halfEdge.twin.face.halfEdges.length !== 3) {
+    throw new Error('splitFaceAlongEdge: twin face must also be a triangle (k = 3)');
   }
 
   const a = halfEdge.origin();
