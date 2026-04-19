@@ -671,6 +671,89 @@ function junctionImageMatches(
 }
 
 // ----------------------------------------------------------------------------
+// Frame-change-at-point helper
+// ----------------------------------------------------------------------------
+
+/**
+ * Recompute a twin pair's transforms after re-anchoring one side's frame.
+ *
+ * Setup:
+ *   - `T_old` is the existing edge transform `F → ext` (i.e. `h.transform`,
+ *     where `h` lives in face F and `h.twin` lives in face `ext`).
+ *   - We're replacing F with a sub-face whose frame relates to F by `R`:
+ *     a point `(x, y)` in the sub-frame equals `R · (x, y)` in F's frame.
+ *     (`R` is "sub → F"; equivalently, F's frame is the sub-frame composed
+ *     with `R`.)
+ *
+ * After the rebase, the new edge transforms are:
+ *   - `fwd: sub → ext  =  T_old · R`  (re-express in the sub-frame, then jump to ext)
+ *   - `rev: ext → sub  =  inv(fwd)`   (twins are always inverse pairs)
+ *
+ * In the operational regime (invariant 7 — translation-only edges), `R` is
+ * always a translation. The signature accepts a general `Matrix2DReadonly`
+ * so the same helper carries through unchanged once uniform scale is enabled.
+ *
+ * Pure function: doesn't mutate anything. Returns fresh matrices.
+ */
+export function rebaseTwinTransform(
+  T_old: M.Matrix2DReadonly,
+  R: M.Matrix2DReadonly,
+): { fwd: M.Matrix2D; rev: M.Matrix2D } {
+  const fwd = M.multiply(T_old, R);
+  const rev = M.invert(fwd);
+  return { fwd, rev };
+}
+
+/**
+ * Convenience for the common case: `R = translate(point)`. Used by the splits
+ * to re-anchor a sub-face whose origin sits at `point` in the parent's frame.
+ */
+export function rebaseTwinTransformByTranslation(
+  T_old: M.Matrix2DReadonly,
+  point: Point,
+): { fwd: M.Matrix2D; rev: M.Matrix2D } {
+  return rebaseTwinTransform(T_old, M.fromTranslate(point.x, point.y));
+}
+
+// ----------------------------------------------------------------------------
+// Edge-translation primitive (exploratory)
+// ----------------------------------------------------------------------------
+
+/**
+ * Add a translation `(dtx, dty)` (in the **half-edge's own face's frame**) to
+ * a twin pair's transforms.
+ *
+ * Mechanics:
+ *   - `h.transform` (h.face → h.twin.face) is post-multiplied by
+ *     `translate(-dtx, -dty)` so the twin face appears to translate by
+ *     `+(dtx, dty)` in `h.face`'s frame.
+ *   - `h.twin.transform` is updated to remain `inv(h.transform)`.
+ *
+ * **This is an exploratory primitive.** It deliberately does not:
+ *   - Update the stored origins on `h.twin`'s side to keep the endpoint
+ *     correspondence (`T · h.target = h.twin.origin`) intact.
+ *   - Re-rebase any other edges on the twin face's side.
+ *   - Maintain cycle closure (going around any loop crossing this edge no
+ *     longer sums to identity).
+ *
+ * Calling `validateAtlas` after this primitive will report endpoint and
+ * cycle violations, **and that's the point**: this primitive exists to let
+ * the user *see* what edge transforms do — junctions visibly slide apart,
+ * face polygons stop meeting at the edge, and cycle-inconsistency manifests
+ * as visible "tearing" between faces. Structured operations (expand,
+ * contract, …) build on top of this primitive and are responsible for
+ * maintaining global consistency by re-rebasing/re-anchoring as needed.
+ *
+ * Pre: `h.twin` must be non-null. (No-op for boundary edges.)
+ */
+export function editEdgeTranslation(h: HalfEdge, dtx: number, dty: number): void {
+  if (!h.twin) return;
+  const delta = M.fromTranslate(-dtx, -dty);
+  h.transform = M.multiply(h.transform, delta);
+  h.twin.transform = M.invert(h.transform);
+}
+
+// ----------------------------------------------------------------------------
 // Mutation primitives
 // ----------------------------------------------------------------------------
 
@@ -756,22 +839,15 @@ export function splitFaceAtInterior(
 
   // External twins: re-attach each old neighbour to the new corresponding
   // sub-face's outer half-edge (halfEdges[1], the one matching old side i).
-  // Frame change is `translate(-p)` (sub-face's frame is F's translated by -p):
-  //
-  //   x_F   = translate(p) · x_sub          (sub → F)
-  //   x_ext = T_old · x_F                   (F → ext)
-  //   ⇒ T_sub_to_ext = T_old · translate(p)
-  //
-  // and going ext → sub: T_ext_to_sub = translate(-p) · inv(T_old).
+  // Frame change is sub → F = translate(p) — sub-face's frame is F's frame
+  // translated so that the inserted point sits at sub-frame's (0, 0).
   for (let i = 0; i < k; i++) {
     const ext = externalTwins[i].ext;
     if (!ext) continue;
     const T_old = externalTwins[i].T_old!;
     const subOuter = subFaces[i].halfEdges[1];
-
-    const T_sub_to_ext = M.multiply(T_old, M.fromTranslate(point.x, point.y));
-    const T_ext_to_sub = M.multiply(M.fromTranslate(-point.x, -point.y), M.invert(T_old));
-    setTwin(subOuter, ext, T_sub_to_ext, T_ext_to_sub);
+    const { fwd, rev } = rebaseTwinTransformByTranslation(T_old, point);
+    setTwin(subOuter, ext, fwd, rev);
   }
 
   // Detach old face from atlas state, attach new ones.
@@ -941,18 +1017,15 @@ export function splitFaceAlongEdge(
   setTwin(Fsplit.sideA.halfEdges[0], Fsplit.sideB.halfEdges[2], M.fromValues(), M.fromValues());
 
   // Re-attach external twins of the two preserved edges (b→c and c→a) to
-  // F_B and F_A respectively. Both new faces are F's frame translated by -p.
+  // F_B and F_A respectively. Both new faces are F's frame translated by -p,
+  // i.e. sub → F = translate(p).
   if (ext_F_BC) {
-    const T_old = T_F_BC!;
-    const T_sub_to_ext = M.multiply(T_old, M.fromTranslate(point.x, point.y));
-    const T_ext_to_sub = M.multiply(M.fromTranslate(-point.x, -point.y), M.invert(T_old));
-    setTwin(Fsplit.sideB.halfEdges[1], ext_F_BC, T_sub_to_ext, T_ext_to_sub);
+    const { fwd, rev } = rebaseTwinTransformByTranslation(T_F_BC!, point);
+    setTwin(Fsplit.sideB.halfEdges[1], ext_F_BC, fwd, rev);
   }
   if (ext_F_CA) {
-    const T_old = T_F_CA!;
-    const T_sub_to_ext = M.multiply(T_old, M.fromTranslate(point.x, point.y));
-    const T_ext_to_sub = M.multiply(M.fromTranslate(-point.x, -point.y), M.invert(T_old));
-    setTwin(Fsplit.sideA.halfEdges[1], ext_F_CA, T_sub_to_ext, T_ext_to_sub);
+    const { fwd, rev } = rebaseTwinTransformByTranslation(T_F_CA!, point);
+    setTwin(Fsplit.sideA.halfEdges[1], ext_F_CA, fwd, rev);
   }
 
   // If there's a twin face on the other side of the split edge, split it too.
@@ -980,18 +1053,14 @@ export function splitFaceAlongEdge(
       M.fromValues(),
     );
 
-    // Re-attach G's outer external twins.
+    // Re-attach G's outer external twins. G's sub-frame → G = translate(pointInG).
     if (ext_G_BC) {
-      const T_old_outer = T_G_BC!;
-      const T_sub_to_ext = M.multiply(T_old_outer, M.fromTranslate(pointInG.x, pointInG.y));
-      const T_ext_to_sub = M.multiply(M.fromTranslate(-pointInG.x, -pointInG.y), M.invert(T_old_outer));
-      setTwin(G_results.sideB.halfEdges[1], ext_G_BC, T_sub_to_ext, T_ext_to_sub);
+      const { fwd, rev } = rebaseTwinTransformByTranslation(T_G_BC!, pointInG);
+      setTwin(G_results.sideB.halfEdges[1], ext_G_BC, fwd, rev);
     }
     if (ext_G_CA) {
-      const T_old_outer = T_G_CA!;
-      const T_sub_to_ext = M.multiply(T_old_outer, M.fromTranslate(pointInG.x, pointInG.y));
-      const T_ext_to_sub = M.multiply(M.fromTranslate(-pointInG.x, -pointInG.y), M.invert(T_old_outer));
-      setTwin(G_results.sideA.halfEdges[1], ext_G_CA, T_sub_to_ext, T_ext_to_sub);
+      const { fwd, rev } = rebaseTwinTransformByTranslation(T_G_CA!, pointInG);
+      setTwin(G_results.sideA.halfEdges[1], ext_G_CA, fwd, rev);
     }
 
     // Wire the new internal twins ACROSS the split edge between F's sub-faces
@@ -1007,12 +1076,17 @@ export function splitFaceAlongEdge(
     //   F_A.halfEdges[2] (a → p)  ↔  G_B.halfEdges[0] (p → a')
     //   F_B.halfEdges[0] (p → b)  ↔  G_A.halfEdges[2] (b' → p)
     //
-    // F's-sub-frame → G's-sub-frame =
-    //   translate(-pointInG) · T_he_old · translate(point)
-    const T_subF_to_subG = M.multiply(
-      M.fromTranslate(-pointInG.x, -pointInG.y),
-      M.multiply(T_he_old as M.Matrix2D, M.fromTranslate(point.x, point.y)),
-    );
+    // The composite of two frame changes (re-anchor F by point, then jump
+    // F→G via T_he_old, then re-anchor G by pointInG):
+    //   subF → subG = translate(-pointInG) · T_he_old · translate(point)
+    // which is exactly `rebaseTwinTransform(T_he_old, R_F)` re-anchored on
+    // the G side by `inv(R_G)`. Compose by stacking the helper twice (once
+    // on each side):
+    const R_F = M.fromTranslate(point.x, point.y); // subF → F
+    const R_G = M.fromTranslate(pointInG.x, pointInG.y); // subG → G
+    // Go subF → F → G → subG by composing all three:
+    const T_subF_to_G = M.multiply(T_he_old as M.Matrix2D, R_F);
+    const T_subF_to_subG = M.multiply(M.invert(R_G), T_subF_to_G);
     const T_subG_to_subF = M.invert(T_subF_to_subG);
 
     setTwin(Fsplit.sideA.halfEdges[2], G_results.sideB.halfEdges[0], T_subF_to_subG, T_subG_to_subF);

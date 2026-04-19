@@ -1,64 +1,85 @@
-## Things worth thinking about before they bite
+# SIA Prototype Direction: Gizmos + Fill Triangulation
 
-**Brute-force point location.** Fine now, will bite later. The replacement is straightforward and doesn't change the API — swapping in a walk-based or spatial-index-based locator is a local change.
+## The substrate distinction
 
-**`#lastComposites` rebuilt from scratch per frame.** Fine now (atlas is tiny), a hotspot later. The interesting thing is that composite invalidation is a graph problem: when an edge transform changes, every face downstream of that edge in the BFS tree from root needs invalidating. The BFS tree already has the structure needed to make this incremental.
+**The atlas is the substrate.** It deals in faces (edges are lower-level internals). It handles filling natively. It doesn't enforce a scheme.
 
-**Frame-change arithmetic as a named concept.** The pattern `T_sub_to_ext = T_old · translate(p)` / `T_ext_to_sub = translate(-p) · inv(T_old)` shows up three times across two functions. That's a real operation with a real signature: "rebase a face frame at a point, re-expressing external transforms accordingly." Naming it and giving it one implementation will pay off as soon as you do anything beyond splits. Especially important once non-identity edge transforms exist, because the same logic has to work when `T_old` isn't identity.
+**"Schemes" are choices in how the atlas is used**, expressed in `folk-atlas.ts` or equivalent. The atlas itself shouldn't know or care. Different applications can use the atlas with different schemes — the substrate is general-purpose; the scheme is where trade-offs get chosen.
 
-**Shape-to-face reassignment via old-composites round-trip.** Works for now, but the cleanest version takes `(oldFace, subFaces, shapes, point)` and does the reassignment directly in face-local arithmetic rather than round-tripping through root-local. For identity transforms the two are equivalent; for non-identity transforms the round-trip is an extra source of floating-point error.
+## The trade-off space
 
-## Broader observations from seeing it in code
+Multiple approaches can be built on the atlas substrate, each trading different things:
 
-**The mathematical object is leaner than the discussion suggested.** The atlas is really just: a graph of half-edges with origin data and twin transforms. No vertex objects, no explicit equivalence classes, no separate "patch" abstraction, no reference surface, no operation stack. The theoretical layering we'd sketched (reference surface + operation stack + chart structure, with patches as a maximal-identity abstraction) was scaffolding for thinking; the actual object collapses all of it into the half-edge graph. Feels right.
+- Local topology with non-identity edge transforms (gives up global Euclidean pan/zoom; gets exact rigidity within faces but loses it across cumulative edges with transforms).
+- Sectored rigid translation (keeps Euclidean pan/zoom; accepts tears at ray discontinuities).
+- Smooth render-time displacement field (no tears; accepts shear everywhere in affected regions).
+- Shape-aware / explicit rigid groups (users designate important diagrams).
+- Implicit rigidity via SDF-like kernels (system detects clusters heuristically).
+- Compact-support operations (effect bounded; loses unbounded reach).
+- Or other choices like looping / self-connected: the top-level face (or some designated face) has boundary edges identified with other boundary edges of itself, giving toroidal, cylindrical, Klein-bottle, dilation-loop, or other topologies.
 
-**Junction identity is a computation, not a thing.** In a standard half-edge mesh, vertices are objects that own things. Here, position is per-half-edge (in its face frame), and "same vertex" is emergent from twin + next, verified at traversal time by the invariant that twin transforms carry origins to origins. This means **junction consistency is a derived property, not an enforced one.** Slightly scary but correct, and it accommodates future features like branch points / cone angles by intentionally relaxing the consistency at specific junctions.
+The atlas should let these be expressed without baking any of them in.
 
-**The transform invariants suggest a reduced representation.** Given a twin pair's transform and one half-edge's origin data, the twin's origin data is forced. You're storing both, with validation ensuring consistency. An alternative stores origin on only one half-edge per pair (the "primary") and derives it for the twin, halving origin storage and making junction-consistency structural rather than validated. Probably not worth doing now, but worth knowing the representation is "doubled" relative to its information content.
+## The chosen direction for this prototype
 
-**Faces are abstract shapes that happen to live somewhere.** Because `halfEdges[0]`'s origin is always finite `(0, 0)` and the face's other junctions are expressed relative to it, a face is really a pair: (an anchor choice, plus relative offsets to other vertices). Absolute position in any sense comes only from the composite transform at render time. Two atlases with identical face-shape data and identical transforms but different roots are _the same atlas_ up to rendering convention. Root isn't part of the atlas's identity; it's a pointer into it.
+**Gizmos + fill triangulation + "shear may exist but is minimized by good triangulation."**
 
-**Splits live in a simpler algebra than operations will eventually need.** Splits introduce only translations between old and new sub-face frames — no non-identity linear parts. Other operations (expansions, tears, dilations) will introduce genuine non-identity edge transforms. Worth keeping the distinction explicit, because the "rebase-at-point" helper is specifically translation-shaped right now but will need to generalize.
+- Gizmos replace direct edge manipulation (which was always wrong — it was just there to poke things).
+- The atlas auto-triangulates within each face (can be in euclidean terms, i suspect, if we normalize things right and extend delauney or whatever to support ideal vertices).
+- Gizmos are convex polygon child-faces placed inside existing faces.
+- When a gizmo is added/sized (on pointer-up, not during drag, to reduce churn), the containing face is re-filled.
+- Filling is always scoped to one face at a time. Face edges never overlap.
 
-**The atlas isn't a metric space.** There's no notion of distance in the structure. Face-local distance is ordinary Euclidean on face-local coordinates; distance between points in different faces is only meaningful once you pick a frame to express both in, and re-expressing through non-isometric transforms (dilations) will give different answers depending on frame choice. Distance is a derived concept computed via walks, and its canonical form depends on which transforms you assume to be isometries. The atlas is a _geometric structure_, not a _metric space_ — the difference is load-bearing.
+## Recursive structure
 
-**Shapes currently transform with their face.** Fine for rectangles under translation-only edge transforms. But once edge transforms have non-identity linear parts (scale, shear), a shape rendered through a composite will be visually stretched — which you want for some operations (dilation zoom) but not others (translation expand — the shape should move, not deform). The deeper structure: a shape has its own local frame, attached to a face by a frame-placement. Rendering is: face composite · shape placement · intrinsic shape geometry. Current code bakes placement into `(x, y)` and doesn't separate shape frame from face frame. Eventually you'll want an explicit shape-frame concept, probably with a per-shape flag for whether to resist face deformation.
+- Base case: one face (the infinite plane).
+- Add a gizmo: the outer face gets a child; its interior is filled to accommodate.
+- A gizmo inside a gizmo is the same pattern one level down — each face handles its own fill independently.
+- This directly supports nested operations (and eventually infinite zoom / recursive canvases).
 
-**Mutation operations decompose into combinatorial rewrite + transform specification.** Every mutation is a local rewrite of the half-edge graph, plus a specification of the new edge transforms introduced. Splits interleave these; separating them would make more complex operations composable. A single op like "expand polygon by Δ" would decompose into: (1) subdivide each boundary edge to introduce new junctions and insert new triangles between old boundary and new one, (2) set transforms on the new edges to implement the Δ displacement.
+## Terminology
 
-**The at-infinity half-edges are a bookkeeping element, not a geometric one.** A face bounded by two adjacent ideal junctions has a "closing" half-edge between them with no twin, never stroked, never rendered, never crossed. It exists to make face iteration uniform. Slight abstraction leak — face data structure pretends all edges are equal, but some are physical and some are placeholder. Worth documenting.
+The "triangulation in the context of a face" wants a name. **Fill** — it's short and clear. The face has a boundary (can be finite or ideal), some contents (child gizmos), and fill between. "Fill faces" for the interstitial polygons produced by the filling process.
 
-## The n-gon question
+## What "good fill" looks like
 
-Seeing this in code made me wonder whether the triangle assumption is actually earning its keep. I now think it isn't.
+- No super-thin slivers.
+- No super-acute angles.
+- Local — adding a gizmo only creates new fill near it.
+- Deterministic.
+- Works with finite and ideal boundary vertices.
 
-Triangles are conventional in meshes for reasons that are specific to mesh processing: unique planar embedding from three points, unambiguous barycentric interpolation, mature triangulation algorithms, GPU hardware preference. Of these, only the first is semantically meaningful for SIA — **face interiors don't need interpolation** (no per-vertex data is interpolated across a face), and we're not rasterizing triangles, we're applying CSS transforms to DOM subtrees.
+For first prototype: **constrained Delaunay triangulation** of the parent face's complement-of-gizmos. The parent boundary and gizmo boundaries are constraints. Output is triangles for fill. Sub-faces (gizmos) stay as whatever polygons the user made them — n-gon where needed.
 
-Meanwhile, the operations we actually want produce n-gons naturally:
+Ideal vertices on the boundary can be handled by extending constrained Delaunay, or by bounding with a large representation and treating ideals as points on that boundary. (the latter, i will point out, is incorrect)
 
-- **Expanding a polygon** produces the original n-gon as inner boundary, an expanded n-gon as outer boundary, an annular strip between. Triangulating the strip requires choosing diagonals that aren't semantic.
-- **Tearing along an arc** produces a face that's become an n+2-gon with the two new arc-sides. Triangulation adds non-semantic diagonals.
-- **The empty canvas** is semantically _one flat region_. With triangles, it's four wedge faces meeting at origin — four faces because each has to be a triangle, not because anything is distinct about the quadrants. With n-gons, it's one face with four ideal boundary half-edges and no twin pairs.
+Face identity for unchanged faces must be stable.
 
-The triangles are artifacts of representation, not structure. **The natural "face" of an SIA is the maximal region sharing a single local coordinate frame, bounded by the edges where frame changes happen.** That's almost never a triangle.
+## The semantics of a gizmo
 
-With n-gon faces:
+A gizmo is a convex child face with transforms on its boundary edges encoding its geometric effect. For the "make space" gizmo: each boundary edge's transform is its outward-normal times Δ, where Δ is user-controlled (dragging to grow).
 
-- The at-infinity half-edge stops feeling like a hack — it's just a boundary cycle element where two adjacent junctions happen to both be ideal.
-- "Sparse" becomes genuinely sparse: faces exist only where operations create them.
-- Face count is a meaningful semantic quantity ("how many regions have distinct frames") rather than a triangulation-quality artifact.
-- Storage scales with operation complexity, not with triangulation choices.
+At Δ=0 everything is identity. As Δ grows, the gizmo's effect on the parent's fill grows.
 
-Constraints I'd keep:
+Fill triangulation plays the role of sectored decomposition: each fill triangle is effectively a "sector" with its own rigid translation. Fill-triangle boundaries are where discontinuities live. Good fill makes these discontinuities small and well-distributed.
 
-1. **Simply-connected faces** (topological disks). Annular operations subdivide into simply-connected pieces.
-2. **Convex faces**, to keep containment cheap (n half-plane tests). Non-convex results subdivide into convex pieces.
-3. **Anchor convention stays**: `halfEdges[0].origin` at face-local `(0, 0)`, frame is unique.
+**Correction on reach:** fill is bounded by the parent face's boundary — when the parent face _is_ the infinite plane (ideal vertices at infinity), the fill still extends to infinity, and so do the effective rays-from-gizmo-vertices. That's fine; that's how a gizmo in the top-level plane gets effect at all distances. For a gizmo inside a finite parent, the fill is bounded by that parent.
 
-Concrete code change is small: `halfEdges` becomes variable-length, `triangleContains` becomes `polygonContains` with a convexity invariant check, splits produce polygon sub-faces where appropriate. Conceptual change is bigger: **faces are operation-induced regions, not triangulation primitives.** The data structure mirrors the operation history more directly.
+## Implementation sketch
 
-Our triangulation would then become planar subdivision of some kind.
+1. Replace `editEdgeTranslation` with a `createGizmo` primitive that adds a child face inside a parent.
+2. Implement fill triangulation (constrained Delaunay) scoped per-face.
+3. On gizmo creation/resize/move (pointer-up), re-fill the parent.
+4. Set gizmo boundary transforms per outward-normal × Δ.
+5. Set fill-internal edge transforms to reconcile adjacent fill faces (maintaining cycle closure).
+6. Validate invariants (cycle closure, junction consistency) in dev.
 
-One thing to watch: non-convex operation results (tears, annular expansions) need a plan for convex decomposition. Not urgent for the first operations, but don't let the convexity invariant quietly break.
+## Architectural summary
 
-I think n-gons are the right move, and worth doing now before the code has many consumers. It aligns the structure with its semantics rather than with inherited mesh-processing conventions.
+- Atlas (`atlas.ts`): faces, half-edges, transforms, topology mutations, fill/tesellation/triangulation. Scheme-agnostic.
+- Application layer (`folk-atlas.ts`): gizmos, UX, scheme-level operations. Translates user gestures into atlas mutations according to the chosen scheme.
+- Validator: separate, dev-only, composable per scheme. Fine to bake into whichever file for now
+
+### Future Notes
+
+The current code hardcodes Matrix2D as the edge transform type. The substrate could instead require transforms to satisfy a small interface (apply-to-point, compose, invert, identity), letting schemes provide their own transform types. Potentially useful for Nonlinear radial maps for fisheye-lens gizmos. Möbius transforms for bounded-hyperbolic infinite zoom — zoom forever into a region without coordinates blowing up. Among others. Not important now though.

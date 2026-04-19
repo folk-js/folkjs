@@ -9,6 +9,8 @@ import {
   HalfEdge,
   isPolygonCCW,
   type Junction,
+  rebaseTwinTransform,
+  rebaseTwinTransformByTranslation,
   splitFaceAlongEdge,
   splitFaceAtInterior,
   validateAtlas,
@@ -439,6 +441,51 @@ describe('Atlas.switchRoot', () => {
     const composed = M.multiply(C1, C2);
     assert.ok(M.equals(composed, M.fromValues()));
     assert.equal(atlas.root, originalRoot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rebaseTwinTransform / rebaseTwinTransformByTranslation
+// ---------------------------------------------------------------------------
+
+describe('rebaseTwinTransform', () => {
+  it('returns a fwd/rev pair that is mutually inverse', () => {
+    const T_old = M.fromTranslate(5, -3);
+    const R = M.fromTranslate(2, 4);
+    const { fwd, rev } = rebaseTwinTransform(T_old, R);
+    const composed = M.multiply(fwd, rev);
+    assert.ok(M.equals(composed, M.fromValues()));
+  });
+
+  it('is a no-op (returns T_old, inv(T_old)) when R = identity', () => {
+    const T_old = M.fromTranslate(7, 0);
+    const { fwd, rev } = rebaseTwinTransform(T_old, M.fromValues());
+    assert.ok(M.equals(fwd, T_old));
+    assert.ok(M.equals(rev, M.invert(T_old)));
+  });
+
+  it('preserves the physical position of any point in the sub-frame', () => {
+    // The point that lives at (qx, qy) in the new sub-frame sits at
+    // R · (qx, qy) in F's frame, then T_old · (...) in ext's frame.
+    // After the rebase: fwd · (qx, qy) in ext's frame should agree.
+    const T_old = M.fromTranslate(10, 20);
+    const R = M.fromTranslate(-3, 5);
+    const { fwd } = rebaseTwinTransform(T_old, R);
+    for (const q of [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -2, y: 7 }]) {
+      const viaTwoSteps = M.applyToPoint(T_old, M.applyToPoint(R, q));
+      const viaFwd = M.applyToPoint(fwd, q);
+      assert.ok(Math.abs(viaTwoSteps.x - viaFwd.x) < 1e-12);
+      assert.ok(Math.abs(viaTwoSteps.y - viaFwd.y) < 1e-12);
+    }
+  });
+
+  it('rebaseTwinTransformByTranslation matches the general form with R = translate', () => {
+    const T_old = M.fromTranslate(11, -2);
+    const point = { x: 3.5, y: -1.25 };
+    const a = rebaseTwinTransformByTranslation(T_old, point);
+    const b = rebaseTwinTransform(T_old, M.fromTranslate(point.x, point.y));
+    assert.ok(M.equals(a.fwd, b.fwd));
+    assert.ok(M.equals(a.rev, b.rev));
   });
 });
 

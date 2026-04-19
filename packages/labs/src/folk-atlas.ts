@@ -5,8 +5,9 @@ import {
   aroundJunction,
   Atlas,
   createInitialAtlas,
+  editEdgeTranslation,
   Face,
-  type HalfEdge,
+  HalfEdge,
   splitFaceAtInterior,
   validateAtlas,
 } from './atlas.ts';
@@ -17,8 +18,11 @@ export {
   aroundJunction,
   Atlas,
   createInitialAtlas,
+  editEdgeTranslation,
   Face,
   HalfEdge,
+  rebaseTwinTransform,
+  rebaseTwinTransformByTranslation,
   splitFaceAtInterior,
   splitFaceAlongEdge,
   validateAtlas,
@@ -103,6 +107,40 @@ export class FolkAtlas extends ReactiveElement {
       pointer-events: none;
       z-index: 0;
     }
+
+    /* Gizmo layer sits ABOVE shapes so handles are always grabbable.
+       The layer itself is transparent to pointer events; individual
+       handles re-enable them. */
+    .gizmos {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .gizmo-handle {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: oklch(70% 0.18 30);
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+      cursor: grab;
+      pointer-events: auto;
+      touch-action: none;
+      will-change: transform;
+      transform-origin: 7px 7px;
+    }
+    .gizmo-handle:hover {
+      background: oklch(60% 0.22 30);
+    }
+    .gizmo-handle.dragging {
+      cursor: grabbing;
+      background: oklch(55% 0.25 30);
+    }
   `;
 
   /**
@@ -144,6 +182,25 @@ export class FolkAtlas extends ReactiveElement {
   #content!: HTMLDivElement;
   #debug!: HTMLCanvasElement;
   #debugCtx!: CanvasRenderingContext2D;
+  #gizmoLayer!: HTMLDivElement;
+  /**
+   * Edge-translation gizmo handles, keyed by their canonical half-edge (the
+   * lower-indexed half of each twin pair). Only finite-finite twined edges
+   * get handles. Diffed against the canonical-edge set on every render.
+   */
+  #edgeHandles = new Map<HalfEdge, HTMLDivElement>();
+  /**
+   * Active drag state for the edge gizmo. While set, `#renderGizmos` skips
+   * repositioning the dragged handle so the handle stays under the cursor
+   * rather than jumping to the moving face's edge midpoint.
+   */
+  #activeEdgeDrag: {
+    he: HalfEdge;
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startTransform: M.Matrix2D;
+  } | null = null;
   #mutationObserver = new MutationObserver((records) => {
     for (const r of records) {
       r.addedNodes.forEach((n) => {
@@ -176,6 +233,10 @@ export class FolkAtlas extends ReactiveElement {
     const slot = document.createElement('slot');
     this.#content.append(slot);
     root.append(this.#content);
+
+    this.#gizmoLayer = document.createElement('div');
+    this.#gizmoLayer.className = 'gizmos';
+    root.append(this.#gizmoLayer);
 
     this.#lastComposites = this.#atlas.computeComposites();
     for (const child of this.children) {
@@ -584,6 +645,7 @@ export class FolkAtlas extends ReactiveElement {
     this.#lastVisibility = this.#computeVisibilities(composites, view);
     this.#renderShapes(composites);
     this.#renderDebug(composites, view);
+    this.#renderGizmos(composites, view);
   }
 
   /**
@@ -794,6 +856,158 @@ export class FolkAtlas extends ReactiveElement {
       ctx.arc(sp.x, sp.y, 4, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+
+  // ---- Edge translation gizmo (exploratory) ----
+  //
+  // One handle per finite-finite twined edge. Click-drag to add a translation
+  // to the edge's twin pair via `editEdgeTranslation`. Origins on the twin
+  // side are deliberately *not* updated, so dragging visibly tears the atlas
+  // at junctions and breaks cycle closure across loops touching the edge —
+  // this is the whole point of the primitive (see `sia.md` § "Edge gizmo").
+
+  /**
+   * Pick one half-edge per twin pair as the "canonical" one (the one that
+   * owns a gizmo handle). Choice: the half-edge with the smaller index in
+   * `atlas.halfEdges`. Stable across renders so handle DOM nodes can be
+   * reused; arbitrary in terms of which face is treated as the "moving"
+   * side, but the user can always select from either incident face.
+   */
+  #canonicalGizmoEdges(): Set<HalfEdge> {
+    const out = new Set<HalfEdge>();
+    const heIndex = new Map<HalfEdge, number>();
+    for (let i = 0; i < this.#atlas.halfEdges.length; i++) {
+      heIndex.set(this.#atlas.halfEdges[i], i);
+    }
+    for (const he of this.#atlas.halfEdges) {
+      if (!he.twin) continue;
+      // Both endpoints must be finite for a well-defined screen midpoint.
+      if (he.originKind !== 'finite') continue;
+      if (he.next.originKind !== 'finite') continue;
+      const ai = heIndex.get(he)!;
+      const bi = heIndex.get(he.twin)!;
+      if (ai > bi) continue;
+      out.add(he);
+    }
+    return out;
+  }
+
+  #renderGizmos(composites: Map<Face, M.Matrix2D>, view: M.Matrix2DReadonly) {
+    const canonical = this.#canonicalGizmoEdges();
+
+    // Drop handles whose canonical edge no longer exists.
+    for (const [he, el] of this.#edgeHandles) {
+      if (!canonical.has(he)) {
+        el.remove();
+        this.#edgeHandles.delete(he);
+      }
+    }
+
+    for (const he of canonical) {
+      let el = this.#edgeHandles.get(he);
+      if (!el) {
+        el = this.#createGizmoHandle(he);
+        this.#gizmoLayer.append(el);
+        this.#edgeHandles.set(he, el);
+      }
+
+      // Skip repositioning the handle that's actively being dragged: it
+      // tracks the cursor instead, so that `cursor.x - handle.x` stays
+      // constant for the duration of the drag.
+      if (this.#activeEdgeDrag?.he === he) continue;
+
+      const compB = composites.get(he.twin!.face);
+      if (!compB) {
+        el.style.display = 'none';
+        continue;
+      }
+      el.style.display = '';
+
+      // Position at the midpoint of the edge as drawn by the *moving* face
+      // (h.twin.face). When the gizmo is identity, this midpoint coincides
+      // with the same edge as drawn by h.face; once the gizmo translates,
+      // the moving-side midpoint follows the moving face — matching the
+      // intuition "the handle is on the side that moves with you".
+      const screenB = M.multiply(view, compB);
+      const a = { x: he.twin!.ox, y: he.twin!.oy };
+      const b = { x: he.twin!.next.ox, y: he.twin!.next.oy };
+      const sa = M.applyToPoint(screenB, a);
+      const sb = M.applyToPoint(screenB, b);
+      const mx = (sa.x + sb.x) / 2;
+      const my = (sa.y + sb.y) / 2;
+      // Center the 14×14 handle on (mx, my) via a translate that subtracts
+      // half the size — keeps top/left at 0 and the transform on the GPU.
+      el.style.transform = `translate(${mx - 7}px, ${my - 7}px)`;
+    }
+  }
+
+  #createGizmoHandle(he: HalfEdge): HTMLDivElement {
+    const el = document.createElement('div');
+    el.className = 'gizmo-handle';
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      el.setPointerCapture(event.pointerId);
+      el.classList.add('dragging');
+      this.#activeEdgeDrag = {
+        he,
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        // Snapshot the edge's transform at drag start so each move replays
+        // the total delta from the start (avoids floating-point drift from
+        // accumulating per-move translations).
+        startTransform: { ...he.transform },
+      };
+      // Park the handle at the cursor for the duration of the drag.
+      this.#positionHandleAtClient(el, event.clientX, event.clientY);
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      const drag = this.#activeEdgeDrag;
+      if (!drag || drag.he !== he || event.pointerId !== drag.pointerId) return;
+      event.preventDefault();
+      const dsx = event.clientX - drag.startClientX;
+      const dsy = event.clientY - drag.startClientY;
+      // Screen → atlas-units in h.face's frame. In the translation-only
+      // regime composite linear parts are identity, so dividing by the
+      // global view scale is the full conversion. Once uniform scale lands
+      // we'll need to also apply `inv(linear(composite(h.face)))` here.
+      const dx = dsx / this.#scale;
+      const dy = dsy / this.#scale;
+      // Replay from snapshot to avoid drift.
+      he.transform = { ...drag.startTransform };
+      if (he.twin) he.twin.transform = M.invert(he.transform);
+      editEdgeTranslation(he, dx, dy);
+      this.#positionHandleAtClient(el, event.clientX, event.clientY);
+      this.#scheduleUpdate();
+    };
+
+    const endDrag = (event: PointerEvent) => {
+      const drag = this.#activeEdgeDrag;
+      if (!drag || drag.he !== he || event.pointerId !== drag.pointerId) return;
+      this.#activeEdgeDrag = null;
+      el.classList.remove('dragging');
+      if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
+      // Next render snaps the handle back to the moving face's midpoint.
+      this.#scheduleUpdate();
+    };
+
+    el.addEventListener('pointerdown', onPointerDown);
+    el.addEventListener('pointermove', onPointerMove);
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+
+    return el;
+  }
+
+  #positionHandleAtClient(el: HTMLDivElement, clientX: number, clientY: number) {
+    const rect = this.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    el.style.transform = `translate(${x - 7}px, ${y - 7}px)`;
   }
 }
 
