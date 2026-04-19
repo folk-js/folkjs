@@ -389,6 +389,31 @@ export class Atlas {
     }
     return null;
   }
+
+  /**
+   * Re-anchor the atlas so that `newRoot` is the root face.
+   *
+   * Returns the matrix `C = composite_old(newRoot)` (the new root's composite
+   * in the old root's frame). Callers that maintain a view transform on top of
+   * composites should right-multiply their view by `C` to keep all on-screen
+   * positions invariant under the swap, since by construction:
+   *
+   *     view_old · composite_old(X) = (view_old · C) · composite_new(X)
+   *
+   * for every face X reachable from both roots. No structural data changes;
+   * this is purely a "what frame are composites expressed in?" change.
+   *
+   * Returns identity if `newRoot` is already the root, or if it isn't
+   * reachable from the current root (defensive — should not happen).
+   */
+  switchRoot(newRoot: Face): M.Matrix2D {
+    if (newRoot === this.root) return M.fromValues();
+    const composites = this.computeComposites();
+    const C = composites.get(newRoot);
+    if (!C) return M.fromValues();
+    this.root = newRoot;
+    return C;
+  }
 }
 
 // ----------------------------------------------------------------------------

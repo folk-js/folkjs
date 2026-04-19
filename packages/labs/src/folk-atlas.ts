@@ -93,7 +93,7 @@ export class FolkAtlas extends ReactiveElement {
       z-index: 1;
     }
 
-    /* Debug SVG sits BELOW the slotted children so the triangulation
+    /* Debug canvas sits BELOW the slotted children so the triangulation
        doesn't visually occlude shapes. */
     .debug {
       position: absolute;
@@ -101,39 +101,17 @@ export class FolkAtlas extends ReactiveElement {
       width: 100%;
       height: 100%;
       pointer-events: none;
-      overflow: visible;
       z-index: 0;
-    }
-
-    .debug .face {
-      stroke: oklch(58.5% 0.233 277.117 / 0.5);
-      stroke-width: 1;
-      fill: oklch(58.5% 0.233 277.117 / 0.04);
-      vector-effect: non-scaling-stroke;
-    }
-
-    .debug .face.root {
-      fill: oklch(58.5% 0.233 277.117 / 0.12);
-    }
-
-    .debug .vertex {
-      fill: oklch(58.5% 0.233 277.117);
-    }
-
-    .debug .label {
-      font: 11px/1 ui-monospace, monospace;
-      fill: oklch(35% 0.1 277);
-      pointer-events: none;
-      paint-order: stroke;
-      stroke: rgba(248, 249, 250, 0.9);
-      stroke-width: 3;
-      text-anchor: middle;
-      dominant-baseline: middle;
     }
   `;
 
-  /** "Far enough" finite distance (in pixels) at which to stub out ideal vertices for SVG drawing. */
-  static IDEAL_RADIUS = 100_000;
+  /**
+   * "Far enough" finite distance (in face-local units) at which to stub out
+   * ideal vertices when projecting a face polygon for clipping. Only used to
+   * produce a polygon big enough to robustly clip to the viewport rectangle —
+   * the clipped polygon is what's actually drawn.
+   */
+  static IDEAL_RADIUS = 1e6;
 
   // === Atlas state ===
   #atlas = createInitialAtlas();
@@ -151,7 +129,8 @@ export class FolkAtlas extends ReactiveElement {
 
   // === DOM ===
   #content!: HTMLDivElement;
-  #debug!: SVGSVGElement;
+  #debug!: HTMLCanvasElement;
+  #debugCtx!: CanvasRenderingContext2D;
   #mutationObserver = new MutationObserver((records) => {
     for (const r of records) {
       r.addedNodes.forEach((n) => {
@@ -174,8 +153,9 @@ export class FolkAtlas extends ReactiveElement {
     super.connectedCallback();
     const root = this.shadowRoot!;
 
-    this.#debug = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    this.#debug.classList.add('debug');
+    this.#debug = document.createElement('canvas');
+    this.#debug.className = 'debug';
+    this.#debugCtx = this.#debug.getContext('2d')!;
     root.append(this.#debug);
 
     this.#content = document.createElement('div');
@@ -245,9 +225,12 @@ export class FolkAtlas extends ReactiveElement {
   }
 
   #placeInRootFrame(shape: FolkAtlasShape, rootPoint: Point) {
+    // Use fresh composites — `#lastComposites` may be stale (e.g. mid-split,
+    // before `#splitAt` writes the new ones back).
+    const composites = this.#atlas.computeComposites();
     let foundFace: Face | null = null;
     let faceLocal: Point = rootPoint;
-    for (const [face, mf] of this.#lastComposites) {
+    for (const [face, mf] of composites) {
       const local = M.applyToPoint(M.invert(mf), rootPoint);
       if (face.contains(local)) {
         foundFace = face;
@@ -272,20 +255,67 @@ export class FolkAtlas extends ReactiveElement {
 
   /**
    * Re-locate every shape whose face is no longer in the atlas (e.g. because
-   * it was split). For the prototype we use each shape's last-known root-local
-   * position, computed via the OLD composites, before re-placing through the
-   * new atlas.
+   * it was just split). Each orphan shape's *physical* position must be
+   * preserved, but the SIA model has no global frame to round-trip through —
+   * the old root may itself have been the destroyed face, and even when it
+   * wasn't, "old root frame" and "new root frame" can differ (the new sub-
+   * faces of a split are anchored at the inserted point, so the new root's
+   * origin is generally not the old root's origin).
+   *
+   * Algorithm: pick a *surviving* face as a stable physical anchor (any face
+   * present both before and after the mutation works — the split primitives
+   * touch only one face, so neighbours are always fine). Express each orphan
+   * shape's position in the anchor's frame using the *old* composites, then
+   * re-express it in each new face's frame using the *new* composites and
+   * keep the first one whose `contains` check passes.
    */
   #relocateOrphanedShapes(oldComposites: Map<Face, M.Matrix2D>) {
     const presentFaces = new Set(this.#atlas.faces);
-    for (const [shape, face] of [...this.#shapeFaces]) {
-      if (presentFaces.has(face)) continue;
-      const oldComposite = oldComposites.get(face);
-      const rootPoint = oldComposite
-        ? M.applyToPoint(oldComposite, { x: shape.x, y: shape.y })
-        : { x: shape.x, y: shape.y };
+    const orphans: Array<[FolkAtlasShape, Face]> = [];
+    for (const [shape, face] of this.#shapeFaces) {
+      if (!presentFaces.has(face)) orphans.push([shape, face]);
+    }
+    if (orphans.length === 0) return;
+
+    const newComposites = this.#atlas.computeComposites();
+    const anchor = this.#atlas.faces.find((f) => oldComposites.has(f));
+    if (!anchor) {
+      // Whole atlas was replaced. Nothing physical to anchor on; drop orphans.
+      for (const [shape] of orphans) this.#shapeFaces.delete(shape);
+      return;
+    }
+    const anchorOldRoot = oldComposites.get(anchor)!; // anchor → old root
+    const anchorNewRoot = newComposites.get(anchor)!; // anchor → new root
+
+    for (const [shape, oldFace] of orphans) {
+      const oldFaceRoot = oldComposites.get(oldFace);
       this.#shapeFaces.delete(shape);
-      this.#placeInRootFrame(shape, rootPoint);
+      oldFace.shapes.delete(shape);
+      if (!oldFaceRoot) continue; // mystery orphan
+
+      // pAnchor = (anchor ← oldRoot ← oldFace) · shape
+      const M_oldFace_to_anchor = M.multiply(M.invert(anchorOldRoot), oldFaceRoot);
+      const pAnchor = M.applyToPoint(M_oldFace_to_anchor, { x: shape.x, y: shape.y });
+
+      let placed = false;
+      for (const newFace of this.#atlas.faces) {
+        const newFaceRoot = newComposites.get(newFace);
+        if (!newFaceRoot) continue;
+        // pNewFace = inv(newFace → newRoot) · (anchor → newRoot) · pAnchor
+        const M_anchor_to_newFace = M.multiply(M.invert(newFaceRoot), anchorNewRoot);
+        const pNewFace = M.applyToPoint(M_anchor_to_newFace, pAnchor);
+        if (newFace.contains(pNewFace)) {
+          this.#assignShape(shape, newFace, pNewFace);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        // Numerical edge case (e.g. point landed exactly on a boundary and
+        // every contains check returned strictly false). Fall back to the
+        // new root — better than dropping the shape.
+        this.#assignShape(shape, this.#atlas.root, { x: 0, y: 0 });
+      }
     }
   }
 
@@ -474,7 +504,41 @@ export class FolkAtlas extends ReactiveElement {
     this.#x = originX - (originX - this.#x) * scaleDiff + panX;
     this.#y = originY - (originY - this.#y) * scaleDiff + panY;
     this.#scale = newScale;
+    this.#maybeSwitchRootToViewportCentre();
     this.#scheduleUpdate();
+  }
+
+  /**
+   * Move `atlas.root` to whichever face currently sits under the viewport
+   * centre, compensating the view transform so on-screen positions don't
+   * jump. This keeps the actively-mutated frame near the user's focus, which
+   * is the natural anchor for upcoming face-relative gizmo edits.
+   *
+   * Assumption: every edge transform is a translation (or identity). With
+   * that constraint, the view stays of the form `translate(x, y) · scale(s)`
+   * after `view *= C` and we can decompose by inspection. When non-translation
+   * edge transforms appear, the view should be promoted to a full Matrix2D.
+   */
+  #maybeSwitchRootToViewportCentre() {
+    if (this.#lastComposites.size === 0) return;
+    const rect = this.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const rootPoint = { x: (cx - this.#x) / this.#scale, y: (cy - this.#y) / this.#scale };
+    let target: Face | null = null;
+    for (const [face, mf] of this.#lastComposites) {
+      const local = M.applyToPoint(M.invert(mf), rootPoint);
+      if (face.contains(local)) {
+        target = face;
+        break;
+      }
+    }
+    if (!target || target === this.#atlas.root) return;
+    const C = this.#atlas.switchRoot(target);
+    this.#x += this.#scale * C.e;
+    this.#y += this.#scale * C.f;
+    this.#lastComposites = this.#atlas.computeComposites();
   }
 
   // ---- Render loop ----
@@ -517,59 +581,144 @@ export class FolkAtlas extends ReactiveElement {
     }
   }
 
-  // ---- Debug visualisation ----
+  // ---- Debug visualisation (Canvas 2D) ----
 
+  /**
+   * Draw the atlas as a debug underlay:
+   *  - Each face is filled as the visible portion of its triangle, clipped to
+   *    the viewport rect. Ideal vertices are stubbed at `IDEAL_RADIUS` for the
+   *    purposes of producing a polygon to clip; the clipped result is what's
+   *    actually drawn, so they appear as polygons whose "infinite" sides are
+   *    the viewport edges.
+   *  - The root face is drawn with a slightly stronger fill.
+   *  - Each non-at-infinity half-edge is stroked individually. At-infinity
+   *    half-edges (both endpoints ideal) are *never* stroked: there is no
+   *    geometry between two points at infinity to draw.
+   *  - Labels are placed at the centroid of the *clipped* face polygon so
+   *    they always sit inside the visible portion of their face and never
+   *    overlap a neighbour's label.
+   *  - Finite junctions (deduplicated via `aroundJunction`) are dotted last.
+   */
   #renderDebug(composites: Map<Face, M.Matrix2D>, view: M.Matrix2DReadonly) {
-    const svg = this.#debug;
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
-    const ns = 'http://www.w3.org/2000/svg';
+    const ctx = this.#debugCtx;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this.getBoundingClientRect();
+    const cssW = rect.width;
+    const cssH = rect.height;
+    const pxW = Math.max(1, Math.round(cssW * dpr));
+    const pxH = Math.max(1, Math.round(cssH * dpr));
+    if (this.#debug.width !== pxW || this.#debug.height !== pxH) {
+      this.#debug.width = pxW;
+      this.#debug.height = pxH;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
 
-    let faceIndex = 0;
-    for (const face of this.#atlas.faces) {
+    // Generous margin so polygons crossing the edge still produce non-empty
+    // clipped pieces along the viewport boundary.
+    const margin = 32;
+    const clipRect: ClipRect = {
+      minX: -margin,
+      minY: -margin,
+      maxX: cssW + margin,
+      maxY: cssH + margin,
+    };
+
+    // Per-face screen-space polygons (with ideal stand-ins) and their clipped
+    // counterparts.
+    type Entry = {
+      face: Face;
+      screen: M.Matrix2DReadonly;
+      polygon: Point[];
+      clipped: Point[];
+      index: number;
+    };
+    const entries: Entry[] = [];
+    for (let i = 0; i < this.#atlas.faces.length; i++) {
+      const face = this.#atlas.faces[i];
       const mf = composites.get(face);
       if (!mf) continue;
       const screen = M.multiply(view, mf);
-
-      const junctions = face.junctions();
-      const pts: string[] = [];
-      for (const j of junctions) {
+      const polygon: Point[] = [];
+      for (const j of face.junctions()) {
         const local =
           j.kind === 'finite'
             ? { x: j.x, y: j.y }
             : { x: j.x * FolkAtlas.IDEAL_RADIUS, y: j.y * FolkAtlas.IDEAL_RADIUS };
-        const sp = M.applyToPoint(screen, local);
-        pts.push(`${sp.x},${sp.y}`);
+        polygon.push(M.applyToPoint(screen, local));
       }
-      const poly = document.createElementNS(ns, 'polygon');
-      poly.setAttribute('points', pts.join(' '));
-      poly.classList.add('face');
-      if (face === this.#atlas.root) poly.classList.add('root');
-      svg.append(poly);
-
-      // Label each face near its anchor (face-local (0, 0)), offset along
-      // the centroid of the non-anchor junctions.
-      let dx = 0;
-      let dy = 0;
-      for (let i = 1; i < 3; i++) {
-        const j = junctions[i];
-        // Both finite and ideal contribute their (x, y) as a direction-ish vector.
-        dx += j.x;
-        dy += j.y;
-      }
-      const len = Math.hypot(dx, dy) || 1;
-      const labelOffset = 30;
-      const labelLocal = { x: (dx / len) * labelOffset, y: (dy / len) * labelOffset };
-      const lp = M.applyToPoint(screen, labelLocal);
-      const text = document.createElementNS(ns, 'text');
-      text.setAttribute('x', String(lp.x));
-      text.setAttribute('y', String(lp.y));
-      text.classList.add('label');
-      text.textContent = `F${faceIndex} (${face.shapes.size})`;
-      svg.append(text);
-      faceIndex++;
+      entries.push({
+        face,
+        screen,
+        polygon,
+        clipped: clipPolygonToRect(polygon, clipRect),
+        index: i,
+      });
     }
 
-    // Render finite junctions on top of faces, deduplicated via aroundJunction.
+    const FACE_FILL = 'oklch(58.5% 0.233 277.117 / 0.04)';
+    const ROOT_FILL = 'oklch(58.5% 0.233 277.117 / 0.12)';
+    const EDGE_STROKE = 'oklch(58.5% 0.233 277.117 / 0.5)';
+    const VERTEX_FILL = 'oklch(58.5% 0.233 277.117)';
+    const LABEL_FILL = 'oklch(35% 0.1 277)';
+    const LABEL_HALO = 'rgba(248, 249, 250, 0.9)';
+
+    // Pass 1: face fills.
+    for (const e of entries) {
+      if (e.clipped.length < 3) continue;
+      ctx.beginPath();
+      ctx.moveTo(e.clipped[0].x, e.clipped[0].y);
+      for (let k = 1; k < e.clipped.length; k++) ctx.lineTo(e.clipped[k].x, e.clipped[k].y);
+      ctx.closePath();
+      ctx.fillStyle = e.face === this.#atlas.root ? ROOT_FILL : FACE_FILL;
+      ctx.fill();
+    }
+
+    // Pass 2: edge strokes — only for half-edges with at least one finite
+    // endpoint. Stroke on the unclipped polygon edge, then visually clip via
+    // canvas clipping so segments going to infinity fade at the viewport.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(clipRect.minX, clipRect.minY, clipRect.maxX - clipRect.minX, clipRect.maxY - clipRect.minY);
+    ctx.clip();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = EDGE_STROKE;
+    for (const e of entries) {
+      const hes = [...e.face.halfEdgesCCW()];
+      for (let k = 0; k < hes.length; k++) {
+        const a = hes[k];
+        const b = hes[(k + 1) % hes.length];
+        if (a.originKind === 'ideal' && b.originKind === 'ideal') continue;
+        const sa = e.polygon[k];
+        const sb = e.polygon[(k + 1) % e.polygon.length];
+        ctx.beginPath();
+        ctx.moveTo(sa.x, sa.y);
+        ctx.lineTo(sb.x, sb.y);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    // Pass 3: labels at clipped-polygon centroid (always inside the visible
+    // portion of the face).
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    for (const e of entries) {
+      if (e.clipped.length < 3) continue;
+      const c = polygonCentroid(e.clipped);
+      if (!Number.isFinite(c.x) || !Number.isFinite(c.y)) continue;
+      const label = `F${e.index} (${e.face.shapes.size})`;
+      ctx.strokeStyle = LABEL_HALO;
+      ctx.strokeText(label, c.x, c.y);
+      ctx.fillStyle = LABEL_FILL;
+      ctx.fillText(label, c.x, c.y);
+    }
+
+    // Pass 4: finite junctions, deduplicated via aroundJunction.
+    ctx.fillStyle = VERTEX_FILL;
     const visited = new Set<HalfEdge>();
     for (const he of this.#atlas.halfEdges) {
       if (visited.has(he)) continue;
@@ -579,18 +728,102 @@ export class FolkAtlas extends ReactiveElement {
       }
       const fan = [...aroundJunction(he)];
       for (const f of fan) visited.add(f);
-      // Pick the first half-edge whose face has a known composite.
       const rep = fan.find((h) => composites.has(h.face)) ?? fan[0];
       const composite = composites.get(rep.face);
       if (!composite) continue;
-      const screen = M.multiply(view, composite);
-      const sp = M.applyToPoint(screen, { x: rep.ox, y: rep.oy });
-      const dot = document.createElementNS(ns, 'circle');
-      dot.setAttribute('cx', String(sp.x));
-      dot.setAttribute('cy', String(sp.y));
-      dot.setAttribute('r', '4');
-      dot.classList.add('vertex');
-      svg.append(dot);
+      const sp = M.applyToPoint(M.multiply(view, composite), { x: rep.ox, y: rep.oy });
+      if (sp.x < clipRect.minX || sp.x > clipRect.maxX) continue;
+      if (sp.y < clipRect.minY || sp.y > clipRect.maxY) continue;
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 4, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
+}
+
+// ----------------------------------------------------------------------------
+// Polygon helpers (Sutherland–Hodgman + area-weighted centroid)
+// ----------------------------------------------------------------------------
+
+interface ClipRect {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/**
+ * Clip a (convex or non-convex) polygon to an axis-aligned rectangle using
+ * Sutherland–Hodgman. The output is the intersection polygon's vertices in
+ * the same winding order as the input. May be empty if the polygon is fully
+ * outside the rect.
+ */
+function clipPolygonToRect(poly: Point[], rect: ClipRect): Point[] {
+  if (poly.length < 3) return [];
+  let out: Point[] = poly;
+  out = clipAgainstHalfPlane(out, (p) => p.x - rect.minX, (a, b) => intersectX(a, b, rect.minX));
+  out = clipAgainstHalfPlane(out, (p) => rect.maxX - p.x, (a, b) => intersectX(a, b, rect.maxX));
+  out = clipAgainstHalfPlane(out, (p) => p.y - rect.minY, (a, b) => intersectY(a, b, rect.minY));
+  out = clipAgainstHalfPlane(out, (p) => rect.maxY - p.y, (a, b) => intersectY(a, b, rect.maxY));
+  return out;
+}
+
+function clipAgainstHalfPlane(
+  poly: Point[],
+  signedDistance: (p: Point) => number,
+  intersect: (a: Point, b: Point) => Point,
+): Point[] {
+  if (poly.length === 0) return poly;
+  const out: Point[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % poly.length];
+    const aIn = signedDistance(a) >= 0;
+    const bIn = signedDistance(b) >= 0;
+    if (aIn && bIn) out.push(b);
+    else if (aIn && !bIn) out.push(intersect(a, b));
+    else if (!aIn && bIn) {
+      out.push(intersect(a, b));
+      out.push(b);
+    }
+  }
+  return out;
+}
+
+function intersectX(a: Point, b: Point, x: number): Point {
+  const t = (x - a.x) / (b.x - a.x);
+  return { x, y: a.y + t * (b.y - a.y) };
+}
+
+function intersectY(a: Point, b: Point, y: number): Point {
+  const t = (y - a.y) / (b.y - a.y);
+  return { x: a.x + t * (b.x - a.x), y };
+}
+
+/**
+ * Area-weighted centroid of a simple polygon. Falls back to the vertex average
+ * if the polygon is degenerate (area ≈ 0).
+ */
+function polygonCentroid(poly: Point[]): Point {
+  let cx = 0;
+  let cy = 0;
+  let a2 = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    const cross = p.x * q.y - q.x * p.y;
+    cx += (p.x + q.x) * cross;
+    cy += (p.y + q.y) * cross;
+    a2 += cross;
+  }
+  if (Math.abs(a2) < 1e-9) {
+    let sx = 0;
+    let sy = 0;
+    for (const p of poly) {
+      sx += p.x;
+      sy += p.y;
+    }
+    return { x: sx / poly.length, y: sy / poly.length };
+  }
+  return { x: cx / (3 * a2), y: cy / (3 * a2) };
 }

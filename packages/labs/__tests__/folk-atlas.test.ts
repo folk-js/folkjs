@@ -286,6 +286,79 @@ describe('Atlas.computeComposites', () => {
   });
 });
 
+describe('Atlas.switchRoot', () => {
+  it('returns identity and is a no-op when target is already root', () => {
+    const atlas = createInitialAtlas();
+    const C = atlas.switchRoot(atlas.root);
+    assert.ok(M.equals(C, M.fromValues()));
+  });
+
+  it('returns C = composite_old(newRoot) and re-anchors composites at newRoot', () => {
+    // Inject a non-identity translation across one twin pair so the two roots
+    // disagree about coordinates (otherwise the test is trivial).
+    const atlas = createInitialAtlas();
+    const heInner = [...atlas.root.halfEdgesCCW()].find((he) => he.twin)!;
+    const oldRoot = atlas.root;
+    const newRoot = heInner.twin!.face;
+    heInner.transform = M.fromTranslate(7, -3);
+    heInner.twin!.transform = M.fromTranslate(-7, 3);
+
+    const compositesOld = atlas.computeComposites();
+    const expectedC = compositesOld.get(newRoot)!;
+    const C = atlas.switchRoot(newRoot);
+    assert.ok(M.equals(C, expectedC), 'C equals composite_old(newRoot)');
+
+    const compositesNew = atlas.computeComposites();
+    assert.equal(atlas.root, newRoot);
+    assert.ok(M.equals(compositesNew.get(newRoot)!, M.fromValues()));
+
+    // And the directly-adjacent old root maps via the inverse of C in the
+    // new frame: composite_new(oldRoot) = inv(C). (For faces along arbitrary
+    // BFS paths, this only holds in a globally-consistent atlas — see the
+    // round-trip test below for a cleaner statement.)
+    const oldRootComposite = compositesNew.get(oldRoot)!;
+    assert.ok(M.equals(oldRootComposite, M.invert(C)));
+  });
+
+  it('preserves screen positions for every face on a fully-consistent atlas', () => {
+    // The empty seed has all-identity edge transforms, hence is globally
+    // consistent. switchRoot then preserves screen positions for every face
+    // simultaneously when the view absorbs the returned C.
+    const atlas = createInitialAtlas();
+    const newRoot = atlas.faces[2];
+    const viewOld = M.scaleSelf(M.fromTranslate(100, 50), 1.25);
+    const compositesOld = atlas.computeComposites();
+
+    const C = atlas.switchRoot(newRoot);
+    const compositesNew = atlas.computeComposites();
+    const viewNew = M.multiply(viewOld, C);
+
+    const probe = { x: 3, y: 4 };
+    for (const face of atlas.faces) {
+      const screenOld = M.applyToPoint(M.multiply(viewOld, compositesOld.get(face)!), probe);
+      const screenNew = M.applyToPoint(M.multiply(viewNew, compositesNew.get(face)!), probe);
+      assert.ok(Math.abs(screenOld.x - screenNew.x) < 1e-9);
+      assert.ok(Math.abs(screenOld.y - screenNew.y) < 1e-9);
+    }
+  });
+
+  it('switching back to the original root yields inverse compensation', () => {
+    const atlas = createInitialAtlas();
+    const heInner = [...atlas.root.halfEdgesCCW()].find((he) => he.twin)!;
+    const originalRoot = atlas.root;
+    const otherFace = heInner.twin!.face;
+    heInner.transform = M.fromTranslate(7, -3);
+    heInner.twin!.transform = M.fromTranslate(-7, 3);
+
+    const C1 = atlas.switchRoot(otherFace);
+    const C2 = atlas.switchRoot(originalRoot);
+    // C1 * C2 should equal identity (we got back where we started).
+    const composed = M.multiply(C1, C2);
+    assert.ok(M.equals(composed, M.fromValues()));
+    assert.equal(atlas.root, originalRoot);
+  });
+});
+
 describe('Atlas.locate', () => {
   it('places points in their cardinal-quadrant face', () => {
     const atlas = createInitialAtlas();
