@@ -704,6 +704,135 @@ export function createInitialAtlas(
 }
 
 // ----------------------------------------------------------------------------
+// wrapEdges — twin two boundary half-edges with a chosen transform
+// ----------------------------------------------------------------------------
+
+/**
+ * Compute the translation that twins `heA` to `heB` under the standard
+ * convention `T · heA.next.origin = heB.origin` and `T · heA.origin =
+ * heB.next.origin`.
+ *
+ * For a translation to satisfy both equations the two edges must be
+ * anti-parallel as oriented vectors of the same length — geometrically, the
+ * left and right sides of a strip, or two opposite edges of a parallelogram.
+ *
+ * Throws if the geometry is incompatible with a pure translation, or if
+ * either half-edge has an ideal endpoint.
+ */
+export function translationToWrap(heA: HalfEdge, heB: HalfEdge, eps = 1e-6): M.Matrix2D {
+  if (heA.originKind !== 'finite' || heA.next.originKind !== 'finite') {
+    throw new Error('translationToWrap: heA must have two finite endpoints');
+  }
+  if (heB.originKind !== 'finite' || heB.next.originKind !== 'finite') {
+    throw new Error('translationToWrap: heB must have two finite endpoints');
+  }
+  // T(p) = p + t; from T·heA.next.origin = heB.origin we get
+  //   t = heB.origin - heA.next.origin
+  // From T·heA.origin = heB.next.origin we get
+  //   t = heB.next.origin - heA.origin
+  // The two must agree.
+  const tx1 = heB.ox - heA.next.ox;
+  const ty1 = heB.oy - heA.next.oy;
+  const tx2 = heB.next.ox - heA.ox;
+  const ty2 = heB.next.oy - heA.oy;
+  if (Math.abs(tx1 - tx2) > eps || Math.abs(ty1 - ty2) > eps) {
+    throw new Error(
+      `translationToWrap: edges are not translation-compatible (${tx1.toFixed(6)}, ${ty1.toFixed(6)}) vs (${tx2.toFixed(6)}, ${ty2.toFixed(6)})`,
+    );
+  }
+  return M.fromTranslate((tx1 + tx2) / 2, (ty1 + ty2) / 2);
+}
+
+/**
+ * Twin `heA` to `heB` under `transformAtoB`, creating (or extending) a
+ * non-trivial cycle in the atlas. This is how wrapped / looping topologies —
+ * cylinders, tori, dilation loops — get expressed in the SIA model: the
+ * structural commitment is "follow `heA` and you arrive in `heB`'s face".
+ *
+ * The standard cycle-closure invariant (walks between two faces give a
+ * unique composite) is *intentionally* violated in the global sense once
+ * non-trivial twin transforms exist on a loop — that's what gives us
+ * holonomy. Per-twin invariants (`T_twin · T = identity` and the junction-
+ * correspondence equations) are still required and `validateAtlas` still
+ * checks them.
+ *
+ * Pre-conditions (all enforced):
+ *  - both half-edges live in `atlas`
+ *  - both have `twin === null` (no overwriting existing twin pairs)
+ *  - both are finite-finite (at-infinity arcs cannot be twinned across)
+ *  - `transformAtoB` satisfies the twin junction-correspondence:
+ *       transformAtoB · heA.next.origin ≈ heB.origin
+ *       transformAtoB · heA.origin       ≈ heB.next.origin
+ *    (use {@link translationToWrap} when a pure translation is what you want)
+ *
+ * Effect:
+ *  - heA.twin = heB; heB.twin = heA
+ *  - heA.transform = transformAtoB
+ *  - heB.transform = inv(transformAtoB)
+ */
+export function wrapEdges(
+  atlas: Atlas,
+  heA: HalfEdge,
+  heB: HalfEdge,
+  transformAtoB: M.Matrix2D,
+  eps = 1e-6,
+): void {
+  if (heA === heB) {
+    throw new Error('wrapEdges: cannot twin a half-edge to itself');
+  }
+  if (!atlas.halfEdges.includes(heA) || !atlas.halfEdges.includes(heB)) {
+    throw new Error('wrapEdges: half-edges must belong to atlas');
+  }
+  if (heA.twin !== null || heB.twin !== null) {
+    throw new Error('wrapEdges: both half-edges must currently be untwinned');
+  }
+  if (heA.isAtInfinity || heB.isAtInfinity) {
+    throw new Error('wrapEdges: cannot twin at-infinity half-edges');
+  }
+  if (heA.originKind !== 'finite' || heA.next.originKind !== 'finite') {
+    throw new Error('wrapEdges: heA must have two finite endpoints');
+  }
+  if (heB.originKind !== 'finite' || heB.next.originKind !== 'finite') {
+    throw new Error('wrapEdges: heB must have two finite endpoints');
+  }
+
+  // Junction correspondence under transformAtoB.
+  const aTarget = M.applyToPoint(transformAtoB, { x: heA.next.ox, y: heA.next.oy });
+  const aOrigin = M.applyToPoint(transformAtoB, { x: heA.ox, y: heA.oy });
+  if (Math.abs(aTarget.x - heB.ox) > eps || Math.abs(aTarget.y - heB.oy) > eps) {
+    throw new Error(
+      `wrapEdges: transform·heA.target = (${aTarget.x.toFixed(6)}, ${aTarget.y.toFixed(6)}) does not match heB.origin = (${heB.ox.toFixed(6)}, ${heB.oy.toFixed(6)})`,
+    );
+  }
+  if (Math.abs(aOrigin.x - heB.next.ox) > eps || Math.abs(aOrigin.y - heB.next.oy) > eps) {
+    throw new Error(
+      `wrapEdges: transform·heA.origin = (${aOrigin.x.toFixed(6)}, ${aOrigin.y.toFixed(6)}) does not match heB.target = (${heB.next.ox.toFixed(6)}, ${heB.next.oy.toFixed(6)})`,
+    );
+  }
+
+  heA.twin = heB;
+  heB.twin = heA;
+  heA.transform = transformAtoB;
+  heB.transform = M.invert(transformAtoB);
+}
+
+/**
+ * Inverse of {@link wrapEdges}: drop the twin pointers between `he` and its
+ * current twin, leaving both as boundary edges. Their transforms are reset to
+ * identity (they no longer have meaning without a twin).
+ *
+ * No-op when `he.twin === null`.
+ */
+export function untwinEdges(he: HalfEdge): void {
+  const partner = he.twin;
+  if (!partner) return;
+  he.twin = null;
+  partner.twin = null;
+  he.transform = M.fromValues();
+  partner.transform = M.fromValues();
+}
+
+// ----------------------------------------------------------------------------
 // validateAtlas — invariant checker
 // ----------------------------------------------------------------------------
 
@@ -1872,9 +2001,14 @@ function findExit(
     if (he.isAtInfinity) {
       const a = he.origin();
       const b = he.next.origin();
+      // Use `>= -eps` (rather than `> eps`) so the line direction may exactly
+      // coincide with one of the arc's ideal endpoints. Geometrically the
+      // line still exits through that ideal vertex; a strictly-inside check
+      // wrongly rejects axis-aligned directions in cardinal seed wedges
+      // (e.g. d=(1,0) inside the +x/+y wedge whose arc spans (1,0)→(0,1)).
       if (
-        cross(a.x, a.y, d.x, d.y) > eps &&
-        cross(d.x, d.y, b.x, b.y) > eps
+        cross(a.x, a.y, d.x, d.y) >= -eps &&
+        cross(d.x, d.y, b.x, b.y) >= -eps
       ) {
         arcExit = he;
       }

@@ -11,6 +11,9 @@ import {
   insertStrip,
   resizeStrip,
   isPolygonCCW,
+  translationToWrap,
+  untwinEdges,
+  wrapEdges,
   type Junction,
   pointOnHEAtU,
   rebaseTwinTransform,
@@ -543,6 +546,160 @@ describe('Atlas.computeImages', () => {
 
     const images = atlas.computeImages({ maxDepth: 100, maxImagesPerFace: 3 });
     assert.equal(images.length, 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wrapEdges + translationToWrap
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a stand-alone unit-square face whose left and right edges are
+ * boundary (un-twinned). The classic horizontal-cylinder seed.
+ */
+function makeSquareFace(w = 1, h = 1) {
+  const he0 = new HalfEdge('finite', 0, 0); // bottom-left (anchor)
+  const he1 = new HalfEdge('finite', w, 0); // bottom-right
+  const he2 = new HalfEdge('finite', w, h); // top-right
+  const he3 = new HalfEdge('finite', 0, h); // top-left
+  const f = new Face([he0, he1, he2, he3]);
+  const atlas = new Atlas(f);
+  atlas.faces = [f];
+  atlas.halfEdges = [he0, he1, he2, he3];
+  // CCW order: bottom (he0) → right (he1) → top (he2) → left (he3)
+  return { atlas, face: f, bottom: he0, right: he1, top: he2, left: he3, w, h };
+}
+
+describe('translationToWrap', () => {
+  it('returns the unique translation for opposite parallel edges of a rect', () => {
+    const { right, left, w } = makeSquareFace(2, 1);
+    const T = translationToWrap(right, left);
+    assert.ok(M.equals(T, M.fromTranslate(-w, 0)));
+  });
+
+  it('throws when the two edges are not translation-compatible', () => {
+    // Pick top + left of a unit square: they are perpendicular, so no
+    // translation can twin them.
+    const { top, left } = makeSquareFace();
+    assert.throws(() => translationToWrap(top, left));
+  });
+
+  it('throws when an endpoint is ideal', () => {
+    const atlas = createInitialAtlas();
+    const wedge = atlas.faces[0];
+    const ideal = wedge.halfEdges[1]; // ideal-ideal edge at infinity
+    const finite = wedge.halfEdges[0];
+    assert.throws(() => translationToWrap(ideal, finite));
+  });
+});
+
+describe('wrapEdges', () => {
+  it('twins the half-edges with the supplied transform and its inverse', () => {
+    const { atlas, right, left, w } = makeSquareFace();
+    const T = M.fromTranslate(-w, 0);
+    wrapEdges(atlas, right, left, T);
+
+    assert.equal(right.twin, left);
+    assert.equal(left.twin, right);
+    assert.ok(M.equals(right.transform, T));
+    assert.ok(M.equals(left.transform, M.invert(T)));
+  });
+
+  it('passes validateAtlas after wrapping (per-twin invariants intact)', () => {
+    // The atlas is no longer simply-connected, but per-twin transform and
+    // junction invariants must still hold.
+    const { atlas, right, left, w } = makeSquareFace();
+    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+    validateAtlas(atlas);
+  });
+
+  it('produces multiple geometric images of the same face via computeImages', () => {
+    const { atlas, right, left, w, face } = makeSquareFace();
+    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+
+    const images = atlas.computeImages({ maxDepth: 3, maxImagesPerFace: 32 });
+    // depth 0 root + 1 each direction at depth 1 + 1 each at depth 2 + 1 each at depth 3
+    // → 1 + 2 + 2 + 2 = 7 distinct images.
+    assert.equal(images.length, 7);
+    for (const img of images) assert.equal(img.face, face);
+    const xs = images.map((i) => Math.round(i.composite.e)).sort((a, b) => a - b);
+    assert.deepEqual(xs, [-3, -2, -1, 0, 1, 2, 3]);
+  });
+
+  it('throws on already-twinned half-edges', () => {
+    const atlas = createInitialAtlas();
+    const heInner = [...atlas.root.halfEdgesCCW()].find((he) => he.twin)!;
+    const otherHe = [...atlas.faces[2].halfEdgesCCW()].find((he) => he.twin === null)!;
+    assert.throws(() => wrapEdges(atlas, heInner, otherHe, M.fromValues()));
+  });
+
+  it('throws on at-infinity (ideal-ideal) half-edges', () => {
+    const atlas = createInitialAtlas();
+    const wedge = atlas.faces[0];
+    const ideal = wedge.halfEdges[1]; // at-infinity arc
+    const { atlas: a2, right } = makeSquareFace();
+    // Even before twin checks, the ideal-ideal guard should fire.
+    assert.throws(() => wrapEdges(atlas, ideal, right, M.fromValues()));
+    void a2;
+  });
+
+  it('throws on geometry mismatch with the supplied transform', () => {
+    const { atlas, right, left } = makeSquareFace();
+    // Wrong translation amount.
+    assert.throws(() => wrapEdges(atlas, right, left, M.fromTranslate(-2, 0)));
+  });
+
+  it('throws when half-edges are not in the atlas', () => {
+    const { right } = makeSquareFace();
+    const { atlas: other, left } = makeSquareFace();
+    assert.throws(() => wrapEdges(other, right, left, M.fromTranslate(-1, 0)));
+  });
+
+  it('throws on self-twin', () => {
+    const { atlas, right } = makeSquareFace();
+    assert.throws(() => wrapEdges(atlas, right, right, M.fromValues()));
+  });
+
+  it('translationToWrap composes correctly with wrapEdges (cylinder seed)', () => {
+    // Chain the helper into the primitive — the canonical "make me a
+    // horizontal cylinder" call.
+    const { atlas, right, left, face } = makeSquareFace(3, 2);
+    wrapEdges(atlas, right, left, translationToWrap(right, left));
+    validateAtlas(atlas);
+    const images = atlas.computeImages({ maxDepth: 2 });
+    assert.ok(images.length > 1);
+    for (const img of images) assert.equal(img.face, face);
+  });
+});
+
+describe('untwinEdges', () => {
+  it('clears both halves of a twin pair and resets transforms', () => {
+    const { atlas, right, left, w } = makeSquareFace();
+    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+    untwinEdges(right);
+    assert.equal(right.twin, null);
+    assert.equal(left.twin, null);
+    assert.ok(M.equals(right.transform, M.fromValues()));
+    assert.ok(M.equals(left.transform, M.fromValues()));
+  });
+
+  it('is a no-op when the half-edge has no twin', () => {
+    const { right } = makeSquareFace();
+    assert.equal(right.twin, null);
+    untwinEdges(right);
+    assert.equal(right.twin, null);
+  });
+
+  it('round-trips with wrapEdges: untwin then re-wrap restores the cycle', () => {
+    const { atlas, right, left, w, face } = makeSquareFace();
+    const T = M.fromTranslate(-w, 0);
+    wrapEdges(atlas, right, left, T);
+    untwinEdges(right);
+    wrapEdges(atlas, right, left, T);
+    validateAtlas(atlas);
+    const images = atlas.computeImages({ maxDepth: 2 });
+    for (const img of images) assert.equal(img.face, face);
+    assert.ok(images.length > 1);
   });
 });
 

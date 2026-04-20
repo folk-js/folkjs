@@ -10,10 +10,13 @@ import {
   insertStrip,
   resizeStrip,
   splitAtlasAlongLine,
+  translationToWrap,
+  untwinEdges,
+  wrapEdges,
   type SplitAtlasAlongLineResult,
   type InsertStripResult,
 } from './atlas.ts';
-import type { FolkAtlasRegion } from './folk-atlas-region.ts';
+import { FolkAtlasRegion } from './folk-atlas-region.ts';
 import { FolkAtlasShape } from './folk-atlas-shape.ts';
 import { ShapeGhostRenderer } from './folk-atlas-ghosts.ts';
 
@@ -27,8 +30,14 @@ export {
   rebaseTwinTransformByTranslation,
   splitFaceAtInterior,
   splitFaceAlongEdge,
+  translationToWrap,
+  untwinEdges,
   validateAtlas,
+  wrapEdges,
 } from './atlas.ts';
+
+/** Which pair of opposite edges of a region are wrapped. */
+export type RegionWrapAxis = 'horizontal' | 'vertical';
 
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;
@@ -54,10 +63,18 @@ declare global {
  *                   (the would-be strip width). No atlas mutation yet —
  *                   the cut/strip primitive lands in a follow-up.
  */
-export type AtlasTool = 'select' | 'shape' | 'line-cut';
+export type AtlasTool = 'select' | 'shape' | 'line-cut' | 'region';
 
 interface ShapeDragState {
   kind: 'shape';
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  el: HTMLDivElement;
+}
+
+interface RegionDragState {
+  kind: 'region';
   pointerId: number;
   startClientX: number;
   startClientY: number;
@@ -85,7 +102,7 @@ interface HandleExpandDragState {
   gizmo: LineCutGizmo;
 }
 
-type ToolDragState = ShapeDragState | LineDrawDragState | HandleExpandDragState;
+type ToolDragState = ShapeDragState | RegionDragState | LineDrawDragState | HandleExpandDragState;
 
 /**
  * Persistent line-cut gizmo created when the user releases a line-draw drag.
@@ -231,8 +248,20 @@ export class FolkAtlas extends ReactiveElement {
       z-index: 2;
     }
 
+    /* Region overlay layer — screen-coords, sits above shapes so handles
+       are clickable and the outline never gets occluded. The container is
+       transparent to pointer events; individual region elements re-enable
+       events on their own controls. */
+    .regions {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
     :host([tool='shape']) .content,
-    :host([tool='line-cut']) .content {
+    :host([tool='line-cut']) .content,
+    :host([tool='region']) .content {
       cursor: crosshair;
     }
 
@@ -332,6 +361,8 @@ export class FolkAtlas extends ReactiveElement {
   #atlas = createInitialAtlas();
   /** Map from shape element to its assigned face. */
   #shapeFaces = new Map<FolkAtlasShape, Face>();
+  /** Map from region element to its bound (centre) face. */
+  #regionFaces = new Map<FolkAtlasRegion, Face>();
 
   // === Pan / zoom (mirrors folk-space's interaction model) ===
   #x = 0;
@@ -370,6 +401,13 @@ export class FolkAtlas extends ReactiveElement {
   #ghostLayer!: HTMLDivElement;
   /** Ghost rendering subsystem — see {@link ShapeGhostRenderer}. */
   #ghosts!: ShapeGhostRenderer;
+  /**
+   * Layer that hosts `<folk-atlas-region>` elements. Sits in *screen
+   * coordinates* — not transformed by `#content`'s view — so the region's
+   * outline + handles stay crisp at any zoom level. The atlas writes
+   * the polygon vertices and controls position per render.
+   */
+  #regionLayer!: HTMLDivElement;
 
   /** In-flight drag state for tool-driven interactions. */
   #toolDrag: ToolDragState | null = null;
@@ -415,6 +453,10 @@ export class FolkAtlas extends ReactiveElement {
     this.#overlay.className = 'overlay';
     root.append(this.#overlay);
 
+    this.#regionLayer = document.createElement('div');
+    this.#regionLayer.className = 'regions';
+    root.append(this.#regionLayer);
+
     this.#lastComposites = this.#atlas.computeComposites();
     for (const child of this.children) {
       if (child instanceof FolkAtlasShape) this.#registerShape(child);
@@ -446,6 +488,8 @@ export class FolkAtlas extends ReactiveElement {
     this.#mutationObserver.disconnect();
     this.#resizeObserver.disconnect();
     this.#ghosts?.clear();
+    for (const region of this.#regionFaces.keys()) region.remove();
+    this.#regionFaces.clear();
   }
 
   // ---- Child wiring ----
@@ -456,14 +500,6 @@ export class FolkAtlas extends ReactiveElement {
 
   #onChildRemoved(el: Element) {
     if (el instanceof FolkAtlasShape) this.#unregisterShape(el);
-  }
-
-  /**
-   * Called by a child region when its polygon changes. Currently a no-op
-   * structurally — regions are visual decorations only.
-   */
-  notifyRegionChanged(_region: FolkAtlasRegion) {
-    this.#scheduleUpdate();
   }
 
   // ---- Shape tracking ----
@@ -697,6 +733,7 @@ export class FolkAtlas extends ReactiveElement {
     event.stopPropagation();
     this.setPointerCapture(event.pointerId);
     if (this.tool === 'shape') this.#startShapeDrag(event);
+    else if (this.tool === 'region') this.#startRegionDrag(event);
     else if (this.tool === 'line-cut') this.#startLineDraw(event);
   };
 
@@ -708,6 +745,7 @@ export class FolkAtlas extends ReactiveElement {
     if (drag.kind === 'handle-expand') return;
     event.preventDefault();
     if (drag.kind === 'shape') this.#updateShapeDrag(drag, event);
+    else if (drag.kind === 'region') this.#updateRegionDrag(drag, event);
     else if (drag.kind === 'line-draw') this.#updateLineDraw(drag, event);
   };
 
@@ -718,6 +756,7 @@ export class FolkAtlas extends ReactiveElement {
     event.preventDefault();
     if (this.hasPointerCapture(event.pointerId)) this.releasePointerCapture(event.pointerId);
     if (drag.kind === 'shape') this.#endShapeDrag(drag, event);
+    else if (drag.kind === 'region') this.#endRegionDrag(drag, event);
     else if (drag.kind === 'line-draw') this.#endLineDraw(drag, event);
     this.#toolDrag = null;
   };
@@ -788,6 +827,339 @@ export class FolkAtlas extends ReactiveElement {
     el.height = height;
     el.textContent = 'shape';
     this.append(el);
+  }
+
+  // ---- Region tool: drag a rectangle preview, release inserts a region ----
+
+  #startRegionDrag(event: PointerEvent) {
+    const el = document.createElement('div');
+    el.className = 'preview-rect';
+    this.#overlay.append(el);
+    this.#toolDrag = {
+      kind: 'region',
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      el,
+    };
+    this.#updateRegionDrag(this.#toolDrag, event);
+  }
+
+  #updateRegionDrag(drag: RegionDragState, event: PointerEvent) {
+    const rect = this.getBoundingClientRect();
+    const x0 = drag.startClientX - rect.left;
+    const y0 = drag.startClientY - rect.top;
+    const x1 = event.clientX - rect.left;
+    const y1 = event.clientY - rect.top;
+    const left = Math.min(x0, x1);
+    const top = Math.min(y0, y1);
+    const w = Math.abs(x1 - x0);
+    const h = Math.abs(y1 - y0);
+    drag.el.style.transform = `translate(${left}px, ${top}px)`;
+    drag.el.style.width = `${w}px`;
+    drag.el.style.height = `${h}px`;
+  }
+
+  #endRegionDrag(drag: RegionDragState, event: PointerEvent) {
+    drag.el.remove();
+    const rect = this.getBoundingClientRect();
+    const sx0 = drag.startClientX - rect.left;
+    const sy0 = drag.startClientY - rect.top;
+    const sx1 = event.clientX - rect.left;
+    const sy1 = event.clientY - rect.top;
+    let left = Math.min(sx0, sx1);
+    let top = Math.min(sy0, sy1);
+    let w = Math.abs(sx1 - sx0);
+    let h = Math.abs(sy1 - sy0);
+    // Tiny click-without-drag: default-sized region centred on the click.
+    const dx = event.clientX - drag.startClientX;
+    const dy = event.clientY - drag.startClientY;
+    if (dx * dx + dy * dy < 16) {
+      const dw = 200;
+      const dh = 140;
+      left = sx0 - dw / 2;
+      top = sy0 - dh / 2;
+      w = dw;
+      h = dh;
+    }
+    if (w < 8 || h < 8) return;
+    this.createRegionAtScreenRect({ x: left, y: top, width: w, height: h });
+  }
+
+  // -------------------------------------------------------------------------
+  // Region creation API
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create a region by carving an axis-aligned rectangle out of the atlas
+   * with four line cuts (top, bottom, left, right) and binding the resulting
+   * centre face to a fresh `<folk-atlas-region>` element.
+   *
+   * `screenRect` is in CSS pixels relative to the atlas's bounding rect —
+   * the natural output of a tool drag. We convert to face-local coordinates
+   * per cut because each `splitAtlasAlongLine` call may reassign
+   * `atlas.root` and shift the root frame.
+   *
+   * Returns the created region element (already appended to the region
+   * layer) or `null` if no centre face could be located (e.g. the rect is
+   * degenerate or sits entirely outside the atlas).
+   */
+  createRegionAtScreenRect(screenRect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): FolkAtlasRegion | null {
+    const x0 = screenRect.x;
+    const y0 = screenRect.y;
+    const x1 = screenRect.x + screenRect.width;
+    const y1 = screenRect.y + screenRect.height;
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+
+    // Four axis-aligned cuts. Each is described by a *screen* anchor and a
+    // direction. Direction is preserved across screen → face-local for
+    // translation-only edge transforms (current scope).
+    //
+    // Seeds are placed at the *midpoint* of each cut line (not at the rect's
+    // corners): a corner sits on the boundary of two existing wedge faces in
+    // the seed atlas and on the boundary of subsequent cut faces, which makes
+    // `splitAtlasAlongLine`'s `face.contains` lookups and walk-line entry
+    // computations degenerate. Midpoints are guaranteed strictly interior to
+    // their host face after every previous parallel cut.
+    //
+    // Known limitation: if the requested rect straddles a seed-atlas axis
+    // (the X or Y half-axes that bound the default wedges), the four cuts
+    // produce up to four sub-faces in the middle (one per quadrant the
+    // rect enters) rather than a single rectangle. `locate(centre)` below
+    // will pick whichever quadrant the rect's centre falls in. That
+    // quadrant *is* still a clean rectangle and `wrapRegionAxis` works on
+    // it; visually the region just appears as a sub-rect of the requested
+    // area. A future fix would either start from a seed atlas without
+    // origin-crossing wedges, or add a "merge faces along shared finite
+    // edge" primitive and merge the sub-faces here.
+    const cuts: Array<{
+      seedClientX: number;
+      seedClientY: number;
+      direction: Point;
+    }> = [
+      { seedClientX: cx, seedClientY: y0, direction: { x: 1, y: 0 } }, // top
+      { seedClientX: cx, seedClientY: y1, direction: { x: 1, y: 0 } }, // bottom
+      { seedClientX: x0, seedClientY: cy, direction: { x: 0, y: 1 } }, // left
+      { seedClientX: x1, seedClientY: cy, direction: { x: 0, y: 1 } }, // right
+    ];
+
+    for (const cut of cuts) {
+      this.#runOneRegionCut(cut.seedClientX, cut.seedClientY, cut.direction);
+    }
+
+    // Locate the centre face after all four cuts. Use the rect's screen
+    // centre, converted to the post-mutation root frame.
+    const rootCentre = this.#screenPointToRoot(cx, cy);
+    const centreFace = this.#atlas.locate(rootCentre);
+    if (!centreFace) {
+      console.warn('[folk-atlas] createRegion: no face found at rect centre');
+      return null;
+    }
+
+    const region = new FolkAtlasRegion();
+    this.#regionLayer.append(region);
+    this.#regionFaces.set(region, centreFace);
+    this.#scheduleUpdate();
+    return region;
+  }
+
+  /**
+   * Helper: translate a screen point to the atlas's *root* frame using the
+   * current view transform. (No face binding; just the affine convert.)
+   */
+  #screenPointToRoot(clientX: number, clientY: number): Point {
+    return {
+      x: (clientX - this.#x) / this.#scale,
+      y: (clientY - this.#y) / this.#scale,
+    };
+  }
+
+  /**
+   * Run a single line cut sourced from a screen-coord seed. Handles host
+   * lookup, frame conversion, view compensation, and orphan relocation —
+   * the same machinery `#commitCutGizmo` uses for the line-cut tool, just
+   * without a strip insertion (region cuts produce a sharp partition).
+   */
+  #runOneRegionCut(seedClientX: number, seedClientY: number, direction: Point): void {
+    if (this.#lastComposites.size === 0) {
+      this.#lastComposites = this.#atlas.computeComposites();
+    }
+    const seedRoot = this.#screenPointToRoot(seedClientX, seedClientY);
+    let host: Face | null = null;
+    let seedLocal: Point = seedRoot;
+    for (const [face, mf] of this.#lastComposites) {
+      const local = M.applyToPoint(M.invert(mf), seedRoot);
+      if (face.contains(local)) {
+        host = face;
+        seedLocal = local;
+        break;
+      }
+    }
+    if (!host) {
+      console.warn('[folk-atlas] region cut: seed not in any face');
+      return;
+    }
+    const oldComposites = new Map(this.#lastComposites);
+    try {
+      splitAtlasAlongLine(this.#atlas, host, seedLocal, direction);
+    } catch (err) {
+      console.warn('[folk-atlas] region cut split failed:', err);
+      return;
+    }
+    const { newComposites } = this.#compensateViewAfterMutation(oldComposites);
+    this.#lastComposites = newComposites;
+    this.#relocateOrphanedShapes(oldComposites);
+    this.#relocateOrphanedRegions(oldComposites);
+  }
+
+  // -------------------------------------------------------------------------
+  // Region wrap API
+  // -------------------------------------------------------------------------
+
+  /**
+   * Toggle wrapping of the region across the given axis.
+   *
+   * Horizontal wrap twins the region's *left* and *right* edges (after
+   * un-twinning them from their current outside neighbours). The outside
+   * neighbours' inside-facing edges become boundaries — exterior space
+   * loses the ability to enter the region from those sides, but the
+   * region's interior wraps onto itself.
+   *
+   * Vertical wrap is the same with top/bottom.
+   *
+   * Toggling a second time restores the original twins by un-twinning the
+   * inside pair. (We don't currently re-attach the original outside
+   * twins — once severed, those edges remain boundaries. Improving this is
+   * a follow-up; conceptually the region "remembers" who its neighbours
+   * were before a wrap.)
+   */
+  wrapRegionAxis(region: FolkAtlasRegion, axis: RegionWrapAxis): void {
+    const face = this.#regionFaces.get(region);
+    if (!face || !this.#atlas.faces.includes(face)) return;
+
+    const sides = this.#regionSides(face);
+    if (!sides) {
+      console.warn('[folk-atlas] wrapRegionAxis: face is not a clean rectangle');
+      return;
+    }
+
+    const isCurrentlyWrapped = axis === 'horizontal' ? region.wrapH : region.wrapV;
+    const heA = axis === 'horizontal' ? sides.right : sides.top;
+    const heB = axis === 'horizontal' ? sides.left : sides.bottom;
+
+    if (isCurrentlyWrapped) {
+      // Untwin the wrap — leaves both as boundaries; outside neighbours
+      // remain disconnected (their inside-facing edges are also boundaries
+      // from the previous wrap-step, since we untwinned them then).
+      if (heA.twin === heB) untwinEdges(heA);
+      if (axis === 'horizontal') region.wrapH = false;
+      else region.wrapV = false;
+    } else {
+      // Sever both sides from outside, then twin them to each other.
+      if (heA.twin) untwinEdges(heA);
+      if (heB.twin) untwinEdges(heB);
+      try {
+        const T = translationToWrap(heA, heB);
+        wrapEdges(this.#atlas, heA, heB, T);
+      } catch (err) {
+        console.warn('[folk-atlas] wrapRegionAxis: wrap failed:', err);
+        return;
+      }
+      if (axis === 'horizontal') region.wrapH = true;
+      else region.wrapV = true;
+    }
+    this.#scheduleUpdate();
+  }
+
+  /**
+   * Identify the four cardinal sides of a rectangular region face by the
+   * dominant axis of each edge in the face's local frame. Returns `null`
+   * if the face isn't a 4-gon with finite vertices.
+   *
+   * Tolerant of small tilts (region cuts are made with a tiny angular
+   * tilt to avoid coinciding with seed atlas axes), so we classify edges
+   * by their *dominant* axis (|dx| vs |dy|) rather than requiring exact
+   * axis alignment.
+   *
+   * Convention: edges are CCW. For a rectangle whose anchor is at one
+   * corner with the interior on the +x/+y side, the CCW order is
+   * bottom → right → top → left.
+   */
+  #regionSides(face: Face): {
+    bottom: HalfEdge;
+    right: HalfEdge;
+    top: HalfEdge;
+    left: HalfEdge;
+  } | null {
+    if (face.halfEdges.length !== 4) return null;
+    const sides = { bottom: null, right: null, top: null, left: null } as {
+      bottom: HalfEdge | null;
+      right: HalfEdge | null;
+      top: HalfEdge | null;
+      left: HalfEdge | null;
+    };
+    for (const he of face.halfEdges) {
+      if (he.originKind !== 'finite' || he.next.originKind !== 'finite') return null;
+      const dx = he.next.ox - he.ox;
+      const dy = he.next.oy - he.oy;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        // Predominantly horizontal.
+        if (dx > 0) sides.bottom = he;
+        else sides.top = he;
+      } else {
+        // Predominantly vertical.
+        if (dy > 0) sides.right = he;
+        else sides.left = he;
+      }
+    }
+    if (!sides.bottom || !sides.right || !sides.top || !sides.left) return null;
+    return sides as { bottom: HalfEdge; right: HalfEdge; top: HalfEdge; left: HalfEdge };
+  }
+
+  /**
+   * After an atlas mutation, walk all regions and try to re-locate their
+   * bound face. The strategy mirrors `#relocateOrphanedShapes`: find the
+   * region's anchor in the *old* root frame, then locate which surviving
+   * face contains it in the *new* root frame.
+   *
+   * Regions whose face survives need no work. Regions whose face is gone
+   * (e.g. another cut sliced through the rectangle) are unbound — the
+   * element stays in the DOM but renders empty until manually re-bound or
+   * removed.
+   */
+  #relocateOrphanedRegions(oldComposites: ReadonlyMap<Face, M.Matrix2D>): void {
+    if (this.#regionFaces.size === 0) return;
+    const newComposites = this.#lastComposites;
+    const survivors = new Set(this.#atlas.faces);
+    for (const [region, oldFace] of this.#regionFaces) {
+      if (survivors.has(oldFace)) continue;
+      const oldFaceComp = oldComposites.get(oldFace);
+      if (!oldFaceComp) {
+        this.#regionFaces.delete(region);
+        continue;
+      }
+      // Use the (old) face's anchor (origin = (0,0)) to pick a new face.
+      // For now, pick whichever face contains the anchor in the new root.
+      const anchorRoot = M.applyToPoint(oldFaceComp, { x: 0, y: 0 });
+      let placed = false;
+      for (const newFace of this.#atlas.faces) {
+        const newComp = newComposites.get(newFace);
+        if (!newComp) continue;
+        const local = M.applyToPoint(M.invert(newComp), anchorRoot);
+        if (newFace.contains(local)) {
+          this.#regionFaces.set(region, newFace);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) this.#regionFaces.delete(region);
+    }
   }
 
   // ---- Line-cut tool ----
@@ -1414,6 +1786,7 @@ export class FolkAtlas extends ReactiveElement {
     this.#lastVisibility = this.#computeVisibilities(composites, view);
     this.#renderShapes(composites);
     this.#ghosts.update(extras);
+    this.#renderRegions(composites, view);
     if (this.debug) {
       this.#debug.style.display = '';
       this.#renderDebug(composites, view);
@@ -1479,6 +1852,54 @@ export class FolkAtlas extends ReactiveElement {
       shape.style.display = '';
       const m = M.translate(composite, shape.x, shape.y);
       shape.style.transform = M.toCSSString(m);
+    }
+  }
+
+  /**
+   * Per-frame placement for `<folk-atlas-region>` overlays. Each region
+   * lives in screen coordinates so its dashed outline + handles stay crisp
+   * at any zoom; we project the bound face's local junctions through
+   * `(view · faceComposite)` and write the resulting points into the
+   * region's outline polygon. The controls panel goes at the polygon's
+   * centroid (good enough for the axis-aligned rectangle case).
+   *
+   * Regions whose face is no longer in the atlas (destroyed by an unrelated
+   * mutation, e.g. a line cut through it) are hidden until manually rebound.
+   */
+  #renderRegions(composites: Map<Face, M.Matrix2D>, view: M.Matrix2DReadonly) {
+    if (this.#regionFaces.size === 0) return;
+    const survivors = new Set(this.#atlas.faces);
+    for (const [region, face] of this.#regionFaces) {
+      if (!survivors.has(face)) {
+        region.setVisible(false);
+        continue;
+      }
+      const composite = composites.get(face);
+      if (!composite) {
+        region.setVisible(false);
+        continue;
+      }
+      region.setVisible(true);
+      const screen = M.multiply(view, composite);
+      const pts: Point[] = [];
+      let cx = 0;
+      let cy = 0;
+      let n = 0;
+      for (const j of face.junctions()) {
+        const local =
+          j.kind === 'finite'
+            ? { x: j.x, y: j.y }
+            : { x: j.x * FolkAtlas.IDEAL_RADIUS, y: j.y * FolkAtlas.IDEAL_RADIUS };
+        const p = M.applyToPoint(screen, local);
+        pts.push(p);
+        if (j.kind === 'finite') {
+          cx += p.x;
+          cy += p.y;
+          n++;
+        }
+      }
+      region.setOutlineScreenPoints(pts);
+      if (n > 0) region.setControlsScreenPosition(cx / n, cy / n);
     }
   }
 
