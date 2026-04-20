@@ -8,6 +8,7 @@ import {
   Face,
   HalfEdge,
   insertStrip,
+  resizeStrip,
   splitAtlasAlongLine,
   type SplitAtlasAlongLineResult,
   type InsertStripResult,
@@ -117,21 +118,23 @@ interface LineCutGizmo {
   delta: number;
 
   /**
-   * Once the user releases the handle drag with a non-zero delta, the
-   * line-cut mutation is committed to the atlas: `splitAtlasAlongLine`
-   * subdivides every face the line crosses into a left/right pair, and
-   * `insertStrip` opens the seam to width |delta|. The gizmo holds onto
-   * the resulting per-step pairs and strip metadata so subsequent
-   * adjustments can target the same set of faces.
+   * Set once the line-cut mutation is committed to the atlas:
+   * `splitAtlasAlongLine` subdivides every face the line crosses into a
+   * left/right pair, and `insertStrip` opens the seam to the current
+   * |delta|. The gizmo holds onto the resulting per-step pairs and
+   * strip metadata so subsequent handle drags resize the strip in place
+   * (via `resizeStrip`) rather than re-cutting.
    *
-   * `null` until the first commit; once set, the gizmo represents an
-   * existing cut rather than a pending preview.
+   * `null` until the first commit; once set, `hostFace` has been
+   * re-anchored to `strip.stripFace`.
    */
   committed: {
     split: SplitAtlasAlongLineResult;
     strip: InsertStripResult;
     /** Sign of `delta` at commit time — picks which side the strip pushes. */
     sign: 1 | -1;
+    /** Current strip thickness; tracked here because `resizeStrip` requires the prior height. */
+    height: number;
   } | null;
 
   // DOM
@@ -1047,7 +1050,18 @@ export class FolkAtlas extends ReactiveElement {
     const dsy = event.clientY - drag.startClientY;
     const screenDelta = dsx * -uy + dsy * ux;
     g.delta = drag.startDelta + screenDelta / this.#scale;
-    this.#scheduleUpdate();
+    // Live mutation: commit on first crossing of the threshold, then
+    // resize on every subsequent move within the same drag. Both paths
+    // schedule a render so the strip + handle stay in sync with the
+    // cursor.
+    if (!g.committed) {
+      this.#commitCutGizmo(g);
+    } else {
+      this.#resizeCutStrip(g);
+    }
+    // If neither commit nor resize ran (e.g. |delta| under the eps),
+    // still re-render so the preview tracks the cursor.
+    if (!g.committed) this.#scheduleUpdate();
   };
 
   #onHandlePointerUp = (event: PointerEvent) => {
@@ -1060,34 +1074,31 @@ export class FolkAtlas extends ReactiveElement {
     }
     drag.gizmo.handle.classList.remove('dragging');
     this.#toolDrag = null;
-    this.#commitCutGizmo(drag.gizmo);
+    // Final resize already happened in pointermove; nothing more to do.
   };
 
+  /** Threshold below which `|delta|` is treated as "no cut yet" (host-frame units). */
+  static #COMMIT_EPS = 1e-3;
+
   /**
-   * Commit the current cut gizmo to the atlas: subdivide every face the
-   * line crosses, then open the seam by `|gizmo.delta|`. The gizmo holds
-   * onto the resulting per-step pairs and strip metadata so subsequent
-   * adjustments can target the same faces.
+   * Commit a fresh cut: subdivide every face the line crosses, then
+   * open the seam by `|gizmo.delta|`. After this call the gizmo holds
+   * `committed` state (split chain + strip handles) and is re-anchored
+   * to the new strip face so subsequent {@link #resizeCutStrip} calls
+   * can extend / shrink the strip without re-cutting.
    *
-   * The strip pushes the +n side away from the −n side, where
-   * `n = (-dy, dx)` is the 90° CCW perpendicular of the line direction.
-   * If `gizmo.delta` is negative, we flip the line direction so the
-   * apparent "side being pushed" matches the drag direction.
+   * Sign convention: `insertStrip` always opens toward +n (the 90° CCW
+   * perpendicular of the line direction). To make the "pushed side"
+   * match the drag direction, we flip the line direction when
+   * `delta < 0` — that swaps which side ends up on the +n half. The
+   * sign is recorded so resize can mirror the convention.
    *
-   * On the first commit, atlas mutation happens and any orphaned shapes
-   * are relocated. Re-committing (e.g. after dragging the handle to a
-   * new Δ) is a no-op for now — live resizing of an existing strip is
-   * a follow-up.
+   * Idempotent: calling on an already-committed gizmo is a no-op.
    */
   #commitCutGizmo(gizmo: LineCutGizmo) {
-    if (gizmo.committed) return; // already mutated; live resize is TODO
-    const eps = 1e-3; // host-frame units; smaller than the smallest sane strip
-    if (Math.abs(gizmo.delta) < eps) return;
+    if (gizmo.committed) return;
+    if (Math.abs(gizmo.delta) < FolkAtlas.#COMMIT_EPS) return;
 
-    // Sign convention: insertStrip always opens toward +n of the chord
-    // direction. To make the "pushed side" match the drag direction,
-    // flip the line direction when delta is negative — that swaps which
-    // side ends up on the +n half.
     const sign: 1 | -1 = gizmo.delta >= 0 ? 1 : -1;
     const direction =
       sign > 0
@@ -1100,33 +1111,84 @@ export class FolkAtlas extends ReactiveElement {
     try {
       split = splitAtlasAlongLine(this.#atlas, gizmo.hostFace, gizmo.anchor, direction);
     } catch (err) {
-      // Geometric failure (e.g. seam landed exactly on a vertex after
-      // intermediate edits). Surface to the console and tear the gizmo
-      // down so the user can try again.
       console.warn('[folk-atlas] line cut split failed:', err);
       this.#clearCutGizmo();
       return;
     }
 
     let strip: InsertStripResult;
+    const initialHeight = Math.abs(gizmo.delta);
     try {
-      strip = insertStrip(this.#atlas, split, Math.abs(gizmo.delta));
+      strip = insertStrip(this.#atlas, split, initialHeight);
     } catch (err) {
       console.warn('[folk-atlas] line cut strip insertion failed:', err);
       this.#clearCutGizmo();
       return;
     }
 
-    gizmo.committed = { split, strip, sign };
+    gizmo.committed = { split, strip, sign, height: initialHeight };
 
-    // Relocate any shapes whose face was replaced by the split.
+    // Compensate the view first so `#x, #y` is correct for the post-
+    // mutation root, then relocate any shapes whose face was replaced.
+    const { newComposites, K } = this.#compensateViewAfterMutation(oldComposites);
+    this.#lastComposites = newComposites;
     this.#relocateOrphanedShapes(oldComposites);
 
-    // The gizmo's hostFace was almost certainly split — clear the
-    // visual gizmo since its anchor frame is no longer meaningful.
-    // (Future: reframe the gizmo onto one of the new sub-faces so the
-    // user can keep adjusting Δ live.)
-    this.#clearCutGizmo();
+    // Re-anchor the gizmo onto the strip face so it survives the loss
+    // of `hostFace`. The strip's frame is global-aligned to `hostFace`'s
+    // frame (translation-only edges), so direction is preserved and only
+    // points need re-expressing.
+    //
+    // Math: with K = oldRoot ← newRoot, the old/new screen positions of
+    // any point P agree iff
+    //     view_old · oldComp(host) · P_host
+    //   = view_new · newComp(strip) · P_strip
+    //   = (view_old · K) · newComp(strip) · P_strip
+    // ⇒ P_strip = inv(newComp(strip)) · inv(K) · oldComp(host) · P_host
+    const oldHostComp = oldComposites.get(gizmo.hostFace);
+    const newStripComp = newComposites.get(strip.stripFace);
+    if (oldHostComp && newStripComp) {
+      const M_host_to_strip = M.multiply(
+        M.invert(newStripComp),
+        M.multiply(M.invert(K), oldHostComp),
+      );
+      gizmo.anchor = M.applyToPoint(M_host_to_strip, gizmo.anchor);
+      gizmo.drawStart = M.applyToPoint(M_host_to_strip, gizmo.drawStart);
+      gizmo.drawEnd = M.applyToPoint(M_host_to_strip, gizmo.drawEnd);
+      gizmo.hostFace = strip.stripFace;
+    } else {
+      // Strip composite missing — atlas in an unexpected state. Drop
+      // the gizmo defensively rather than render with stale geometry.
+      this.#clearCutGizmo();
+    }
+
+    this.#scheduleUpdate();
+  }
+
+  /**
+   * Resize an already-committed cut to a new |delta|.
+   *
+   * Skips the resize when the new height would fall below the commit
+   * epsilon (we don't have a "delete strip" primitive yet — flooring
+   * at the epsilon avoids a degenerate strip).
+   */
+  #resizeCutStrip(gizmo: LineCutGizmo) {
+    const c = gizmo.committed;
+    if (!c) return;
+    // Sign-flip semantics: at commit time we baked `sign` into the
+    // line direction, so the strip always opens toward the original
+    // side. If the user drags through zero to the other side, the
+    // visual asymmetry would invert — for the v1 path we cap at the
+    // commit epsilon and keep the strip on its original side.
+    const newHeight = Math.max(FolkAtlas.#COMMIT_EPS, Math.abs(gizmo.delta));
+    if (newHeight === c.height) return;
+    try {
+      resizeStrip(c.strip, c.split, c.height, newHeight);
+    } catch (err) {
+      console.warn('[folk-atlas] line cut resize failed:', err);
+      return;
+    }
+    c.height = newHeight;
     this.#scheduleUpdate();
   }
 
@@ -1219,6 +1281,65 @@ export class FolkAtlas extends ReactiveElement {
     this.#x += this.#scale * C.e;
     this.#y += this.#scale * C.f;
     this.#lastComposites = this.#atlas.computeComposites();
+  }
+
+  /**
+   * Compensate `#x, #y` so on-screen positions stay invariant across an
+   * atlas mutation that may have replaced `atlas.root`.
+   *
+   * Mutation primitives like `splitFaceAlongChord` reassign
+   * `atlas.root = sub0` directly when they destroy the current root face
+   * (sub0 is a brand-new face whose `(0,0)` anchor sits at some non-zero
+   * position in the OLD root's frame). Without compensation, every
+   * subsequent render uses `view · newComposite(F)` instead of
+   * `view · oldComposite(F)`, and the entire scene jumps by the
+   * `oldRoot ← newRoot` translation — sometimes very far, depending on
+   * where the new root's anchor landed.
+   *
+   * The compensation is `oldRoot ← newRoot = oldComposite(F) · inv(newComposite(F))`
+   * for any face `F` that exists in both the pre- and post-mutation
+   * composite maps. Translation-only edge transforms guarantee this
+   * matrix is itself a translation, so we extract `.e, .f` and apply
+   * the same scale-aware shift the existing `switchRoot` path uses.
+   *
+   * Caller responsibility: snapshot `oldComposites` (e.g. from
+   * `#lastComposites`) before the mutation, call this immediately
+   * after, and ensure `#scheduleUpdate` runs so `#lastComposites`
+   * gets refreshed on the next frame.
+   *
+   * Returns the freshly-computed new composites and the `K` matrix that
+   * was applied (identity when no compensation was needed). `K` is also
+   * the matrix any caller needs to re-express points across the
+   * `oldRoot → newRoot` change (e.g. to re-anchor a gizmo whose original
+   * face was destroyed).
+   */
+  #compensateViewAfterMutation(
+    oldComposites: Map<Face, M.Matrix2D>,
+  ): { newComposites: Map<Face, M.Matrix2D>; K: M.Matrix2D } {
+    const newComposites = this.#atlas.computeComposites();
+    // No compensation needed if the root survived.
+    if (oldComposites.has(this.#atlas.root)) {
+      return { newComposites, K: M.fromValues() };
+    }
+    // Find any face that exists in both maps to anchor the shift.
+    let oldM: M.Matrix2DReadonly | null = null;
+    let newM: M.Matrix2DReadonly | null = null;
+    for (const [face, mNew] of newComposites) {
+      const mOld = oldComposites.get(face);
+      if (mOld) {
+        oldM = mOld;
+        newM = mNew;
+        break;
+      }
+    }
+    if (!oldM || !newM) return { newComposites, K: M.fromValues() }; // whole atlas replaced
+    // K = oldRoot ← newRoot, via the surviving anchor face F:
+    //   oldRoot ← newRoot = (oldRoot ← F) · (F ← newRoot)
+    //                     = oldComposite(F)  · inv(newComposite(F))
+    const K = M.multiply(oldM, M.invert(newM));
+    this.#x += this.#scale * K.e;
+    this.#y += this.#scale * K.f;
+    return { newComposites, K };
   }
 
   // ---- Render loop ----

@@ -9,6 +9,7 @@ import {
   Face,
   HalfEdge,
   insertStrip,
+  resizeStrip,
   isPolygonCCW,
   type Junction,
   pointOnHEAtU,
@@ -1967,6 +1968,147 @@ describe('insertStrip', () => {
     // After the second call, the original strip is orphaned and validation
     // should detect inconsistencies. We don't assert validateAtlas throws
     // here because the exact failure mode isn't part of the API contract.
+  });
+});
+
+describe('resizeStrip', () => {
+  // Same line as insertStrip tests: through (1, 1) with direction (-2, -1)/√5
+  // — yields a 3-face NE → NW → SW chain.
+  const setupStrip = (initialHeight = 0.5) => {
+    const atlas = createInitialAtlas();
+    const ne = atlas.locate({ x: 1, y: 1 })!;
+    const dir = { x: -2 / Math.sqrt(5), y: -1 / Math.sqrt(5) };
+    const splitResult = splitAtlasAlongLine(atlas, ne, { x: 1, y: 1 }, dir);
+    const stripResult = insertStrip(atlas, splitResult, initialHeight);
+    const perp = { x: -dir.y, y: dir.x };
+    return { atlas, splitResult, stripResult, dir, perp, initialHeight };
+  };
+
+  it('rejects non-positive newHeight', () => {
+    const { stripResult, splitResult } = setupStrip();
+    assert.throws(() => resizeStrip(stripResult, splitResult, 0.5, 0), /must be positive/);
+    assert.throws(() => resizeStrip(stripResult, splitResult, 0.5, -1), /must be positive/);
+  });
+
+  it('rejects mismatched chain lengths', () => {
+    const { stripResult, splitResult } = setupStrip();
+    const trimmed = { pairs: [splitResult.pairs[0]] };
+    assert.throws(() => resizeStrip(stripResult, trimmed, 0.5, 0.6), /chain length mismatch/);
+  });
+
+  it('no-op when oldHeight equals newHeight', () => {
+    const { atlas, stripResult, splitResult } = setupStrip(0.5);
+    const topBefore = stripResult.topHEs.map((h) => ({ ox: h.ox, oy: h.oy }));
+    const transBefore = splitResult.pairs.map((p) => ({
+      e: p.leftChordHE.transform.e,
+      f: p.leftChordHE.transform.f,
+    }));
+    resizeStrip(stripResult, splitResult, 0.5, 0.5);
+    for (let i = 0; i < stripResult.topHEs.length; i++) {
+      assert.equal(stripResult.topHEs[i].ox, topBefore[i].ox);
+      assert.equal(stripResult.topHEs[i].oy, topBefore[i].oy);
+    }
+    for (let i = 0; i < splitResult.pairs.length; i++) {
+      assert.equal(splitResult.pairs[i].leftChordHE.transform.e, transBefore[i].e);
+      assert.equal(splitResult.pairs[i].leftChordHE.transform.f, transBefore[i].f);
+    }
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
+
+  it('shifts finite topHE origins by Δ·perp', () => {
+    const { stripResult, splitResult, perp } = setupStrip(0.5);
+    const topBefore = stripResult.topHEs.map((h) => ({
+      kind: h.originKind,
+      ox: h.ox,
+      oy: h.oy,
+    }));
+    const newH = 1.25;
+    resizeStrip(stripResult, splitResult, 0.5, newH);
+    const delta = newH - 0.5;
+    for (let i = 0; i < stripResult.topHEs.length; i++) {
+      const t = stripResult.topHEs[i];
+      if (topBefore[i].kind === 'finite') {
+        assert.ok(
+          Math.abs(t.ox - (topBefore[i].ox + delta * perp.x)) < 1e-9,
+          `topHEs[${i}].ox: got ${t.ox}, expected ${topBefore[i].ox + delta * perp.x}`,
+        );
+        assert.ok(
+          Math.abs(t.oy - (topBefore[i].oy + delta * perp.y)) < 1e-9,
+          `topHEs[${i}].oy: got ${t.oy}, expected ${topBefore[i].oy + delta * perp.y}`,
+        );
+      } else {
+        // Ideal topHE: direction unchanged.
+        assert.equal(t.originKind, 'ideal');
+        assert.ok(Math.abs(t.ox - topBefore[i].ox) < 1e-12);
+        assert.ok(Math.abs(t.oy - topBefore[i].oy) < 1e-12);
+      }
+    }
+  });
+
+  it('does NOT touch bottomHEs or right-chord twin transforms', () => {
+    const { stripResult, splitResult } = setupStrip(0.5);
+    const botBefore = stripResult.bottomHEs.map((h) => ({ ox: h.ox, oy: h.oy }));
+    const rightTransBefore = splitResult.pairs.map((p) => ({
+      e: p.rightChordHE.transform.e,
+      f: p.rightChordHE.transform.f,
+    }));
+    resizeStrip(stripResult, splitResult, 0.5, 1.25);
+    for (let i = 0; i < stripResult.bottomHEs.length; i++) {
+      assert.equal(stripResult.bottomHEs[i].ox, botBefore[i].ox);
+      assert.equal(stripResult.bottomHEs[i].oy, botBefore[i].oy);
+    }
+    for (let i = 0; i < splitResult.pairs.length; i++) {
+      assert.equal(splitResult.pairs[i].rightChordHE.transform.e, rightTransBefore[i].e);
+      assert.equal(splitResult.pairs[i].rightChordHE.transform.f, rightTransBefore[i].f);
+    }
+  });
+
+  it('atlas remains valid after resize', () => {
+    const { atlas, stripResult, splitResult } = setupStrip(0.5);
+    resizeStrip(stripResult, splitResult, 0.5, 1.25);
+    assert.doesNotThrow(() => validateAtlas(atlas));
+    resizeStrip(stripResult, splitResult, 1.25, 0.1);
+    assert.doesNotThrow(() => validateAtlas(atlas));
+    resizeStrip(stripResult, splitResult, 0.1, 3.0);
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
+
+  it('twin-image equation T · h.next.origin = h.twin.origin holds for left chords post-resize', () => {
+    const { stripResult, splitResult } = setupStrip(0.5);
+    resizeStrip(stripResult, splitResult, 0.5, 1.7);
+    for (let i = 0; i < splitResult.pairs.length; i++) {
+      const l = splitResult.pairs[i].leftChordHE;
+      const twin = l.twin!;
+      assert.equal(twin, stripResult.topHEs[i]);
+      const tgt = l.next.origin();
+      const twinOrig = twin.origin();
+      if (tgt.kind === 'finite' && twinOrig.kind === 'finite') {
+        const img = M.applyToPoint(l.transform, { x: tgt.x, y: tgt.y });
+        assert.ok(
+          Math.abs(img.x - twinOrig.x) < 1e-9 && Math.abs(img.y - twinOrig.y) < 1e-9,
+          `twin-image mismatch at pair ${i}`,
+        );
+      }
+    }
+  });
+
+  it('round-trip h → h\' → h restores topHE origins and left-chord transforms', () => {
+    const { stripResult, splitResult } = setupStrip(0.5);
+    const topSnap = stripResult.topHEs.map((h) => ({ ox: h.ox, oy: h.oy }));
+    const leftSnap = splitResult.pairs.map((p) => ({
+      e: p.leftChordHE.transform.e,
+      f: p.leftChordHE.transform.f,
+    }));
+    resizeStrip(stripResult, splitResult, 0.5, 1.7);
+    resizeStrip(stripResult, splitResult, 1.7, 0.5);
+    for (let i = 0; i < stripResult.topHEs.length; i++) {
+      assert.ok(Math.abs(stripResult.topHEs[i].ox - topSnap[i].ox) < 1e-9);
+      assert.ok(Math.abs(stripResult.topHEs[i].oy - topSnap[i].oy) < 1e-9);
+    }
+    for (let i = 0; i < splitResult.pairs.length; i++) {
+      assert.ok(Math.abs(splitResult.pairs[i].leftChordHE.transform.e - leftSnap[i].e) < 1e-9);
+      assert.ok(Math.abs(splitResult.pairs[i].leftChordHE.transform.f - leftSnap[i].f) < 1e-9);
+    }
   });
 });
 

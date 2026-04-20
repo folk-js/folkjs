@@ -2407,6 +2407,139 @@ export function insertStrip(
   return { stripFace, bottomHEs, topHEs };
 }
 
+/**
+ * Resize an existing strip's perpendicular thickness in place.
+ *
+ * Mutates only the +n (top) side of the strip:
+ *  - Each finite `topHEs[i]` origin shifts by `Δ · perp` in the strip's frame
+ *    (where `Δ = newHeight − oldHeight`, `perp = (-d.y, d.x)`, the 90° CCW
+ *    rotation of the line direction).
+ *  - The `leftChordHE ↔ topHEs[i]` twin transforms shift by the same `Δ · perp`,
+ *    keeping the chord-image correspondence (`T · h.next.origin = h.twin.origin`)
+ *    exact under the new height.
+ *
+ * Untouched (independent of `height` by construction):
+ *  - `bottomHEs` and `rightChordHE ↔ bottomHEs[i]` twin transforms.
+ *  - The strip face's anchor (`halfEdges[0]`, which is `bottomHEs[1]`).
+ *
+ * Visual effect: the −n side of the cut (the "right" side) stays planted,
+ * while the +n side gets pushed away as the strip grows. This matches the
+ * asymmetric expansion the line-cut UI uses (the "side being pushed"
+ * matches the drag direction, with the line direction flipped to switch
+ * sides as needed).
+ *
+ * Constraints:
+ *  - `newHeight > 0`. Shrinking back to zero would make the strip
+ *    degenerate and require a separate "remove strip" primitive.
+ *  - `oldHeight` must be the strip's current thickness (callers track it
+ *    alongside the `InsertStripResult`).
+ *
+ * Caller responsibilities:
+ *  - Track `currentHeight` between successive `resizeStrip` calls; this
+ *    function does not store it on the strip.
+ *  - Call after the strip was created by {@link insertStrip}; passing a
+ *    foreign strip/split pair is undefined behaviour.
+ *
+ * O(N) in the chain length. Performs no allocations beyond the
+ * per-step transform matrices.
+ */
+export function resizeStrip(
+  stripResult: InsertStripResult,
+  splitResult: SplitAtlasAlongLineResult,
+  oldHeight: number,
+  newHeight: number,
+): void {
+  if (!(newHeight > 0)) {
+    throw new Error('resizeStrip: newHeight must be positive');
+  }
+  const N = stripResult.bottomHEs.length;
+  if (N !== splitResult.pairs.length) {
+    throw new Error(
+      `resizeStrip: chain length mismatch (strip ${N} vs split ${splitResult.pairs.length})`,
+    );
+  }
+  if (N < 2) {
+    throw new Error('resizeStrip: invalid strip (chain length < 2)');
+  }
+
+  // ---- Recover the strip-frame line direction d (and perp = 90° CCW d) ----
+  // Two strategies, in order of preference:
+  //  (a) For N >= 3 there are two adjacent finite bottom origins (c[1], c[2]),
+  //      and c[2] - c[1] = chordLen[1] · d. Direction is exact.
+  //  (b) For N == 2 there is only c[1] on the bottom, so we read perp directly
+  //      from topHEs[0] - bottomHEs[1] = oldHeight · perp, then derive d.
+  //      Falls back to this when (a) fails (e.g. unexpected ideal entries).
+  let d: Point;
+  const b1 = stripResult.bottomHEs[1].origin();
+  if (b1.kind !== 'finite') {
+    throw new Error('resizeStrip: bottomHEs[1] expected to be finite');
+  }
+  let dxRaw = 0;
+  let dyRaw = 0;
+  if (N >= 3) {
+    const b2 = stripResult.bottomHEs[2].origin();
+    if (b2.kind === 'finite') {
+      dxRaw = b2.x - b1.x;
+      dyRaw = b2.y - b1.y;
+    }
+  }
+  if (dxRaw === 0 && dyRaw === 0) {
+    // N == 2 fallback (or unexpected ideal middle origin): derive perp first.
+    const t0 = stripResult.topHEs[0].origin();
+    if (t0.kind !== 'finite') {
+      throw new Error('resizeStrip: cannot recover line direction from strip');
+    }
+    const px = t0.x - b1.x;
+    const py = t0.y - b1.y;
+    const plen = Math.hypot(px, py);
+    if (plen === 0) {
+      throw new Error('resizeStrip: zero-thickness strip (oldHeight inconsistent)');
+    }
+    // perp = (px, py) / plen → d = 90° CW(perp) = (perp.y, -perp.x)
+    d = { x: py / plen, y: -px / plen };
+  } else {
+    const dlen = Math.hypot(dxRaw, dyRaw);
+    d = { x: dxRaw / dlen, y: dyRaw / dlen };
+  }
+  const perp = { x: -d.y, y: d.x };
+  const delta = newHeight - oldHeight;
+  if (delta === 0) return;
+  const dpx = delta * perp.x;
+  const dpy = delta * perp.y;
+
+  // ---- Shift finite topHE origins ----
+  // Ideal topHEs (specifically topHEs[N-1] when present) are direction-only
+  // and stay put — the perpendicular shift doesn't change the at-infinity
+  // arc's direction.
+  for (let i = 0; i < N; i++) {
+    const t = stripResult.topHEs[i];
+    if (t.originKind === 'finite') {
+      t.ox += dpx;
+      t.oy += dpy;
+    }
+  }
+
+  // ---- Update left-chord twin transforms ----
+  // Translation-only invariant: T_LtoS gains exactly Δ·perp on its
+  // translation part. The linear part is identity (translation), so we
+  // build the new matrix by adding to .e/.f and inverting for the back-edge.
+  for (let i = 0; i < N; i++) {
+    const l = splitResult.pairs[i].leftChordHE;
+    const t = stripResult.topHEs[i];
+    const oldT = l.transform;
+    const T_LtoS = M.fromValues(
+      oldT.a,
+      oldT.b,
+      oldT.c,
+      oldT.d,
+      oldT.e + dpx,
+      oldT.f + dpy,
+    );
+    const T_StoL = M.invert(T_LtoS);
+    setTwin(l, t, T_LtoS, T_StoL);
+  }
+}
+
 // ----------------------------------------------------------------------------
 // Line-cut mutation primitive (cutAtlasByLine + insertStrip) — STUB / PREVIEW
 // ----------------------------------------------------------------------------
