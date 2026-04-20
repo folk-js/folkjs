@@ -55,6 +55,12 @@
         height: 18px;
         display: block;
       }
+      #toolbar .separator {
+        width: 1px;
+        align-self: stretch;
+        margin: 4px 2px;
+        background: oklch(85% 0.02 277);
+      }
 
       #info {
         position: absolute;
@@ -79,7 +85,7 @@
     </style>
   </head>
   <body>
-    <folk-atlas tool="select">
+    <folk-atlas tool="select" debug>
       <folk-atlas-shape x="140" y="120" width="120" height="60">NE quadrant</folk-atlas-shape>
       <folk-atlas-shape x="-260" y="80" width="160" height="80">NW quadrant</folk-atlas-shape>
       <folk-atlas-shape x="-200" y="-180" width="160" height="80">SW quadrant</folk-atlas-shape>
@@ -107,6 +113,14 @@
           <path d="M15 15l-3-3 3-3" />
         </svg>
       </button>
+      <span class="separator" aria-hidden="true"></span>
+      <button id="debug-toggle" title="Toggle debug underlay (face fills, edges, labels)" aria-pressed="true">
+        <!-- eye / visibility icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      </button>
     </div>
 
     <div id="info">
@@ -119,6 +133,7 @@
       const atlas = document.querySelector('folk-atlas');
       const toolbar = document.getElementById('toolbar');
       const buttons = toolbar.querySelectorAll('button[data-tool]');
+      const debugToggle = document.getElementById('debug-toggle');
 
       function setTool(tool) {
         atlas.setAttribute('tool', tool);
@@ -127,10 +142,21 @@
         }
       }
 
+      function setDebug(on) {
+        if (on) atlas.setAttribute('debug', '');
+        else atlas.removeAttribute('debug');
+        debugToggle.setAttribute('aria-pressed', String(on));
+      }
+
       toolbar.addEventListener('click', (e) => {
-        const btn = e.target.closest('button[data-tool]');
-        if (!btn) return;
-        setTool(btn.dataset.tool);
+        const toolBtn = e.target.closest('button[data-tool]');
+        if (toolBtn) {
+          setTool(toolBtn.dataset.tool);
+          return;
+        }
+        if (e.target.closest('#debug-toggle')) {
+          setDebug(!atlas.hasAttribute('debug'));
+        }
       });
     </script>
   </body>

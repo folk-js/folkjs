@@ -310,13 +310,21 @@ export class FolkAtlas extends ReactiveElement {
 
   static override properties = {
     tool: { type: String, reflect: true },
+    debug: { type: Boolean, reflect: true },
   };
 
   declare tool: AtlasTool;
+  /**
+   * When `true`, renders the atlas's triangulation as a faint underlay
+   * (face fills, edge strokes, junction dots, face labels). Defaults to
+   * `true`; toggle off via the `debug` attribute or property to hide it.
+   */
+  declare debug: boolean;
 
   constructor() {
     super();
     this.tool = 'select';
+    this.debug = true;
   }
 
   // === Atlas state ===
@@ -1371,7 +1379,12 @@ export class FolkAtlas extends ReactiveElement {
     this.#lastComposites = composites;
     this.#lastVisibility = this.#computeVisibilities(composites, view);
     this.#renderShapes(composites);
-    this.#renderDebug(composites, view);
+    if (this.debug) {
+      this.#debug.style.display = '';
+      this.#renderDebug(composites, view);
+    } else {
+      this.#debug.style.display = 'none';
+    }
     this.#renderCutGizmo();
   }
 
@@ -1381,6 +1394,8 @@ export class FolkAtlas extends ReactiveElement {
     if (changedProperties.has('tool') && this.tool !== 'line-cut') {
       this.#clearCutGizmo();
     }
+    // Toggling debug needs a render to pick up the visibility change.
+    if (changedProperties.has('debug')) this.#scheduleUpdate();
   }
 
   /**
