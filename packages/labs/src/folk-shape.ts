@@ -453,6 +453,19 @@ export class FolkShape extends ReactiveElement {
       handle = focusedElement.getAttribute('part') as Handle | null;
     }
 
+    // Promote clicks on non-interactive slotted content into a move intent so
+    // users can drag a shape by grabbing its contents (e.g. a card's body),
+    // not just the 1px border of the host. Form controls and other obviously
+    // interactive elements still get their native behaviour.
+    if (!handle && target !== this && this.contains(target)) {
+      const interactive = target.closest(
+        'a, button, input, textarea, select, summary, details, audio, video, [contenteditable=""], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="radio"], [role="slider"], [role="switch"]',
+      );
+      if (!interactive) {
+        handle = 'move';
+      }
+    }
+
     if (event.type === 'dblclick') {
       if (handle?.startsWith('resize')) {
         this.height = 'auto';
@@ -541,7 +554,7 @@ export class FolkShape extends ReactiveElement {
     // Handle shape movement and rotation
     // target === this || (!handle && event instanceof KeyboardEvent) causes movement when content is inside is focused
     // so removing for now, not sure why it's
-    if (target === this) {
+    if (target === this || handle === 'move') {
       if (event instanceof KeyboardEvent && event.altKey) {
         const ROTATION_MUL = event.shiftKey ? Math.PI / 12 : Math.PI / 36;
         const rotationDelta = moveDelta.x !== 0 ? (moveDelta.x > 0 ? ROTATION_MUL : -ROTATION_MUL) : 0;
