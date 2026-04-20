@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HTML-in-Canvas · spatial warps (portals + shears)</title>
+    <title>HTML-in-Canvas warps</title>
     <style>
       :root {
         color-scheme: dark;
@@ -23,7 +23,11 @@
         background: #0a0a0f;
         color: #d8d8e8;
         font-family:
-          ui-sans-serif, -apple-system, 'SF Pro Text', 'Segoe UI', sans-serif;
+          ui-sans-serif,
+          -apple-system,
+          'SF Pro Text',
+          'Segoe UI',
+          sans-serif;
         overflow: hidden;
       }
 
@@ -60,11 +64,21 @@
         margin: 0;
         color: #a8a8c0;
       }
-      .card.cyan h3 { color: #7df9ff; }
-      .card.pink h3 { color: #ff79c6; }
-      .card.lime h3 { color: #b8ff7e; }
-      .card.amber h3 { color: #ffc371; }
-      .card.violet h3 { color: #b58bff; }
+      .card.cyan h3 {
+        color: #7df9ff;
+      }
+      .card.pink h3 {
+        color: #ff79c6;
+      }
+      .card.lime h3 {
+        color: #b8ff7e;
+      }
+      .card.amber h3 {
+        color: #ffc371;
+      }
+      .card.violet h3 {
+        color: #b58bff;
+      }
 
       /* SVG overlay. Root has pointer-events: none; individual handles /
          lines / gizmos re-enable pointer-events as needed. */
@@ -84,7 +98,9 @@
         vector-effect: non-scaling-stroke;
         pointer-events: none;
       }
-      #tools .portal-line { opacity: 0.9; }
+      #tools .portal-line {
+        opacity: 0.9;
+      }
       #tools .shear-line {
         stroke: #ffc371;
         stroke-dasharray: 6 4;
@@ -114,8 +130,12 @@
         pointer-events: all;
         cursor: grab;
       }
-      #tools .handle:hover { fill: #1f1f33; }
-      #tools .handle:active { cursor: grabbing; }
+      #tools .handle:hover {
+        fill: #1f1f33;
+      }
+      #tools .handle:active {
+        cursor: grabbing;
+      }
 
       #tools .shear-gizmo {
         fill: #ffc371;
@@ -173,7 +193,9 @@
         color: #a8a8c0;
         border-radius: 8px;
         cursor: pointer;
-        transition: background 120ms ease-out, color 120ms ease-out;
+        transition:
+          background 120ms ease-out,
+          color 120ms ease-out;
       }
       #dock button svg {
         width: 22px;
@@ -184,7 +206,10 @@
         stroke-linecap: round;
         stroke-linejoin: round;
       }
-      #dock button:hover { background: #252540; color: #d8d8e8; }
+      #dock button:hover {
+        background: #252540;
+        color: #d8d8e8;
+      }
       #dock button.active {
         background: var(--accent);
         color: #0a0a0f;
@@ -213,13 +238,18 @@
         max-width: 420px;
         line-height: 1.5;
       }
-      #status .warn { color: #ff8585; pointer-events: auto; }
+      #status .warn {
+        color: #ff8585;
+        pointer-events: auto;
+      }
       #status code {
         background: #1b1b2a;
         padding: 1px 5px;
         border-radius: 4px;
       }
-      #status .hint-strong { color: #d8d8e8; }
+      #status .hint-strong {
+        color: #d8d8e8;
+      }
     </style>
   </head>
   <body>
@@ -228,54 +258,36 @@
     <canvas id="stage" layoutsubtree>
       <folk-shape x="140" y="150" width="240" height="150">
         <div class="card cyan">
-          <h3>Spatial canvas</h3>
-          <p>
-            Drag me. Draw a portal (two drags) or a shear (one drag) and
-            watch shapes ghost, split, or shear as they cross.
-          </p>
+          <h3>Glorbifax</h3>
+          <p>The tremulous yonk simmers beneath a pale veneer of quonkish ambiguity.</p>
         </div>
       </folk-shape>
 
       <folk-shape x="500" y="200" width="260" height="160" rotation="-4">
         <div class="card pink">
-          <h3>Interactive HTML</h3>
-          <p>
-            I'm still real HTML under each rendering. Ghosts are
-            visual-only; clicks land on my logical position.
-          </p>
+          <h3>Wumble theory</h3>
+          <p>Seven zibblecorns cannot traverse the flenning threshold without prior snorkelation.</p>
         </div>
       </folk-shape>
 
       <folk-shape x="860" y="160" width="220" height="200">
         <div class="card lime">
-          <h3>Rules of the space</h3>
-          <p>
-            Shear: a half-plane is sheared along its seam; pull the yellow
-            handle to change k. Portal: a pair; content straddling one
-            ghosts onto the other.
-          </p>
+          <h3>Plonk</h3>
+          <p>A grumbling moof once asked whether drimble could substitute for sprangle in conditions of high voom.</p>
         </div>
       </folk-shape>
 
       <folk-shape x="200" y="430" width="200" height="150" rotation="6">
         <div class="card amber">
-          <h3>Crossing semantics</h3>
-          <p>
-            Drag me through a portal. I can pass all the way through; when
-            I let go the canvas snaps me to whichever side holds the
-            majority of my area.
-          </p>
+          <h3>Frendle cascade</h3>
+          <p>Quorble density exceeds the borpulent index by a factor of fleem.</p>
         </div>
       </folk-shape>
 
       <folk-shape x="540" y="470" width="250" height="160">
         <div class="card violet">
-          <h3>Next steps</h3>
-          <p>
-            Proxy-mirror hit targets, canvas-level event retargeting,
-            composing portals with shears. Each extends the sync loop in a
-            different direction.
-          </p>
+          <h3>Snorb</h3>
+          <p>Bliveted at the margin of a hezzled plane, the grumf persists — unclumped, unvomped, thoroughly spligged.</p>
         </div>
       </folk-shape>
     </canvas>
@@ -284,31 +296,31 @@
 
     <div id="dock">
       <button data-mode="select" class="active" title="Select / drag shapes (V)" aria-label="Select">
-        <svg viewBox="0 0 24 24"><path d="M5 3l6 16 2-7 7-2-15-7z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M5 3l6 16 2-7 7-2-15-7z" /></svg>
       </button>
       <div class="sep"></div>
       <button data-mode="portal" title="Draw portal — two drags, A then B (P)" aria-label="Draw portal">
         <svg viewBox="0 0 24 24">
-          <path d="M6 3v18"/>
-          <path d="M18 3v18"/>
-          <path d="M9 9l3 3-3 3"/>
-          <path d="M15 15l-3-3 3-3"/>
+          <path d="M6 3v18" />
+          <path d="M18 3v18" />
+          <path d="M9 9l3 3-3 3" />
+          <path d="M15 15l-3-3 3-3" />
         </svg>
       </button>
       <button data-mode="shear" title="Draw shear — one drag (S)" aria-label="Draw shear">
         <svg viewBox="0 0 24 24">
-          <path d="M4 18l16-12"/>
-          <path d="M9 16l6-4.5"/>
+          <path d="M4 18l16-12" />
+          <path d="M9 16l6-4.5" />
         </svg>
       </button>
       <div class="sep"></div>
       <button id="clearBtn" class="danger" title="Delete all warps" aria-label="Clear warps">
         <svg viewBox="0 0 24 24">
-          <path d="M4 7h16"/>
-          <path d="M10 7V4h4v3"/>
-          <path d="M6 7l1 13h10l1-13"/>
-          <path d="M10 11v6"/>
-          <path d="M14 11v6"/>
+          <path d="M4 7h16" />
+          <path d="M10 7V4h4v3" />
+          <path d="M6 7l1 13h10l1-13" />
+          <path d="M10 11v6" />
+          <path d="M14 11v6" />
         </svg>
       </button>
     </div>
@@ -595,10 +607,7 @@
           this.texture = device.createTexture({
             size: [w, h, 1],
             format: 'rgba8unorm',
-            usage:
-              GPUTextureUsage.TEXTURE_BINDING |
-              GPUTextureUsage.COPY_DST |
-              GPUTextureUsage.RENDER_ATTACHMENT,
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
           });
           this.texW = w;
           this.texH = h;
@@ -723,10 +732,7 @@
         function cross(o, p, q) {
           return (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
         }
-        return (
-          (cross(c, d, a) > 0) !== (cross(c, d, b) > 0) &&
-          (cross(a, b, c) > 0) !== (cross(a, b, d) > 0)
-        );
+        return cross(c, d, a) > 0 !== cross(c, d, b) > 0 && cross(a, b, c) > 0 !== cross(a, b, d) > 0;
       }
 
       function pointInConvex(p, corners) {
@@ -923,12 +929,8 @@
         // A straddling shape splits visually with one clip plane per side.
         for (const s of shears) {
           const seam = seamGeom(s.seam[0], s.seam[1]);
-          const centerSide =
-            V.dot(seam.nrm, homeAxes.origin) + seam.d >= 0 ? +1 : -1;
-          const crosses = segHitsRect(
-            { p0: s.seam[0], p1: s.seam[1] },
-            corners,
-          );
+          const centerSide = V.dot(seam.nrm, homeAxes.origin) + seam.d >= 0 ? +1 : -1;
+          const crosses = segHitsRect({ p0: s.seam[0], p1: s.seam[1] }, corners);
           const shearAff = shearAffine(seam, s.k);
 
           if (centerSide > 0) {
@@ -1051,10 +1053,7 @@
       }
 
       function renderTools() {
-        tools.setAttribute(
-          'viewBox',
-          `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`,
-        );
+        tools.setAttribute('viewBox', `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`);
         tools.setAttribute('width', canvas.clientWidth);
         tools.setAttribute('height', canvas.clientHeight);
         tools.innerHTML = '';
@@ -1488,18 +1487,12 @@
             const { homeAxes, homeClips, ghosts } = computeInstances(el);
             let slot = 0;
             for (const g of ghosts) {
-              view.writeInstance(
-                slot,
-                packUniform(w, h, g.axes, dpr, g.clips[0], g.clips[1]),
-              );
+              view.writeInstance(slot, packUniform(w, h, g.axes, dpr, g.clips[0], g.clips[1]));
               pass.setBindGroup(0, view.getBindGroup(slot));
               pass.draw(6);
               slot++;
             }
-            view.writeInstance(
-              slot,
-              packUniform(w, h, homeAxes, dpr, homeClips[0], homeClips[1]),
-            );
+            view.writeInstance(slot, packUniform(w, h, homeAxes, dpr, homeClips[0], homeClips[1]));
             pass.setBindGroup(0, view.getBindGroup(slot));
             pass.draw(6);
           }
