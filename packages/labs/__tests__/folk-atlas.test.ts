@@ -415,6 +415,137 @@ describe('Atlas.computeComposites', () => {
   });
 });
 
+describe('Atlas.computeImages', () => {
+  it('with maxImagesPerFace=1, returns one image per reachable face matching computeComposites', () => {
+    const atlas = createInitialAtlas();
+    const composites = atlas.computeComposites();
+    const images = atlas.computeImages({ maxImagesPerFace: 1 });
+    assert.equal(images.length, composites.size);
+    const seen = new Map<Face, M.Matrix2D>();
+    for (const img of images) {
+      assert.ok(!seen.has(img.face), 'no duplicate face with maxImagesPerFace=1');
+      seen.set(img.face, img.composite);
+    }
+    for (const [face, composite] of composites) {
+      assert.ok(M.equals(seen.get(face)!, composite));
+    }
+  });
+
+  it('first image of each face equals its computeComposites composite (BFS shortest path)', () => {
+    const atlas = createInitialAtlas();
+    const composites = atlas.computeComposites();
+    const images = atlas.computeImages();
+    const firstSeen = new Map<Face, M.Matrix2D>();
+    for (const img of images) {
+      if (!firstSeen.has(img.face)) firstSeen.set(img.face, img.composite);
+    }
+    assert.equal(firstSeen.size, composites.size);
+    for (const [face, composite] of composites) {
+      assert.ok(M.equals(firstSeen.get(face)!, composite));
+    }
+  });
+
+  it('seed 4-wedge atlas: dedupe collapses cycle-closure to one image per face', () => {
+    // F0—F1—F2—F3—F0 forms a cycle through twin pairs. With identity transforms
+    // every revisit lands at the same composite, so dedupe collapses the cycle
+    // to one image per face.
+    const atlas = createInitialAtlas();
+    const images = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 8 });
+    const counts = new Map<Face, number>();
+    for (const img of images) counts.set(img.face, (counts.get(img.face) ?? 0) + 1);
+    for (const n of counts.values()) assert.equal(n, 1, 'each face appears once');
+    assert.equal(counts.size, atlas.faces.length);
+  });
+
+  it('dedupeImages=false enumerates every BFS walk separately', () => {
+    const atlas = createInitialAtlas();
+    const dedup = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 8 });
+    const raw = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 8, dedupeImages: false });
+    assert.ok(raw.length > dedup.length, 'raw walk count exceeds deduped count');
+  });
+
+  it('maxDepth=0 returns only the root', () => {
+    const atlas = createInitialAtlas();
+    const images = atlas.computeImages({ maxDepth: 0 });
+    assert.equal(images.length, 1);
+    assert.equal(images[0].face, atlas.root);
+    assert.equal(images[0].depth, 0);
+    assert.ok(M.equals(images[0].composite, M.fromValues()));
+  });
+
+  it('maxDepth=1 returns root plus its immediate neighbours', () => {
+    const atlas = createInitialAtlas();
+    const images = atlas.computeImages({ maxDepth: 1 });
+    // Root + its twin neighbours (the wedge has 2 twinned edges, 1 at-infinity).
+    const twinCount = [...atlas.root.halfEdgesCCW()].filter((he) => he.twin).length;
+    assert.equal(images.length, 1 + twinCount);
+    for (const img of images) assert.ok(img.depth <= 1);
+  });
+
+  it('shouldExpand=false stops descent but still records the image', () => {
+    // Refuse to expand past depth 0 → only root + its neighbours appear (the
+    // root's neighbours are recorded, but their own neighbours aren't enqueued).
+    const atlas = createInitialAtlas();
+    const images = atlas.computeImages({
+      maxDepth: 8,
+      shouldExpand: (img) => img.depth < 1,
+    });
+    for (const img of images) assert.ok(img.depth <= 1);
+    const twinCount = [...atlas.root.halfEdgesCCW()].filter((he) => he.twin).length;
+    assert.equal(images.length, 1 + twinCount);
+  });
+
+  it('manual self-twinning quad produces multiple images of the same face', () => {
+    // A unit square face whose right edge twins its own left edge: a horizontal
+    // wrap. Walking right → re-enter from left, shifted +1 in root coords.
+    // Walking left  → re-enter from right, shifted −1 in root coords.
+    const w = 1;
+    const h = 1;
+    const he0 = new HalfEdge('finite', 0, 0); // anchor (bottom-left)
+    const he1 = new HalfEdge('finite', w, 0); // bottom-right
+    const he2 = new HalfEdge('finite', w, h); // top-right
+    const he3 = new HalfEdge('finite', 0, h); // top-left
+    // CCW order around a unit square: (0,0) → (w,0) → (w,h) → (0,h) → back.
+    const f = new Face([he0, he1, he2, he3]);
+    // he1 (right edge: (w,0)→(w,h)) ↔ he3 (left edge: (0,h)→(0,0))
+    he1.twin = he3;
+    he3.twin = he1;
+    he1.transform = M.fromTranslate(-w, 0);
+    he3.transform = M.fromTranslate(w, 0);
+    const atlas = new Atlas(f);
+    atlas.faces = [f];
+    atlas.halfEdges = [he0, he1, he2, he3];
+
+    const images = atlas.computeImages({ maxDepth: 2, maxImagesPerFace: 32 });
+
+    // depth 0: 1 image. depth 1: 2 images (one each direction). depth 2: 2 more.
+    assert.equal(images.length, 5);
+    const offsets = images.map((img) => Math.round(img.composite.e));
+    offsets.sort((a, b) => a - b);
+    assert.deepEqual(offsets, [-2, -1, 0, 1, 2]);
+    // All images have the same face.
+    for (const img of images) assert.equal(img.face, f);
+  });
+
+  it('respects maxImagesPerFace on a self-twinning loop', () => {
+    const he0 = new HalfEdge('finite', 0, 0);
+    const he1 = new HalfEdge('finite', 1, 0);
+    const he2 = new HalfEdge('finite', 1, 1);
+    const he3 = new HalfEdge('finite', 0, 1);
+    const f = new Face([he0, he1, he2, he3]);
+    he1.twin = he3;
+    he3.twin = he1;
+    he1.transform = M.fromTranslate(-1, 0);
+    he3.transform = M.fromTranslate(1, 0);
+    const atlas = new Atlas(f);
+    atlas.faces = [f];
+    atlas.halfEdges = [he0, he1, he2, he3];
+
+    const images = atlas.computeImages({ maxDepth: 100, maxImagesPerFace: 3 });
+    assert.equal(images.length, 3);
+  });
+});
+
 describe('Atlas.switchRoot', () => {
   it('returns identity and is a no-op when target is already root', () => {
     const atlas = createInitialAtlas();

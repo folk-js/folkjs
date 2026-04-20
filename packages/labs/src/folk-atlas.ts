@@ -15,6 +15,7 @@ import {
 } from './atlas.ts';
 import type { FolkAtlasRegion } from './folk-atlas-region.ts';
 import { FolkAtlasShape } from './folk-atlas-shape.ts';
+import { ShapeGhostRenderer } from './folk-atlas-ghosts.ts';
 
 export {
   aroundJunction,
@@ -360,6 +361,15 @@ export class FolkAtlas extends ReactiveElement {
   #debugCtx!: CanvasRenderingContext2D;
   /** Overlay layer for tool previews (drag rectangles, line previews, …). */
   #overlay!: HTMLDivElement;
+  /**
+   * Layer that hosts ghost clones of shapes whose face has multiple images
+   * (wrapped / looping / recursive topologies). Sits inside `#content` so it
+   * inherits the same view transform as the slotted originals; sits before
+   * the slot in source order so ghosts paint *behind* the editable originals.
+   */
+  #ghostLayer!: HTMLDivElement;
+  /** Ghost rendering subsystem — see {@link ShapeGhostRenderer}. */
+  #ghosts!: ShapeGhostRenderer;
 
   /** In-flight drag state for tool-driven interactions. */
   #toolDrag: ToolDragState | null = null;
@@ -392,9 +402,14 @@ export class FolkAtlas extends ReactiveElement {
 
     this.#content = document.createElement('div');
     this.#content.className = 'content';
+    this.#ghostLayer = document.createElement('div');
+    this.#ghostLayer.className = 'ghosts';
+    this.#ghostLayer.setAttribute('aria-hidden', 'true');
     const slot = document.createElement('slot');
-    this.#content.append(slot);
+    // Ghosts before slot so editable originals paint on top.
+    this.#content.append(this.#ghostLayer, slot);
     root.append(this.#content);
+    this.#ghosts = new ShapeGhostRenderer(this.#ghostLayer);
 
     this.#overlay = document.createElement('div');
     this.#overlay.className = 'overlay';
@@ -430,6 +445,7 @@ export class FolkAtlas extends ReactiveElement {
     window.removeEventListener('blur', this.#onBlur);
     this.#mutationObserver.disconnect();
     this.#resizeObserver.disconnect();
+    this.#ghosts?.clear();
   }
 
   // ---- Child wiring ----
@@ -464,6 +480,7 @@ export class FolkAtlas extends ReactiveElement {
     const face = this.#shapeFaces.get(shape);
     if (face) face.shapes.delete(shape);
     this.#shapeFaces.delete(shape);
+    this.#ghosts?.removeShape(shape);
   }
 
   #placeInRootFrame(shape: FolkAtlasShape, rootPoint: Point) {
@@ -1375,10 +1392,28 @@ export class FolkAtlas extends ReactiveElement {
     const view = M.scaleSelf(M.fromTranslate(this.#x, this.#y), this.#scale);
     this.#content.style.transform = M.toCSSString(view);
 
-    const composites = this.#atlas.computeComposites();
+    // One BFS per frame: derive the primary composite per face (first BFS
+    // image, identical to computeComposites for tree atlases) and the
+    // additional composites per face (the "ghost" images for wrapped /
+    // looping topologies). Tree atlases produce an empty extras map at zero
+    // cost beyond the BFS itself.
+    const images = this.#atlas.computeImages();
+    const composites = new Map<Face, M.Matrix2D>();
+    const extras = new Map<Face, M.Matrix2D[]>();
+    for (const img of images) {
+      if (!composites.has(img.face)) {
+        composites.set(img.face, img.composite);
+      } else {
+        const arr = extras.get(img.face);
+        if (arr) arr.push(img.composite);
+        else extras.set(img.face, [img.composite]);
+      }
+    }
+
     this.#lastComposites = composites;
     this.#lastVisibility = this.#computeVisibilities(composites, view);
     this.#renderShapes(composites);
+    this.#ghosts.update(extras);
     if (this.debug) {
       this.#debug.style.display = '';
       this.#renderDebug(composites, view);

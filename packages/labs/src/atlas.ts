@@ -432,6 +432,51 @@ function signedTurn(a: Junction, b: Junction, p: Point): number {
 // ----------------------------------------------------------------------------
 
 /**
+ * A single rendered "image" of a face in the root frame. For tree atlases
+ * there is exactly one image per reachable face; for atlases with loops a face
+ * may have many images (each at a different composite — these are the
+ * "ghosts" rendered around the canvas).
+ */
+export interface AtlasImage {
+  face: Face;
+  /** Face-local → root-local for this particular walk. */
+  composite: M.Matrix2D;
+  /** BFS depth from the root (root itself is depth 0). */
+  depth: number;
+}
+
+/** Options for {@link Atlas.computeImages}. */
+export interface ComputeImagesOptions {
+  /** Hard cap on BFS depth (default 8). */
+  maxDepth?: number;
+  /** Hard cap on images per face (default 16). */
+  maxImagesPerFace?: number;
+  /**
+   * Optional predicate. Returning `false` records the image but skips
+   * enqueuing its neighbours — the hook for visibility-based pruning.
+   */
+  shouldExpand?: (image: AtlasImage) => boolean;
+  /**
+   * When true (default), images that land at the same (face, composite) via
+   * different walks are merged: only the first BFS occurrence is recorded.
+   * This is correct behaviour for a closed loop (a genuine torus has each
+   * face appearing exactly once per geometric copy), and avoids drawing the
+   * same ghost on top of itself when the cycle math closes.
+   *
+   * Set to false for diagnostic / structural traversal where you want to see
+   * every walk independently.
+   */
+  dedupeImages?: boolean;
+  /**
+   * Quantization step for the composite-equality check used by `dedupeImages`.
+   * Two composites whose entries all round to the same `quantum` multiple are
+   * considered the same image. Default 1e-6, generous enough to absorb the
+   * floating-point drift accumulated by short BFS walks.
+   */
+  dedupeQuantum?: number;
+}
+
+/**
  * The atlas: a collection of faces glued by half-edge twin pointers and
  * transforms, plus a chosen `root` face from which composite transforms are
  * computed at render time.
@@ -473,6 +518,84 @@ export class Atlas {
         }
       }
     }
+    return out;
+  }
+
+  /**
+   * BFS from `root`, enumerating every reachable *image* of every face in the
+   * root frame. Unlike {@link computeComposites}, faces may appear multiple
+   * times — once per distinct walk that reaches them. This is what enables
+   * rendering of looping / wrapped / recursive topologies, where a single face
+   * can be visible at multiple screen locations as a "ghost" copy.
+   *
+   * For tree-shaped atlases (the common case today), each face is reached
+   * exactly once and the first image of each face has the same composite as
+   * `computeComposites().get(face)`.
+   *
+   * Traversal is bounded so loops cannot blow up:
+   *  - `maxDepth`           — hard cap on BFS depth from root.
+   *  - `maxImagesPerFace`   — hard cap on number of images per face.
+   *  - `shouldExpand(img)`  — optional predicate; if it returns false we still
+   *                           record the image but do not enqueue its
+   *                           neighbours. This is the hook for visibility-based
+   *                           pruning (drop ghosts whose face is too small or
+   *                           too far off-screen).
+   *
+   * Images are returned in BFS order — the first image of each face is the
+   * shortest-path one, so callers wanting "the canonical composite for shape
+   * placement" can take the first occurrence.
+   */
+  computeImages(opts: ComputeImagesOptions = {}): AtlasImage[] {
+    const maxDepth = opts.maxDepth ?? 8;
+    const maxImagesPerFace = opts.maxImagesPerFace ?? 16;
+    const shouldExpand = opts.shouldExpand;
+    const dedupeImages = opts.dedupeImages ?? true;
+    const quantum = opts.dedupeQuantum ?? 1e-6;
+    const invQ = 1 / quantum;
+
+    const out: AtlasImage[] = [];
+    const counts = new Map<Face, number>();
+    const seenKeys = dedupeImages ? new Map<Face, Set<string>>() : null;
+
+    const keyOf = (m: M.Matrix2D): string =>
+      `${Math.round(m.a * invQ)}_${Math.round(m.b * invQ)}_${Math.round(m.c * invQ)}_${Math.round(m.d * invQ)}_${Math.round(m.e * invQ)}_${Math.round(m.f * invQ)}`;
+
+    const queue: AtlasImage[] = [{ face: this.root, composite: M.fromValues(), depth: 0 }];
+    let head = 0;
+    while (head < queue.length) {
+      const img = queue[head++];
+      const c = counts.get(img.face) ?? 0;
+      if (c >= maxImagesPerFace) continue;
+
+      if (seenKeys) {
+        let set = seenKeys.get(img.face);
+        if (!set) {
+          set = new Set();
+          seenKeys.set(img.face, set);
+        }
+        const k = keyOf(img.composite);
+        if (set.has(k)) continue;
+        set.add(k);
+      }
+
+      counts.set(img.face, c + 1);
+      out.push(img);
+
+      if (img.depth >= maxDepth) continue;
+      if (shouldExpand && !shouldExpand(img)) continue;
+
+      for (const he of img.face.halfEdgesCCW()) {
+        const twin = he.twin;
+        if (!twin) continue;
+        if ((counts.get(twin.face) ?? 0) >= maxImagesPerFace) continue;
+        queue.push({
+          face: twin.face,
+          composite: M.multiply(img.composite, twin.transform),
+          depth: img.depth + 1,
+        });
+      }
+    }
+
     return out;
   }
 
