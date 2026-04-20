@@ -1,15 +1,16 @@
-import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
+import { ReactiveElement, css, type PropertyValues } from '@folkjs/dom/ReactiveElement';
 import * as M from '@folkjs/geometry/Matrix2D';
 import type { Point } from '@folkjs/geometry/Vector2';
 import {
   aroundJunction,
   Atlas,
   createInitialAtlas,
-  editEdgeTranslation,
   Face,
   HalfEdge,
-  splitFaceAtInterior,
-  validateAtlas,
+  insertStrip,
+  splitAtlasAlongLine,
+  type SplitAtlasAlongLineResult,
+  type InsertStripResult,
 } from './atlas.ts';
 import type { FolkAtlasRegion } from './folk-atlas-region.ts';
 import { FolkAtlasShape } from './folk-atlas-shape.ts';
@@ -18,7 +19,6 @@ export {
   aroundJunction,
   Atlas,
   createInitialAtlas,
-  editEdgeTranslation,
   Face,
   HalfEdge,
   rebaseTwinTransform,
@@ -35,6 +35,112 @@ declare global {
   interface HTMLElementTagNameMap {
     'folk-atlas': FolkAtlas;
   }
+}
+
+/**
+ * Available interaction tools. Switched via the `tool` attribute on
+ * `<folk-atlas>` (set by the toolbar in the demo HTML).
+ *
+ *  - `select`     — default. Background pointer events do nothing; shapes
+ *                   handle their own drag; pan/zoom is wheel-driven.
+ *  - `shape`      — click+drag draws a preview rectangle; on release a new
+ *                   `<folk-atlas-shape>` is created at that position.
+ *  - `line-cut`   — click+drag draws an infinite line (drawn segment solid,
+ *                   infinite extensions dashed). On release a persistent
+ *                   gizmo is committed at the drag's midpoint with a
+ *                   perpendicular handle. Dragging the handle picks Δ
+ *                   (the would-be strip width). No atlas mutation yet —
+ *                   the cut/strip primitive lands in a follow-up.
+ */
+export type AtlasTool = 'select' | 'shape' | 'line-cut';
+
+interface ShapeDragState {
+  kind: 'shape';
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  el: HTMLDivElement;
+}
+
+interface LineDrawDragState {
+  kind: 'line-draw';
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  svg: SVGSVGElement;
+  lineFinite: SVGLineElement;
+  lineBefore: SVGLineElement;
+  lineAfter: SVGLineElement;
+}
+
+interface HandleExpandDragState {
+  kind: 'handle-expand';
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  /** The Δ already accumulated on the gizmo when the drag started. */
+  startDelta: number;
+  gizmo: LineCutGizmo;
+}
+
+type ToolDragState = ShapeDragState | LineDrawDragState | HandleExpandDragState;
+
+/**
+ * Persistent line-cut gizmo created when the user releases a line-draw drag.
+ *
+ * Geometry is stored in `hostFace`'s local frame (the face containing the
+ * seam point at creation time) so the gizmo stays anchored to the atlas
+ * across pan/zoom and `switchRoot`. Each render projects the geometry to
+ * screen via the host face's composite.
+ *
+ * The gizmo is a *visual contract* in B1 — the perpendicular handle shows
+ * what Δ would be applied; nothing in the atlas is mutated until the
+ * cut/strip primitive lands (B2+).
+ */
+interface LineCutGizmo {
+  hostFace: Face;
+  /** The seam point — midpoint of the original drag — in `hostFace`'s frame. */
+  anchor: Point;
+  /** Unit vector along the cut line, in `hostFace`'s frame. */
+  direction: Point;
+  /** Drag start point (one end of the "drawn" segment), in `hostFace`'s frame. */
+  drawStart: Point;
+  /** Drag end point (other end of the "drawn" segment), in `hostFace`'s frame. */
+  drawEnd: Point;
+  /**
+   * Signed perpendicular displacement in atlas units (host frame).
+   *
+   * Sign picks the side: the strip pushes the +n side away by |delta|, where
+   * `n = (-dy, dx)` is the 90° CCW perpendicular of `direction`. The
+   * unmoved side is anchored: shapes there keep their host-frame coords.
+   */
+  delta: number;
+
+  /**
+   * Once the user releases the handle drag with a non-zero delta, the
+   * line-cut mutation is committed to the atlas: `splitAtlasAlongLine`
+   * subdivides every face the line crosses into a left/right pair, and
+   * `insertStrip` opens the seam to width |delta|. The gizmo holds onto
+   * the resulting per-step pairs and strip metadata so subsequent
+   * adjustments can target the same set of faces.
+   *
+   * `null` until the first commit; once set, the gizmo represents an
+   * existing cut rather than a pending preview.
+   */
+  committed: {
+    split: SplitAtlasAlongLineResult;
+    strip: InsertStripResult;
+    /** Sign of `delta` at commit time — picks which side the strip pushes. */
+    sign: 1 | -1;
+  } | null;
+
+  // DOM
+  svg: SVGSVGElement;
+  lineFinite: SVGLineElement;
+  lineBefore: SVGLineElement;
+  lineAfter: SVGLineElement;
+  perp: SVGLineElement;
+  handle: HTMLDivElement;
 }
 
 /**
@@ -63,10 +169,12 @@ export interface FaceLocalPoint {
  *  - `<folk-atlas-region>`: a polygonal marker drawn relative to the atlas.
  *    **Visual only** for now — the atlas structure is not derived from regions.
  *
- * **Mutating the atlas.** Shift+click anywhere inside the canvas to call
- * `splitFaceAtInterior` at that point. This is a temporary debug interaction
- * to exercise the primitive; eventually mutation will be driven by region
- * geometry / explicit operations.
+ * **Mutating the atlas.** Switch tools via the `tool` attribute (set by the
+ * toolbar UI in the demo HTML). The `shape` tool drag-creates a new
+ * `<folk-atlas-shape>`; the `line-cut` tool drops a persistent line gizmo
+ * with a perpendicular handle for picking strip width Δ (cut/strip
+ * insertion lands in a follow-up). The `select` tool is the default and
+ * leaves background pointers alone.
  *
  * **Coordinate model.** All public projection helpers (`screenToFaceLocal`,
  * `placeShape`) traffic in `FaceLocalPoint`s — never in a "root-local" or
@@ -108,17 +216,63 @@ export class FolkAtlas extends ReactiveElement {
       z-index: 0;
     }
 
-    /* Gizmo layer sits ABOVE shapes so handles are always grabbable.
-       The layer itself is transparent to pointer events; individual
-       handles re-enable them. */
-    .gizmos {
+    /* Tool-driven preview overlay (drag rectangles, line previews, etc.).
+       Sits above shapes so it's always visible during a drag; transparent
+       to pointer events so shapes underneath stay grabbable when no tool
+       is active. */
+    .overlay {
       position: absolute;
       inset: 0;
       pointer-events: none;
       z-index: 2;
     }
 
-    .gizmo-handle {
+    :host([tool='shape']) .content,
+    :host([tool='line-cut']) .content {
+      cursor: crosshair;
+    }
+
+    .preview-rect {
+      position: absolute;
+      border: 1.5px dashed oklch(45% 0.16 277);
+      background: oklch(58.5% 0.233 277.117 / 0.08);
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+
+    /* Line-cut SVG layer — used by both the in-flight line-draw preview and
+       the persistent gizmo after release. The "drawn" segment between the
+       drag start/end points is solid; the projected infinite extensions
+       beyond each end are dashed and faded for visual feedback. */
+    .cut-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: visible;
+    }
+    .cut-svg .cut-finite {
+      stroke: oklch(45% 0.16 277);
+      stroke-width: 2;
+      stroke-linecap: round;
+    }
+    .cut-svg .cut-infinite {
+      stroke: oklch(45% 0.16 277);
+      stroke-width: 1.25;
+      stroke-dasharray: 6 4;
+      opacity: 0.45;
+    }
+    .cut-svg .cut-perp {
+      stroke: oklch(60% 0.2 30);
+      stroke-width: 1.5;
+      stroke-dasharray: 4 3;
+    }
+
+    /* Persistent perpendicular handle at the centre of the drawn line.
+       Drag perpendicular to the line to control the strip's expansion Δ. */
+    .cut-handle {
       position: absolute;
       top: 0;
       left: 0;
@@ -132,12 +286,12 @@ export class FolkAtlas extends ReactiveElement {
       pointer-events: auto;
       touch-action: none;
       will-change: transform;
-      transform-origin: 7px 7px;
+      z-index: 3;
     }
-    .gizmo-handle:hover {
+    .cut-handle:hover {
       background: oklch(60% 0.22 30);
     }
-    .gizmo-handle.dragging {
+    .cut-handle.dragging {
       cursor: grabbing;
       background: oklch(55% 0.25 30);
     }
@@ -150,6 +304,17 @@ export class FolkAtlas extends ReactiveElement {
    * the clipped polygon is what's actually drawn.
    */
   static IDEAL_RADIUS = 1e6;
+
+  static override properties = {
+    tool: { type: String, reflect: true },
+  };
+
+  declare tool: AtlasTool;
+
+  constructor() {
+    super();
+    this.tool = 'select';
+  }
 
   // === Atlas state ===
   #atlas = createInitialAtlas();
@@ -182,25 +347,11 @@ export class FolkAtlas extends ReactiveElement {
   #content!: HTMLDivElement;
   #debug!: HTMLCanvasElement;
   #debugCtx!: CanvasRenderingContext2D;
-  #gizmoLayer!: HTMLDivElement;
-  /**
-   * Edge-translation gizmo handles, keyed by their canonical half-edge (the
-   * lower-indexed half of each twin pair). Only finite-finite twined edges
-   * get handles. Diffed against the canonical-edge set on every render.
-   */
-  #edgeHandles = new Map<HalfEdge, HTMLDivElement>();
-  /**
-   * Active drag state for the edge gizmo. While set, `#renderGizmos` skips
-   * repositioning the dragged handle so the handle stays under the cursor
-   * rather than jumping to the moving face's edge midpoint.
-   */
-  #activeEdgeDrag: {
-    he: HalfEdge;
-    pointerId: number;
-    startClientX: number;
-    startClientY: number;
-    startTransform: M.Matrix2D;
-  } | null = null;
+  /** Overlay layer for tool previews (drag rectangles, line previews, …). */
+  #overlay!: HTMLDivElement;
+
+  /** In-flight drag state for tool-driven interactions. */
+  #toolDrag: ToolDragState | null = null;
   #mutationObserver = new MutationObserver((records) => {
     for (const r of records) {
       r.addedNodes.forEach((n) => {
@@ -234,9 +385,9 @@ export class FolkAtlas extends ReactiveElement {
     this.#content.append(slot);
     root.append(this.#content);
 
-    this.#gizmoLayer = document.createElement('div');
-    this.#gizmoLayer.className = 'gizmos';
-    root.append(this.#gizmoLayer);
+    this.#overlay = document.createElement('div');
+    this.#overlay.className = 'overlay';
+    root.append(this.#overlay);
 
     this.#lastComposites = this.#atlas.computeComposites();
     for (const child of this.children) {
@@ -249,6 +400,9 @@ export class FolkAtlas extends ReactiveElement {
     this.addEventListener('wheel', this.#onWheel, { passive: false });
     this.addEventListener('mouseup', this.#onMouseUp);
     this.addEventListener('pointerdown', this.#onPointerDown);
+    this.addEventListener('pointermove', this.#onPointerMove);
+    this.addEventListener('pointerup', this.#onPointerUp);
+    this.addEventListener('pointercancel', this.#onPointerUp);
     window.addEventListener('blur', this.#onBlur);
 
     this.#scheduleUpdate();
@@ -259,6 +413,9 @@ export class FolkAtlas extends ReactiveElement {
     this.removeEventListener('wheel', this.#onWheel);
     this.removeEventListener('mouseup', this.#onMouseUp);
     this.removeEventListener('pointerdown', this.#onPointerDown);
+    this.removeEventListener('pointermove', this.#onPointerMove);
+    this.removeEventListener('pointerup', this.#onPointerUp);
+    this.removeEventListener('pointercancel', this.#onPointerUp);
     window.removeEventListener('blur', this.#onBlur);
     this.#mutationObserver.disconnect();
     this.#resizeObserver.disconnect();
@@ -299,8 +456,7 @@ export class FolkAtlas extends ReactiveElement {
   }
 
   #placeInRootFrame(shape: FolkAtlasShape, rootPoint: Point) {
-    // Use fresh composites — `#lastComposites` may be stale (e.g. mid-split,
-    // before `#splitAt` writes the new ones back).
+    // Use fresh composites — `#lastComposites` may be stale (e.g. mid-mutation).
     const composites = this.#atlas.computeComposites();
     let foundFace: Face | null = null;
     let faceLocal: Point = rootPoint;
@@ -489,37 +645,488 @@ export class FolkAtlas extends ReactiveElement {
     this.#scheduleUpdate();
   }
 
-  // ---- Atlas mutation: shift+click to split a face at the click point ----
+  // ---- Tool-driven pointer interactions ----
+  //
+  // Background pointer events on the atlas dispatch by `this.tool`. Shapes
+  // and other in-canvas elements stop propagation in their own handlers, so
+  // these only fire when the pointer is on the atlas background itself.
+
+  /**
+   * `true` if the given event target is the atlas background — i.e. not a
+   * shape or any other slotted child. Used to gate tool gestures so e.g.
+   * pointerdown on a shape doesn't double-fire the `shape` tool's
+   * "create new shape" gesture.
+   */
+  #isBackgroundTarget(target: EventTarget | null): boolean {
+    return target === this || target instanceof HTMLDivElement;
+  }
 
   #onPointerDown = (event: PointerEvent) => {
-    if (!event.shiftKey) return;
     if (event.button !== 0) return;
-    if (event.target !== this && !(event.target instanceof HTMLDivElement)) return;
+    if (!this.#isBackgroundTarget(event.target)) return;
+    if (this.tool === 'select') return;
     event.preventDefault();
     event.stopPropagation();
-
-    const ptr = this.screenToFaceLocal(event.clientX, event.clientY);
-    if (!ptr) return;
-    this.#splitAt(ptr);
+    this.setPointerCapture(event.pointerId);
+    if (this.tool === 'shape') this.#startShapeDrag(event);
+    else if (this.tool === 'line-cut') this.#startLineDraw(event);
   };
 
-  #splitAt(p: FaceLocalPoint) {
-    const oldComposites = this.#atlas.computeComposites();
+  #onPointerMove = (event: PointerEvent) => {
+    const drag = this.#toolDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    // Handle-expand drags are scoped to the handle element and route through
+    // its own listeners; the atlas dispatcher only sees the other two.
+    if (drag.kind === 'handle-expand') return;
+    event.preventDefault();
+    if (drag.kind === 'shape') this.#updateShapeDrag(drag, event);
+    else if (drag.kind === 'line-draw') this.#updateLineDraw(drag, event);
+  };
+
+  #onPointerUp = (event: PointerEvent) => {
+    const drag = this.#toolDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.kind === 'handle-expand') return;
+    event.preventDefault();
+    if (this.hasPointerCapture(event.pointerId)) this.releasePointerCapture(event.pointerId);
+    if (drag.kind === 'shape') this.#endShapeDrag(drag, event);
+    else if (drag.kind === 'line-draw') this.#endLineDraw(drag, event);
+    this.#toolDrag = null;
+  };
+
+  // ---- Shape tool: drag a rectangle preview, release creates the shape ----
+
+  #startShapeDrag(event: PointerEvent) {
+    const el = document.createElement('div');
+    el.className = 'preview-rect';
+    this.#overlay.append(el);
+    this.#toolDrag = {
+      kind: 'shape',
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      el,
+    };
+    this.#updateShapeDrag(this.#toolDrag, event);
+  }
+
+  #updateShapeDrag(drag: ShapeDragState, event: PointerEvent) {
+    const rect = this.getBoundingClientRect();
+    const x0 = drag.startClientX - rect.left;
+    const y0 = drag.startClientY - rect.top;
+    const x1 = event.clientX - rect.left;
+    const y1 = event.clientY - rect.top;
+    const left = Math.min(x0, x1);
+    const top = Math.min(y0, y1);
+    const w = Math.abs(x1 - x0);
+    const h = Math.abs(y1 - y0);
+    drag.el.style.transform = `translate(${left}px, ${top}px)`;
+    drag.el.style.width = `${w}px`;
+    drag.el.style.height = `${h}px`;
+  }
+
+  #endShapeDrag(drag: ShapeDragState, event: PointerEvent) {
+    drag.el.remove();
+    // Convert the screen-space drag rectangle into root-frame coords and
+    // create a new <folk-atlas-shape>. The mutation observer picks it up
+    // and `#registerShape` places it in the correct face.
+    const rect = this.getBoundingClientRect();
+    const sx0 = (drag.startClientX - rect.left - this.#x) / this.#scale;
+    const sy0 = (drag.startClientY - rect.top - this.#y) / this.#scale;
+    const sx1 = (event.clientX - rect.left - this.#x) / this.#scale;
+    const sy1 = (event.clientY - rect.top - this.#y) / this.#scale;
+    const left = Math.min(sx0, sx1);
+    const top = Math.min(sy0, sy1);
+    let w = Math.abs(sx1 - sx0);
+    let h = Math.abs(sy1 - sy0);
+    // Tiny click-without-drag: create a default-sized shape centred on the
+    // click. Threshold in screen pixels so it's stable across zoom levels.
+    const screenDx = event.clientX - drag.startClientX;
+    const screenDy = event.clientY - drag.startClientY;
+    if (screenDx * screenDx + screenDy * screenDy < 16) {
+      const dw = 120 / this.#scale;
+      const dh = 60 / this.#scale;
+      this.#createShape(left - dw / 2, top - dh / 2, dw, dh);
+    } else {
+      this.#createShape(left, top, w, h);
+    }
+  }
+
+  #createShape(x: number, y: number, width: number, height: number) {
+    const el = new FolkAtlasShape();
+    el.x = x;
+    el.y = y;
+    el.width = width;
+    el.height = height;
+    el.textContent = 'shape';
+    this.append(el);
+  }
+
+  // ---- Line-cut tool ----
+  //
+  // Two-phase gesture:
+  //   (1) Drag on the background to draw an infinite line. The drawn segment
+  //       (start→end of the drag) is rendered solid; the projected infinite
+  //       extensions beyond each end are dashed and faded. Release does NOT
+  //       mutate the atlas — it just commits a persistent gizmo.
+  //   (2) The persistent gizmo has a perpendicular handle at the seam (the
+  //       midpoint of the original drag). Dragging the handle perpendicular
+  //       to the line picks Δ — the size of the strip that would be inserted
+  //       on that side. Visual only in B1 — when the cut/strip primitive
+  //       lands (B2+), this is where the actual atlas mutation will happen.
+  //
+  // The gizmo persists until the user draws another line or switches tools.
+
+  /** "Far enough" multiplier for projecting infinite line extensions in screen px. */
+  static #INFINITE_REACH_MULT = 4;
+
+  /** Persistent line-cut gizmo, or `null` when no line is currently drawn. */
+  #cutGizmo: LineCutGizmo | null = null;
+
+  #startLineDraw(event: PointerEvent) {
+    // Clear any prior gizmo — drawing a new line replaces it.
+    this.#clearCutGizmo();
+    const svg = this.#createCutSvg();
+    const lineBefore = this.#createCutLine(svg, 'cut-infinite');
+    const lineFinite = this.#createCutLine(svg, 'cut-finite');
+    const lineAfter = this.#createCutLine(svg, 'cut-infinite');
+    this.#overlay.append(svg);
+    this.#toolDrag = {
+      kind: 'line-draw',
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      svg,
+      lineBefore,
+      lineFinite,
+      lineAfter,
+    };
+    this.#updateLineDraw(this.#toolDrag, event);
+  }
+
+  #updateLineDraw(drag: LineDrawDragState, event: PointerEvent) {
+    const rect = this.getBoundingClientRect();
+    const x0 = drag.startClientX - rect.left;
+    const y0 = drag.startClientY - rect.top;
+    const x1 = event.clientX - rect.left;
+    const y1 = event.clientY - rect.top;
+    this.#layoutCutLines(
+      drag.lineBefore,
+      drag.lineFinite,
+      drag.lineAfter,
+      { x: x0, y: y0 },
+      { x: x1, y: y1 },
+      Math.max(rect.width, rect.height) * FolkAtlas.#INFINITE_REACH_MULT,
+    );
+  }
+
+  #endLineDraw(drag: LineDrawDragState, event: PointerEvent) {
+    drag.svg.remove();
+
+    // Cancel: too short to be a meaningful line.
+    const dsx = event.clientX - drag.startClientX;
+    const dsy = event.clientY - drag.startClientY;
+    if (dsx * dsx + dsy * dsy < 16) return;
+
+    const midClientX = (drag.startClientX + event.clientX) / 2;
+    const midClientY = (drag.startClientY + event.clientY) / 2;
+    const seamLocal = this.screenToFaceLocal(midClientX, midClientY);
+    if (!seamLocal) return;
+    const startLocal = this.screenToFaceLocal(drag.startClientX, drag.startClientY);
+    const endLocal = this.screenToFaceLocal(event.clientX, event.clientY);
+    if (!startLocal || !endLocal) return;
+
+    // Express drag start/end in the seam's host face frame.
+    const drawStart = this.reexpressPoint(startLocal, seamLocal.face);
+    const drawEnd = this.reexpressPoint(endLocal, seamLocal.face);
+    const dx = drawEnd.x - drawStart.x;
+    const dy = drawEnd.y - drawStart.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return;
+
+    this.#createCutGizmo({
+      hostFace: seamLocal.face,
+      anchor: { x: seamLocal.x, y: seamLocal.y },
+      direction: { x: dx / len, y: dy / len },
+      drawStart,
+      drawEnd,
+    });
+  }
+
+  // ---- Cut gizmo lifecycle ----
+
+  #createCutSvg(): SVGSVGElement {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'cut-svg');
+    return svg;
+  }
+
+  #createCutLine(svg: SVGSVGElement, className: string): SVGLineElement {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('class', className);
+    svg.append(line);
+    return line;
+  }
+
+  #createCutGizmo(spec: {
+    hostFace: Face;
+    anchor: Point;
+    direction: Point;
+    drawStart: Point;
+    drawEnd: Point;
+  }) {
+    const svg = this.#createCutSvg();
+    const lineBefore = this.#createCutLine(svg, 'cut-infinite');
+    const lineFinite = this.#createCutLine(svg, 'cut-finite');
+    const lineAfter = this.#createCutLine(svg, 'cut-infinite');
+    const perp = this.#createCutLine(svg, 'cut-perp');
+    perp.style.display = 'none';
+    this.#overlay.append(svg);
+
+    const handle = document.createElement('div');
+    handle.className = 'cut-handle';
+    handle.addEventListener('pointerdown', this.#onHandlePointerDown);
+    handle.addEventListener('pointermove', this.#onHandlePointerMove);
+    handle.addEventListener('pointerup', this.#onHandlePointerUp);
+    handle.addEventListener('pointercancel', this.#onHandlePointerUp);
+    this.#overlay.append(handle);
+
+    this.#cutGizmo = {
+      hostFace: spec.hostFace,
+      anchor: spec.anchor,
+      direction: spec.direction,
+      drawStart: spec.drawStart,
+      drawEnd: spec.drawEnd,
+      delta: 0,
+      committed: null,
+      svg,
+      lineBefore,
+      lineFinite,
+      lineAfter,
+      perp,
+      handle,
+    };
+    this.#scheduleUpdate();
+  }
+
+  #clearCutGizmo() {
+    if (!this.#cutGizmo) return;
+    this.#cutGizmo.svg.remove();
+    this.#cutGizmo.handle.remove();
+    this.#cutGizmo = null;
+    if (this.#toolDrag?.kind === 'handle-expand') this.#toolDrag = null;
+  }
+
+  /**
+   * Project the cut gizmo's host-frame geometry to screen space and update
+   * its DOM. Called once per `#render()`. Pure layout — no atlas reads.
+   */
+  #renderCutGizmo() {
+    const g = this.#cutGizmo;
+    if (!g) return;
+    const composite = this.#lastComposites.get(g.hostFace);
+    if (!composite) {
+      // Host face vanished (only possible once mutation lands; harmless to drop).
+      this.#clearCutGizmo();
+      return;
+    }
+    const view = M.scaleSelf(M.fromTranslate(this.#x, this.#y), this.#scale);
+    const screen = M.multiply(view, composite);
+    const sa = M.applyToPoint(screen, g.anchor);
+    const ss = M.applyToPoint(screen, g.drawStart);
+    const se = M.applyToPoint(screen, g.drawEnd);
+    const ddx = se.x - ss.x;
+    const ddy = se.y - ss.y;
+    const dlen = Math.hypot(ddx, ddy);
+    if (dlen < 1e-6) return;
+    const ux = ddx / dlen;
+    const uy = ddy / dlen;
+    const rect = this.getBoundingClientRect();
+    const reach = Math.max(rect.width, rect.height) * FolkAtlas.#INFINITE_REACH_MULT;
+    this.#layoutCutLines(g.lineBefore, g.lineFinite, g.lineAfter, ss, se, reach);
+
+    // Perpendicular (90° CCW from line direction in screen space).
+    const perpX = -uy;
+    const perpY = ux;
+    const handleScreenDx = g.delta * this.#scale * perpX;
+    const handleScreenDy = g.delta * this.#scale * perpY;
+    const handleX = sa.x + handleScreenDx;
+    const handleY = sa.y + handleScreenDy;
+    if (Math.abs(g.delta) > 1e-6) {
+      g.perp.style.display = '';
+      g.perp.setAttribute('x1', String(sa.x));
+      g.perp.setAttribute('y1', String(sa.y));
+      g.perp.setAttribute('x2', String(handleX));
+      g.perp.setAttribute('y2', String(handleY));
+    } else {
+      g.perp.style.display = 'none';
+    }
+    g.handle.style.transform = `translate(${handleX - 7}px, ${handleY - 7}px)`;
+  }
+
+  /**
+   * Lay out the three line segments (before-infinite, drawn-finite,
+   * after-infinite) along the line through `start`→`end`, with the infinite
+   * extensions reaching `reach` screen pixels past each endpoint.
+   */
+  #layoutCutLines(
+    before: SVGLineElement,
+    finite: SVGLineElement,
+    after: SVGLineElement,
+    start: Point,
+    end: Point,
+    reach: number,
+  ) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const len = Math.hypot(dx, dy);
+    finite.setAttribute('x1', String(start.x));
+    finite.setAttribute('y1', String(start.y));
+    finite.setAttribute('x2', String(end.x));
+    finite.setAttribute('y2', String(end.y));
+    if (len < 1e-3) {
+      // Degenerate: collapse extensions onto the click point.
+      for (const l of [before, after]) {
+        l.setAttribute('x1', String(start.x));
+        l.setAttribute('y1', String(start.y));
+        l.setAttribute('x2', String(start.x));
+        l.setAttribute('y2', String(start.y));
+      }
+      return;
+    }
+    const ux = dx / len;
+    const uy = dy / len;
+    before.setAttribute('x1', String(start.x - ux * reach));
+    before.setAttribute('y1', String(start.y - uy * reach));
+    before.setAttribute('x2', String(start.x));
+    before.setAttribute('y2', String(start.y));
+    after.setAttribute('x1', String(end.x));
+    after.setAttribute('y1', String(end.y));
+    after.setAttribute('x2', String(end.x + ux * reach));
+    after.setAttribute('y2', String(end.y + uy * reach));
+  }
+
+  // ---- Handle drag (expansion Δ) ----
+
+  #onHandlePointerDown = (event: PointerEvent) => {
+    const g = this.#cutGizmo;
+    if (!g || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    g.handle.setPointerCapture(event.pointerId);
+    g.handle.classList.add('dragging');
+    this.#toolDrag = {
+      kind: 'handle-expand',
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startDelta: g.delta,
+      gizmo: g,
+    };
+  };
+
+  #onHandlePointerMove = (event: PointerEvent) => {
+    const drag = this.#toolDrag;
+    if (!drag || drag.kind !== 'handle-expand' || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const g = drag.gizmo;
+    const composite = this.#lastComposites.get(g.hostFace);
+    if (!composite) return;
+    const view = M.scaleSelf(M.fromTranslate(this.#x, this.#y), this.#scale);
+    const screen = M.multiply(view, composite);
+    const ss = M.applyToPoint(screen, g.drawStart);
+    const se = M.applyToPoint(screen, g.drawEnd);
+    const ddx = se.x - ss.x;
+    const ddy = se.y - ss.y;
+    const dlen = Math.hypot(ddx, ddy);
+    if (dlen < 1e-6) return;
+    const ux = ddx / dlen;
+    const uy = ddy / dlen;
+    // Project the screen-space cursor offset onto the perpendicular axis.
+    const dsx = event.clientX - drag.startClientX;
+    const dsy = event.clientY - drag.startClientY;
+    const screenDelta = dsx * -uy + dsy * ux;
+    g.delta = drag.startDelta + screenDelta / this.#scale;
+    this.#scheduleUpdate();
+  };
+
+  #onHandlePointerUp = (event: PointerEvent) => {
+    const drag = this.#toolDrag;
+    if (!drag || drag.kind !== 'handle-expand' || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (drag.gizmo.handle.hasPointerCapture(event.pointerId)) {
+      drag.gizmo.handle.releasePointerCapture(event.pointerId);
+    }
+    drag.gizmo.handle.classList.remove('dragging');
+    this.#toolDrag = null;
+    this.#commitCutGizmo(drag.gizmo);
+  };
+
+  /**
+   * Commit the current cut gizmo to the atlas: subdivide every face the
+   * line crosses, then open the seam by `|gizmo.delta|`. The gizmo holds
+   * onto the resulting per-step pairs and strip metadata so subsequent
+   * adjustments can target the same faces.
+   *
+   * The strip pushes the +n side away from the −n side, where
+   * `n = (-dy, dx)` is the 90° CCW perpendicular of the line direction.
+   * If `gizmo.delta` is negative, we flip the line direction so the
+   * apparent "side being pushed" matches the drag direction.
+   *
+   * On the first commit, atlas mutation happens and any orphaned shapes
+   * are relocated. Re-committing (e.g. after dragging the handle to a
+   * new Δ) is a no-op for now — live resizing of an existing strip is
+   * a follow-up.
+   */
+  #commitCutGizmo(gizmo: LineCutGizmo) {
+    if (gizmo.committed) return; // already mutated; live resize is TODO
+    const eps = 1e-3; // host-frame units; smaller than the smallest sane strip
+    if (Math.abs(gizmo.delta) < eps) return;
+
+    // Sign convention: insertStrip always opens toward +n of the chord
+    // direction. To make the "pushed side" match the drag direction,
+    // flip the line direction when delta is negative — that swaps which
+    // side ends up on the +n half.
+    const sign: 1 | -1 = gizmo.delta >= 0 ? 1 : -1;
+    const direction =
+      sign > 0
+        ? gizmo.direction
+        : { x: -gizmo.direction.x, y: -gizmo.direction.y };
+
+    const oldComposites = new Map(this.#lastComposites);
+
+    let split: SplitAtlasAlongLineResult;
     try {
-      splitFaceAtInterior(this.#atlas, p.face, { x: p.x, y: p.y });
-    } catch (e) {
-      console.warn('[folk-atlas] splitFaceAtInterior failed:', e);
+      split = splitAtlasAlongLine(this.#atlas, gizmo.hostFace, gizmo.anchor, direction);
+    } catch (err) {
+      // Geometric failure (e.g. seam landed exactly on a vertex after
+      // intermediate edits). Surface to the console and tear the gizmo
+      // down so the user can try again.
+      console.warn('[folk-atlas] line cut split failed:', err);
+      this.#clearCutGizmo();
       return;
     }
 
+    let strip: InsertStripResult;
     try {
-      validateAtlas(this.#atlas);
-    } catch (e) {
-      console.error('[folk-atlas] atlas invariants violated after split:', e);
+      strip = insertStrip(this.#atlas, split, Math.abs(gizmo.delta));
+    } catch (err) {
+      console.warn('[folk-atlas] line cut strip insertion failed:', err);
+      this.#clearCutGizmo();
+      return;
     }
 
+    gizmo.committed = { split, strip, sign };
+
+    // Relocate any shapes whose face was replaced by the split.
     this.#relocateOrphanedShapes(oldComposites);
-    this.#lastComposites = this.#atlas.computeComposites();
+
+    // The gizmo's hostFace was almost certainly split — clear the
+    // visual gizmo since its anchor frame is no longer meaningful.
+    // (Future: reframe the gizmo onto one of the new sub-faces so the
+    // user can keep adjusting Δ live.)
+    this.#clearCutGizmo();
     this.#scheduleUpdate();
   }
 
@@ -585,8 +1192,7 @@ export class FolkAtlas extends ReactiveElement {
   /**
    * Move `atlas.root` to whichever face currently sits under the viewport
    * centre, compensating the view transform so on-screen positions don't
-   * jump. This keeps the actively-mutated frame near the user's focus, which
-   * is the natural anchor for upcoming face-relative gizmo edits.
+   * jump. This keeps the actively-mutated frame near the user's focus.
    *
    * Assumption: every edge transform is a translation (or identity). With
    * that constraint, the view stays of the form `translate(x, y) · scale(s)`
@@ -645,7 +1251,15 @@ export class FolkAtlas extends ReactiveElement {
     this.#lastVisibility = this.#computeVisibilities(composites, view);
     this.#renderShapes(composites);
     this.#renderDebug(composites, view);
-    this.#renderGizmos(composites, view);
+    this.#renderCutGizmo();
+  }
+
+  protected override willUpdate(changedProperties: PropertyValues): void {
+    // Switching away from line-cut tears down any in-progress gizmo —
+    // the gizmo is meaningless outside its tool.
+    if (changedProperties.has('tool') && this.tool !== 'line-cut') {
+      this.#clearCutGizmo();
+    }
   }
 
   /**
@@ -858,157 +1472,6 @@ export class FolkAtlas extends ReactiveElement {
     }
   }
 
-  // ---- Edge translation gizmo (exploratory) ----
-  //
-  // One handle per finite-finite twined edge. Click-drag to add a translation
-  // to the edge's twin pair via `editEdgeTranslation`. Origins on the twin
-  // side are deliberately *not* updated, so dragging visibly tears the atlas
-  // at junctions and breaks cycle closure across loops touching the edge —
-  // this is the whole point of the primitive (see `sia.md` § "Edge gizmo").
-
-  /**
-   * Pick one half-edge per twin pair as the "canonical" one (the one that
-   * owns a gizmo handle). Choice: the half-edge with the smaller index in
-   * `atlas.halfEdges`. Stable across renders so handle DOM nodes can be
-   * reused; arbitrary in terms of which face is treated as the "moving"
-   * side, but the user can always select from either incident face.
-   */
-  #canonicalGizmoEdges(): Set<HalfEdge> {
-    const out = new Set<HalfEdge>();
-    const heIndex = new Map<HalfEdge, number>();
-    for (let i = 0; i < this.#atlas.halfEdges.length; i++) {
-      heIndex.set(this.#atlas.halfEdges[i], i);
-    }
-    for (const he of this.#atlas.halfEdges) {
-      if (!he.twin) continue;
-      // Both endpoints must be finite for a well-defined screen midpoint.
-      if (he.originKind !== 'finite') continue;
-      if (he.next.originKind !== 'finite') continue;
-      const ai = heIndex.get(he)!;
-      const bi = heIndex.get(he.twin)!;
-      if (ai > bi) continue;
-      out.add(he);
-    }
-    return out;
-  }
-
-  #renderGizmos(composites: Map<Face, M.Matrix2D>, view: M.Matrix2DReadonly) {
-    const canonical = this.#canonicalGizmoEdges();
-
-    // Drop handles whose canonical edge no longer exists.
-    for (const [he, el] of this.#edgeHandles) {
-      if (!canonical.has(he)) {
-        el.remove();
-        this.#edgeHandles.delete(he);
-      }
-    }
-
-    for (const he of canonical) {
-      let el = this.#edgeHandles.get(he);
-      if (!el) {
-        el = this.#createGizmoHandle(he);
-        this.#gizmoLayer.append(el);
-        this.#edgeHandles.set(he, el);
-      }
-
-      // Skip repositioning the handle that's actively being dragged: it
-      // tracks the cursor instead, so that `cursor.x - handle.x` stays
-      // constant for the duration of the drag.
-      if (this.#activeEdgeDrag?.he === he) continue;
-
-      const compB = composites.get(he.twin!.face);
-      if (!compB) {
-        el.style.display = 'none';
-        continue;
-      }
-      el.style.display = '';
-
-      // Position at the midpoint of the edge as drawn by the *moving* face
-      // (h.twin.face). When the gizmo is identity, this midpoint coincides
-      // with the same edge as drawn by h.face; once the gizmo translates,
-      // the moving-side midpoint follows the moving face — matching the
-      // intuition "the handle is on the side that moves with you".
-      const screenB = M.multiply(view, compB);
-      const a = { x: he.twin!.ox, y: he.twin!.oy };
-      const b = { x: he.twin!.next.ox, y: he.twin!.next.oy };
-      const sa = M.applyToPoint(screenB, a);
-      const sb = M.applyToPoint(screenB, b);
-      const mx = (sa.x + sb.x) / 2;
-      const my = (sa.y + sb.y) / 2;
-      // Center the 14×14 handle on (mx, my) via a translate that subtracts
-      // half the size — keeps top/left at 0 and the transform on the GPU.
-      el.style.transform = `translate(${mx - 7}px, ${my - 7}px)`;
-    }
-  }
-
-  #createGizmoHandle(he: HalfEdge): HTMLDivElement {
-    const el = document.createElement('div');
-    el.className = 'gizmo-handle';
-
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      el.setPointerCapture(event.pointerId);
-      el.classList.add('dragging');
-      this.#activeEdgeDrag = {
-        he,
-        pointerId: event.pointerId,
-        startClientX: event.clientX,
-        startClientY: event.clientY,
-        // Snapshot the edge's transform at drag start so each move replays
-        // the total delta from the start (avoids floating-point drift from
-        // accumulating per-move translations).
-        startTransform: { ...he.transform },
-      };
-      // Park the handle at the cursor for the duration of the drag.
-      this.#positionHandleAtClient(el, event.clientX, event.clientY);
-    };
-
-    const onPointerMove = (event: PointerEvent) => {
-      const drag = this.#activeEdgeDrag;
-      if (!drag || drag.he !== he || event.pointerId !== drag.pointerId) return;
-      event.preventDefault();
-      const dsx = event.clientX - drag.startClientX;
-      const dsy = event.clientY - drag.startClientY;
-      // Screen → atlas-units in h.face's frame. In the translation-only
-      // regime composite linear parts are identity, so dividing by the
-      // global view scale is the full conversion. Once uniform scale lands
-      // we'll need to also apply `inv(linear(composite(h.face)))` here.
-      const dx = dsx / this.#scale;
-      const dy = dsy / this.#scale;
-      // Replay from snapshot to avoid drift.
-      he.transform = { ...drag.startTransform };
-      if (he.twin) he.twin.transform = M.invert(he.transform);
-      editEdgeTranslation(he, dx, dy);
-      this.#positionHandleAtClient(el, event.clientX, event.clientY);
-      this.#scheduleUpdate();
-    };
-
-    const endDrag = (event: PointerEvent) => {
-      const drag = this.#activeEdgeDrag;
-      if (!drag || drag.he !== he || event.pointerId !== drag.pointerId) return;
-      this.#activeEdgeDrag = null;
-      el.classList.remove('dragging');
-      if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
-      // Next render snaps the handle back to the moving face's midpoint.
-      this.#scheduleUpdate();
-    };
-
-    el.addEventListener('pointerdown', onPointerDown);
-    el.addEventListener('pointermove', onPointerMove);
-    el.addEventListener('pointerup', endDrag);
-    el.addEventListener('pointercancel', endDrag);
-
-    return el;
-  }
-
-  #positionHandleAtClient(el: HTMLDivElement, clientX: number, clientY: number) {
-    const rect = this.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    el.style.transform = `translate(${x - 7}px, ${y - 7}px)`;
-  }
 }
 
 // ----------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Sparse Ideal Atlas — regions + draggable shapes</title>
+    <title>Sparse Ideal Atlas</title>
     <style>
       html,
       body {
@@ -17,65 +17,121 @@
         inset: 0;
       }
 
-      #info {
+      #toolbar {
         position: absolute;
         top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 10px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+        z-index: 10;
+      }
+
+      #toolbar button {
+        all: unset;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        cursor: pointer;
+        color: oklch(40% 0.05 277);
+        transition: background 0.1s;
+      }
+      #toolbar button:hover {
+        background: oklch(95% 0.02 277);
+      }
+      #toolbar button[aria-pressed='true'] {
+        background: oklch(58.5% 0.233 277.117 / 0.18);
+        color: oklch(35% 0.16 277);
+      }
+      #toolbar svg {
+        width: 18px;
+        height: 18px;
+        display: block;
+      }
+
+      #info {
+        position: absolute;
+        bottom: 12px;
         left: 12px;
         background: rgba(255, 255, 255, 0.92);
-        padding: 10px 12px;
+        padding: 6px 10px;
         border-radius: 6px;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-        font-size: 12px;
+        font-size: 11px;
         line-height: 1.4;
-        max-width: 340px;
+        color: oklch(40% 0.05 277);
         z-index: 10;
         pointer-events: none;
       }
-
-      #info b {
-        color: oklch(45% 0.16 277);
-      }
-
-      #info code {
-        background: rgba(0, 0, 0, 0.05);
+      #info kbd {
+        font: inherit;
+        background: rgba(0, 0, 0, 0.06);
         padding: 1px 4px;
         border-radius: 3px;
-        font-size: 11px;
       }
     </style>
   </head>
   <body>
-    <folk-atlas>
+    <folk-atlas tool="select">
       <folk-atlas-shape x="140" y="120" width="120" height="60">NE quadrant</folk-atlas-shape>
-      <folk-atlas-shape x="350" y="180" width="160" height="60">NE far</folk-atlas-shape>
       <folk-atlas-shape x="-260" y="80" width="160" height="80">NW quadrant</folk-atlas-shape>
       <folk-atlas-shape x="-200" y="-180" width="160" height="80">SW quadrant</folk-atlas-shape>
       <folk-atlas-shape x="100" y="-160" width="160" height="80">SE quadrant</folk-atlas-shape>
     </folk-atlas>
 
+    <div id="toolbar" role="toolbar" aria-label="Atlas tools">
+      <button data-tool="select" title="Select (drag shapes, scroll to pan/zoom)" aria-pressed="true">
+        <!-- arrow / selection cursor -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 3l6 16 2.4-6.6L20 10z" />
+        </svg>
+      </button>
+      <button data-tool="shape" title="Shape — drag to create a rectangle">
+        <!-- rectangle outline -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="6" width="16" height="12" rx="1.5" />
+        </svg>
+      </button>
+      <button data-tool="line-cut" title="Line cut — drag to draw a cut line">
+        <!-- diagonal line with arrows perpendicular to it -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 21L21 3" />
+          <path d="M9 9l3 3-3 3" />
+          <path d="M15 15l-3-3 3-3" />
+        </svg>
+      </button>
+    </div>
+
     <div id="info">
-      <b>Sparse Ideal Atlas — primitive splits.</b><br />
-      The seed atlas is 4 quadrant faces meeting at the origin, with ideal
-      vertices at the cardinal directions. Each face owns its own copies of
-      every vertex (un-shared); all edge transforms are identity so the canvas
-      behaves visually like a flat plane.
-      <br /><br />
-      <b>Shift + click</b> anywhere in the canvas to split the underlying face
-      at that point via <code>splitFaceAtInterior</code>. Each split adds 2
-      faces and re-anchors them to the inserted point as their canonical
-      <code>(0, 0)</code> origin. Atlas invariants are validated after every
-      mutation.
-      <br /><br />
-      <b>Drag</b> shapes around. They re-locate to whichever face contains
-      their origin — watch the <code>(N)</code> counts next to each face label
-      change as a shape crosses a face boundary.
-      <br /><br />
-      <b>Pan:</b> two-finger scroll. <b>Zoom:</b>
-      <code>⌘</code> / <code>Ctrl</code> + scroll.
+      <kbd>scroll</kbd> pan · <kbd>⌘ scroll</kbd> zoom
     </div>
 
     <script type="module">
       import '@folkjs/labs/standalone/folk-atlas';
+
+      const atlas = document.querySelector('folk-atlas');
+      const toolbar = document.getElementById('toolbar');
+      const buttons = toolbar.querySelectorAll('button[data-tool]');
+
+      function setTool(tool) {
+        atlas.setAttribute('tool', tool);
+        for (const b of buttons) {
+          b.setAttribute('aria-pressed', String(b.dataset.tool === tool));
+        }
+      }
+
+      toolbar.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-tool]');
+        if (!btn) return;
+        setTool(btn.dataset.tool);
+      });
     </script>
   </body>
 </html>
