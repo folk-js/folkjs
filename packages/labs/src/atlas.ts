@@ -1985,6 +1985,23 @@ export function boundaryHitToJunction(hit: BoundaryHit): Junction {
  * Find where the line `p + s * d` (s > eps) exits `face`. Returns `null` if
  * no forward exit exists (degenerate face / numerical issue) or if the only
  * candidate exit would equal `excludeHE` (the boundary the line just entered).
+ *
+ * Three exit kinds are supported, in priority order:
+ *
+ *   1. **Finite hit** — line crosses a finite-bearing edge at a finite point.
+ *      Returned with `point` set, `idealDir` null.
+ *   2. **Arc exit** — line exits through an at-infinity arc edge (ideal-ideal).
+ *      Returned with `point` null, `idealDir` set to the line direction.
+ *   3. **Corner exit** — line exits through an ideal vertex shared between two
+ *      finite-bearing edges (an "infinite corner"). This happens when the line
+ *      direction is parallel to both adjacent edges and there's no arc to use.
+ *      Such a corner is created whenever a chord materialises *at* an existing
+ *      arc-endpoint vertex (the arc on the other side of the chord lives on,
+ *      but on this side the corner is no longer protected by an arc), then a
+ *      subsequent parallel cut tries to exit through it. Returned with `point`
+ *      null, `idealDir` set to the line direction, and `he` chosen so its
+ *      origin matches `idealDir` — this lets the existing materialise() in
+ *      splitFaceAlongChord short-circuit cleanly without arc subdivision.
  */
 function findExit(
   face: Face,
@@ -2035,6 +2052,30 @@ function findExit(
       idealDir: { x: d.x, y: d.y },
     };
   }
+
+  // Corner exit. Look for an ideal vertex of `face` whose direction matches
+  // `d` and which is bounded on both sides by finite-bearing (non-arc) edges.
+  // Skip vertices adjacent to an arc — those are already handled by the
+  // arcExit branch above. `d` is unit-length; ideal-vertex directions are
+  // unit-length by construction.
+  const cornerEps = 1e-6;
+  for (const he of face.halfEdgesCCW()) {
+    if (he === excludeHE) continue;
+    if (he.originKind !== 'ideal') continue;
+    if (he.isAtInfinity) continue;
+    if (he.prev.isAtInfinity) continue;
+    const dx = d.x - he.ox;
+    const dy = d.y - he.oy;
+    if (dx * dx + dy * dy < cornerEps * cornerEps) {
+      return {
+        he,
+        point: null,
+        u: null,
+        idealDir: { x: d.x, y: d.y },
+      };
+    }
+  }
+
   return null;
 }
 
@@ -2342,22 +2383,38 @@ function findHEForFinitePoint(face: Face, p: Point): { he: HalfEdge; u: number }
 }
 
 /**
- * Find an at-infinity arc on `face` whose CCW sweep contains the ideal
- * direction `idealDir`. Prefers an arc whose origin matches the direction
- * (returns the arc starting AT the new vertex, so materialise sees u=0).
+ * Find a half-edge on `face` whose `origin()` IS the ideal vertex with
+ * direction `idealDir`, or — failing that — an at-infinity arc whose CCW
+ * sweep contains it. Used by {@link refreshHit} to re-resolve a captured
+ * ideal-exit after intervening face mutations.
+ *
+ * Two ideal-exit kinds need this:
+ *   1. Arc exit: line exits through an at-infinity arc. The matching HE is
+ *      either an arc whose origin equals `idealDir` (preferred — already at
+ *      a vertex, materialise short-circuits) or any arc whose CCW sweep
+ *      contains `idealDir` (will be subdivided).
+ *   2. Corner exit ({@link findExit}): line exits through an ideal vertex
+ *      bounded by two finite-bearing edges (no adjacent arc). The matching
+ *      HE is the finite-bearing HE whose origin equals `idealDir`. There
+ *      is no arc to fall back on; arc-sweep search will not find anything.
+ *
+ * The first loop covers both cases by accepting any HE (arc or finite-
+ * bearing) whose origin matches the direction.
  */
 function findArcForIdealDir(face: Face, idealDir: Point): HalfEdge {
   const eps = 1e-9;
+  // Either an arc starting at idealDir, or a finite-bearing HE coming out
+  // of the ideal corner (corner exit). materialise() short-circuits in
+  // both cases since the chord endpoint already coincides with origin().
   for (const he of face.halfEdges) {
-    if (
-      he.originKind === 'ideal' &&
-      Math.abs(he.ox - idealDir.x) < eps &&
-      Math.abs(he.oy - idealDir.y) < eps &&
-      he.isAtInfinity
-    ) {
-      return he;
-    }
+    if (he.originKind !== 'ideal') continue;
+    if (Math.abs(he.ox - idealDir.x) >= eps) continue;
+    if (Math.abs(he.oy - idealDir.y) >= eps) continue;
+    return he;
   }
+  // Arc sweep fallback: a stale `idealDir` may sit strictly inside an arc
+  // whose endpoints didn't yet contain a vertex matching it — materialise()
+  // will subdivide.
   for (const he of face.halfEdges) {
     if (!he.isAtInfinity) continue;
     const a = he.origin();

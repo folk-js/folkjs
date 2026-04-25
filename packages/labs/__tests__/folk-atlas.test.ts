@@ -2035,6 +2035,99 @@ describe('splitAtlasAlongLine', () => {
       assert.ok(hasRightConnection, `no right-side twin connection between pairs ${i} and ${i + 1}`);
     }
   });
+
+  // Regression: the four-axis-aligned-cuts pattern used by region creation.
+  // After cut 1, each crossed wedge gains a sub-face whose only finite-bearing
+  // edges (the chord and the surviving spoke into infinity) are PARALLEL to
+  // the cut direction and meet at a now-bare ideal vertex. A subsequent
+  // parallel cut whose seed lands in such a sub-face has no finite edge and
+  // no arc to exit through — the line only "exits" at the ideal vertex
+  // itself. findExit must recognise this corner-exit, otherwise walkLine
+  // throws "no forward exit from host". This used to fire in 3 of the 4
+  // wedges (everywhere except wedge 3 = +x/-y in screen coords).
+  describe('axis-aligned region cuts (corner-exit bug)', () => {
+    /**
+     * Run a cut specified in atlas-root coordinates. Mirrors
+     * FolkAtlas#runOneRegionCut: locate the host face, transform the seed
+     * into the host's local frame via the inverse composite, then call
+     * splitAtlasAlongLine. Direction is left in root frame (root = local
+     * for the seed atlas's translation-only composites).
+     */
+    const cutAtRoot = (
+      atlas: Atlas,
+      seedRoot: { x: number; y: number },
+      direction: { x: number; y: number },
+    ) => {
+      const composites = atlas.computeComposites();
+      let host: Face | null = null;
+      let seedLocal: { x: number; y: number } = seedRoot;
+      for (const [face, mf] of composites) {
+        const local = M.applyToPoint(M.invert(mf), seedRoot);
+        if (face.contains(local)) {
+          host = face;
+          seedLocal = local;
+          break;
+        }
+      }
+      assert.ok(
+        host,
+        `no face contains seed (${seedRoot.x}, ${seedRoot.y}) in root frame`,
+      );
+      splitAtlasAlongLine(atlas, host!, seedLocal, direction);
+    };
+
+    // For each interior point in each wedge, run the same 4 axis-aligned
+    // cuts that FolkAtlas#createRegionAtScreenRect uses to carve out a
+    // rectangular region. None of them should throw, and after all cuts
+    // the rectangle's interior should be a single face.
+    const cases: Array<{ name: string; cx: number; cy: number }> = [
+      { name: 'wedge +x/+y', cx: 100, cy: 50 },
+      { name: 'wedge -x/+y', cx: -100, cy: 50 },
+      { name: 'wedge -x/-y', cx: -100, cy: -50 },
+      { name: 'wedge +x/-y', cx: 100, cy: -50 },
+    ];
+
+    for (const { name, cx, cy } of cases) {
+      it(`carves a rectangle inside ${name} without throwing`, () => {
+        const atlas = createInitialAtlas();
+        const x0 = cx - 40,
+          x1 = cx + 40,
+          y0 = cy - 20,
+          y1 = cy + 20;
+        const cuts: Array<{
+          seed: { x: number; y: number };
+          dir: { x: number; y: number };
+        }> = [
+          { seed: { x: cx, y: y0 }, dir: { x: 1, y: 0 } }, // top   horiz cut
+          { seed: { x: cx, y: y1 }, dir: { x: 1, y: 0 } }, // bot   horiz cut
+          { seed: { x: x0, y: cy }, dir: { x: 0, y: 1 } }, // left  vert  cut
+          { seed: { x: x1, y: cy }, dir: { x: 0, y: 1 } }, // right vert  cut
+        ];
+        for (const { seed, dir } of cuts) {
+          assert.doesNotThrow(
+            () => cutAtRoot(atlas, seed, dir),
+            `cut at seed (${seed.x}, ${seed.y}) dir (${dir.x}, ${dir.y}) failed`,
+          );
+        }
+        assert.doesNotThrow(() => validateAtlas(atlas));
+
+        // After all four cuts, the rectangle interior should be coverable.
+        const inset = 1;
+        for (const [x, y] of [
+          [x0 + inset, y0 + inset],
+          [x1 - inset, y0 + inset],
+          [x1 - inset, y1 - inset],
+          [x0 + inset, y1 - inset],
+          [cx, cy],
+        ]) {
+          assert.ok(
+            atlas.locate({ x, y }),
+            `lost coverage near rect corner (${x}, ${y}) in ${name}`,
+          );
+        }
+      });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
