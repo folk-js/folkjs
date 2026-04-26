@@ -1,5 +1,4 @@
 import { ReactiveElement, css } from '@folkjs/dom/ReactiveElement';
-import type { Point } from '@folkjs/geometry/Vector2';
 import type { Face } from './atlas.ts';
 import type { FolkAtlas, RegionWrapAxis } from './folk-atlas.ts';
 
@@ -18,14 +17,16 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
  * face produced by four axis-aligned line cuts). It owns no positional
  * state of its own — the parent atlas drives placement every frame:
  *
- *  - The atlas reads the bound face's local junctions, projects them to
- *    screen via `(view · faceComposite)`, and pokes the resulting polygon
- *    into our outline SVG via {@link setOutlineScreenPoints}.
- *  - The atlas computes the on-screen centre of the polygon and pokes it
- *    into our controls layer via {@link setControlsScreenPosition}.
+ *  - The atlas draws the region's outline (green fill + dashed border)
+ *    into a *back* layer that sits behind shapes, so the region reads
+ *    as the floor of the space rather than a sticker on top of it. The
+ *    region element itself owns only the controls.
+ *  - The atlas computes the on-screen centre of the bound face's
+ *    polygon and pokes it into our controls layer via
+ *    {@link setControlsScreenPosition}.
  *
- * Living entirely in screen coordinates lets the outline + handles stay
- * crisp at any zoom level (no transform inheritance, no counter-scaling).
+ * Living entirely in screen coordinates lets the controls stay crisp at
+ * any zoom level (no transform inheritance, no counter-scaling).
  *
  * The region exposes two wrap toggles via buttons that delegate the actual
  * twin/untwin work back to the parent atlas through
@@ -43,21 +44,6 @@ export class FolkAtlasRegion extends ReactiveElement {
       pointer-events: none;
       width: 0;
       height: 0;
-    }
-
-    .outline {
-      position: absolute;
-      inset: 0;
-      overflow: visible;
-      pointer-events: none;
-    }
-
-    .outline polygon {
-      fill: oklch(70% 0.18 145 / 0.06);
-      stroke: oklch(48% 0.18 145 / 0.85);
-      stroke-width: 1.5;
-      stroke-dasharray: 6 4;
-      vector-effect: non-scaling-stroke;
     }
 
     .controls {
@@ -120,8 +106,6 @@ export class FolkAtlasRegion extends ReactiveElement {
    */
   face: Face | null = null;
 
-  #svg!: SVGSVGElement;
-  #poly!: SVGPolygonElement;
   #controls!: HTMLDivElement;
   #wrapHBtn!: HTMLButtonElement;
   #wrapVBtn!: HTMLButtonElement;
@@ -132,20 +116,25 @@ export class FolkAtlasRegion extends ReactiveElement {
     this.wrapV = false;
   }
 
-  /** The `<folk-atlas>` ancestor, or `null` if not nested in one. */
+  /**
+   * The owning `<folk-atlas>`, or `null` if not registered. Regions live
+   * inside the atlas's shadow DOM (the `#regionLayer`), so `closest()`
+   * can't see across the boundary — we walk the composed tree via
+   * `getRootNode()` and pick up the host. Falls back to a light-DOM
+   * lookup so external `<folk-atlas-region>` children still resolve.
+   */
   get atlas(): FolkAtlas | null {
+    const rootNode = this.getRootNode();
+    if (rootNode instanceof ShadowRoot) {
+      const host = rootNode.host;
+      if (host && host.tagName === 'FOLK-ATLAS') return host as FolkAtlas;
+    }
     return this.closest('folk-atlas') as FolkAtlas | null;
   }
 
   override connectedCallback() {
     super.connectedCallback();
     const root = this.shadowRoot!;
-
-    this.#svg = document.createElementNS(SVG_NS, 'svg');
-    this.#svg.classList.add('outline');
-    this.#poly = document.createElementNS(SVG_NS, 'polygon');
-    this.#svg.append(this.#poly);
-    root.append(this.#svg);
 
     this.#controls = document.createElement('div');
     this.#controls.className = 'controls';
@@ -169,23 +158,10 @@ export class FolkAtlasRegion extends ReactiveElement {
   // -------------------------------------------------------------------------
 
   /**
-   * Replace the outline polygon's vertices with the given screen-space
-   * points. The atlas computes these from `(view · faceComposite)`
-   * applied to the bound face's local junctions.
-   */
-  setOutlineScreenPoints(points: ReadonlyArray<Point>): void {
-    if (points.length === 0) {
-      this.#poly.setAttribute('points', '');
-      return;
-    }
-    const s = points.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
-    this.#poly.setAttribute('points', s);
-  }
-
-  /**
    * Position the controls panel in screen coordinates. The atlas computes
    * `(x, y)` as a sensible anchor for the bound face (e.g. its on-screen
-   * centroid).
+   * centroid). The outline itself is rendered separately by the atlas in
+   * its back layer.
    */
   setControlsScreenPosition(x: number, y: number): void {
     this.#controls.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;

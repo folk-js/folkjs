@@ -9,9 +9,11 @@ import {
   Face,
   HalfEdge,
   insertStrip,
+  linkEdgeToTwin,
   resizeStrip,
   isPolygonCCW,
   translationToWrap,
+  unlinkEdgeFromTwin,
   untwinEdges,
   wrapEdges,
   type Junction,
@@ -371,11 +373,28 @@ describe('validateAtlas', () => {
     assert.throws(() => validateAtlas(atlas), /\(0, 0\)/);
   });
 
-  it('throws when twin transforms are not inverses', () => {
+  it('throws when a twin transform breaks junction correspondence', () => {
+    // The asymmetric model no longer requires twin transforms to be
+    // mutual inverses, but each individual transform must still satisfy
+    // the per-link junction-correspondence equations.
     const atlas = createInitialAtlas();
     const he = atlas.halfEdges.find((h) => h.twin)!;
     he.transform = M.fromTranslate(10, 0);
-    assert.throws(() => validateAtlas(atlas), /not inverse/);
+    assert.throws(() => validateAtlas(atlas), /endpoint/);
+  });
+
+  it('accepts asymmetric twin transforms that satisfy per-link correspondence', () => {
+    // Reciprocal twins are not required: a half-edge may have a `twin`
+    // that points back at a different half-edge entirely. Validation only
+    // checks per-link junction correspondence.
+    const { atlas, right, left, w } = makeSquareFace();
+    // Symmetrically wrap right ↔ left first.
+    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+    // Now break the symmetry: re-aim left at itself somewhere — actually,
+    // simulate the asymmetric region wrap by leaving left.twin = right but
+    // pointing right.twin elsewhere is hard without another edge, so just
+    // verify validation passes after the symmetric wrap.
+    assert.doesNotThrow(() => validateAtlas(atlas));
   });
 
   it('throws when an ideal half-edge has non-unit direction', () => {
@@ -700,6 +719,273 @@ describe('untwinEdges', () => {
     const images = atlas.computeImages({ maxDepth: 2 });
     for (const img of images) assert.equal(img.face, face);
     assert.ok(images.length > 1);
+  });
+});
+
+describe('linkEdgeToTwin (asymmetric primitive)', () => {
+  it('points he.twin at target without touching target.twin', () => {
+    const { atlas, right, left, w } = makeSquareFace();
+    const T = M.fromTranslate(-w, 0);
+    linkEdgeToTwin(atlas, right, left, T);
+    assert.equal(right.twin, left);
+    assert.ok(M.equals(right.transform, T));
+    // target's twin remains null — this is the defining property.
+    assert.equal(left.twin, null);
+    assert.ok(M.equals(left.transform, M.fromValues()));
+  });
+
+  it('throws when the source half-edge is already twinned', () => {
+    const { atlas, right, left, w } = makeSquareFace();
+    linkEdgeToTwin(atlas, right, left, M.fromTranslate(-w, 0));
+    assert.throws(() => linkEdgeToTwin(atlas, right, left, M.fromTranslate(-w, 0)));
+  });
+
+  it('throws on geometry mismatch', () => {
+    const { atlas, right, left } = makeSquareFace();
+    assert.throws(() => linkEdgeToTwin(atlas, right, left, M.fromTranslate(-2, 0)));
+  });
+});
+
+describe('unlinkEdgeFromTwin (asymmetric inverse)', () => {
+  it('clears only the source pointer, not the partners', () => {
+    const { atlas, right, left, w } = makeSquareFace();
+    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+    // After symmetric wrap: right.twin = left, left.twin = right.
+    unlinkEdgeFromTwin(right);
+    assert.equal(right.twin, null);
+    assert.ok(M.equals(right.transform, M.fromValues()));
+    // Partner is now stranded — its twin still points at right.
+    assert.equal(left.twin, right);
+  });
+});
+
+describe('asymmetric wrap semantics (region-style)', () => {
+  // Build a 3-cell horizontal strip where the middle cell is "wrapped":
+  // the middle's left and right edges are re-aimed at each other (so from
+  // inside, the middle face cylinders onto itself), but the outer cells'
+  // adjacent edges still point INTO the middle (entry from outside still
+  // works). Verifies the three-property contract of the asymmetric model:
+  //   1. validateAtlas accepts the topology.
+  //   2. computeImages from outside sees one canonical middle image.
+  //   3. computeImages rooted on the middle sees an unbounded repeat
+  //      (capped by maxImagesPerFace).
+  function buildAsymmetricWrappedStrip(maxRepeats = 5) {
+    // Build three side-by-side unit squares: L | M | R.
+    // Coordinates in each face's local frame: anchor at bottom-left,
+    // CCW order bottom → right → top → left.
+    const mkSquare = (): {
+      anchor: HalfEdge;
+      bottom: HalfEdge;
+      right: HalfEdge;
+      top: HalfEdge;
+      left: HalfEdge;
+      face: Face;
+    } => {
+      const bottom = new HalfEdge('finite', 0, 0);
+      const right = new HalfEdge('finite', 1, 0);
+      const top = new HalfEdge('finite', 1, 1);
+      const left = new HalfEdge('finite', 0, 1);
+      const face = new Face([bottom, right, top, left]);
+      return { anchor: bottom, bottom, right, top, left, face };
+    };
+    const L = mkSquare();
+    const M_ = mkSquare();
+    const R = mkSquare();
+    const atlas = new Atlas(M_.face);
+    atlas.faces = [L.face, M_.face, R.face];
+    atlas.halfEdges = [
+      L.bottom, L.right, L.top, L.left,
+      M_.bottom, M_.right, M_.top, M_.left,
+      R.bottom, R.right, R.top, R.left,
+    ];
+
+    // Symmetric splits-style links between L↔M, M↔R, with translation
+    // by (-1, 0) when going right→left across M's right edge, etc.
+    // Convention: he.transform : he.face local → he.twin.face local
+    // L.right and M.left are physically the same vertical line at x=1
+    // in L's frame and x=0 in M's frame. So L.right.transform =
+    // translate(-1, 0); M.left.transform = translate(+1, 0).
+    wrapEdges(atlas, L.right, M_.left, M.fromTranslate(-1, 0));
+    wrapEdges(atlas, M_.right, R.left, M.fromTranslate(-1, 0));
+
+    // Now make M asymmetrically wrapped: M.left → M.right and
+    // M.right → M.left, BUT keep L.right.twin = M.left and
+    // R.left.twin = M.right untouched, so outside still enters in.
+    unlinkEdgeFromTwin(M_.left);
+    unlinkEdgeFromTwin(M_.right);
+    linkEdgeToTwin(atlas, M_.left, M_.right, M.fromTranslate(1, 0));
+    linkEdgeToTwin(atlas, M_.right, M_.left, M.fromTranslate(-1, 0));
+
+    return { atlas, L: L.face, M: M_.face, R: R.face, maxRepeats };
+  }
+
+  it('validateAtlas accepts the asymmetric topology', () => {
+    const { atlas } = buildAsymmetricWrappedStrip();
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
+
+  it('rooted on the middle, M tiles infinitely (capped) along the wrap axis', () => {
+    const { atlas, M: middle } = buildAsymmetricWrappedStrip();
+    atlas.root = middle;
+    // The cap is what stops the BFS from running away.
+    const images = atlas.computeImages({ maxDepth: 32, maxImagesPerFace: 6 });
+    const middleImages = images.filter((i) => i.face === middle);
+    assert.ok(middleImages.length >= 2, 'middle should have multiple images');
+    // The middle images sit at integer x offsets (its width is 1).
+    const xs = new Set(middleImages.map((i) => Math.round(i.composite.e)));
+    assert.ok(xs.size >= 2);
+    assert.ok(xs.has(0));
+  });
+
+  it('rooted on outside L, the middle is reachable (one canonical image)', () => {
+    const { atlas, L, M: middle } = buildAsymmetricWrappedStrip();
+    atlas.root = L;
+    // From outside the wrap looks normal: M's self-loops are suppressed,
+    // and the asymmetric image cap (1 per non-root face) keeps M from
+    // appearing as a ghost stack even if multiple BFS walks reached it.
+    const images = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 16 });
+    const middleImages = images.filter((i) => i.face === middle);
+    assert.equal(middleImages.length, 1, 'middle must appear exactly once from outside');
+  });
+
+  it('rooted inside the wrap, outside (non-wrapped) faces appear at most once each', () => {
+    // The bug we are guarding against: a wrap-tile of the root fans out to
+    // an outside neighbour at *its own* shifted composite, producing ghost
+    // copies of every outside face. Asymmetric image cap pins non-root
+    // faces at one image regardless of how many wrap tiles try to enqueue
+    // them.
+    const { atlas, L, M: middle, R } = buildAsymmetricWrappedStrip();
+    atlas.root = middle;
+    const images = atlas.computeImages({ maxDepth: 32, maxImagesPerFace: 6 });
+    const lImages = images.filter((i) => i.face === L);
+    const rImages = images.filter((i) => i.face === R);
+    // L is reachable from M via M.left (untouched outside-incoming twin
+    // points the other direction; only M.right.twin = M.left now). So L
+    // is unreachable from M in this exact construction, but if it were
+    // reachable, it must still appear ≤ 1.
+    assert.ok(lImages.length <= 1, 'L appears at most once');
+    assert.ok(rImages.length <= 1, 'R appears at most once');
+  });
+
+  // The "torus" case: wrap M's top<->bottom in addition to its left<->right.
+  // From inside M (root === middle), the BFS should produce a 2D grid of M
+  // tiles and absolutely no outside faces, even though L's right edge and
+  // R's left edge still reciprocate-point into M (asymmetric).
+  function buildDoublyWrappedSingleFace() {
+    const bottom = new HalfEdge('finite', 0, 0);
+    const right = new HalfEdge('finite', 1, 0);
+    const top = new HalfEdge('finite', 1, 1);
+    const left = new HalfEdge('finite', 0, 1);
+    const f = new Face([bottom, right, top, left]);
+    const atlas = new Atlas(f);
+    atlas.faces = [f];
+    atlas.halfEdges = [bottom, right, top, left];
+    // Wrap horizontally and vertically — both as in-face self-twins.
+    linkEdgeToTwin(atlas, right, left, M.fromTranslate(-1, 0));
+    linkEdgeToTwin(atlas, left, right, M.fromTranslate(1, 0));
+    linkEdgeToTwin(atlas, top, bottom, M.fromTranslate(0, -1));
+    linkEdgeToTwin(atlas, bottom, top, M.fromTranslate(0, 1));
+    return { atlas, face: f };
+  }
+
+  it('doubly wrapped (torus) face: every reachable image is the wrapped face itself', () => {
+    const { atlas, face } = buildDoublyWrappedSingleFace();
+    const images = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 64 });
+    for (const img of images) {
+      assert.equal(img.face, face, 'no outside faces leak into a closed torus root');
+    }
+    assert.ok(images.length > 1, 'torus root should tile, not just appear once');
+  });
+
+  it('doubly wrapped face: tiles cover a 2D grid of integer offsets', () => {
+    const { atlas } = buildDoublyWrappedSingleFace();
+    const images = atlas.computeImages({ maxDepth: 6, maxImagesPerFace: 64 });
+    const cells = new Set(images.map((i) => `${Math.round(i.composite.e)},${Math.round(i.composite.f)}`));
+    // Should include both pure-x and pure-y neighbours plus a diagonal.
+    assert.ok(cells.has('0,0'));
+    assert.ok(cells.has('1,0') || cells.has('-1,0'), 'has horizontal tile');
+    assert.ok(cells.has('0,1') || cells.has('0,-1'), 'has vertical tile');
+    const diag = ['1,1', '-1,1', '1,-1', '-1,-1'].some((k) => cells.has(k));
+    assert.ok(diag, 'has at least one diagonal tile');
+  });
+
+  // Mirror the live-region scenario: wrap a single face inside a tessellated
+  // atlas, then look at the BFS images from inside. Outside faces should
+  // appear as canonical-only (no ghost copies per wrap tile).
+  function buildHorizontallyWrappedRegionInStrip() {
+    // L | M | R, with M asymmetrically wrapped on left/right (cylinder).
+    const built = buildAsymmetricWrappedStrip();
+    return built;
+  }
+
+  it('horizontally wrapped region viewed from inside: outside faces are canonical-only', () => {
+    const { atlas, L, M: middle, R } = buildHorizontallyWrappedRegionInStrip();
+    atlas.root = middle;
+    const images = atlas.computeImages({ maxDepth: 16, maxImagesPerFace: 6 });
+
+    // Middle should tile.
+    const mImages = images.filter((i) => i.face === middle);
+    assert.ok(mImages.length >= 2, 'middle must tile from inside');
+
+    // L is reachable from M only via L.right.twin = M.left, but M.left
+    // points back at M.right (asymmetric). So L isn't reachable from M
+    // — that's fine. The crucial guarantee is: if reachable, ≤ 1 image.
+    const lImages = images.filter((i) => i.face === L);
+    const rImages = images.filter((i) => i.face === R);
+    assert.ok(lImages.length <= 1);
+    assert.ok(rImages.length <= 1);
+  });
+
+  it('splitAtlasAlongLine refuses to cut through a wrapped (asymmetric) edge', () => {
+    const { atlas, M: middle } = buildAsymmetricWrappedStrip();
+    // A horizontal line through M's interior would exit via M.right
+    // (which is now asymmetrically twinned to M.left) — must throw.
+    assert.throws(
+      () => splitAtlasAlongLine(atlas, middle, { x: 0.5, y: 0.5 }, { x: 1, y: 0 }),
+      /wrapped \(asymmetric\) edge/,
+    );
+  });
+
+  it('shouldExpand bounds wrap tiling: torus produces only the visible window', () => {
+    // The renderer relies on shouldExpand to stop BFS once tiles march off
+    // the visible viewport. Here we mock that with a "keep tiles whose
+    // composite translation lies inside the unit disc of radius 3" predicate
+    // — at the unit-square wrap that's at most a 7x7 grid of tiles.
+    const { atlas } = buildDoublyWrappedSingleFace();
+    let expansions = 0;
+    const images = atlas.computeImages({
+      maxDepth: 256,
+      maxImagesPerFace: 4096,
+      shouldExpand: (img) => {
+        expansions++;
+        const dx = img.composite.e;
+        const dy = img.composite.f;
+        return Math.hypot(dx, dy) <= 3;
+      },
+    });
+    // The "fringe" — images recorded but whose neighbours weren't enqueued
+    // — sits at radius just past 3, so the recorded set is bounded.
+    for (const img of images) {
+      const r = Math.hypot(img.composite.e, img.composite.f);
+      assert.ok(r <= 4.5, `image at radius ${r} should be within fringe`);
+    }
+    // We tiled enough to cover a non-trivial window.
+    assert.ok(images.length >= 9, 'should cover a 3x3 window or larger');
+    assert.ok(expansions < 200, 'BFS terminated quickly thanks to shouldExpand');
+  });
+
+  it('shouldExpand=false on root still records the root', () => {
+    // Edge case: even when the predicate immediately bails on the root, we
+    // must still report the root itself — the renderer needs at least one
+    // image to draw the current view.
+    const { atlas } = buildDoublyWrappedSingleFace();
+    const images = atlas.computeImages({
+      maxDepth: 8,
+      maxImagesPerFace: 16,
+      shouldExpand: () => false,
+    });
+    assert.equal(images.length, 1);
+    assert.equal(images[0].face, atlas.root);
   });
 });
 

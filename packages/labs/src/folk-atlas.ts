@@ -8,11 +8,14 @@ import {
   Face,
   HalfEdge,
   insertStrip,
+  linkEdgeToTwin,
   resizeStrip,
   splitAtlasAlongLine,
   translationToWrap,
+  unlinkEdgeFromTwin,
   untwinEdges,
   wrapEdges,
+  type AtlasImage,
   type SplitAtlasAlongLineResult,
   type InsertStripResult,
 } from './atlas.ts';
@@ -26,11 +29,13 @@ export {
   createInitialAtlas,
   Face,
   HalfEdge,
+  linkEdgeToTwin,
   rebaseTwinTransform,
   rebaseTwinTransformByTranslation,
   splitFaceAtInterior,
   splitFaceAlongEdge,
   translationToWrap,
+  unlinkEdgeFromTwin,
   untwinEdges,
   validateAtlas,
   wrapEdges,
@@ -103,6 +108,20 @@ interface HandleExpandDragState {
 }
 
 type ToolDragState = ShapeDragState | RegionDragState | LineDrawDragState | HandleExpandDragState;
+
+/**
+ * Atlas-owned back-layer SVG state for one region. Holds the canonical
+ * outline polygon plus a pool of polygons for the region face's
+ * additional BFS images (wrap-tile copies). Pooled rather than recreated
+ * each frame to keep the per-frame work to attribute writes only.
+ */
+interface RegionBackEntry {
+  svg: SVGSVGElement;
+  primary: SVGPolygonElement;
+  ghosts: SVGPolygonElement[];
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /**
  * Persistent line-cut gizmo created when the user releases a line-draw drag.
@@ -223,7 +242,7 @@ export class FolkAtlas extends ReactiveElement {
       width: 100%;
       height: 100%;
       transform-origin: 0 0;
-      z-index: 1;
+      z-index: 2;
     }
 
     /* Debug canvas sits BELOW the slotted children so the triangulation
@@ -237,6 +256,38 @@ export class FolkAtlas extends ReactiveElement {
       z-index: 0;
     }
 
+    /* Region back-layer — green fill + dashed outlines for every region
+       face. Painted *behind* shapes so a region reads as the floor of
+       the space rather than a sticker on top of it. The matching front
+       layer (.regions) carries only the controls. */
+    .regions-back {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .regions-back svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+    .regions-back polygon {
+      fill: oklch(70% 0.18 145 / 0.06);
+      stroke: oklch(48% 0.18 145 / 0.85);
+      stroke-width: 1.5;
+      stroke-dasharray: 6 4;
+      vector-effect: non-scaling-stroke;
+    }
+    /* Ghost outline (extra BFS images of the same region face). The only
+       differentiator vs. the canonical tile is a slightly fainter fill —
+       stroke colour and dash size are intentionally identical so wrap
+       tiles read as a single continuous surface. */
+    .regions-back polygon.ghost {
+      fill: oklch(70% 0.18 145 / 0.03);
+    }
+
     /* Tool-driven preview overlay (drag rectangles, line previews, etc.).
        Sits above shapes so it's always visible during a drag; transparent
        to pointer events so shapes underneath stay grabbable when no tool
@@ -245,18 +296,19 @@ export class FolkAtlas extends ReactiveElement {
       position: absolute;
       inset: 0;
       pointer-events: none;
-      z-index: 2;
+      z-index: 4;
     }
 
-    /* Region overlay layer — screen-coords, sits above shapes so handles
-       are clickable and the outline never gets occluded. The container is
-       transparent to pointer events; individual region elements re-enable
-       events on their own controls. */
+    /* Region front-layer — hosts the wrap-toggle controls only. Above
+       shapes so handles are clickable and never get occluded; the
+       container is transparent to pointer events so shapes underneath
+       stay grabbable, and individual region elements re-enable events
+       on their own buttons. */
     .regions {
       position: absolute;
       inset: 0;
       pointer-events: none;
-      z-index: 2;
+      z-index: 3;
     }
 
     :host([tool='shape']) .content,
@@ -373,6 +425,18 @@ export class FolkAtlas extends ReactiveElement {
   /** Cached composites from the most recent render — used by point-locate helpers. */
   #lastComposites: Map<Face, M.Matrix2D> = new Map();
   /**
+   * Cached BFS images from the most recent render. Distinct from
+   * `#lastComposites`: includes every wrap-tile image of the (wrapped) root
+   * face, not just the canonical one.
+   *
+   * Used by point-locate helpers (`screenToFaceLocal`,
+   * `#maybeSwitchRootToViewportCentre`) so that hit-testing and viewport
+   * navigation see the wrap tiling — without it, the pointer or viewport
+   * "falls into the gap" once it leaves the canonical region's local bounds,
+   * even though visually a wrap tile is sitting right there.
+   */
+  #lastImages: AtlasImage[] = [];
+  /**
    * Cached per-face visibility ∈ [0, 1] from the most recent render.
    *
    * Visibility is the product of independent falloff factors (screen distance,
@@ -402,12 +466,26 @@ export class FolkAtlas extends ReactiveElement {
   /** Ghost rendering subsystem — see {@link ShapeGhostRenderer}. */
   #ghosts!: ShapeGhostRenderer;
   /**
-   * Layer that hosts `<folk-atlas-region>` elements. Sits in *screen
-   * coordinates* — not transformed by `#content`'s view — so the region's
-   * outline + handles stay crisp at any zoom level. The atlas writes
-   * the polygon vertices and controls position per render.
+   * Front layer that hosts `<folk-atlas-region>` elements (controls only).
+   * Sits in *screen coordinates* — not transformed by `#content`'s view —
+   * so handles stay crisp at any zoom level. The atlas writes the
+   * controls position per render.
    */
   #regionLayer!: HTMLDivElement;
+  /**
+   * Back layer for region outlines. Holds one `<svg>` per registered
+   * region (created lazily) containing a primary polygon plus pooled
+   * ghost polygons for wrap-tile copies. Sits *behind* shapes so the
+   * region's green tint and dashed border feel like the floor of the
+   * space rather than a sticker pasted on top.
+   */
+  #regionBackLayer!: HTMLDivElement;
+  /**
+   * Per-region back-layer SVG state, kept in lockstep with `#regionFaces`.
+   * Created lazily on first render; torn down when the region is removed
+   * (or its bound face is destroyed by an unrelated mutation).
+   */
+  #regionBackEntries = new Map<FolkAtlasRegion, RegionBackEntry>();
 
   /** In-flight drag state for tool-driven interactions. */
   #toolDrag: ToolDragState | null = null;
@@ -453,6 +531,11 @@ export class FolkAtlas extends ReactiveElement {
     this.#overlay.className = 'overlay';
     root.append(this.#overlay);
 
+    this.#regionBackLayer = document.createElement('div');
+    this.#regionBackLayer.className = 'regions-back';
+    this.#regionBackLayer.setAttribute('aria-hidden', 'true');
+    root.append(this.#regionBackLayer);
+
     this.#regionLayer = document.createElement('div');
     this.#regionLayer.className = 'regions';
     root.append(this.#regionLayer);
@@ -490,6 +573,7 @@ export class FolkAtlas extends ReactiveElement {
     this.#ghosts?.clear();
     for (const region of this.#regionFaces.keys()) region.remove();
     this.#regionFaces.clear();
+    for (const region of [...this.#regionBackEntries.keys()]) this.#removeRegionBackEntry(region);
   }
 
   // ---- Child wiring ----
@@ -632,15 +716,23 @@ export class FolkAtlas extends ReactiveElement {
    * coordinates in.
    */
   screenToFaceLocal(clientX: number, clientY: number): FaceLocalPoint | null {
-    if (this.#lastComposites.size === 0) {
-      this.#lastComposites = this.#atlas.computeComposites();
+    if (this.#lastImages.length === 0) {
+      this.#lastImages = this.#atlas.computeImages();
     }
     const rect = this.getBoundingClientRect();
     const rx = (clientX - rect.left - this.#x) / this.#scale;
     const ry = (clientY - rect.top - this.#y) / this.#scale;
-    for (const [face, mf] of this.#lastComposites) {
-      const local = M.applyToPoint(M.invert(mf), { x: rx, y: ry });
-      if (face.contains(local)) return { face, x: local.x, y: local.y };
+    // Iterate every image — including wrap-tile images of the root face —
+    // so dragging across a wrap seam hits the correct face. Because the cap
+    // for non-root faces is 1, every other (face) appears exactly once in
+    // `#lastImages`, but the root face may appear many times (each tile of
+    // a wrapped region). Returning the face-local point in *that image's
+    // frame* is what gives shape drag its "wrap around" feel: the local
+    // coordinate stays inside the canonical face's bounds even when the
+    // pointer is visually in a tile far from the canonical position.
+    for (const img of this.#lastImages) {
+      const local = M.applyToPoint(M.invert(img.composite), { x: rx, y: ry });
+      if (img.face.contains(local)) return { face: img.face, x: local.x, y: local.y };
     }
     return null;
   }
@@ -1023,21 +1115,24 @@ export class FolkAtlas extends ReactiveElement {
   // -------------------------------------------------------------------------
 
   /**
-   * Toggle wrapping of the region across the given axis.
+   * Toggle wrapping of the region across the given axis (asymmetric model).
    *
-   * Horizontal wrap twins the region's *left* and *right* edges (after
-   * un-twinning them from their current outside neighbours). The outside
-   * neighbours' inside-facing edges become boundaries — exterior space
-   * loses the ability to enter the region from those sides, but the
-   * region's interior wraps onto itself.
+   * Horizontal wrap re-aims the region's *left* and *right* edges so they
+   * point at *each other* (cylinder-cycle on the inside). Crucially the
+   * outside neighbours are left alone: their inside-facing twin pointers
+   * still reference our left/right edges, so from outside the region
+   * still looks like a normal face you can enter from any side. From
+   * inside, the wrap loops the interior onto itself indefinitely.
    *
    * Vertical wrap is the same with top/bottom.
    *
-   * Toggling a second time restores the original twins by un-twinning the
-   * inside pair. (We don't currently re-attach the original outside
-   * twins — once severed, those edges remain boundaries. Improving this is
-   * a follow-up; conceptually the region "remembers" who its neighbours
-   * were before a wrap.)
+   * This relies on the asymmetric-twin model (`he.twin.twin !== he` is
+   * allowed). Outside.twin still points at us; our edge points at our
+   * opposite edge. The two cycles are decoupled.
+   *
+   * Toggling a second time restores the original "outside twin" link by
+   * re-twinning each region edge to its outside neighbour with identity
+   * transform (which is what the original split produced).
    */
   wrapRegionAxis(region: FolkAtlasRegion, axis: RegionWrapAxis): void {
     const face = this.#regionFaces.get(region);
@@ -1054,19 +1149,42 @@ export class FolkAtlas extends ReactiveElement {
     const heB = axis === 'horizontal' ? sides.left : sides.bottom;
 
     if (isCurrentlyWrapped) {
-      // Untwin the wrap — leaves both as boundaries; outside neighbours
-      // remain disconnected (their inside-facing edges are also boundaries
-      // from the previous wrap-step, since we untwinned them then).
-      if (heA.twin === heB) untwinEdges(heA);
+      // Find the outside twins BEFORE mutating anything. We only consider
+      // half-edges whose face is *different* from the region face — that
+      // skips the wrap partner inside the region (which currently holds
+      // the matching `twin === heA/heB` pointer) and finds the original
+      // outside neighbour preserved by the asymmetric wrap.
+      //
+      // The outside half-edge still carries its original transform
+      // (`outer.transform` maps outer.face → heA/heB.face), so we recover
+      // the inbound transform we need for the region's edge as
+      // `inv(outer.transform)`. This restores whatever non-identity
+      // transform the original split installed (region cuts can produce
+      // translation transforms when the cut crosses other faces).
+      const outerA = this.#findExternalIncomingTwin(heA);
+      const outerB = this.#findExternalIncomingTwin(heB);
+      const tA = outerA ? M.invert(outerA.transform) : M.fromValues();
+      const tB = outerB ? M.invert(outerB.transform) : M.fromValues();
+      unlinkEdgeFromTwin(heA);
+      unlinkEdgeFromTwin(heB);
+      try {
+        if (outerA) linkEdgeToTwin(this.#atlas, heA, outerA, tA);
+        if (outerB) linkEdgeToTwin(this.#atlas, heB, outerB, tB);
+      } catch (err) {
+        console.warn('[folk-atlas] wrapRegionAxis: unwrap re-link failed:', err);
+      }
       if (axis === 'horizontal') region.wrapH = false;
       else region.wrapV = false;
     } else {
-      // Sever both sides from outside, then twin them to each other.
-      if (heA.twin) untwinEdges(heA);
-      if (heB.twin) untwinEdges(heB);
       try {
         const T = translationToWrap(heA, heB);
-        wrapEdges(this.#atlas, heA, heB, T);
+        // Asymmetric: re-aim heA → heB and heB → heA, leaving the outside
+        // neighbours' twin pointers (which still reference heA/heB)
+        // untouched.
+        unlinkEdgeFromTwin(heA);
+        unlinkEdgeFromTwin(heB);
+        linkEdgeToTwin(this.#atlas, heA, heB, T);
+        linkEdgeToTwin(this.#atlas, heB, heA, M.invert(T));
       } catch (err) {
         console.warn('[folk-atlas] wrapRegionAxis: wrap failed:', err);
         return;
@@ -1074,7 +1192,21 @@ export class FolkAtlas extends ReactiveElement {
       if (axis === 'horizontal') region.wrapH = true;
       else region.wrapV = true;
     }
+
     this.#scheduleUpdate();
+  }
+
+  /**
+   * Find the *outside* half-edge whose `twin === he` — i.e. the half-edge
+   * in a different face that points at `he`. Skips the wrap partner that
+   * lives inside the same face. Used by unwrap to restore the original
+   * reciprocal twin after a wrap is undone.
+   */
+  #findExternalIncomingTwin(he: HalfEdge): HalfEdge | null {
+    for (const candidate of this.#atlas.halfEdges) {
+      if (candidate.twin === he && candidate.face !== he.face) return candidate;
+    }
+    return null;
   }
 
   /**
@@ -1659,24 +1791,42 @@ export class FolkAtlas extends ReactiveElement {
    * edge transforms appear, the view should be promoted to a full Matrix2D.
    */
   #maybeSwitchRootToViewportCentre() {
-    if (this.#lastComposites.size === 0) return;
+    if (this.#lastImages.length === 0) return;
     const rect = this.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
     const cx = rect.width / 2;
     const cy = rect.height / 2;
     const rootPoint = { x: (cx - this.#x) / this.#scale, y: (cy - this.#y) / this.#scale };
-    let target: Face | null = null;
-    for (const [face, mf] of this.#lastComposites) {
-      const local = M.applyToPoint(M.invert(mf), rootPoint);
-      if (face.contains(local)) {
-        target = face;
+    // Iterate full BFS images, not just primary composites: when the viewer
+    // is inside a wrapped region the canonical region tile may scroll off
+    // and the viewport centre lands in a wrap-tile image. We "snap" the
+    // view to that tile by treating it as the new canonical position —
+    // for the root face that's a pure view shift (looping around the wrap),
+    // for a non-root face it also re-anchors `atlas.root` so composites
+    // recompute from the new face.
+    let target: AtlasImage | null = null;
+    for (const img of this.#lastImages) {
+      const local = M.applyToPoint(M.invert(img.composite), rootPoint);
+      if (img.face.contains(local)) {
+        target = img;
         break;
       }
     }
-    if (!target || target === this.#atlas.root) return;
-    const C = this.#atlas.switchRoot(target);
+    if (!target) return;
+    const C = target.composite;
+    if (target.face === this.#atlas.root) {
+      // Already root: just shift the view by C so the wrap-tile takes
+      // canonical position. No-op when the chosen image *is* the canonical
+      // one (composite ≈ identity). Translation-only views suffice today.
+      if (Math.abs(C.e) < 1e-9 && Math.abs(C.f) < 1e-9) return;
+    } else {
+      this.#atlas.root = target.face;
+    }
     this.#x += this.#scale * C.e;
     this.#y += this.#scale * C.f;
+    // Composites + images are stale after either kind of change; refresh so
+    // subsequent point-locates and the next render see the new frame.
+    this.#lastImages = this.#atlas.computeImages();
     this.#lastComposites = this.#atlas.computeComposites();
   }
 
@@ -1764,18 +1914,49 @@ export class FolkAtlas extends ReactiveElement {
     const view = M.scaleSelf(M.fromTranslate(this.#x, this.#y), this.#scale);
     this.#content.style.transform = M.toCSSString(view);
 
+    const rect = this.getBoundingClientRect();
+    const viewport: ClipRect = {
+      minX: 0,
+      minY: 0,
+      maxX: Math.max(0, rect.width),
+      maxY: Math.max(0, rect.height),
+    };
+
+    // BFS expansion is bounded by *visibility*, not just the depth/image
+    // caps in computeImages: from a wrapped face we'd otherwise tile the
+    // plane forever, but here we stop fanning out as soon as the current
+    // image is fully off-screen or has shrunk below ~1 logical pixel.
+    // The cap arguments below are an emergency hatch only — if they get
+    // hit, computeImages will log an error.
+    const shouldExpand = (img: AtlasImage): boolean => {
+      const aabb = projectFaceScreenAABB(img.face, img.composite, view);
+      return imageIsVisible(aabb, viewport);
+    };
+
     // One BFS per frame: derive the primary composite per face (first BFS
     // image, identical to computeComposites for tree atlases) and the
     // additional composites per face (the "ghost" images for wrapped /
     // looping topologies). Tree atlases produce an empty extras map at zero
     // cost beyond the BFS itself.
-    const images = this.#atlas.computeImages();
+    const images = this.#atlas.computeImages({
+      shouldExpand,
+      maxDepth: 256,
+      maxImagesPerFace: 4096,
+    });
     const composites = new Map<Face, M.Matrix2D>();
     const extras = new Map<Face, M.Matrix2D[]>();
+    const visibility = new Map<Face, number>();
     for (const img of images) {
+      const aabb = projectFaceScreenAABB(img.face, img.composite, view);
+      const visible = imageIsVisible(aabb, viewport);
       if (!composites.has(img.face)) {
         composites.set(img.face, img.composite);
-      } else {
+        visibility.set(img.face, visible ? 1 : 0);
+      } else if (visible) {
+        // Off-screen ghost images are recorded by BFS (they sit just past
+        // the visible boundary as the "fringe" that lets us learn about
+        // their neighbours via shouldExpand) but never make it into the
+        // ghost render set — there'd be nothing to see.
         const arr = extras.get(img.face);
         if (arr) arr.push(img.composite);
         else extras.set(img.face, [img.composite]);
@@ -1783,10 +1964,11 @@ export class FolkAtlas extends ReactiveElement {
     }
 
     this.#lastComposites = composites;
-    this.#lastVisibility = this.#computeVisibilities(composites, view);
+    this.#lastImages = images;
+    this.#lastVisibility = visibility;
     this.#renderShapes(composites);
     this.#ghosts.update(extras);
-    this.#renderRegions(composites, view);
+    this.#renderRegions(composites, extras, view);
     if (this.debug) {
       this.#debug.style.display = '';
       this.#renderDebug(composites, view);
@@ -1806,82 +1988,59 @@ export class FolkAtlas extends ReactiveElement {
     if (changedProperties.has('debug')) this.#scheduleUpdate();
   }
 
-  /**
-   * Compute per-face visibility ∈ [0, 1] from the current composites and view
-   * transform. Today both falloff factors are stubs that return 1 always —
-   * the plumbing exists so culling, opacity blending, and LOD can be added
-   * without restructuring the renderer. See `sia.md` § "Per-face visibility".
-   */
-  #computeVisibilities(
-    composites: Map<Face, M.Matrix2D>,
-    view: M.Matrix2DReadonly,
-  ): Map<Face, number> {
-    const out = new Map<Face, number>();
-    const rect = this.getBoundingClientRect();
-    const viewport: ClipRect = {
-      minX: 0,
-      minY: 0,
-      maxX: Math.max(0, rect.width),
-      maxY: Math.max(0, rect.height),
-    };
-    for (const [face, composite] of composites) {
-      const screen = M.multiply(view, composite);
-      const polygonScreen: Point[] = [];
-      for (const j of face.junctions()) {
-        const local =
-          j.kind === 'finite'
-            ? { x: j.x, y: j.y }
-            : { x: j.x * FolkAtlas.IDEAL_RADIUS, y: j.y * FolkAtlas.IDEAL_RADIUS };
-        polygonScreen.push(M.applyToPoint(screen, local));
-      }
-      const v = screenDistanceFalloff(polygonScreen, viewport) * scaleFalloff(screen);
-      out.set(face, v);
-    }
-    return out;
-  }
-
   #renderShapes(composites: Map<Face, M.Matrix2D>) {
     for (const [shape, face] of this.#shapeFaces) {
       const composite = composites.get(face);
-      if (!composite) continue;
-      const visibility = this.#lastVisibility.get(face) ?? 1;
-      if (visibility <= 0) {
-        shape.style.display = 'none';
+      // Face not reachable from current root (e.g. you've panned into a
+      // wrapped region whose loop has no exit edges back to the rest of the
+      // atlas). The shape's last transform is from a stale root, so we must
+      // hide it explicitly — leaving `display = ''` would render it on top
+      // of the new view at a meaningless position.
+      if (!composite) {
+        if (shape.style.display !== 'none') shape.style.display = 'none';
         continue;
       }
-      shape.style.display = '';
+      const visibility = this.#lastVisibility.get(face) ?? 1;
+      if (visibility <= 0) {
+        if (shape.style.display !== 'none') shape.style.display = 'none';
+        continue;
+      }
+      if (shape.style.display === 'none') shape.style.display = '';
       const m = M.translate(composite, shape.x, shape.y);
       shape.style.transform = M.toCSSString(m);
     }
   }
 
   /**
-   * Per-frame placement for `<folk-atlas-region>` overlays. Each region
-   * lives in screen coordinates so its dashed outline + handles stay crisp
-   * at any zoom; we project the bound face's local junctions through
-   * `(view · faceComposite)` and write the resulting points into the
-   * region's outline polygon. The controls panel goes at the polygon's
+   * Per-frame placement for `<folk-atlas-region>` overlays. Outlines are
+   * drawn into atlas-owned back-layer SVGs (one per region) so the green
+   * fill + dashed border paint *behind* shapes; the region custom element
+   * itself sits in the front layer and only carries the controls. Both
+   * are projected from the bound face's local junctions through
+   * `(view · faceComposite)`. The controls panel anchors at the polygon's
    * centroid (good enough for the axis-aligned rectangle case).
    *
    * Regions whose face is no longer in the atlas (destroyed by an unrelated
-   * mutation, e.g. a line cut through it) are hidden until manually rebound.
+   * mutation, e.g. a line cut through it) are hidden until manually rebound,
+   * and any orphan back entries are torn down at the end.
    */
-  #renderRegions(composites: Map<Face, M.Matrix2D>, view: M.Matrix2DReadonly) {
-    if (this.#regionFaces.size === 0) return;
+  #renderRegions(
+    composites: Map<Face, M.Matrix2D>,
+    extras: Map<Face, M.Matrix2D[]>,
+    view: M.Matrix2DReadonly,
+  ) {
+    // Even when no regions are tracked we still want to drop any stale
+    // back entries (e.g. last region was removed this frame).
+    if (this.#regionFaces.size === 0 && this.#regionBackEntries.size === 0) return;
+
     const survivors = new Set(this.#atlas.faces);
-    for (const [region, face] of this.#regionFaces) {
-      if (!survivors.has(face)) {
-        region.setVisible(false);
-        continue;
-      }
-      const composite = composites.get(face);
-      if (!composite) {
-        region.setVisible(false);
-        continue;
-      }
-      region.setVisible(true);
+
+    const projectRing = (
+      face: Face,
+      composite: M.Matrix2D,
+    ): { ring: Point[]; cx: number; cy: number; n: number } => {
       const screen = M.multiply(view, composite);
-      const pts: Point[] = [];
+      const ring: Point[] = [];
       let cx = 0;
       let cy = 0;
       let n = 0;
@@ -1891,16 +2050,95 @@ export class FolkAtlas extends ReactiveElement {
             ? { x: j.x, y: j.y }
             : { x: j.x * FolkAtlas.IDEAL_RADIUS, y: j.y * FolkAtlas.IDEAL_RADIUS };
         const p = M.applyToPoint(screen, local);
-        pts.push(p);
+        ring.push(p);
         if (j.kind === 'finite') {
           cx += p.x;
           cy += p.y;
           n++;
         }
       }
-      region.setOutlineScreenPoints(pts);
-      if (n > 0) region.setControlsScreenPosition(cx / n, cy / n);
+      return { ring, cx, cy, n };
+    };
+
+    const setPolyPoints = (poly: SVGPolygonElement, ring: ReadonlyArray<Point>) => {
+      if (ring.length === 0) {
+        poly.setAttribute('points', '');
+        return;
+      }
+      const s = ring.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ');
+      poly.setAttribute('points', s);
+    };
+
+    for (const [region, face] of this.#regionFaces) {
+      const back = this.#getOrCreateRegionBackEntry(region);
+      if (!survivors.has(face)) {
+        region.setVisible(false);
+        back.svg.style.display = 'none';
+        continue;
+      }
+      const composite = composites.get(face);
+      if (!composite) {
+        region.setVisible(false);
+        back.svg.style.display = 'none';
+        continue;
+      }
+      region.setVisible(true);
+      back.svg.style.display = '';
+      const primary = projectRing(face, composite);
+      setPolyPoints(back.primary, primary.ring);
+      if (primary.n > 0) {
+        region.setControlsScreenPosition(primary.cx / primary.n, primary.cy / primary.n);
+      }
+      // Ghost outlines: every additional BFS image of this face. For a
+      // wrapped region viewed from outside there are typically zero; from
+      // inside the wrap (root === region face) there are many — the
+      // repeating cylinder/torus tiles.
+      const more = extras.get(face);
+      const ghostRings = more && more.length > 0 ? more.map((c) => projectRing(face, c).ring) : [];
+      while (back.ghosts.length < ghostRings.length) {
+        const g = document.createElementNS(SVG_NS, 'polygon');
+        g.classList.add('ghost');
+        back.svg.append(g);
+        back.ghosts.push(g);
+      }
+      for (let i = 0; i < back.ghosts.length; i++) {
+        const node = back.ghosts[i];
+        const ring = ghostRings[i];
+        if (!ring) {
+          if (node.style.display !== 'none') node.style.display = 'none';
+          continue;
+        }
+        if (node.style.display === 'none') node.style.display = '';
+        setPolyPoints(node, ring);
+      }
     }
+
+    // Garbage-collect back entries for regions that are no longer tracked
+    // (the region element was removed without going through #removeRegion).
+    if (this.#regionBackEntries.size > this.#regionFaces.size) {
+      for (const region of this.#regionBackEntries.keys()) {
+        if (!this.#regionFaces.has(region)) this.#removeRegionBackEntry(region);
+      }
+    }
+  }
+
+  #getOrCreateRegionBackEntry(region: FolkAtlasRegion): RegionBackEntry {
+    let entry = this.#regionBackEntries.get(region);
+    if (entry) return entry;
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    const primary = document.createElementNS(SVG_NS, 'polygon');
+    svg.append(primary);
+    this.#regionBackLayer.append(svg);
+    entry = { svg, primary, ghosts: [] };
+    this.#regionBackEntries.set(region, entry);
+    return entry;
+  }
+
+  #removeRegionBackEntry(region: FolkAtlasRegion): void {
+    const entry = this.#regionBackEntries.get(region);
+    if (!entry) return;
+    entry.svg.remove();
+    this.#regionBackEntries.delete(region);
   }
 
   // ---- Debug visualisation (Canvas 2D) ----
@@ -2077,27 +2315,67 @@ export class FolkAtlas extends ReactiveElement {
 // to the body of each function. See `sia.md` § "Per-face visibility (scalar)".
 
 /**
- * Falloff based on how far the face's screen-space polygon sits from the
- * viewport rectangle. Should return 1 inside (or overlapping) the viewport,
- * fall to 0 over a buffer band, and stay at 0 past the buffer.
+ * Project a face's junction polygon through `view · composite` and return its
+ * axis-aligned screen-space bounding box. Ideal junctions are stubbed at
+ * `IDEAL_RADIUS`, so faces with ideal vertices have AABBs that cover most of
+ * any plausible viewport — i.e. they're treated as "always visible", which is
+ * the correct behaviour for genuinely infinite faces.
  *
- * Stub: always 1.
+ * Returns a degenerate (`Infinity`) AABB only if the face has no junctions,
+ * which shouldn't happen for a valid atlas.
  */
-function screenDistanceFalloff(_facePolygonScreen: Point[], _viewport: ClipRect): number {
-  return 1;
+function projectFaceScreenAABB(
+  face: Face,
+  composite: M.Matrix2DReadonly,
+  view: M.Matrix2DReadonly,
+): ClipRect {
+  const screen = M.multiply(view, composite);
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const j of face.junctions()) {
+    const local =
+      j.kind === 'finite'
+        ? { x: j.x, y: j.y }
+        : { x: j.x * FolkAtlas.IDEAL_RADIUS, y: j.y * FolkAtlas.IDEAL_RADIUS };
+    const p = M.applyToPoint(screen, local);
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, minY, maxX, maxY };
 }
 
 /**
- * Falloff based on the face's effective scale (per-pixel size of one face-
- * local unit). Should fall to 0 once a face contributes less than ~1 logical
- * pixel of detail. Trivially 1 in the translation-only edge-transform regime
- * (invariant 7); becomes meaningful once uniform scale is enabled.
+ * Visibility test for a face image: the AABB must overlap the viewport AND
+ * be at least `MIN_VISIBLE_PX` along *both* axes. The "AND" matters — a
+ * 0.3 px-wide bar that is 200 px tall still counts as visible (a thin
+ * line you can see), whereas a face that has shrunk to a sub-pixel speck
+ * in both dimensions cannot contribute any pixels and is dropped.
  *
- * Stub: always 1.
+ * This is the predicate used both by `shouldExpand` (to bound the BFS so
+ * wrapped tiles don't fan out forever) and by the render filter (to skip
+ * drawing the off-screen "fringe" that BFS records anyway).
  */
-function scaleFalloff(_screen: M.Matrix2DReadonly): number {
-  return 1;
+function imageIsVisible(aabb: ClipRect, viewport: ClipRect): boolean {
+  if (aabb.maxX < viewport.minX) return false;
+  if (aabb.minX > viewport.maxX) return false;
+  if (aabb.maxY < viewport.minY) return false;
+  if (aabb.minY > viewport.maxY) return false;
+  const w = aabb.maxX - aabb.minX;
+  const h = aabb.maxY - aabb.minY;
+  if (w < MIN_VISIBLE_PX && h < MIN_VISIBLE_PX) return false;
+  return true;
 }
+
+/**
+ * Below this screen size in *both* axes, a face image is considered too
+ * small to render (sub-pixel). Set above 1 px to leave a small margin so
+ * we don't churn between visible / invisible at exactly 1 px during zoom.
+ */
+const MIN_VISIBLE_PX = 1;
 
 // ----------------------------------------------------------------------------
 // Polygon helpers (Sutherland–Hodgman + area-weighted centroid)

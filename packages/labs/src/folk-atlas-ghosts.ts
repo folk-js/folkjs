@@ -165,25 +165,28 @@ export class ShapeGhostRenderer {
   }
 
   /**
-   * Copy the visual surface of `shape` onto `ghost`: dimensions, then a
-   * snapshot of the shape's projected (slotted) content as inner HTML. We
-   * read the shape's `width`/`height` properties directly — cheaper and
+   * Copy the visual silhouette of `shape` onto `ghost`: dimensions and a
+   * matching frame, but deliberately *no inner content*. Ghosts must look
+   * pixel-identical to the original — same border, fill, shadow, no
+   * dimming — so a wrap tiling reads as one continuous space rather than
+   * "real here, dim copies there". Inner content is the only deliberate
+   * omission: duplicating labels across every tile would be visually
+   * noisy and force the user to mentally deduplicate. The empty
+   * silhouette is enough to convey position, size, and identity-by-shape.
+   *
+   * Reads the shape's `width`/`height` properties directly — cheaper and
    * more reliable than reading computed style.
+   *
+   * Kept in sync with `FolkAtlasShape.styles` — adjust together.
    */
   #applyShapeProps(shape: FolkAtlasShape, ghost: HTMLElement): void {
     ghost.style.width = `${shape.width}px`;
     ghost.style.height = `${shape.height}px`;
-    // Match the shape's host styling so ghosts read as faithful copies.
-    // Kept in sync with `FolkAtlasShape.styles` — adjust together.
     ghost.style.boxSizing = 'border-box';
-    ghost.style.padding = '8px 10px';
     ghost.style.background = 'white';
     ghost.style.border = '1px solid oklch(85% 0.02 277)';
     ghost.style.borderRadius = '6px';
     ghost.style.boxShadow = '0 2px 6px rgba(0, 0, 0, 0.08)';
-    ghost.style.font = '13px/1.3 ui-sans-serif, system-ui, sans-serif';
-    ghost.style.color = 'oklch(30% 0.05 277)';
-    ghost.style.opacity = '0.7';
-    ghost.innerHTML = shape.innerHTML;
+    // Intentionally leave inner content blank.
   }
 }

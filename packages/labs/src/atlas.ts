@@ -26,14 +26,28 @@ import type { Point } from '@folkjs/geometry/Vector2';
 // contract, polygon regions) can introduce higher-k faces without touching
 // the core invariants.
 //
-// **Edge transforms.** A non-null twin pair `(h, h.twin)` carries an affine
-// `transform` mapping `h.face`'s frame to `h.twin.face`'s frame. The pair is
-// constrained:
-//   - `h.transform * h.twin.transform = identity`
+// **Edge transforms.** Each non-null `h.twin` link is a *one-way* pointer:
+// "exiting through `h` lands you in `h.twin.face`, with frame change
+// `h.transform : h.face local → h.twin.face local`". The geometric
+// junction-correspondence invariant is local to each link:
 //   - `h.transform · h.next.origin = h.twin.origin`
 //   - `h.transform · h.origin     = h.twin.next.origin`
 // For ideal junctions only the linear part of the transform applies (and the
 // result is renormalized to unit length).
+//
+// **Twins are NOT required to be reciprocal.** It can be the case that
+// `h.twin.twin !== h` (and equivalently, `h.transform · h.twin.transform`
+// is not identity). This is what enables wrapped/looping topologies: a
+// region's "top" and "bottom" edges can twin to *each other* (creating an
+// internal cycle that produces the cylinder repetition), while outside
+// faces' adjacent edges still point INTO the region (one-way), so shapes
+// can cross into the wrap from outside but never back out through the
+// wrapped axis.
+//
+// Reciprocal twin pairs (the common case from face splits) still satisfy
+// `h.twin.twin === h` and `h.transform · h.twin.transform = identity` —
+// but those are *consequences* of how a particular operation built them,
+// not enforced invariants of the data model.
 //
 // **At-infinity half-edges.** A half-edge with both `origin` and `target`
 // ideal is the boundary between two ideal directions — a piece of the line
@@ -103,12 +117,17 @@ export class HalfEdge {
    *
    * Unused (but kept identity) when `twin` is null.
    *
-   * Invariants when `twin` is non-null:
-   *   transform * twin.transform = identity
+   * Junction-correspondence invariants when `twin` is non-null:
    *   transform * this.next.origin = twin.origin
    *   transform * this.origin       = twin.next.origin
    * For ideal-kind origins only the linear part applies and the image is
    * renormalized to unit length.
+   *
+   * Note: `transform` is NOT in general the inverse of `twin.transform`.
+   * `twin` is a one-way pointer (see module header). When `twin.twin === this`
+   * (a reciprocal pair, e.g. produced by a face split), the inverse
+   * relationship does hold by how the operation built them — but it is not
+   * a model-level invariant.
    */
   transform: M.Matrix2D = M.fromValues();
 
@@ -499,9 +518,13 @@ export class Atlas {
    * BFS from `root`, computing the composite transform (face-local →
    * root-local) for every reachable face.
    *
-   * Convention: `he.transform` maps `he.face → he.twin.face`. So going from a
-   * known face A to neighbour B via `he` in A: `M_B = M_A * he.twin.transform`
-   * (B → A composed with A → root).
+   * Convention: `he.transform` maps `he.face local → he.twin.face local`. So
+   * the change-of-frame from neighbour B back to the known face A is
+   * `inv(he.transform)`, and `M_B = M_A * inv(he.transform)`.
+   *
+   * (We use `inv(he.transform)` rather than `he.twin.transform` because
+   * `he.twin.transform` is only equal to the inverse for reciprocal twin
+   * pairs. Asymmetric twins — used for wrapping — break that equality.)
    */
   computeComposites(): Map<Face, M.Matrix2D> {
     const out = new Map<Face, M.Matrix2D>();
@@ -513,7 +536,7 @@ export class Atlas {
       for (const he of f.halfEdgesCCW()) {
         const twin = he.twin;
         if (twin && !out.has(twin.face)) {
-          out.set(twin.face, M.multiply(mf, twin.transform));
+          out.set(twin.face, M.multiply(mf, M.invert(he.transform)));
           queue.push(twin.face);
         }
       }
@@ -532,9 +555,22 @@ export class Atlas {
    * exactly once and the first image of each face has the same composite as
    * `computeComposites().get(face)`.
    *
+   * Tiling is asymmetric by design: only the *root face* is allowed to appear
+   * at multiple composites (its wrap loops tile the canvas). Every *other*
+   * face is capped at one image, no matter how many distinct BFS walks reach
+   * it. This is what makes "from inside a wrapped region, the rest of the
+   * world looks like a single canonical layout, with the wrapped region
+   * repeating around it" — without it, every wrap-tile of the root would
+   * fan out into the outside, producing a sea of ghost copies of normal
+   * (non-wrapped) faces. From an outside root the wrapped face still appears
+   * exactly once: its self-loops are hidden because the viewer isn't inside
+   * the wrap.
+   *
    * Traversal is bounded so loops cannot blow up:
    *  - `maxDepth`           — hard cap on BFS depth from root.
-   *  - `maxImagesPerFace`   — hard cap on number of images per face.
+   *  - `maxImagesPerFace`   — hard cap on number of images per face. Only
+   *                           the root face actually uses the full cap;
+   *                           non-root faces are pinned at 1.
    *  - `shouldExpand(img)`  — optional predicate; if it returns false we still
    *                           record the image but do not enqueue its
    *                           neighbours. This is the hook for visibility-based
@@ -560,12 +596,30 @@ export class Atlas {
     const keyOf = (m: M.Matrix2D): string =>
       `${Math.round(m.a * invQ)}_${Math.round(m.b * invQ)}_${Math.round(m.c * invQ)}_${Math.round(m.d * invQ)}_${Math.round(m.e * invQ)}_${Math.round(m.f * invQ)}`;
 
+    // Asymmetric image cap: root tiles freely, everything else is single.
+    const capOf = (f: Face) => (f === this.root ? maxImagesPerFace : 1);
+
+    // Track whether either of our hard limits ever rejected a would-be
+    // image. Healthy renders should never trip these — `shouldExpand` (the
+    // visibility-based pruner) is supposed to bound the BFS first. If we
+    // hit a limit, surface it as a warning so the bug shows up instead of
+    // silently producing the wrong picture.
+    let hitDepthLimit = false;
+    let hitImagesLimit = false;
+
     const queue: AtlasImage[] = [{ face: this.root, composite: M.fromValues(), depth: 0 }];
     let head = 0;
     while (head < queue.length) {
       const img = queue[head++];
       const c = counts.get(img.face) ?? 0;
-      if (c >= maxImagesPerFace) continue;
+      if (c >= capOf(img.face)) {
+        // Only count this as an "unwanted" cap-hit when something legitimately
+        // wanted to be drawn here; root cap >1 is the case where overflow
+        // matters (off-screen tiles past the visible window). Non-root faces
+        // are intentionally pinned to 1, so re-rejection is normal.
+        if (capOf(img.face) > 1) hitImagesLimit = true;
+        continue;
+      }
 
       if (seenKeys) {
         let set = seenKeys.get(img.face);
@@ -581,18 +635,59 @@ export class Atlas {
       counts.set(img.face, c + 1);
       out.push(img);
 
-      if (img.depth >= maxDepth) continue;
+      if (img.depth >= maxDepth) {
+        hitDepthLimit = true;
+        continue;
+      }
       if (shouldExpand && !shouldExpand(img)) continue;
 
       for (const he of img.face.halfEdgesCCW()) {
         const twin = he.twin;
         if (!twin) continue;
-        if ((counts.get(twin.face) ?? 0) >= maxImagesPerFace) continue;
+        if ((counts.get(twin.face) ?? 0) >= capOf(twin.face)) {
+          if (capOf(twin.face) > 1) hitImagesLimit = true;
+          continue;
+        }
+        // Wrap self-loop suppression: an edge whose twin lives in the
+        // *same* face is a wrap loop (e.g. a region's right edge twinned
+        // to its own left edge). We only follow such loops when the BFS
+        // root is the wrapped face itself — that's "the viewer is inside
+        // the wrapped region", in which case we want the cylinder/torus
+        // to repeat outwards. From outside the wrapped face the loop is
+        // hidden so the region looks like a normal face.
+        if (twin.face === img.face && img.face !== this.root) continue;
+        // Stepping across `he` into the neighbour: the neighbour's frame
+        // expressed in the current frame is `inv(he.transform)`. We use
+        // `inv(he.transform)` (not `he.twin.transform`) because asymmetric
+        // twins — used for wrapping — make those two not equal in general.
         queue.push({
           face: twin.face,
-          composite: M.multiply(img.composite, twin.transform),
+          composite: M.multiply(img.composite, M.invert(he.transform)),
           depth: img.depth + 1,
         });
+      }
+    }
+
+    // Only the renderer (which passes `shouldExpand` to bound BFS by
+    // visibility) treats these caps as an emergency hatch — for that
+    // caller, hitting a cap means visibility-based pruning failed and
+    // the picture is wrong. Tests and other callers that use the caps
+    // as the *primary* bound (no `shouldExpand`) shouldn't be warned.
+    if (shouldExpand) {
+      if (hitDepthLimit) {
+        console.error(
+          `[atlas.computeImages] hit maxDepth=${maxDepth} — emergency hatch tripped. ` +
+            `BFS should normally be bounded by shouldExpand (visibility); reaching the ` +
+            `depth cap means a tighter cull is missing.`,
+        );
+      }
+      if (hitImagesLimit) {
+        console.error(
+          `[atlas.computeImages] hit maxImagesPerFace=${maxImagesPerFace} on the root face — ` +
+            `emergency hatch tripped. BFS should normally be bounded by shouldExpand ` +
+            `(visibility-based culling); reaching the per-face cap means a tighter cull is ` +
+            `missing.`,
+        );
       }
     }
 
@@ -744,31 +839,100 @@ export function translationToWrap(heA: HalfEdge, heB: HalfEdge, eps = 1e-6): M.M
 }
 
 /**
- * Twin `heA` to `heB` under `transformAtoB`, creating (or extending) a
- * non-trivial cycle in the atlas. This is how wrapped / looping topologies —
- * cylinders, tori, dilation loops — get expressed in the SIA model: the
- * structural commitment is "follow `heA` and you arrive in `heB`'s face".
+ * One-way primitive: point `he.twin` at `target`, with frame-change
+ * `he.transform = transform`. This does NOT touch `target.twin` —
+ * the link is asymmetric.
+ *
+ * This is the building block for both reciprocal and asymmetric topologies.
+ * For the symmetric case (face splits), call it twice with mutually inverse
+ * transforms; for asymmetric cycles (wrapped regions), it is called per
+ * direction independently.
+ *
+ * Pre-conditions:
+ *  - both half-edges live in `atlas`
+ *  - `he !== target`
+ *  - `he` is currently untwinned
+ *  - both are finite-finite
+ *  - `transform` satisfies the junction-correspondence equations
+ *      transform · he.next.origin ≈ target.origin
+ *      transform · he.origin       ≈ target.next.origin
+ *
+ * Effect: sets `he.twin = target` and `he.transform = transform`.
+ */
+export function linkEdgeToTwin(
+  atlas: Atlas,
+  he: HalfEdge,
+  target: HalfEdge,
+  transform: M.Matrix2D,
+  eps = 1e-6,
+): void {
+  if (he === target) throw new Error('linkEdgeToTwin: cannot twin a half-edge to itself');
+  if (!atlas.halfEdges.includes(he) || !atlas.halfEdges.includes(target)) {
+    throw new Error('linkEdgeToTwin: half-edges must belong to atlas');
+  }
+  if (he.twin !== null) throw new Error('linkEdgeToTwin: he must currently be untwinned');
+  if (he.isAtInfinity || target.isAtInfinity) {
+    throw new Error('linkEdgeToTwin: cannot twin at-infinity half-edges');
+  }
+  if (he.originKind !== 'finite' || he.next.originKind !== 'finite') {
+    throw new Error('linkEdgeToTwin: he must have two finite endpoints');
+  }
+  if (target.originKind !== 'finite' || target.next.originKind !== 'finite') {
+    throw new Error('linkEdgeToTwin: target must have two finite endpoints');
+  }
+  const aTarget = M.applyToPoint(transform, { x: he.next.ox, y: he.next.oy });
+  const aOrigin = M.applyToPoint(transform, { x: he.ox, y: he.oy });
+  if (Math.abs(aTarget.x - target.ox) > eps || Math.abs(aTarget.y - target.oy) > eps) {
+    throw new Error(
+      `linkEdgeToTwin: transform·he.target = (${aTarget.x.toFixed(6)}, ${aTarget.y.toFixed(6)}) does not match target.origin = (${target.ox.toFixed(6)}, ${target.oy.toFixed(6)})`,
+    );
+  }
+  if (Math.abs(aOrigin.x - target.next.ox) > eps || Math.abs(aOrigin.y - target.next.oy) > eps) {
+    throw new Error(
+      `linkEdgeToTwin: transform·he.origin = (${aOrigin.x.toFixed(6)}, ${aOrigin.y.toFixed(6)}) does not match target.target = (${target.next.ox.toFixed(6)}, ${target.next.oy.toFixed(6)})`,
+    );
+  }
+  he.twin = target;
+  he.transform = transform;
+}
+
+/**
+ * One-way unlink primitive: clear `he`'s outbound twin pointer. Does NOT
+ * touch the partner's twin pointer (the partner may still point at `he`,
+ * which is allowed under the asymmetric model).
+ *
+ * No-op when `he.twin === null`.
+ */
+export function unlinkEdgeFromTwin(he: HalfEdge): void {
+  if (!he.twin) return;
+  he.twin = null;
+  he.transform = M.fromValues();
+}
+
+/**
+ * Twin `heA` to `heB` under `transformAtoB` *symmetrically* — both
+ * `heA.twin = heB` and `heB.twin = heA`, with mutually inverse transforms.
+ *
+ * This is the natural "wrap a strip into a cylinder" operation: a single
+ * cycle, both edges referring to each other. For an asymmetric link
+ * (e.g. one-way wrap where outside still points in but the wrap loops back
+ * to itself), use {@link linkEdgeToTwin} directly.
  *
  * The standard cycle-closure invariant (walks between two faces give a
  * unique composite) is *intentionally* violated in the global sense once
  * non-trivial twin transforms exist on a loop — that's what gives us
- * holonomy. Per-twin invariants (`T_twin · T = identity` and the junction-
- * correspondence equations) are still required and `validateAtlas` still
- * checks them.
+ * holonomy. Per-link junction-correspondence is still required and
+ * `validateAtlas` still checks it.
  *
- * Pre-conditions (all enforced):
+ * Pre-conditions (all enforced via the underlying primitive):
  *  - both half-edges live in `atlas`
- *  - both have `twin === null` (no overwriting existing twin pairs)
- *  - both are finite-finite (at-infinity arcs cannot be twinned across)
- *  - `transformAtoB` satisfies the twin junction-correspondence:
- *       transformAtoB · heA.next.origin ≈ heB.origin
- *       transformAtoB · heA.origin       ≈ heB.next.origin
- *    (use {@link translationToWrap} when a pure translation is what you want)
+ *  - both have `twin === null`
+ *  - both are finite-finite
+ *  - `transformAtoB` satisfies the junction-correspondence equations
  *
  * Effect:
  *  - heA.twin = heB; heB.twin = heA
- *  - heA.transform = transformAtoB
- *  - heB.transform = inv(transformAtoB)
+ *  - heA.transform = transformAtoB; heB.transform = inv(transformAtoB)
  */
 export function wrapEdges(
   atlas: Atlas,
@@ -777,59 +941,28 @@ export function wrapEdges(
   transformAtoB: M.Matrix2D,
   eps = 1e-6,
 ): void {
-  if (heA === heB) {
-    throw new Error('wrapEdges: cannot twin a half-edge to itself');
+  if (heB.twin !== null) {
+    throw new Error('wrapEdges: heB must currently be untwinned (use linkEdgeToTwin for asymmetric links)');
   }
-  if (!atlas.halfEdges.includes(heA) || !atlas.halfEdges.includes(heB)) {
-    throw new Error('wrapEdges: half-edges must belong to atlas');
-  }
-  if (heA.twin !== null || heB.twin !== null) {
-    throw new Error('wrapEdges: both half-edges must currently be untwinned');
-  }
-  if (heA.isAtInfinity || heB.isAtInfinity) {
-    throw new Error('wrapEdges: cannot twin at-infinity half-edges');
-  }
-  if (heA.originKind !== 'finite' || heA.next.originKind !== 'finite') {
-    throw new Error('wrapEdges: heA must have two finite endpoints');
-  }
-  if (heB.originKind !== 'finite' || heB.next.originKind !== 'finite') {
-    throw new Error('wrapEdges: heB must have two finite endpoints');
-  }
-
-  // Junction correspondence under transformAtoB.
-  const aTarget = M.applyToPoint(transformAtoB, { x: heA.next.ox, y: heA.next.oy });
-  const aOrigin = M.applyToPoint(transformAtoB, { x: heA.ox, y: heA.oy });
-  if (Math.abs(aTarget.x - heB.ox) > eps || Math.abs(aTarget.y - heB.oy) > eps) {
-    throw new Error(
-      `wrapEdges: transform·heA.target = (${aTarget.x.toFixed(6)}, ${aTarget.y.toFixed(6)}) does not match heB.origin = (${heB.ox.toFixed(6)}, ${heB.oy.toFixed(6)})`,
-    );
-  }
-  if (Math.abs(aOrigin.x - heB.next.ox) > eps || Math.abs(aOrigin.y - heB.next.oy) > eps) {
-    throw new Error(
-      `wrapEdges: transform·heA.origin = (${aOrigin.x.toFixed(6)}, ${aOrigin.y.toFixed(6)}) does not match heB.target = (${heB.next.ox.toFixed(6)}, ${heB.next.oy.toFixed(6)})`,
-    );
-  }
-
-  heA.twin = heB;
-  heB.twin = heA;
-  heA.transform = transformAtoB;
-  heB.transform = M.invert(transformAtoB);
+  linkEdgeToTwin(atlas, heA, heB, transformAtoB, eps);
+  linkEdgeToTwin(atlas, heB, heA, M.invert(transformAtoB), eps);
 }
 
 /**
- * Inverse of {@link wrapEdges}: drop the twin pointers between `he` and its
- * current twin, leaving both as boundary edges. Their transforms are reset to
- * identity (they no longer have meaning without a twin).
+ * Symmetric inverse of {@link wrapEdges}: clear both `he.twin` and its
+ * current partner's `twin` pointer (when the pointer is reciprocal).
  *
- * No-op when `he.twin === null`.
+ * For asymmetric cleanup, use {@link unlinkEdgeFromTwin} directly on each
+ * side independently.
+ *
+ * No-op when `he.twin === null`. When `he`'s partner is not reciprocal
+ * (`he.twin.twin !== he`), only `he`'s pointer is cleared.
  */
 export function untwinEdges(he: HalfEdge): void {
   const partner = he.twin;
   if (!partner) return;
-  he.twin = null;
-  partner.twin = null;
-  he.transform = M.fromValues();
-  partner.transform = M.fromValues();
+  unlinkEdgeFromTwin(he);
+  if (partner.twin === he) unlinkEdgeFromTwin(partner);
 }
 
 // ----------------------------------------------------------------------------
@@ -918,19 +1051,12 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     if (!allFaceSet.has(h.face)) errs.push('halfEdge.face not in atlas');
 
     if (h.twin) {
-      if (h.twin.twin !== h) errs.push('halfEdge.twin.twin !== self');
       if (!allHESet.has(h.twin)) errs.push('halfEdge.twin not in atlas');
 
-      // Transform consistency: T_twin · T = identity.
-      const composed = M.multiply(h.twin.transform, h.transform);
-      if (!matricesAreClose(composed, M.fromValues(), eps * 100)) {
-        errs.push(
-          `twin transforms not inverse pair (composed = ${matrixToString(composed)})`,
-        );
-      }
-
-      // Junction correspondence: T · h.next.origin = h.twin.origin
-      //                          T · h.origin      = h.twin.next.origin
+      // Junction correspondence (one-way; symmetric inverse-pair is NOT
+      // required — see module header on asymmetric twins):
+      //   T · h.next.origin = h.twin.origin
+      //   T · h.origin      = h.twin.next.origin
       const T = h.transform;
       if (!junctionImageMatches(T, h.target(), h.twin.origin(), eps * 100)) {
         errs.push("twin endpoint b' does not match T·b");
@@ -941,7 +1067,20 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     }
   }
 
-  // ---- reachability from root ----
+  // ---- reachability from root (bidirectional under asymmetric twins) ----
+  // A face is "reachable" if it can be visited by following twin links
+  // either OUT of the current face (`he.twin.face`) OR INTO the current
+  // face (some other half-edge `g` with `g.twin === he`). Symmetric twins
+  // make these two equivalent; asymmetric wraps may make them diverge.
+  // We pre-compute incoming pointers once per validation pass.
+  const incoming = new Map<Face, HalfEdge[]>();
+  for (const h of atlas.halfEdges) {
+    if (h.twin) {
+      const list = incoming.get(h.twin.face);
+      if (list) list.push(h);
+      else incoming.set(h.twin.face, [h]);
+    }
+  }
   const reachable = new Set<Face>();
   const queue: Face[] = [atlas.root];
   reachable.add(atlas.root);
@@ -951,6 +1090,15 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
       if (he.twin && !reachable.has(he.twin.face)) {
         reachable.add(he.twin.face);
         queue.push(he.twin.face);
+      }
+    }
+    const incomingHEs = incoming.get(f);
+    if (incomingHEs) {
+      for (const ih of incomingHEs) {
+        if (!reachable.has(ih.face)) {
+          reachable.add(ih.face);
+          queue.push(ih.face);
+        }
       }
     }
   }
@@ -2479,6 +2627,24 @@ export function splitAtlasAlongLine(
   direction: Point,
 ): SplitAtlasAlongLineResult {
   const chain = walkLine(host, seam, direction);
+
+  // Refuse to cut along a chain that visits the same face twice. That
+  // signals the line crossed a wrapped (asymmetric) edge and looped
+  // back through a topological cycle (e.g. a cylinder seam). A chord
+  // through such a chain would need to be subdivided in lock-step at
+  // every revisit (not yet supported) or it would break the wrap.
+  // Refuse early — before any mutation — so callers can recover
+  // cleanly.
+  {
+    const seen = new Set<Face>();
+    for (const c of chain) {
+      if (seen.has(c.face)) {
+        throw new Error('splitAtlasAlongLine: cut crosses a wrapped (asymmetric) edge — refusing');
+      }
+      seen.add(c.face);
+    }
+  }
+
   // Capture all entry/exit geometry up front. HE references will become
   // stale as we mutate; the geometric position remains valid in each
   // face's frame because subdivision preserves face identity and frame.
