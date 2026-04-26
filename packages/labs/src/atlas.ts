@@ -2774,6 +2774,60 @@ export function splitAtlasAlongLine(
   return { pairs };
 }
 
+/**
+ * Face-bounded line cut: split exactly one face along the chord between
+ * the line's two boundary intersections. Does **not** propagate through
+ * twin edges to neighbouring faces.
+ *
+ * Conceptually a single iteration of {@link splitAtlasAlongLine} that
+ * skips the {@link walkLine} chain traversal. Used by region-creation
+ * primitives where the cut is meant to terminate at the host's bounds
+ * (so deep nested regions don't slice every level above them).
+ *
+ * Geometry:
+ *   - `seam` must be strictly interior to `host` (in `host`'s local frame).
+ *   - `direction` is a non-zero 2D vector; the function normalises it.
+ *   - The cut is the chord through `seam` in `±direction`, clipped to the
+ *     host's boundary on both sides.
+ *
+ * The result mirrors {@link splitFaceAlongChord}: `faces[0]` is on the
+ * RIGHT of the (back-exit → forward-exit) direction, `faces[1]` on the
+ * LEFT, with their respective chord half-edges twinned across the chord.
+ * No twin links outside the host are touched.
+ *
+ * Throws if the line cannot find both a forward and backward boundary
+ * exit, or if the resulting chord would be degenerate (e.g. ideal-to-ideal
+ * on a face with no finite intersections).
+ */
+export function splitFaceAlongLine(
+  atlas: Atlas,
+  host: Face,
+  seam: Point,
+  direction: Point,
+): SplitChordResult {
+  if (!atlas.faces.includes(host)) {
+    throw new Error('splitFaceAlongLine: host not in atlas');
+  }
+  if (!polygonContainsStrict(host.junctions(), seam)) {
+    throw new Error('splitFaceAlongLine: seam is not strictly interior to host');
+  }
+  const len = Math.hypot(direction.x, direction.y);
+  if (len < WALK_EPS) throw new Error('splitFaceAlongLine: zero-length direction');
+  const d = { x: direction.x / len, y: direction.y / len };
+  const dNeg = { x: -d.x, y: -d.y };
+
+  const forwardExit = findExit(host, seam, d, null);
+  if (!forwardExit) throw new Error('splitFaceAlongLine: no forward exit from host');
+  const backwardExit = findExit(host, seam, dNeg, null);
+  if (!backwardExit) throw new Error('splitFaceAlongLine: no backward exit from host');
+
+  // splitFaceAlongChord materialises both endpoints (subdividing host's
+  // boundary edges if needed) but never reaches into their twins. So a
+  // chord cut here only mutates `host` and its half-edges; neighbouring
+  // faces are completely untouched.
+  return splitFaceAlongChord(atlas, host, backwardExit, forwardExit);
+}
+
 // ----------------------------------------------------------------------------
 // Atlas-level strip insertion: insertStrip
 // ----------------------------------------------------------------------------

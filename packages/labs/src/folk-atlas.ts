@@ -12,6 +12,7 @@ import {
   rescaleFaceFrame,
   resizeStrip,
   splitAtlasAlongLine,
+  splitFaceAlongLine,
   translationToWrap,
   unlinkEdgeFromTwin,
   untwinEdges,
@@ -302,16 +303,25 @@ export class FolkAtlas extends ReactiveElement {
       z-index: 4;
     }
 
-    /* Region front-layer — hosts the wrap-toggle controls only. Above
-       shapes so handles are clickable and never get occluded; the
+    /* Region front-layer — hosts the wrap-toggle / scale controls only.
+       Above shapes so handles are clickable and never get occluded; the
        container is transparent to pointer events so shapes underneath
        stay grabbable, and individual region elements re-enable events
-       on their own buttons. */
+       on their own buttons.
+
+       Only visible while the region tool is active: in any other tool
+       the toolbars are pure clutter (especially in deeply nested scenes
+       like the zoom-deep one, where they pile up). The dashed outline
+       layer .regions-back stays visible so the user always knows where
+       the regions are; only the controls hide. */
     .regions {
       position: absolute;
       inset: 0;
       pointer-events: none;
       z-index: 3;
+    }
+    :host(:not([tool='region'])) .regions {
+      display: none;
     }
 
     :host([tool='shape']) .content,
@@ -1119,8 +1129,23 @@ export class FolkAtlas extends ReactiveElement {
       { seedClientX: x1, seedClientY: cy, direction: { x: 0, y: 1 } }, // right
     ];
 
+    // Track per-cut success so we can bail out if any of the four cuts
+    // failed. Without this, a partially-failed carve still installs a
+    // region bound to whatever face `locate(centre)` returns — typically
+    // the unaltered host face. Multiple successive failures would then
+    // alias all their regions to the same face, and `setRegionScale`
+    // calls would compound on the same target. Fail cleanly instead.
+    let succeeded = 0;
     for (const cut of cuts) {
-      this.#runOneRegionCut(cut.seedClientX, cut.seedClientY, cut.direction);
+      if (this.#runOneRegionCut(cut.seedClientX, cut.seedClientY, cut.direction)) {
+        succeeded++;
+      }
+    }
+    if (succeeded < cuts.length) {
+      console.warn(
+        `[folk-atlas] createRegion: only ${succeeded}/${cuts.length} cuts succeeded — abandoning region`,
+      );
+      return null;
     }
 
     // Locate the centre face after all four cuts. Use the rect's screen
@@ -1151,12 +1176,24 @@ export class FolkAtlas extends ReactiveElement {
   }
 
   /**
-   * Run a single line cut sourced from a screen-coord seed. Handles host
-   * lookup, frame conversion, view compensation, and orphan relocation —
-   * the same machinery `#commitCutGizmo` uses for the line-cut tool, just
-   * without a strip insertion (region cuts produce a sharp partition).
+   * Run a single face-bounded line cut sourced from a screen-coord seed.
+   * Handles host lookup, frame conversion, view compensation, and orphan
+   * relocation.
+   *
+   * Uses {@link splitFaceAlongLine} (NOT {@link splitAtlasAlongLine}) so
+   * the cut terminates at the host face's boundary rather than propagating
+   * through twin edges. Region carving is meant to live entirely inside
+   * its host face — otherwise carving a region inside a deeply nested
+   * scaled face would slice every level above it. The "global" line-cut
+   * tool (`#commitCutGizmo`) deliberately uses the propagating variant
+   * since cutting through space is its defining behaviour.
+   *
+   * Returns `true` iff the cut actually mutated the atlas. Returning a
+   * boolean lets `createRegionAtScreenRect` distinguish "cut applied" from
+   * "cut bailed out" (host not found / split threw / etc) without us
+   * having to thread error sentinels through the call stack.
    */
-  #runOneRegionCut(seedClientX: number, seedClientY: number, direction: Point): void {
+  #runOneRegionCut(seedClientX: number, seedClientY: number, direction: Point): boolean {
     if (this.#lastComposites.size === 0) {
       this.#lastComposites = this.#atlas.computeComposites();
     }
@@ -1173,19 +1210,20 @@ export class FolkAtlas extends ReactiveElement {
     }
     if (!host) {
       console.warn('[folk-atlas] region cut: seed not in any face');
-      return;
+      return false;
     }
     const oldComposites = new Map(this.#lastComposites);
     try {
-      splitAtlasAlongLine(this.#atlas, host, seedLocal, direction);
+      splitFaceAlongLine(this.#atlas, host, seedLocal, direction);
     } catch (err) {
       console.warn('[folk-atlas] region cut split failed:', err);
-      return;
+      return false;
     }
     const { newComposites } = this.#compensateViewAfterMutation(oldComposites);
     this.#lastComposites = newComposites;
     this.#relocateOrphanedShapes(oldComposites);
     this.#relocateOrphanedRegions(oldComposites);
+    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -1328,6 +1366,17 @@ export class FolkAtlas extends ReactiveElement {
     if (face === this.#atlas.root) {
       this.#scale /= R;
     }
+    // Invalidate cached composites: `rescaleFaceFrame` rewrites this face's
+    // half-edge coords (multiplying by R) and conjugates every twin
+    // transform that touches it, so the BFS-projected `face → root`
+    // composite for this face — and indirectly for any face whose
+    // BFS chain crosses it — is now stale. Subsequent operations that
+    // route screen-space queries through `#lastComposites` (notably
+    // `#runOneRegionCut`'s host lookup) would otherwise compose the new
+    // face vertices with old composites and pick a non-existent or
+    // boundary-coincident "host", producing the misleading
+    // `splitFaceAlongLine: seam is not strictly interior to host` error.
+    this.#lastComposites = new Map();
     this.#scheduleUpdate();
   }
 

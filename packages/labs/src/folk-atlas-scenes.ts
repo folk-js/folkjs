@@ -165,6 +165,92 @@ export const SCENES: Record<string, SceneBuilder> = {
     addShape(atlas, -260, -180, 'outside');
     return atlas.regionFace(region) ?? undefined;
   },
+
+  'zoom-deep': (atlas) => {
+    // Russian-doll stack of N nested scaled regions to demonstrate "infinite"
+    // (well, deep) zoom. Each region is carved INSIDE its parent via a
+    // face-bounded cut (no propagation through twin edges — see
+    // `splitFaceAlongLine`), so deep cuts don't slice every parent above
+    // them. Each level then gets a uniform interior scale; combined with a
+    // shrinking screen footprint per level, the result is a self-similar
+    // tunnel the user can wheel-zoom into.
+    //
+    // Self-similar tuning:
+    //   - We pick `shrink ≈ 1/S` so each successive level's screen-pixel
+    //     footprint shrinks by the same factor that the parent's interior
+    //     magnifies — every level fills (just under) the entirety of its
+    //     parent's interior, and the user sees a tunnel of identical-looking
+    //     rectangles when they wheel-zoom in.
+    //   - With S=1.6 and shrink=0.6 the per-level safety margin is
+    //     `1 - shrink·S = 0.04` (the child fills 96% of parent face-local
+    //     space). Smaller margins give visually tighter tunnels but make
+    //     the seed point of each cut sit perilously close to the parent's
+    //     boundary — past ~20 levels the rect becomes sub-pixel at the
+    //     default zoom and the carve algorithm bails out (we break on null).
+    //   - We rely on `createRegionAtScreenRect` returning null when the cuts
+    //     fail (e.g. seed not strictly interior, host too small) instead of
+    //     guarding with a fixed pixel threshold — that lets us push the
+    //     stack as deep as numerics allow before stopping.
+    //
+    // Shapes: we drop a labelled landmark roughly every quarter of the way
+    // down the stack so the user can verify the wheel-zoom is actually
+    // crossing levels (the substrate auto-switches `atlas.root` when the
+    // viewport centre lands inside a deeper region — see
+    // `#maybeSwitchRootToViewportCentre`).
+    const N = 20;
+    const S = 1.6;
+    const shrink = 0.6;
+    const rect = atlas.getBoundingClientRect();
+    // The whole stack must live inside a single seed-atlas wedge (the +x/+y
+    // quadrant by convention) — otherwise the first carve straddles the
+    // seed origin and `createRegionAtScreenRect` carves four sub-rects
+    // (one per quadrant) instead of a single region. We anchor the
+    // outermost rect's top-left at `(QUADRANT_INSET, QUADRANT_INSET)` in
+    // root-frame and shrink toward its centre, which keeps every nested
+    // rect strictly in +x/+y too (the centre is fixed; only the half-size
+    // shrinks).
+    const initialW = 360;
+    const initialH = 320;
+    const cx0 = rect.width / 2 + QUADRANT_INSET + initialW / 2;
+    const cy0 = rect.height / 2 + QUADRANT_INSET + initialH / 2;
+    let cw = initialW;
+    let ch = initialH;
+    let levelsCarved = 0;
+    for (let i = 0; i < N; i++) {
+      const region = atlas.createRegionAtScreenRect({
+        x: cx0 - cw / 2,
+        y: cy0 - ch / 2,
+        width: cw,
+        height: ch,
+      });
+      if (!region) break;
+      atlas.setRegionScale(region, S);
+      levelsCarved = i + 1;
+      // Drop a labelled landmark every 5 levels. The shape's seed coords are
+      // in the root frame (the same frame `createRegionAtScreenRect`'s
+      // `screenRect` resolves to here, with `view = identity` and
+      // `view.translation = (rect.width/2, rect.height/2)`); the mutation
+      // observer assigns it to whichever face currently contains that point
+      // (the deepest region we've carved so far, since each carve consumed
+      // the previous deepest face).
+      if (i % 5 === 0) {
+        const rootX = cx0 - rect.width / 2;
+        const rootY = cy0 - rect.height / 2;
+        addShape(atlas, rootX, rootY, `level ${i}`);
+      }
+      cw *= shrink;
+      ch *= shrink;
+    }
+    if (levelsCarved < N) {
+      console.info(
+        `[folk-atlas-scenes] zoom-deep: carved ${levelsCarved}/${N} levels before the cuts failed`,
+      );
+    }
+    // Don't switchRoot — leave the user at the outermost view so they can
+    // wheel-zoom in to traverse all the levels naturally. The auto-switch
+    // in `#maybeSwitchRootToViewportCentre` handles re-rooting on the way in.
+    return undefined;
+  },
 };
 
 export function listSceneNames(): string[] {

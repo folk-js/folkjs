@@ -24,6 +24,7 @@ import {
   splitAtlasAlongLine,
   splitFaceAlongChord,
   splitFaceAlongEdge,
+  splitFaceAlongLine,
   splitFaceAtInterior,
   splitFaceAtVertices,
   subdivideAtInfinityArc,
@@ -2542,6 +2543,135 @@ describe('splitAtlasAlongLine', () => {
         }
       });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// splitFaceAlongLine — face-bounded line cut (no twin propagation)
+// ---------------------------------------------------------------------------
+
+describe('splitFaceAlongLine', () => {
+  it('splits exactly one face into two and leaves untouched neighbours alone', () => {
+    // Cut the +x/+y wedge horizontally near (1, 0.5). Without propagation,
+    // the line should not cause cascade splits in the other 3 wedges.
+    const atlas = createInitialAtlas();
+    const ne = atlas.locate({ x: 1, y: 0.5 })!;
+    const nw = atlas.locate({ x: -1, y: 0.5 })!;
+    const sw = atlas.locate({ x: -1, y: -0.5 })!;
+    const se = atlas.locate({ x: 1, y: -0.5 })!;
+    const facesBefore = atlas.faces.length;
+    const result = splitFaceAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 1, y: 0 });
+
+    assert.equal(atlas.faces.length, facesBefore + 1, 'expected exactly +1 face (host split into 2)');
+    assert.ok(atlas.faces.includes(result.faces[0]));
+    assert.ok(atlas.faces.includes(result.faces[1]));
+    assert.equal(result.chordHEs[0].twin, result.chordHEs[1]);
+    assert.equal(result.chordHEs[1].twin, result.chordHEs[0]);
+
+    // The other 3 wedges' Face objects survive intact (face identity check).
+    assert.ok(atlas.faces.includes(nw), 'NW wedge should be untouched');
+    assert.ok(atlas.faces.includes(sw), 'SW wedge should be untouched');
+    assert.ok(atlas.faces.includes(se), 'SE wedge should be untouched');
+
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
+
+  it('only subdivides boundary HEs of the host face (and their twins, never the twin face structure)', () => {
+    // The horizontal line y=0.5 hits NE on the +y spoke (twin pair with NW).
+    // splitFaceAlongChord materialises chord endpoints by subdividing the
+    // host's edge AND its twin so the neighbour stays geometrically
+    // consistent — but the neighbour face's *cycle length* should grow by
+    // at most one per side hit, never split into two faces.
+    const atlas = createInitialAtlas();
+    const ne = atlas.locate({ x: 1, y: 0.5 })!;
+    const nw = atlas.locate({ x: -1, y: 0.5 })!;
+    const nwHesBefore = nw.halfEdges.length;
+    splitFaceAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 1, y: 0 });
+    const nwHesAfter = nw.halfEdges.length;
+
+    // NW gets exactly one extra vertex (a subdivision point on its +y arm
+    // shared with NE) — going from 3 to 4 half-edges.
+    assert.equal(
+      nwHesAfter,
+      nwHesBefore + 1,
+      'NW should gain exactly one boundary subdivision, not be split',
+    );
+  });
+
+  it('preserves point coverage for finite samples on either side of the cut', () => {
+    const atlas = createInitialAtlas();
+    const ne = atlas.locate({ x: 1, y: 0.5 })!;
+    splitFaceAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 1, y: 0 });
+    const samples: Array<[number, number]> = [
+      [0.5, 0.1], // below cut, inside NE
+      [0.5, 0.9], // above cut, inside NE
+      [3, 0.5 + 0.0001], // far +x just above cut
+      [3, 0.5 - 0.0001], // far +x just below cut
+    ];
+    for (const [x, y] of samples) {
+      assert.ok(atlas.locate({ x, y }) !== null, `lost coverage at (${x}, ${y})`);
+    }
+  });
+
+  it('cuts a previously cut sub-face without affecting other sub-faces (nested cuts)', () => {
+    // Cut horizontally inside NE, then make a SECOND cut inside one of the
+    // resulting sub-faces — only that sub-face should split, the sibling
+    // and all other wedges survive. This is the 4-cuts-for-region pattern,
+    // face-bounded.
+    //
+    // Note: splitFaceAtVertices re-anchors sub-faces, and may pick the new
+    // root from one of them — so atlas.locate on absolute coords no longer
+    // identifies "upper" vs "lower" reliably. Use the SplitChordResult
+    // faces directly for face identity tests.
+    const atlas = createInitialAtlas();
+    const ne = atlas.locate({ x: 1, y: 0.5 })!;
+    const cut1 = splitFaceAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 1, y: 0 });
+    const sibling = cut1.faces[1]; // the LEFT side of (back→fwd) is the OTHER sub-face
+    const target = cut1.faces[0]; // the RIGHT side
+    const facesAfterFirst = atlas.faces.length;
+    // Pick a seed strictly interior to `target`. Since splitFaceAtVertices
+    // re-anchors at the chord vertex (0, 0.5), and target is the (0, 0) →
+    // (0, -0.5) → +x∞ wedge in its own frame, (1, -0.25) is interior.
+    const cut2 = splitFaceAlongLine(atlas, target, { x: 1, y: -0.25 }, { x: 0, y: 1 });
+    assert.equal(
+      atlas.faces.length,
+      facesAfterFirst + 1,
+      'second cut should add exactly one face (split target only)',
+    );
+    assert.ok(atlas.faces.includes(sibling), 'sibling sub-face should be untouched');
+    assert.ok(!atlas.faces.includes(target), 'target sub-face was split, should be detached');
+    assert.ok(atlas.faces.includes(cut2.faces[0]));
+    assert.ok(atlas.faces.includes(cut2.faces[1]));
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
+
+  it('throws when seam is not strictly interior to host', () => {
+    const atlas = createInitialAtlas();
+    const ne = atlas.locate({ x: 1, y: 0.5 })!;
+    // Origin (0, 0) is a vertex of NE, not interior.
+    assert.throws(
+      () => splitFaceAlongLine(atlas, ne, { x: 0, y: 0 }, { x: 1, y: 0 }),
+      /seam is not strictly interior/,
+    );
+  });
+
+  it('throws on zero-length direction', () => {
+    const atlas = createInitialAtlas();
+    const ne = atlas.locate({ x: 1, y: 0.5 })!;
+    assert.throws(
+      () => splitFaceAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 0, y: 0 }),
+      /zero-length direction/,
+    );
+  });
+
+  it('throws when host is not in the atlas', () => {
+    const atlas = createInitialAtlas();
+    const a = createInitialAtlas();
+    const stranger = a.faces[0];
+    assert.throws(
+      () => splitFaceAlongLine(atlas, stranger, { x: 1, y: 0.5 }, { x: 1, y: 0 }),
+      /host not in atlas/,
+    );
   });
 });
 
