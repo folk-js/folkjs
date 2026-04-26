@@ -61,6 +61,21 @@
         margin: 4px 2px;
         background: oklch(85% 0.02 277);
       }
+      #toolbar select {
+        all: unset;
+        height: 32px;
+        padding: 0 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        font: 12px/1 ui-sans-serif, system-ui, sans-serif;
+        color: oklch(40% 0.05 277);
+        background: oklch(98% 0.01 277);
+        border: 1px solid oklch(85% 0.02 277);
+        box-sizing: border-box;
+      }
+      #toolbar select:hover {
+        background: oklch(95% 0.02 277);
+      }
 
       #info {
         position: absolute;
@@ -127,6 +142,10 @@
           <circle cx="12" cy="12" r="3" />
         </svg>
       </button>
+      <span class="separator" aria-hidden="true"></span>
+      <select id="scene-picker" title="Load test scene">
+        <option value="">— scene —</option>
+      </select>
     </div>
 
     <div id="info">
@@ -140,6 +159,24 @@
       const toolbar = document.getElementById('toolbar');
       const buttons = toolbar.querySelectorAll('button[data-tool]');
       const debugToggle = document.getElementById('debug-toggle');
+      const scenePicker = document.getElementById('scene-picker');
+
+      // Populate scene picker from the FolkAtlas registry.
+      const FolkAtlasCtor = customElements.get('folk-atlas');
+      const sceneNames = (FolkAtlasCtor && FolkAtlasCtor.sceneNames) || [];
+      for (const name of sceneNames) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        scenePicker.append(opt);
+      }
+      scenePicker.addEventListener('change', () => {
+        const name = scenePicker.value;
+        if (!name) return;
+        atlas.loadScene(name);
+        // Reset to placeholder so re-selecting the same scene reloads it.
+        scenePicker.value = '';
+      });
 
       function setTool(tool) {
         atlas.setAttribute('tool', tool);

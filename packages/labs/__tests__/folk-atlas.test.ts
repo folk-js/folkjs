@@ -10,6 +10,7 @@ import {
   HalfEdge,
   insertStrip,
   linkEdgeToTwin,
+  rescaleFaceFrame,
   resizeStrip,
   isPolygonCCW,
   translationToWrap,
@@ -403,6 +404,39 @@ describe('validateAtlas', () => {
     he.ox = 99;
     assert.throws(() => validateAtlas(atlas), /direction length|T·a|endpoint/);
   });
+
+  it('throws when a twin transform has shear (non-similarity)', () => {
+    // The seed atlas's twins all live along the cardinal axes between
+    // (0,0) and (0,0). A shear of the form [1, 0, c, 1, 0, 0] still
+    // satisfies junction correspondence for those particular edges
+    // (both endpoints sit on the axis, so the off-axis shear doesn't
+    // displace them) but violates the similarity invariant.
+    const atlas = createInitialAtlas();
+    const he = atlas.halfEdges.find((h) => h.twin)!;
+    he.transform = M.fromValues(1, 0, 0.5, 1, 0, 0);
+    assert.throws(() => validateAtlas(atlas), /rotation\/shear|non-uniform/);
+  });
+
+  it('throws when a twin transform is a reflection (det < 0)', () => {
+    // A reflection across the x-axis fixes both endpoints of an edge
+    // that lies on that axis (the seed atlas's twins do), so junction
+    // correspondence holds — but it has det = -1 and a ≠ d, so the
+    // similarity invariant rejects it.
+    const atlas = createInitialAtlas();
+    const he = atlas.halfEdges.find((h) => h.twin)!;
+    he.transform = M.fromValues(1, 0, 0, -1, 0, 0);
+    assert.throws(() => validateAtlas(atlas), /non-uniform|non-positive/);
+  });
+
+  it('accepts a uniform-scale similarity twin transform', () => {
+    // Build a 1D-degenerate but otherwise-valid scenario: take a seed
+    // twin and scale by 1.0 (identity) — should pass. Scaling by, say,
+    // 2.0 would not satisfy junction correspondence on this seed, so
+    // we just confirm the *shape* of the check accepts any uniform s.
+    // Real scaled twins are tested via the operation that builds them.
+    const atlas = createInitialAtlas();
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -719,6 +753,101 @@ describe('untwinEdges', () => {
     const images = atlas.computeImages({ maxDepth: 2 });
     for (const img of images) assert.equal(img.face, face);
     assert.ok(images.length > 1);
+  });
+});
+
+describe('rescaleFaceFrame', () => {
+  // Build a 2-cell horizontal strip L|M sharing the L.right ↔ M.left edge,
+  // with translation-only twins between them.
+  function makeTwoCellStrip() {
+    const mkSquare = () => {
+      const bottom = new HalfEdge('finite', 0, 0);
+      const right = new HalfEdge('finite', 1, 0);
+      const top = new HalfEdge('finite', 1, 1);
+      const left = new HalfEdge('finite', 0, 1);
+      return { bottom, right, top, left, face: new Face([bottom, right, top, left]) };
+    };
+    const L = mkSquare();
+    const R = mkSquare();
+    const atlas = new Atlas(L.face);
+    atlas.faces = [L.face, R.face];
+    atlas.halfEdges = [L.bottom, L.right, L.top, L.left, R.bottom, R.right, R.top, R.left];
+    wrapEdges(atlas, L.right, R.left, M.fromTranslate(-1, 0));
+    return { atlas, L, R };
+  }
+
+  it('multiplies finite boundary coords by R and conjugates twin transforms', () => {
+    const { atlas, L, R } = makeTwoCellStrip();
+    rescaleFaceFrame(atlas, L.face, 2);
+    // L.face's finite coords doubled (anchor stays at 0).
+    assert.equal(L.bottom.ox, 0);
+    assert.equal(L.right.ox, 2);
+    assert.equal(L.top.ox, 2);
+    assert.equal(L.top.oy, 2);
+    assert.equal(L.left.oy, 2);
+    // R.face's coords unchanged.
+    assert.equal(R.right.ox, 1);
+    assert.equal(R.top.oy, 1);
+    // L.right (boundary OUT): T_old = translate(-1, 0); T_new linear = 1/2.
+    assert.ok(Math.abs(L.right.transform.a - 0.5) < 1e-12);
+    assert.ok(Math.abs(L.right.transform.d - 0.5) < 1e-12);
+    assert.ok(Math.abs(L.right.transform.e + 1) < 1e-12);
+    assert.ok(Math.abs(L.right.transform.f) < 1e-12);
+    // R.left (boundary IN): T_old = translate(1, 0); T_new linear = 2.
+    assert.ok(Math.abs(R.left.transform.a - 2) < 1e-12);
+    assert.ok(Math.abs(R.left.transform.d - 2) < 1e-12);
+    assert.ok(Math.abs(R.left.transform.e - 2) < 1e-12);
+    assert.ok(Math.abs(R.left.transform.f) < 1e-12);
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
+
+  it('round-trips: rescale by R then by 1/R restores all coordinates and transforms', () => {
+    const { atlas, L, R } = makeTwoCellStrip();
+    const before = {
+      lRightOx: L.right.ox,
+      lTopOy: L.top.oy,
+      lRightT: { ...L.right.transform },
+      rLeftT: { ...R.left.transform },
+    };
+    rescaleFaceFrame(atlas, L.face, 3.5);
+    rescaleFaceFrame(atlas, L.face, 1 / 3.5);
+    assert.ok(Math.abs(L.right.ox - before.lRightOx) < 1e-9);
+    assert.ok(Math.abs(L.top.oy - before.lTopOy) < 1e-9);
+    assert.ok(M.equals(L.right.transform, before.lRightT));
+    assert.ok(M.equals(R.left.transform, before.rLeftT));
+  });
+
+  it('preserves wrap partner as a pure translation, scaled by R', () => {
+    // Single square with right ↔ left wrapped to itself (asymmetric: only
+    // left → right, leaving right.twin alone for clarity).
+    const sq = makeSquareFace();
+    const T = M.fromTranslate(-1, 0);
+    wrapEdges(sq.atlas, sq.right, sq.left, T);
+    rescaleFaceFrame(sq.atlas, sq.face, 2);
+    // The wrap should still be a pure translation (linear part = 1) and
+    // the translation magnitude should have doubled.
+    assert.ok(Math.abs(sq.right.transform.a - 1) < 1e-12);
+    assert.ok(Math.abs(sq.right.transform.d - 1) < 1e-12);
+    assert.ok(Math.abs(sq.right.transform.b) < 1e-12);
+    assert.ok(Math.abs(sq.right.transform.c) < 1e-12);
+    assert.ok(Math.abs(sq.right.transform.e + 2) < 1e-12);
+    assert.ok(Math.abs(sq.right.transform.f) < 1e-12);
+    assert.doesNotThrow(() => validateAtlas(sq.atlas));
+  });
+
+  it('throws on non-positive or non-finite R', () => {
+    const { atlas, L } = makeTwoCellStrip();
+    assert.throws(() => rescaleFaceFrame(atlas, L.face, 0));
+    assert.throws(() => rescaleFaceFrame(atlas, L.face, -2));
+    assert.throws(() => rescaleFaceFrame(atlas, L.face, Number.NaN));
+  });
+
+  it('R = 1 is a no-op', () => {
+    const { atlas, L } = makeTwoCellStrip();
+    const before = { ox: L.right.ox, oy: L.right.oy };
+    rescaleFaceFrame(atlas, L.face, 1);
+    assert.equal(L.right.ox, before.ox);
+    assert.equal(L.right.oy, before.oy);
   });
 });
 

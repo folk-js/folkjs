@@ -89,15 +89,52 @@ export class FolkAtlasRegion extends ReactiveElement {
       stroke-linejoin: round;
       fill: none;
     }
+
+    .controls .sep {
+      width: 1px;
+      align-self: stretch;
+      margin: 2px 0;
+      background: oklch(85% 0.04 145);
+    }
+
+    .controls .scale-readout {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 38px;
+      height: 26px;
+      padding: 0 4px;
+      border-radius: 5px;
+      cursor: pointer;
+      font: 11px/1 ui-sans-serif, system-ui, sans-serif;
+      color: oklch(35% 0.05 145);
+      letter-spacing: 0.02em;
+    }
+    .controls .scale-readout:hover {
+      background: oklch(95% 0.04 145);
+    }
   `;
 
   static override properties = {
     wrapH: { type: Boolean, reflect: true, attribute: 'wrap-h' },
     wrapV: { type: Boolean, reflect: true, attribute: 'wrap-v' },
+    interiorScale: { type: Number, reflect: true, attribute: 'interior-scale' },
   };
 
   declare wrapH: boolean;
   declare wrapV: boolean;
+  /**
+   * Region's interior scale relative to the outside frame. Default 1
+   * (no scale change at the boundary). Larger values "zoom in" — the
+   * interior is intrinsically bigger, contents inside render at `1/S`
+   * from outside, and entering shrinks your stride by the same factor.
+   * Smaller values (in `(0, 1)`) "zoom out".
+   *
+   * Set via {@link FolkAtlas.setRegionScale} so the underlying twin
+   * transforms are kept in lockstep with this declarative value.
+   */
+  declare interiorScale: number;
 
   /**
    * The atlas Face this region is bound to. Set by the parent atlas on
@@ -109,11 +146,15 @@ export class FolkAtlasRegion extends ReactiveElement {
   #controls!: HTMLDivElement;
   #wrapHBtn!: HTMLButtonElement;
   #wrapVBtn!: HTMLButtonElement;
+  #scaleDownBtn!: HTMLButtonElement;
+  #scaleResetBtn!: HTMLButtonElement;
+  #scaleUpBtn!: HTMLButtonElement;
 
   constructor() {
     super();
     this.wrapH = false;
     this.wrapV = false;
+    this.interiorScale = 1;
   }
 
   /**
@@ -141,14 +182,38 @@ export class FolkAtlasRegion extends ReactiveElement {
 
     this.#wrapHBtn = this.#makeWrapButton('horizontal', 'Wrap horizontally (left ↔ right)');
     this.#wrapVBtn = this.#makeWrapButton('vertical', 'Wrap vertically (top ↔ bottom)');
-    this.#controls.append(this.#wrapHBtn, this.#wrapVBtn);
+
+    const sep = document.createElement('span');
+    sep.className = 'sep';
+    sep.setAttribute('aria-hidden', 'true');
+
+    this.#scaleDownBtn = this.#makeScaleButton(
+      0.5,
+      'Halve interior scale (zoom out the inside)',
+      '÷2',
+    );
+    this.#scaleResetBtn = this.#makeScaleResetButton();
+    this.#scaleUpBtn = this.#makeScaleButton(
+      2,
+      'Double interior scale (zoom in the inside)',
+      '×2',
+    );
+
+    this.#controls.append(
+      this.#wrapHBtn,
+      this.#wrapVBtn,
+      sep,
+      this.#scaleDownBtn,
+      this.#scaleResetBtn,
+      this.#scaleUpBtn,
+    );
     root.append(this.#controls);
 
     this.#syncButtonState();
   }
 
   protected override willUpdate(changed: Map<PropertyKey, unknown>) {
-    if (changed.has('wrapH') || changed.has('wrapV')) {
+    if (changed.has('wrapH') || changed.has('wrapV') || changed.has('interiorScale')) {
       this.#syncButtonState();
     }
   }
@@ -180,6 +245,9 @@ export class FolkAtlasRegion extends ReactiveElement {
     if (!this.#wrapHBtn || !this.#wrapVBtn) return;
     this.#wrapHBtn.setAttribute('aria-pressed', String(!!this.wrapH));
     this.#wrapVBtn.setAttribute('aria-pressed', String(!!this.wrapV));
+    if (this.#scaleResetBtn) {
+      this.#scaleResetBtn.textContent = formatScale(this.interiorScale ?? 1);
+    }
   }
 
   #makeWrapButton(axis: RegionWrapAxis, title: string): HTMLButtonElement {
@@ -211,4 +279,59 @@ export class FolkAtlasRegion extends ReactiveElement {
     btn.addEventListener('pointerdown', (e) => e.stopPropagation());
     return btn;
   }
+
+  /**
+   * Build a `[÷2]` / `[×2]` button that multiplies the region's
+   * `interiorScale` by `factor`. The actual mutation goes through
+   * {@link FolkAtlas.setRegionScale} so twin transforms stay in sync.
+   */
+  #makeScaleButton(factor: number, title: string, label: string): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = title;
+    btn.className = 'scale-step';
+    btn.textContent = label;
+    btn.style.fontSize = '12px';
+    btn.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const atlas = this.atlas;
+      if (!atlas) return;
+      const next = (this.interiorScale ?? 1) * factor;
+      atlas.setRegionScale(this, next);
+    });
+    btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    return btn;
+  }
+
+  /**
+   * Read-out button showing the current `interiorScale` (e.g. `1×`,
+   * `2×`, `0.5×`). Click to reset to 1 (so users can recover from
+   * runaway zooms quickly).
+   */
+  #makeScaleResetButton(): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = 'Click to reset interior scale to 1×';
+    btn.className = 'scale-readout';
+    btn.textContent = formatScale(this.interiorScale ?? 1);
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const atlas = this.atlas;
+      if (!atlas) return;
+      atlas.setRegionScale(this, 1);
+    });
+    btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    return btn;
+  }
+}
+
+/** Format a scale factor for the read-out: `1×`, `2×`, `0.5×`, `0.25×`. */
+function formatScale(s: number): string {
+  if (Math.abs(s - 1) < 1e-6) return '1×';
+  if (Math.abs(s - Math.round(s)) < 1e-6) return `${Math.round(s)}×`;
+  // Show up to three decimal places, trimming trailing zeros.
+  return `${parseFloat(s.toFixed(3))}×`;
 }

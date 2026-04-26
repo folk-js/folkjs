@@ -58,10 +58,15 @@ import type { Point } from '@folkjs/geometry/Vector2';
 // returned by this module is face-relative. The choice of `atlas.root` is a
 // rendering convention only.
 //
-// **No rotation in edge transforms.** By model invariant, transforms are
-// translations + (potentially non-uniform) scales. The implementation does
-// not currently enforce this — it is a design constraint that operations
-// must respect.
+// **Similarity-only edge transforms.** By model invariant, every twin
+// transform is a *similarity with rotation = 0*: a uniform positive
+// scale composed with a translation, of the form
+//   `[[s, 0], [0, s], (tx, ty)]`  with  s > 0.
+// No rotation, no reflection (det > 0), no shear, no non-uniform scale.
+// `validateAtlas` enforces this in development; production skips the
+// check. Existing operations (line cut, region cut, wrap) all produce
+// pure translations (s = 1); the scale degree of freedom is reserved
+// for nesting / infinite-zoom regions.
 
 // ----------------------------------------------------------------------------
 // Junction (a derived "vertex" descriptor)
@@ -965,6 +970,73 @@ export function untwinEdges(he: HalfEdge): void {
   if (partner.twin === he) unlinkEdgeFromTwin(partner);
 }
 
+/**
+ * Rescale a face's local frame by a uniform positive factor `R`. The face's
+ * own stored geometry (every finite half-edge of `face.halfEdges`) gets its
+ * coordinates multiplied by `R`, and every twin transform that touches the
+ * face's frame is conjugated to compensate.
+ *
+ * Intended for **scaled regions / nested faces**: a region declares its
+ * "interior scale" relative to outside, and updating that declared value
+ * runs this primitive with `R = newScale / oldScale`.
+ *
+ * Junction correspondence is preserved by construction. The face anchor
+ * stays at `(0, 0)` since `0 · R = 0`.
+ *
+ * Cases handled per twin link:
+ *
+ * | `he.face === face` | `he.twin.face === face` | new transform                                    |
+ * | ------------------ | ----------------------- | ------------------------------------------------ |
+ * | yes                | no                      | `T · scale(1/R)`  (boundary out: linear → 1/R)   |
+ * | no                 | yes                     | `scale(R) · T`   (boundary in:  linear → R)      |
+ * | yes                | yes                     | `scale(R) · T · scale(1/R)`  (wrap, conjugate)   |
+ * | no                 | no                      | unchanged                                        |
+ *
+ * For the "wrap partner" row, conjugating a translation `T(p) = p + t` by a
+ * uniform scale yields another translation: `T_new(p) = p + R·t`. So a
+ * wrap that was previously a translation of length `L` becomes a
+ * translation of length `R·L` — exactly what the now-`R`-times-bigger
+ * boundary requires.
+ *
+ * Pre-conditions:
+ *   - `R > 0` (a non-positive `R` would flip orientation / collapse the
+ *     face).
+ *   - `face` belongs to `atlas`.
+ *   - All boundary half-edges' finite endpoints stay finite; ideal
+ *     endpoints are unaffected (their stored direction is independent
+ *     of frame scale, and the twin transform's linear part scales
+ *     directions uniformly which cancels under renormalization).
+ */
+export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
+  if (!Number.isFinite(R) || R <= 0) {
+    throw new Error(`rescaleFaceFrame: R must be a positive finite number, got ${R}`);
+  }
+  if (!atlas.faces.includes(face)) {
+    throw new Error('rescaleFaceFrame: face must belong to atlas');
+  }
+  if (R === 1) return;
+
+  for (const he of face.halfEdges) {
+    if (he.originKind === 'finite') {
+      he.ox *= R;
+      he.oy *= R;
+    }
+  }
+
+  const scaleR = M.fromScale(R);
+  const scaleInvR = M.fromScale(1 / R);
+  for (const he of atlas.halfEdges) {
+    if (!he.twin) continue;
+    const sourceIsFace = he.face === face;
+    const targetIsFace = he.twin.face === face;
+    if (!sourceIsFace && !targetIsFace) continue;
+    let T = he.transform;
+    if (sourceIsFace) T = M.multiply(T, scaleInvR);
+    if (targetIsFace) T = M.multiply(scaleR, T);
+    he.transform = T;
+  }
+}
+
 // ----------------------------------------------------------------------------
 // validateAtlas — invariant checker
 // ----------------------------------------------------------------------------
@@ -1063,6 +1135,27 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
       }
       if (!junctionImageMatches(T, h.origin(), h.twin.target(), eps * 100)) {
         errs.push("twin endpoint a' does not match T·a");
+      }
+
+      // Similarity-only edge transforms: T must be of the form
+      //   [[s, 0], [0, s], (tx, ty)]  with s > 0.
+      // No rotation, no reflection (det > 0), no shear, no non-uniform
+      // scale. Tolerance matches the junction check above.
+      const simEps = eps * 100;
+      if (Math.abs(T.b) > simEps || Math.abs(T.c) > simEps) {
+        errs.push(
+          `twin transform has rotation/shear (b=${T.b}, c=${T.c}), expected similarity`,
+        );
+      }
+      if (Math.abs(T.a - T.d) > simEps) {
+        errs.push(
+          `twin transform has non-uniform scale (a=${T.a}, d=${T.d}), expected uniform`,
+        );
+      }
+      if (T.a <= simEps) {
+        errs.push(
+          `twin transform has non-positive scale (a=${T.a}), expected s > 0`,
+        );
       }
     }
   }

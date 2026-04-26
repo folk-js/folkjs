@@ -9,6 +9,7 @@ import {
   HalfEdge,
   insertStrip,
   linkEdgeToTwin,
+  rescaleFaceFrame,
   resizeStrip,
   splitAtlasAlongLine,
   translationToWrap,
@@ -22,6 +23,7 @@ import {
 import { FolkAtlasRegion } from './folk-atlas-region.ts';
 import { FolkAtlasShape } from './folk-atlas-shape.ts';
 import { ShapeGhostRenderer } from './folk-atlas-ghosts.ts';
+import { SCENES, listSceneNames, type SceneBuilder } from './folk-atlas-scenes.ts';
 
 export {
   aroundJunction,
@@ -32,6 +34,7 @@ export {
   linkEdgeToTwin,
   rebaseTwinTransform,
   rebaseTwinTransformByTranslation,
+  rescaleFaceFrame,
   splitFaceAtInterior,
   splitFaceAlongEdge,
   translationToWrap,
@@ -707,6 +710,13 @@ export class FolkAtlas extends ReactiveElement {
   }
 
   /**
+   * Return the {@link Face} a region is bound to, or `null` if untracked.
+   */
+  regionFace(region: FolkAtlasRegion): Face | null {
+    return this.#regionFaces.get(region) ?? null;
+  }
+
+  /**
    * Convert client-space (CSS pixel) coordinates into a face-local point on
    * whichever face contains the pointer. Returns `null` if no face contains
    * the point (shouldn't happen for a well-formed atlas covering the plane).
@@ -979,6 +989,74 @@ export class FolkAtlas extends ReactiveElement {
   }
 
   // -------------------------------------------------------------------------
+  // Scene loading API
+  // -------------------------------------------------------------------------
+
+  /**
+   * Replace the current atlas, shapes, and regions with a named built-in
+   * scene from {@link SCENES}. After tearing down, the atlas is reset to
+   * a fresh seed (`createInitialAtlas`), the view recentred on the host's
+   * bounding rect, and the scene's builder runs against the empty atlas.
+   *
+   * If the builder returns a {@link Face}, the atlas root is switched to
+   * that face before re-centring — this lets a scene place its
+   * "interesting" geometry away from the seed-atlas axes (which avoids
+   * the 4-quadrant straddle in `createRegionAtScreenRect`) and still have
+   * it appear at screen centre when the scene loads.
+   */
+  loadScene(name: string): void {
+    // Tear down shapes: remove from light DOM and drop bookkeeping +
+    // ghosts. The MutationObserver also fires `#unregisterShape` async,
+    // which is idempotent.
+    for (const shape of [...this.#shapeFaces.keys()]) {
+      this.#ghosts?.removeShape(shape);
+      shape.remove();
+    }
+    this.#shapeFaces.clear();
+
+    // Tear down regions: remove the front-layer custom element and the
+    // atlas-owned back-layer SVG.
+    for (const region of [...this.#regionFaces.keys()]) region.remove();
+    this.#regionFaces.clear();
+    for (const region of [...this.#regionBackEntries.keys()]) {
+      this.#removeRegionBackEntry(region);
+    }
+
+    this.#atlas = createInitialAtlas();
+    this.#lastComposites = new Map();
+    this.#lastImages = [];
+    this.#lastVisibility.clear();
+
+    // Recentre the view *before* running the builder so any scene that
+    // calls `createRegionAtScreenRect` sees a sane mapping from screen
+    // coords to root frame.
+    const rect = this.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      this.#x = rect.width / 2;
+      this.#y = rect.height / 2;
+      this.#scale = 1;
+      this.#centeredOnce = true;
+    }
+
+    const builder: SceneBuilder | undefined = SCENES[name];
+    if (!builder) {
+      console.warn(`[folk-atlas] unknown scene: ${name}. Known: ${listSceneNames().join(', ')}`);
+      this.#scheduleUpdate();
+      return;
+    }
+    const sceneRoot = builder(this);
+    if (sceneRoot && this.#atlas.faces.includes(sceneRoot)) {
+      this.#atlas.switchRoot(sceneRoot);
+    }
+    this.#scheduleUpdate();
+  }
+
+  /** List of registered scene names (for UI population). */
+  static get sceneNames(): string[] {
+    return listSceneNames();
+  }
+
+  // -------------------------------------------------------------------------
   // Region creation API
   // -------------------------------------------------------------------------
 
@@ -1193,6 +1271,63 @@ export class FolkAtlas extends ReactiveElement {
       else region.wrapV = true;
     }
 
+    this.#scheduleUpdate();
+  }
+
+  /**
+   * Set a region's *interior scale* relative to the outside frame. Larger
+   * values "zoom in" — interior coordinates are intrinsically bigger, so
+   * contents render at `1/S` from outside (and entering the region
+   * shrinks your stride accordingly).
+   *
+   * Implementation: the boundary of the region's face is *re-expressed*
+   * in a frame that's `R = S_new / S_old` times the previous frame.
+   *   1. Multiply every finite half-edge stored coordinate of the
+   *      region face by `R`. (Anchor stays at `(0, 0)` since `0·R = 0`.)
+   *   2. For every half-edge `h` in the atlas with `h.twin`, conjugate
+   *      its transform by the frame change: right-multiply by
+   *      `scale(1/R)` if `h.face === regionFace`, left-multiply by
+   *      `scale(R)` if `h.twin.face === regionFace`. Wrap partners
+   *      (both endpoints inside the region) get *both* multiplications,
+   *      which composes to a similarity-preserving conjugation that
+   *      keeps the wrap a pure translation (just `R`× longer).
+   *
+   * Crucially this preserves shape coordinates: shapes inside the
+   * region keep their `(x, y, w, h)` exactly. From outside, the
+   * composite of the region face acquires a `1/R` linear part, so
+   * interior contents appear at `1/R` size — the "infinite zoom"
+   * effect. From inside (rooted in the region face), shape positions
+   * are identical and only the boundary visually changes.
+   *
+   * Constraints:
+   *   - `S_new` must be `> 0`.
+   *   - Region's bound face must still exist in the atlas.
+   *
+   * View compensation is asymmetric:
+   *   - When the user is *outside* the region (root ≠ region face), no
+   *     compensation is needed — the region boundary's on-screen position
+   *     is invariant (the linear part of the outgoing composite cancels
+   *     the boundary stretch), and interior contents naturally appear at
+   *     the new `1/R` size.
+   *   - When the user is *inside* the region (root === region face),
+   *     finite coords on root just got multiplied by `R`. Without
+   *     compensation, every shape in the region would visually scale by
+   *     `R` on screen. Counter-scale the viewport by `1/R` so the
+   *     contents the user is looking at stay in place; the world *outside*
+   *     the region (reached via twin transforms) instead appears scaled.
+   */
+  setRegionScale(region: FolkAtlasRegion, sNew: number): void {
+    const face = this.#regionFaces.get(region);
+    if (!face || !this.#atlas.faces.includes(face)) return;
+    if (!Number.isFinite(sNew) || sNew <= 0) return;
+    const sOld = region.interiorScale ?? 1;
+    if (Math.abs(sNew - sOld) < 1e-9) return;
+    const R = sNew / sOld;
+    rescaleFaceFrame(this.#atlas, face, R);
+    region.interiorScale = sNew;
+    if (face === this.#atlas.root) {
+      this.#scale /= R;
+    }
     this.#scheduleUpdate();
   }
 
@@ -1815,15 +1950,31 @@ export class FolkAtlas extends ReactiveElement {
     if (!target) return;
     const C = target.composite;
     if (target.face === this.#atlas.root) {
-      // Already root: just shift the view by C so the wrap-tile takes
+      // Already root: shift the view by C so the wrap-tile takes
       // canonical position. No-op when the chosen image *is* the canonical
-      // one (composite ≈ identity). Translation-only views suffice today.
-      if (Math.abs(C.e) < 1e-9 && Math.abs(C.f) < 1e-9) return;
+      // one (composite ≈ identity in both translation and scale).
+      const isIdentity =
+        Math.abs(C.e) < 1e-9 &&
+        Math.abs(C.f) < 1e-9 &&
+        Math.abs(C.a - 1) < 1e-9 &&
+        Math.abs(C.d - 1) < 1e-9;
+      if (isIdentity) return;
     } else {
       this.#atlas.root = target.face;
     }
+    // Apply the full similarity K = C to the view: view_new = view_old · K.
+    // For our (uniform-scale + translation) view this means
+    //   #x_new = #scale_old * K.e + #x_old
+    //   #y_new = #scale_old * K.f + #y_old
+    //   #scale_new = #scale_old * K.a   (uniform scale is in K.a == K.d)
+    // The translation parts keep the on-screen image of every face
+    // anchored; the scale part undoes the inherent scale difference
+    // between old and new root frames so deeper/scaled regions cause
+    // *zero visual jump* at root-switch — the substrate quietly
+    // renormalises while the user keeps wheel-zooming.
     this.#x += this.#scale * C.e;
     this.#y += this.#scale * C.f;
+    this.#scale *= C.a;
     // Composites + images are stale after either kind of change; refresh so
     // subsequent point-locates and the next render see the new frame.
     this.#lastImages = this.#atlas.computeImages();
@@ -1845,9 +1996,12 @@ export class FolkAtlas extends ReactiveElement {
    *
    * The compensation is `oldRoot ← newRoot = oldComposite(F) · inv(newComposite(F))`
    * for any face `F` that exists in both the pre- and post-mutation
-   * composite maps. Translation-only edge transforms guarantee this
-   * matrix is itself a translation, so we extract `.e, .f` and apply
-   * the same scale-aware shift the existing `switchRoot` path uses.
+   * composite maps. Under the similarity-only edge-transform model this
+   * matrix is itself a similarity (uniform scale + translation), so we
+   * apply the full `view_new = view_old · K` update — translation parts
+   * shift `#x, #y`, scale part multiplies `#scale`. For pure-translation
+   * mutations (line cuts, region cuts) the scale part is 1 and this
+   * reduces to the original translation-only behaviour.
    *
    * Caller responsibility: snapshot `oldComposites` (e.g. from
    * `#lastComposites`) before the mutation, call this immediately
@@ -1886,6 +2040,7 @@ export class FolkAtlas extends ReactiveElement {
     const K = M.multiply(oldM, M.invert(newM));
     this.#x += this.#scale * K.e;
     this.#y += this.#scale * K.f;
+    this.#scale *= K.a;
     return { newComposites, K };
   }
 
