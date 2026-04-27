@@ -125,6 +125,29 @@ interface RegionBackEntry {
   ghosts: SVGPolygonElement[];
 }
 
+/**
+ * Persistent visual outline for one region: a polygon stored in some atlas
+ * face's local frame, together with the face used to project it.
+ *
+ * The polygon is in `face`'s frame, so screen-space rendering goes through
+ * `composite(face) · view`. When `face` is destroyed by a subsequent atlas
+ * mutation (e.g. a child region carves through it), {@link
+ * FolkAtlas.relocateOrphanedRegions} picks a new surviving face that contains
+ * the polygon's centroid and re-expresses every vertex in that face's frame
+ * via the old/new composites — so the polygon's screen position is preserved.
+ *
+ * Concretely for nested rectangles in `zoom-deep`: a parent region's
+ * outer-rectangle polygon ends up anchored to the deepest child's centre face
+ * (since each level's centroid sits inside the next deeper child's centre),
+ * with vertex coordinates accordingly large in that scaled frame. Projecting
+ * those large coordinates through the child's smaller-scale composite
+ * recovers the original on-screen rectangle.
+ */
+interface RegionOutline {
+  face: Face;
+  vertices: Point[];
+}
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /**
@@ -426,8 +449,42 @@ export class FolkAtlas extends ReactiveElement {
   #atlas = createInitialAtlas();
   /** Map from shape element to its assigned face. */
   #shapeFaces = new Map<FolkAtlasShape, Face>();
-  /** Map from region element to its bound (centre) face. */
+  /**
+   * Map from region element to its currently-bound atlas face. This is the
+   * "operational" face — wrap/scale operations (which need a 4-edge rectangular
+   * face to work on) read from here. Initially the centre face produced by
+   * the four carve cuts; on relocation it tracks the surviving face that
+   * contains the region's centroid (typically the deepest descendant region's
+   * centre, since nested carving subdivides the original centre).
+   *
+   * Note: visual rendering does NOT come from this face — see
+   * {@link #regionOutlines}. After children carve inside, the operational face
+   * is no longer the original rectangle, so `wrapRegionAxis` /
+   * `setRegionScale` on a parent-with-children may operate on the wrong piece;
+   * that's a known limitation of this single-face data model and out of scope
+   * for the visual fix.
+   */
   #regionFaces = new Map<FolkAtlasRegion, Face>();
+  /**
+   * Visual outline for each region: a polygon (4 vertices for the rectangular
+   * carve case) expressed in some surviving atlas face's local frame.
+   *
+   * Why a separate polygon instead of just rendering `#regionFaces.get(r)`'s
+   * junctions: when a child region carves inside a parent's centre face, the
+   * parent's centre face is destroyed and split into 5 sub-faces (top /
+   * bottom / left / right strips + the new centre). Naively re-binding the
+   * parent to "any surviving sub-face containing the old anchor" picks the
+   * sub-face that owns the original (0, 0) corner — always one of the strips
+   * — and the parent visually becomes that strip rather than its original
+   * outer rectangle (you'd see deeply-nested carves stack as horizontal
+   * strips instead of concentric rectangles).
+   *
+   * The fix is to remember the outline geometry separately and re-express its
+   * vertices into the new anchor face's frame on each relocation. The outline
+   * thus survives any sequence of cuts: the polygon stays put on screen even
+   * as the underlying atlas faces are destroyed and recreated around it.
+   */
+  #regionOutlines = new Map<FolkAtlasRegion, RegionOutline>();
 
   // === Pan / zoom (mirrors folk-space's interaction model) ===
   #x = 0;
@@ -586,6 +643,7 @@ export class FolkAtlas extends ReactiveElement {
     this.#ghosts?.clear();
     for (const region of this.#regionFaces.keys()) region.remove();
     this.#regionFaces.clear();
+    this.#regionOutlines.clear();
     for (const region of [...this.#regionBackEntries.keys()]) this.#removeRegionBackEntry(region);
   }
 
@@ -1028,6 +1086,7 @@ export class FolkAtlas extends ReactiveElement {
     // atlas-owned back-layer SVG.
     for (const region of [...this.#regionFaces.keys()]) region.remove();
     this.#regionFaces.clear();
+    this.#regionOutlines.clear();
     for (const region of [...this.#regionBackEntries.keys()]) {
       this.#removeRegionBackEntry(region);
     }
@@ -1160,6 +1219,7 @@ export class FolkAtlas extends ReactiveElement {
     const region = new FolkAtlasRegion();
     this.#regionLayer.append(region);
     this.#regionFaces.set(region, centreFace);
+    this.#regionOutlines.set(region, makeOutlineFromFace(centreFace));
     this.#scheduleUpdate();
     return region;
   }
@@ -1366,6 +1426,21 @@ export class FolkAtlas extends ReactiveElement {
     if (face === this.#atlas.root) {
       this.#scale /= R;
     }
+    // Outline vertices live in the face's local frame, in parallel with the
+    // face's own junctions. `rescaleFaceFrame` multiplies the junctions by R
+    // and counter-scales the outgoing twin transforms by 1/R so the face's
+    // *projected* on-screen position is invariant. Outlines must follow
+    // suit: any outline anchored to this face has to multiply its vertices
+    // by R for the same reason — otherwise an outline anchored here (e.g.
+    // a parent region's outer rectangle that got re-anchored to this face
+    // when its own centre was carved away) would shrink by R on screen
+    // every time the user (or a scene builder) bumps `S` here.
+    if (R !== 1) {
+      for (const [, outline] of this.#regionOutlines) {
+        if (outline.face !== face) continue;
+        outline.vertices = outline.vertices.map((v) => ({ x: v.x * R, y: v.y * R }));
+      }
+    }
     // Invalidate cached composites: `rescaleFaceFrame` rewrites this face's
     // half-edge coords (multiplying by R) and conjugates every twin
     // transform that touches it, so the BFS-projected `face → root`
@@ -1439,42 +1514,76 @@ export class FolkAtlas extends ReactiveElement {
   }
 
   /**
-   * After an atlas mutation, walk all regions and try to re-locate their
-   * bound face. The strategy mirrors `#relocateOrphanedShapes`: find the
-   * region's anchor in the *old* root frame, then locate which surviving
-   * face contains it in the *new* root frame.
+   * After an atlas mutation, walk all regions and try to re-locate them.
+   * Two pieces of state need updating:
    *
-   * Regions whose face survives need no work. Regions whose face is gone
-   * (e.g. another cut sliced through the rectangle) are unbound — the
-   * element stays in the DOM but renders empty until manually re-bound or
-   * removed.
+   *   1. `#regionOutlines.get(region)` — the rendered polygon. Its anchor
+   *      face may have been destroyed; if so we pick a *new* surviving face
+   *      that contains the outline's centroid in the root frame, then re-
+   *      express every vertex into that face's local frame so screen-space
+   *      geometry is preserved.
+   *
+   *   2. `#regionFaces.get(region)` — the operational face used by wrap /
+   *      scale. Same centroid-based pick.
+   *
+   * Why centroid (not the old face's `(0, 0)` anchor): a region's centre
+   * face has its anchor at one of its corners (the first finite vertex
+   * picked by `splitFaceAtVertices`). After a child carves four cuts inside
+   * it, that corner ends up in one of the four newly-created strip faces —
+   * never in the new centre face — so an anchor-based rebind would
+   * silently re-bind the parent region to its bottom strip. The polygon's
+   * geometric centre, by contrast, sits inside whichever new face owns the
+   * inside of the original rect: for a child carve that's the child's
+   * centre face (which is by construction inside the parent's rect), so
+   * the parent's outline lands on a face that's actually inside its old
+   * rectangle and the polygon re-projection produces the correct
+   * concentric-rectangle picture.
+   *
+   * Regions whose centroid lands in no face after the mutation (degenerate
+   * cuts, polygon entirely off the surviving atlas) are dropped from both
+   * maps — the element stays in the DOM but renders empty.
    */
   #relocateOrphanedRegions(oldComposites: ReadonlyMap<Face, M.Matrix2D>): void {
-    if (this.#regionFaces.size === 0) return;
+    if (this.#regionOutlines.size === 0) return;
     const newComposites = this.#lastComposites;
     const survivors = new Set(this.#atlas.faces);
-    for (const [region, oldFace] of this.#regionFaces) {
-      if (survivors.has(oldFace)) continue;
-      const oldFaceComp = oldComposites.get(oldFace);
+    for (const [region, outline] of this.#regionOutlines) {
+      if (survivors.has(outline.face)) continue;
+      const oldFaceComp = oldComposites.get(outline.face);
       if (!oldFaceComp) {
+        this.#regionOutlines.delete(region);
         this.#regionFaces.delete(region);
         continue;
       }
-      // Use the (old) face's anchor (origin = (0,0)) to pick a new face.
-      // For now, pick whichever face contains the anchor in the new root.
-      const anchorRoot = M.applyToPoint(oldFaceComp, { x: 0, y: 0 });
-      let placed = false;
-      for (const newFace of this.#atlas.faces) {
-        const newComp = newComposites.get(newFace);
-        if (!newComp) continue;
-        const local = M.applyToPoint(M.invert(newComp), anchorRoot);
-        if (newFace.contains(local)) {
-          this.#regionFaces.set(region, newFace);
-          placed = true;
+      const centroidLocal = polygonCentroid(outline.vertices);
+      const centroidRoot = M.applyToPoint(oldFaceComp, centroidLocal);
+      let newFace: Face | null = null;
+      let newFaceComp: M.Matrix2D | null = null;
+      for (const f of this.#atlas.faces) {
+        const comp = newComposites.get(f);
+        if (!comp) continue;
+        const local = M.applyToPoint(M.invert(comp), centroidRoot);
+        if (f.contains(local)) {
+          newFace = f;
+          newFaceComp = comp;
           break;
         }
       }
-      if (!placed) this.#regionFaces.delete(region);
+      if (!newFace || !newFaceComp) {
+        this.#regionOutlines.delete(region);
+        this.#regionFaces.delete(region);
+        continue;
+      }
+      // Re-express every vertex from `outline.face` (destroyed) into
+      // `newFace`'s local frame, going via the root-frame point (which is
+      // the only common reference between old and new composites).
+      const rootToNew = M.invert(newFaceComp);
+      const newVertices = outline.vertices.map((v) => {
+        const r = M.applyToPoint(oldFaceComp, v);
+        return M.applyToPoint(rootToNew, r);
+      });
+      this.#regionOutlines.set(region, { face: newFace, vertices: newVertices });
+      this.#regionFaces.set(region, newFace);
     }
   }
 
@@ -1954,12 +2063,29 @@ export class FolkAtlas extends ReactiveElement {
     return false;
   }
 
+  /**
+   * Apply a pan + scale delta to the view, anchored at `(originX, originY)`
+   * in screen space. Both pan and zoom are accepted unconditionally — the
+   * scale is *clamped* to `[MIN_SCALE, MAX_SCALE]`, never rejected, because
+   * rejecting would also drop the pan and that produces the user-visible
+   * "pan/zoom freeze" described in folk-atlas-scenes.ts: when
+   * `#maybeSwitchRootToViewportCentre` had nudged `#scale` outside the
+   * bounds (`#scale *= C.a` with no clamp), every subsequent wheel/pan
+   * event silently early-returned and the canvas appeared frozen even
+   * though space and shape gizmos still responded.
+   *
+   * `effectiveDiff = clampedScale / #scale` keeps the origin-anchor
+   * math self-consistent so a clamped zoom feels like "I hit the limit"
+   * rather than dragging the world around. Pan deltas (`panX`, `panY`)
+   * apply on top, so the user can always pan even at a scale boundary.
+   */
   #applyChange(panX: number, panY: number, scaleDiff: number, originX: number, originY: number) {
-    const newScale = this.#scale * scaleDiff;
-    if (newScale < MIN_SCALE || newScale > MAX_SCALE) return;
-    this.#x = originX - (originX - this.#x) * scaleDiff + panX;
-    this.#y = originY - (originY - this.#y) * scaleDiff + panY;
-    this.#scale = newScale;
+    const targetScale = this.#scale * scaleDiff;
+    const clampedScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, targetScale));
+    const effectiveDiff = this.#scale > 0 ? clampedScale / this.#scale : 1;
+    this.#x = originX - (originX - this.#x) * effectiveDiff + panX;
+    this.#y = originY - (originY - this.#y) * effectiveDiff + panY;
+    this.#scale = clampedScale;
     this.#maybeSwitchRootToViewportCentre();
     this.#scheduleUpdate();
   }
@@ -1988,13 +2114,25 @@ export class FolkAtlas extends ReactiveElement {
     // for the root face that's a pure view shift (looping around the wrap),
     // for a non-root face it also re-anchors `atlas.root` so composites
     // recompute from the new face.
+    //
+    // We also enforce a scale-invariant: a candidate switch is only
+    // accepted if `#scale * C.a` (the post-switch view scale) lands in
+    // `[MIN_SCALE, MAX_SCALE]`. Without this guard, a deep face whose
+    // composite has scale ~1e-4 could renormalise `#scale` so far below
+    // `MIN_SCALE` that every subsequent `#applyChange` would clamp the
+    // scale to `MIN_SCALE` and then root-switch *back* into the same
+    // tiny face — a sticky state where neither pan nor zoom appears to
+    // do anything (this was the "freeze" reported on `zoom-deep`). With
+    // the guard, the BFS-traversal scan keeps looking past such a face,
+    // accepting only switches that preserve a sane view scale.
     let target: AtlasImage | null = null;
     for (const img of this.#lastImages) {
       const local = M.applyToPoint(M.invert(img.composite), rootPoint);
-      if (img.face.contains(local)) {
-        target = img;
-        break;
-      }
+      if (!img.face.contains(local)) continue;
+      const postSwitchScale = this.#scale * img.composite.a;
+      if (postSwitchScale < MIN_SCALE || postSwitchScale > MAX_SCALE) continue;
+      target = img;
+      break;
     }
     if (!target) return;
     const C = target.composite;
@@ -2126,6 +2264,17 @@ export class FolkAtlas extends ReactiveElement {
       maxY: Math.max(0, rect.height),
     };
 
+    // Full unbounded composite map, used for things that need to project
+    // even invisible faces (region outlines whose anchor face has been
+    // BFS-pruned for being sub-pixel — see `#renderRegions` for the
+    // motivating case). Cheap: for our atlas sizes this is a few hundred
+    // map ops per frame. Stored on the instance so mutation paths
+    // (`#runOneRegionCut`, gizmo lookups, `reexpressPoint`, …) which
+    // assume `#lastComposites` is the *full* composite cache don't see a
+    // stale pruned-by-render snapshot.
+    const fullComposites = this.#atlas.computeComposites();
+    this.#lastComposites = fullComposites;
+
     // BFS expansion is bounded by *visibility*, not just the depth/image
     // caps in computeImages: from a wrapped face we'd otherwise tile the
     // plane forever, but here we stop fanning out as soon as the current
@@ -2147,14 +2296,23 @@ export class FolkAtlas extends ReactiveElement {
       maxDepth: 256,
       maxImagesPerFace: 4096,
     });
-    const composites = new Map<Face, M.Matrix2D>();
+    // `visibleComposites` is the primary BFS image of every face that BFS
+    // *reached*. It's the visibility-pruned subset of `fullComposites`
+    // and drives face-first culling for shapes and the debug overlay
+    // (anything anchored to a face BFS skipped is implicitly off-screen
+    // or sub-pixel). Region outlines deliberately skip this map and
+    // anchor through `fullComposites` instead — their stored polygon
+    // can be much larger than the anchor face after centroid
+    // relocation, so a sub-pixel anchor face does not imply a sub-pixel
+    // outline.
+    const visibleComposites = new Map<Face, M.Matrix2D>();
     const extras = new Map<Face, M.Matrix2D[]>();
     const visibility = new Map<Face, number>();
     for (const img of images) {
       const aabb = projectFaceScreenAABB(img.face, img.composite, view);
       const visible = imageIsVisible(aabb, viewport);
-      if (!composites.has(img.face)) {
-        composites.set(img.face, img.composite);
+      if (!visibleComposites.has(img.face)) {
+        visibleComposites.set(img.face, img.composite);
         visibility.set(img.face, visible ? 1 : 0);
       } else if (visible) {
         // Off-screen ghost images are recorded by BFS (they sit just past
@@ -2167,15 +2325,14 @@ export class FolkAtlas extends ReactiveElement {
       }
     }
 
-    this.#lastComposites = composites;
     this.#lastImages = images;
     this.#lastVisibility = visibility;
-    this.#renderShapes(composites);
+    this.#renderShapes(visibleComposites);
     this.#ghosts.update(extras);
-    this.#renderRegions(composites, extras, view);
+    this.#renderRegions(fullComposites, extras, view);
     if (this.debug) {
       this.#debug.style.display = '';
-      this.#renderDebug(composites, view);
+      this.#renderDebug(visibleComposites, view);
     } else {
       this.#debug.style.display = 'none';
     }
@@ -2235,33 +2392,67 @@ export class FolkAtlas extends ReactiveElement {
   ) {
     // Even when no regions are tracked we still want to drop any stale
     // back entries (e.g. last region was removed this frame).
-    if (this.#regionFaces.size === 0 && this.#regionBackEntries.size === 0) return;
+    if (this.#regionOutlines.size === 0 && this.#regionBackEntries.size === 0) return;
 
     const survivors = new Set(this.#atlas.faces);
 
-    const projectRing = (
-      face: Face,
+    const rect = this.getBoundingClientRect();
+    // Clip rect for the SVG polygons. Slightly larger than the viewport so
+    // the stroke (which sits ON the polygon edge) lands just off-screen
+    // when the polygon surrounds the viewport — otherwise clipping pulls
+    // the dashed border in to the viewport edge and it'd look like every
+    // ancestor region was outlined at the screen edge. The margin only
+    // needs to exceed the stroke half-width; 32px is plenty for a 1.5px
+    // stroke and keeps the clipped polygon bounded for SVG paint.
+    const cssW = Math.max(0, rect.width);
+    const cssH = Math.max(0, rect.height);
+    const STROKE_MARGIN = 32;
+    const outlineClipRect: ClipRect = {
+      minX: -STROKE_MARGIN,
+      minY: -STROKE_MARGIN,
+      maxX: cssW + STROKE_MARGIN,
+      maxY: cssH + STROKE_MARGIN,
+    };
+
+    /**
+     * Project the outline's stored polygon through `view · composite` and
+     * clip it to a slightly-enlarged viewport rect. The polygon lives in
+     * `outline.face`'s local frame; the caller passes the composite for
+     * that face (or one of its BFS extra-image composites for ghosts).
+     *
+     * Why we clip here (and don't just render the raw projected polygon):
+     * a parent region's outline is stored in its current anchor face's
+     * local frame, and after the centroid relocator has walked it down
+     * ~20 levels of `S=1.6` rescale that frame is ~12 000× smaller than
+     * the outermost root frame. From inside (root === anchor) the
+     * polygon's vertex coords are ~12 000× the original screen size — i.e.
+     * millions of pixels off in every direction, surrounding the viewport.
+     * Drawing such a polygon "as is" makes the SVG renderer chew through
+     * a huge geometric range every frame even though nothing in the
+     * polygon's *boundary* is on screen. Sutherland–Hodgman against the
+     * viewport reduces the surrounds-viewport case to the clip rect itself
+     * (4 vertices, bounded coords) — the green tint still fills the screen
+     * (correct: the user is inside this region) but the dashed stroke
+     * lands at `±STROKE_MARGIN` off-viewport, which is not painted. For
+     * the off-screen case the clip output is empty and the caller drops
+     * the polygon entirely. For the "boundary partially on screen" case
+     * the clip preserves the visible portion verbatim.
+     *
+     * The control-anchor centroid is taken from the *clipped* ring so it
+     * always sits inside the visible region (or vanishes with it). When
+     * the clip is empty the caller hides the controls.
+     */
+    const projectOutline = (
+      outline: RegionOutline,
       composite: M.Matrix2D,
-    ): { ring: Point[]; cx: number; cy: number; n: number } => {
+    ): { clipped: Point[]; cx: number; cy: number } => {
       const screen = M.multiply(view, composite);
       const ring: Point[] = [];
-      let cx = 0;
-      let cy = 0;
-      let n = 0;
-      for (const j of face.junctions()) {
-        const local =
-          j.kind === 'finite'
-            ? { x: j.x, y: j.y }
-            : { x: j.x * FolkAtlas.IDEAL_RADIUS, y: j.y * FolkAtlas.IDEAL_RADIUS };
-        const p = M.applyToPoint(screen, local);
-        ring.push(p);
-        if (j.kind === 'finite') {
-          cx += p.x;
-          cy += p.y;
-          n++;
-        }
-      }
-      return { ring, cx, cy, n };
+      for (const v of outline.vertices) ring.push(M.applyToPoint(screen, v));
+      const clipped = clipPolygonToRect(ring, outlineClipRect);
+      if (clipped.length === 0) return { clipped, cx: 0, cy: 0 };
+      const c = polygonCentroid(clipped);
+      return { clipped, cx: c.x, cy: c.y };
     };
 
     const setPolyPoints = (poly: SVGPolygonElement, ring: ReadonlyArray<Point>) => {
@@ -2273,32 +2464,43 @@ export class FolkAtlas extends ReactiveElement {
       poly.setAttribute('points', s);
     };
 
-    for (const [region, face] of this.#regionFaces) {
+    for (const [region, outline] of this.#regionOutlines) {
       const back = this.#getOrCreateRegionBackEntry(region);
-      if (!survivors.has(face)) {
+      if (!survivors.has(outline.face)) {
         region.setVisible(false);
         back.svg.style.display = 'none';
         continue;
       }
-      const composite = composites.get(face);
+      const composite = composites.get(outline.face);
       if (!composite) {
+        region.setVisible(false);
+        back.svg.style.display = 'none';
+        continue;
+      }
+      const primary = projectOutline(outline, composite);
+      if (primary.clipped.length === 0) {
         region.setVisible(false);
         back.svg.style.display = 'none';
         continue;
       }
       region.setVisible(true);
       back.svg.style.display = '';
-      const primary = projectRing(face, composite);
-      setPolyPoints(back.primary, primary.ring);
-      if (primary.n > 0) {
-        region.setControlsScreenPosition(primary.cx / primary.n, primary.cy / primary.n);
+      setPolyPoints(back.primary, primary.clipped);
+      region.setControlsScreenPosition(primary.cx, primary.cy);
+      // Ghost outlines: every additional BFS image of the anchor face. For
+      // a wrapped region viewed from outside there are typically zero; from
+      // inside the wrap (root === anchor face) there are many — the
+      // repeating cylinder/torus tiles. The same stored polygon is
+      // projected and clipped through each extra composite; empty clips
+      // are dropped so we never write extreme coords into the SVG.
+      const more = extras.get(outline.face);
+      const ghostRings: Point[][] = [];
+      if (more) {
+        for (const c of more) {
+          const proj = projectOutline(outline, c);
+          if (proj.clipped.length > 0) ghostRings.push(proj.clipped);
+        }
       }
-      // Ghost outlines: every additional BFS image of this face. For a
-      // wrapped region viewed from outside there are typically zero; from
-      // inside the wrap (root === region face) there are many — the
-      // repeating cylinder/torus tiles.
-      const more = extras.get(face);
-      const ghostRings = more && more.length > 0 ? more.map((c) => projectRing(face, c).ring) : [];
       while (back.ghosts.length < ghostRings.length) {
         const g = document.createElementNS(SVG_NS, 'polygon');
         g.classList.add('ghost');
@@ -2319,9 +2521,9 @@ export class FolkAtlas extends ReactiveElement {
 
     // Garbage-collect back entries for regions that are no longer tracked
     // (the region element was removed without going through #removeRegion).
-    if (this.#regionBackEntries.size > this.#regionFaces.size) {
+    if (this.#regionBackEntries.size > this.#regionOutlines.size) {
       for (const region of this.#regionBackEntries.keys()) {
-        if (!this.#regionFaces.has(region)) this.#removeRegionBackEntry(region);
+        if (!this.#regionOutlines.has(region)) this.#removeRegionBackEntry(region);
       }
     }
   }
@@ -2638,6 +2840,24 @@ function intersectX(a: Point, b: Point, x: number): Point {
 function intersectY(a: Point, b: Point, y: number): Point {
   const t = (y - a.y) / (b.y - a.y);
   return { x: a.x + t * (b.x - a.x), y };
+}
+
+/**
+ * Build an outline from `face`'s finite vertices. The polygon vertices live in
+ * `face`'s local frame, so projecting through `face`'s composite gives the
+ * face's on-screen polygon at construction time. As the atlas mutates around
+ * the polygon, the outline's anchor face migrates (see
+ * `FolkAtlas#relocateOrphanedRegions`) but its on-screen geometry is preserved.
+ *
+ * Ideal junctions are dropped — outlines describe finite carve rectangles, not
+ * the seed-atlas wedges that reach to infinity.
+ */
+function makeOutlineFromFace(face: Face): RegionOutline {
+  const vertices: Point[] = [];
+  for (const j of face.junctions()) {
+    if (j.kind === 'finite') vertices.push({ x: j.x, y: j.y });
+  }
+  return { face, vertices };
 }
 
 /**
