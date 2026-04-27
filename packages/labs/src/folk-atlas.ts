@@ -2467,6 +2467,11 @@ export class FolkAtlas extends ReactiveElement {
      * always sits inside the visible region (or vanishes with it). When
      * the clip is empty the caller hides the controls.
      */
+    // Inset the controls panel a few pixels in from the polygon's
+    // top-left corner so it doesn't ride flush against the dashed
+    // boundary stroke. The panel still anchors at *its* top-left
+    // (see `setControlsScreenPosition`), so this is a one-sided pad.
+    const CONTROLS_INSET = 8;
     const projectOutline = (
       outline: RegionOutline,
       composite: M.Matrix2D,
@@ -2476,8 +2481,22 @@ export class FolkAtlas extends ReactiveElement {
       for (const v of outline.vertices) ring.push(M.applyToPoint(screen, v));
       const clipped = clipPolygonToRect(ring, outlineClipRect);
       if (clipped.length === 0) return { clipped, cx: 0, cy: 0 };
-      const c = polygonCentroid(clipped);
-      return { clipped, cx: c.x, cy: c.y };
+      // Anchor controls at the top-left of the *clipped* polygon's AABB
+      // (intersected with the viewport so it stays on screen even when
+      // the user is "inside" a giant region whose true corner is far
+      // off-canvas). The clipped ring is bounded by `outlineClipRect`,
+      // so its AABB is too — coords here are guaranteed finite.
+      let minX = Infinity;
+      let minY = Infinity;
+      for (const p of clipped) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+      }
+      // Re-clamp into the actual viewport (the clipped polygon may
+      // extend up to `STROKE_MARGIN` off-screen) and add the inset.
+      const cx = Math.max(0, minX) + CONTROLS_INSET;
+      const cy = Math.max(0, minY) + CONTROLS_INSET;
+      return { clipped, cx, cy };
     };
 
     const setPolyPoints = (poly: SVGPolygonElement, ring: ReadonlyArray<Point>) => {

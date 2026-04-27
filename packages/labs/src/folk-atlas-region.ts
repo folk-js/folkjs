@@ -223,13 +223,16 @@ export class FolkAtlasRegion extends ReactiveElement {
   // -------------------------------------------------------------------------
 
   /**
-   * Position the controls panel in screen coordinates. The atlas computes
-   * `(x, y)` as a sensible anchor for the bound face (e.g. its on-screen
-   * centroid). The outline itself is rendered separately by the atlas in
-   * its back layer.
+   * Position the controls panel in screen coordinates. The atlas
+   * computes `(x, y)` as the *top-left* anchor for the panel inside the
+   * bound face's projected polygon (typically the clipped polygon's
+   * top-left + inset). Anchoring at the corner instead of the centroid
+   * keeps the controls out of the way of nested regions, which would
+   * otherwise stack their panels on top of each other at the shared
+   * geometric centre.
    */
   setControlsScreenPosition(x: number, y: number): void {
-    this.#controls.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+    this.#controls.style.transform = `translate(${x}px, ${y}px)`;
   }
 
   /** Show / hide the entire region (atlas calls this when the face is gone). */
