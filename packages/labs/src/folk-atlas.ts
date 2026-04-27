@@ -650,7 +650,13 @@ export class FolkAtlas extends ReactiveElement {
   // ---- Child wiring ----
 
   #onChildAdded(el: Element) {
-    if (el instanceof FolkAtlasShape) this.#registerShape(el);
+    // Skip shapes already registered (e.g. flushed synchronously during
+    // `loadScene` before a `switchRoot`). Re-registering would re-interpret
+    // the now-face-local `(x, y)` as a fresh seed in the current root frame,
+    // moving the shape to a different face.
+    if (el instanceof FolkAtlasShape && !this.#shapeFaces.has(el)) {
+      this.#registerShape(el);
+    }
   }
 
   #onChildRemoved(el: Element) {
@@ -1114,6 +1120,25 @@ export class FolkAtlas extends ReactiveElement {
       return;
     }
     const sceneRoot = builder(this);
+    // Flush any shapes the builder appended *before* switching root.
+    // `MutationObserver` callbacks run as microtasks, so by the time they
+    // fire, the root has already moved to `sceneRoot` and a shape's
+    // authored `(x, y)` (which `#placeInRootFrame` interprets in the
+    // *current* root frame) is silently re-interpreted in the new
+    // frame. For the wrap-region scenes this routinely lands the shape
+    // outside its intended face — visible on the `torus` scene as a
+    // shape that appears one wrap-repeat down/right of the face it's
+    // meant to be inside (face 7's local frame is anchored at its
+    // bottom-right corner, so seed coords like (170, 170) sit well
+    // outside the (-220,-220)..(0,0) polygon and only the wrapped
+    // ghost lands on screen). Registering synchronously while the old
+    // root is still in effect resolves the seeds in the frame the
+    // scene author actually meant.
+    for (const child of this.children) {
+      if (child instanceof FolkAtlasShape && !this.#shapeFaces.has(child)) {
+        this.#registerShape(child);
+      }
+    }
     if (sceneRoot && this.#atlas.faces.includes(sceneRoot)) {
       this.#atlas.switchRoot(sceneRoot);
     }
