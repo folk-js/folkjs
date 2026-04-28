@@ -13,14 +13,21 @@ import { leftOfDirectedEdge, leftOfDirectedEdgeStrict } from './line.ts';
 
 /**
  * Test whether `p` lies inside (or on the boundary of) the CCW convex polygon
- * defined by `verts` (k ≥ 3). Junctions may be finite or ideal.
+ * defined by `verts` (k ≥ 2). Junctions may be finite or ideal.
  *
  * Implementation: n half-plane tests. Correctness assumes the polygon is
  * convex and CCW (both invariants enforced elsewhere — see {@link isPolygonCCW}).
+ *
+ * **Digon case (k=2)**: the two ideal vertices alone don't constrain finite
+ * points — the actual constraint is carried by chord half-edges, which
+ * `Face.contains` tests separately. We return `true` here so the chord
+ * tests can do the work; for non-ideal-antipodal digons (degenerate),
+ * `isPolygonCCW` already rejects them at face construction.
  */
 export function polygonContains(verts: ReadonlyArray<Junction>, p: Point): boolean {
   const n = verts.length;
-  if (n < 3) return false;
+  if (n < 2) return false;
+  if (n === 2) return true;
   for (let i = 0; i < n; i++) {
     if (!leftOfDirectedEdge(verts[i], verts[(i + 1) % n], p)) return false;
   }
@@ -33,7 +40,8 @@ export function polygonContainsStrict(
   p: Point,
 ): boolean {
   const n = verts.length;
-  if (n < 3) return false;
+  if (n < 2) return false;
+  if (n === 2) return true;
   for (let i = 0; i < n; i++) {
     if (!leftOfDirectedEdgeStrict(verts[i], verts[(i + 1) % n], p)) return false;
   }
@@ -41,10 +49,17 @@ export function polygonContainsStrict(
 }
 
 /**
- * Whether the convex polygon defined by `verts` (k ≥ 3) is wound CCW. Handles
+ * Whether the convex polygon defined by `verts` (k ≥ 2) is wound CCW. Handles
  * any mix of finite and ideal vertices, including all-ideal polygons whose
  * boundary is the line at infinity (the four-wedge collapse / "infinite plane"
  * seed).
+ *
+ * **Digon case (k=2)**: only valid if both vertices are ideal and antipodal
+ * (the two limit directions of a real line through R²). Such a digon is a
+ * "slab" face bounded by 2 parallel chord HEs — orientation is encoded in
+ * the chord HE directions, not in the vertex sequence, so this predicate
+ * just validates the vertex configuration and trusts HE-level checks
+ * (`validateAtlas`) for the rest.
  *
  * Convexity contract: every consecutive triple `(a, b, c)` must satisfy
  * `c` lies left-of-or-on directed edge `a → b` (no right turns). At least
@@ -72,7 +87,14 @@ export function polygonContainsStrict(
  */
 export function isPolygonCCW(verts: ReadonlyArray<Junction>): boolean {
   const n = verts.length;
-  if (n < 3) return false;
+  if (n < 2) return false;
+  if (n === 2) {
+    const a = verts[0];
+    const b = verts[1];
+    if (a.kind !== 'ideal' || b.kind !== 'ideal') return false;
+    const eps = 1e-9;
+    return Math.abs(a.x + b.x) <= eps && Math.abs(a.y + b.y) <= eps;
+  }
   if (verts.every((v) => v.kind === 'ideal')) {
     let pos = 0;
     for (let i = 0; i < n; i++) {
