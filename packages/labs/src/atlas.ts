@@ -1,5 +1,33 @@
 import * as M from '@folkjs/geometry/Matrix2D';
 import type { Point } from '@folkjs/geometry/Vector2';
+import {
+  applyLinearToDirection,
+  cross,
+  isPolygonCCW,
+  type Junction,
+  junctionInTranslatedFrame,
+  leftOfDirectedEdge,
+  leftOfDirectedEdgeStrict,
+  parameterOnSegment,
+  polygonContains,
+  polygonContainsStrict,
+  sameIdealDirection,
+} from './atlas/geometry/index.ts';
+
+// Re-export the geometry primitives so existing consumers of `./atlas.ts`
+// continue to work unchanged. New code should import directly from
+// `./atlas/geometry/index.ts`.
+export {
+  applyLinearToDirection,
+  cross,
+  isPolygonCCW,
+  type Junction,
+  leftOfDirectedEdge,
+  leftOfDirectedEdgeStrict,
+  polygonContains,
+  polygonContainsStrict,
+  sameIdealDirection,
+};
 
 // ============================================================================
 // Sparse Ideal Atlas — pure data structure (edge-primary)
@@ -68,25 +96,9 @@ import type { Point } from '@folkjs/geometry/Vector2';
 // pure translations (s = 1); the scale degree of freedom is reserved
 // for nesting / infinite-zoom regions.
 
-// ----------------------------------------------------------------------------
-// Junction (a derived "vertex" descriptor)
-// ----------------------------------------------------------------------------
-
-/**
- * A junction is a kind + a pair of numbers, in some face's local frame.
- *
- *  - `kind: 'finite'` — `(x, y)` is a face-local position.
- *  - `kind: 'ideal'`  — `(x, y)` is a unit direction in the face-local frame
- *    representing "at infinity in this direction".
- *
- * Junctions are derived data (read off `HalfEdge.originKind/ox/oy`); they are
- * not separately allocated objects in the atlas.
- */
-export interface Junction {
-  kind: 'finite' | 'ideal';
-  x: number;
-  y: number;
-}
+// The `Junction` value type and the oriented-projective-plane primitives that
+// operate on it now live in `./atlas/geometry/`. They are re-exported at the
+// top of this file for backward compatibility.
 
 // ----------------------------------------------------------------------------
 // HalfEdge
@@ -262,194 +274,32 @@ export function* aroundJunction(he: HalfEdge): IterableIterator<HalfEdge> {
 }
 
 // ----------------------------------------------------------------------------
-// Geometry primitives — a partially-projective geometry library
+// Geometry primitives
 // ----------------------------------------------------------------------------
 //
 // All atlas computation lives on top of a small set of geometry primitives
 // that work uniformly on `Junction`s — i.e. on the affine plane R² extended
 // with a directional "line at infinity" (each ideal junction is a unit
-// direction; antipodes are distinct points). Things to find here, in
-// increasing-level order:
+// direction; antipodes are distinct points). The pure-geometry layer lives
+// in `./atlas/geometry/`:
 //
-//   - low-level: `cross`, `applyLinearToDirection`
-//   - half-plane / convexity predicates that accept any mix of finite and
-//     ideal vertices: `leftOfDirectedEdge[Strict]`, `polygonContains[Strict]`,
-//     `sameIdealDirection`, `isPolygonCCW`
-//   - parameterisation helpers on edges (defined further down, near walkLine):
-//     `pointOnHEAtU`, `uOfPointOnHE`, `intersectLineWithHE`, `findExit`
+//   - low-level (`./atlas/geometry/point.ts`): `cross`, `applyLinearToDirection`
+//   - junctions (`./atlas/geometry/junction.ts`): `Junction`,
+//     `sameIdealDirection`, `junctionInTranslatedFrame`
+//   - line predicates (`./atlas/geometry/line.ts`):
+//     `leftOfDirectedEdge[Strict]`, `parameterOnSegment`
+//   - convex polygons (`./atlas/geometry/polygon.ts`):
+//     `polygonContains[Strict]`, `isPolygonCCW`
+//
+// Atlas-aware geometry — parameterisation and traversal of `HalfEdge`s —
+// stays here, defined further down near `walkLine`:
+//   - `pointOnHEAtU`, `uOfPointOnHE`, `intersectLineWithHE`, `findExit`
 //   - line traversal: `walkLine` (returns a chain of `FaceCrossing`s)
 //   - boundary-hit utilities: `boundaryHitToJunction`
 //
-// The mutation primitives further down (`splitFaceAtInterior`, `splitFaceAlongEdge`,
-// `subdivideHalfEdge`, `subdivideAtInfinityArc`, …) all consume these.
-
-/** 2D scalar cross product (ax*by - ay*bx). */
-export function cross(ax: number, ay: number, bx: number, by: number): number {
-  return ax * by - ay * bx;
-}
-
-/** Apply only the linear (2x2) part of an affine to a direction vector. */
-export function applyLinearToDirection(
-  m: M.Matrix2DReadonly,
-  d: { x: number; y: number },
-): { x: number; y: number } {
-  return { x: m.a * d.x + m.c * d.y, y: m.b * d.x + m.d * d.y };
-}
-
-/**
- * Whether `p` lies on the left of (or on) the directed edge `a → b`.
- * Junctions may be finite or ideal.
- *
- * - finite → finite: standard half-plane test.
- * - finite → ideal: edge is a ray from `a` in direction `(b.x, b.y)`.
- * - ideal → finite: edge "comes from infinity in direction a" toward `b`;
- *   the locally-effective travel direction is `-a`.
- * - ideal → ideal: edge lies at infinity, doesn't constrain finite query
- *   points; returns `true`.
- */
-export function leftOfDirectedEdge(a: Junction, b: Junction, p: Point): boolean {
-  if (a.kind === 'finite' && b.kind === 'finite') {
-    return cross(b.x - a.x, b.y - a.y, p.x - a.x, p.y - a.y) >= 0;
-  }
-  if (a.kind === 'finite' && b.kind === 'ideal') {
-    return cross(b.x, b.y, p.x - a.x, p.y - a.y) >= 0;
-  }
-  if (a.kind === 'ideal' && b.kind === 'finite') {
-    return cross(a.x, a.y, b.x - p.x, b.y - p.y) >= 0;
-  }
-  return true;
-}
-
-/** Strict version of {@link leftOfDirectedEdge}: `> 0` instead of `≥ 0`. */
-export function leftOfDirectedEdgeStrict(a: Junction, b: Junction, p: Point): boolean {
-  if (a.kind === 'finite' && b.kind === 'finite') {
-    return cross(b.x - a.x, b.y - a.y, p.x - a.x, p.y - a.y) > 0;
-  }
-  if (a.kind === 'finite' && b.kind === 'ideal') {
-    return cross(b.x, b.y, p.x - a.x, p.y - a.y) > 0;
-  }
-  if (a.kind === 'ideal' && b.kind === 'finite') {
-    return cross(a.x, a.y, b.x - p.x, b.y - p.y) > 0;
-  }
-  return true;
-}
-
-/**
- * Test whether `p` lies inside (or on the boundary of) the CCW convex polygon
- * defined by `verts` (k ≥ 3). Junctions may be finite or ideal.
- *
- * Implementation: n half-plane tests. Correctness assumes the polygon is
- * convex and CCW (both invariants enforced elsewhere — see {@link isPolygonCCW}
- * and the convexity check in {@link validateAtlas}).
- */
-export function polygonContains(verts: ReadonlyArray<Junction>, p: Point): boolean {
-  const n = verts.length;
-  if (n < 3) return false;
-  for (let i = 0; i < n; i++) {
-    if (!leftOfDirectedEdge(verts[i], verts[(i + 1) % n], p)) return false;
-  }
-  return true;
-}
-
-/** Strict version: returns `true` only if `p` is strictly interior. */
-export function polygonContainsStrict(
-  verts: ReadonlyArray<Junction>,
-  p: Point,
-): boolean {
-  const n = verts.length;
-  if (n < 3) return false;
-  for (let i = 0; i < n; i++) {
-    if (!leftOfDirectedEdgeStrict(verts[i], verts[(i + 1) % n], p)) return false;
-  }
-  return true;
-}
-
-/**
- * Whether two ideal junctions point in (numerically) the same direction.
- * Used to detect degenerate at-infinity edges where two consecutive vertices
- * share an ideal direction (e.g. the "ends" of a strip rectangle).
- */
-export function sameIdealDirection(a: Junction, b: Junction, eps = 1e-9): boolean {
-  return (
-    a.kind === 'ideal' &&
-    b.kind === 'ideal' &&
-    Math.abs(a.x - b.x) < eps &&
-    Math.abs(a.y - b.y) < eps
-  );
-}
-
-/**
- * Whether the convex polygon defined by `verts` (k ≥ 3) is wound CCW. Handles
- * any mix of finite and ideal vertices except an all-ideal cycle (not produced
- * by our operations and not supported).
- *
- * Convexity contract: every consecutive triple `(a, b, c)` must satisfy
- * `c` lies left-of-or-on directed edge `a → b` (no right turns). At least
- * one turn must be strictly positive (so the polygon isn't entirely degenerate).
- *
- * Two structural exceptions are allowed and *don't* contribute to the turn
- * accounting — both arise naturally in our operations and represent valid
- * convex shapes:
- *
- *  1. **Collinear chain vertices**: `b` is finite and lies on the segment
- *     `a → c` (zero-turn intermediate vertex on a long side). Strip
- *     rectangles use these to twin a single long side to a chain of
- *     neighbouring sub-faces.
- *  2. **Same-ideal-direction edges**: `(a, b)` or `(b, c)` are both ideal
- *     in the same direction (a degenerate at-infinity edge with zero
- *     length). Strip rectangles' two short ends terminate this way.
- */
-export function isPolygonCCW(verts: ReadonlyArray<Junction>): boolean {
-  const n = verts.length;
-  if (n < 3) return false;
-  if (verts.every((v) => v.kind === 'ideal')) {
-    throw new Error('isPolygonCCW: all-ideal polygon not supported');
-  }
-  const R = 1e12;
-  const asFinite = (v: Junction): Point =>
-    v.kind === 'finite' ? { x: v.x, y: v.y } : { x: v.x * R, y: v.y * R };
-
-  // The relaxed left-of test admits a tiny negative slack so that
-  // "collinear due to floating-point round-off" isn't classified as a
-  // right turn. Without this, strip rectangles (whose top/bottom edges
-  // are long parallel segments derived from chord vectors and a perp
-  // offset) sometimes register a few ULPs of negative cross at their
-  // collinear chain vertices. The strict turn count is unaffected — it
-  // still requires `> 0`.
-  const COLLINEAR_EPS = 1e-9;
-
-  let positiveCount = 0;
-  for (let i = 0; i < n; i++) {
-    const a = verts[i];
-    const b = verts[(i + 1) % n];
-    const c = verts[(i + 2) % n];
-    if (sameIdealDirection(a, b) || sameIdealDirection(b, c)) continue;
-    const cFin = asFinite(c);
-    const x = signedTurn(a, b, cFin);
-    if (x < -COLLINEAR_EPS) return false;
-    if (x > 0) positiveCount++;
-  }
-  return positiveCount > 0;
-}
-
-/**
- * Signed cross of edge `a → b` with the vector `a → p`. Used by
- * {@link isPolygonCCW} to admit an ULP-level epsilon on the relaxed
- * (non-strict) check while still calling {@link leftOfDirectedEdgeStrict}
- * for the strict turn count via the sign.
- */
-function signedTurn(a: Junction, b: Junction, p: Point): number {
-  if (a.kind === 'finite' && b.kind === 'finite') {
-    return cross(b.x - a.x, b.y - a.y, p.x - a.x, p.y - a.y);
-  }
-  if (a.kind === 'finite' && b.kind === 'ideal') {
-    return cross(b.x, b.y, p.x - a.x, p.y - a.y);
-  }
-  if (a.kind === 'ideal' && b.kind === 'finite') {
-    return cross(a.x, a.y, b.x - p.x, b.y - p.y);
-  }
-  return 1; // both ideal — sameIdealDirection guard upstream handles this case
-}
+// The mutation primitives further down (`splitFaceAtInterior`,
+// `splitFaceAlongEdge`, `subdivideHalfEdge`, `subdivideAtInfinityArc`, …)
+// all consume these.
 
 // ----------------------------------------------------------------------------
 // Atlas
@@ -2122,18 +1972,6 @@ function rewireFaceCycle(face: Face) {
   }
 }
 
-/**
- * Express a junction `j` (in some face's frame) in a frame translated by
- * `+translation` (i.e., where `translation` is the new origin). For finite
- * junctions this subtracts the translation; for ideal directions it's a no-op.
- */
-function junctionInTranslatedFrame(j: Junction, translation: Point): Junction {
-  if (j.kind === 'finite') {
-    return { kind: 'finite', x: j.x - translation.x, y: j.y - translation.y };
-  }
-  return { kind: 'ideal', x: j.x, y: j.y };
-}
-
 function setTwin(
   a: HalfEdge,
   b: HalfEdge,
@@ -3191,25 +3029,4 @@ export interface CutAtlasResult {
  */
 export function cutAtlasByLine(_atlas: Atlas, _crossings: FaceCrossing[], _delta: number): CutAtlasResult {
   throw new Error('cutAtlasByLine: not yet implemented (use walkLine + UI preview for now)');
-}
-
-// ----------------------------------------------------------------------------
-
-
-/**
- * Parameter `t` such that `p = a + t * (b - a)`, or `null` if `p` is not
- * (sufficiently) collinear with the segment.
- */
-function parameterOnSegment(a: Point, b: Point, p: Point, eps = 1e-9): number | null {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len2 = dx * dx + dy * dy;
-  if (len2 < eps * eps) return null;
-  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
-  // Collinearity check: perpendicular component must be tiny.
-  const px = a.x + t * dx;
-  const py = a.y + t * dy;
-  const perp2 = (p.x - px) * (p.x - px) + (p.y - py) * (p.y - py);
-  if (perp2 > eps * eps * Math.max(1, len2)) return null;
-  return t;
 }
