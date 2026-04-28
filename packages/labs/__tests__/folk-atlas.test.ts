@@ -5,7 +5,6 @@ import {
   addInnerLoop,
   Atlas,
   aroundJunction,
-  boundaryHitToJunction,
   createInitialAtlas,
   Face,
   HalfEdge,
@@ -25,9 +24,7 @@ import {
   rebaseTwinTransformByTranslation,
   splitAtlasAlongLine,
   splitFaceAlongChord,
-  splitFaceAlongEdge,
   splitFaceAlongLine,
-  splitFaceAtInterior,
   splitFaceAtVertices,
   subdivideAtInfinityArc,
   subdivideHalfEdge,
@@ -1271,183 +1268,6 @@ describe('Atlas.locate', () => {
 });
 
 // ---------------------------------------------------------------------------
-// splitFaceAtInterior
-// ---------------------------------------------------------------------------
-
-describe('splitFaceAtInterior', () => {
-  it('replaces 1 face with 3 sub-faces', () => {
-    const atlas = createInitialAtlas();
-    const before = atlas.faces.length;
-    // Find the face containing (100, 100) — it's whichever wedge covers +X, +Y.
-    const target = atlas.locate({ x: 100, y: 100 })!;
-    splitFaceAtInterior(atlas, target, { x: 100, y: 100 });
-    assert.equal(atlas.faces.length, before + 2);
-  });
-
-  it('passes validateAtlas after splitting an inner face', () => {
-    const atlas = createInitialAtlas();
-    const target = atlas.locate({ x: 100, y: 100 })!;
-    splitFaceAtInterior(atlas, target, { x: 100, y: 100 });
-    assert.doesNotThrow(() => validateAtlas(atlas));
-  });
-
-  it('preserves point coverage for finite samples', () => {
-    const atlas = createInitialAtlas();
-    const target = atlas.locate({ x: 100, y: 100 })!;
-    splitFaceAtInterior(atlas, target, { x: 100, y: 100 });
-    const samples: Array<[number, number]> = [
-      [10, 10],
-      [50, 50],
-      [200, 50],
-      [50, 200],
-      [-5, 5],
-      [-5, -5],
-      [5, -5],
-    ];
-    for (const [x, y] of samples) {
-      assert.ok(atlas.locate({ x, y }) !== null, `lost coverage at (${x}, ${y})`);
-    }
-  });
-
-  it('the inserted point is the same physical point across all 3 sub-faces', () => {
-    const atlas = createInitialAtlas();
-    const target = atlas.locate({ x: 100, y: 100 })!;
-    const result = splitFaceAtInterior(atlas, target, { x: 100, y: 100 });
-    // The interior point lives at (0, 0) in each sub-face's local frame.
-    const composites = atlas.computeComposites();
-    const rootPositions = result.faces.map((f) =>
-      M.applyToPoint(composites.get(f)!, { x: 0, y: 0 }),
-    );
-    for (let i = 1; i < 3; i++) {
-      assert.ok(
-        Math.abs(rootPositions[i].x - rootPositions[0].x) < 1e-9 &&
-          Math.abs(rootPositions[i].y - rootPositions[0].y) < 1e-9,
-        `sub-face ${i} disagrees on inserted-point root position`,
-      );
-    }
-  });
-
-  it('throws when point is outside the face', () => {
-    const atlas = createInitialAtlas();
-    // Pick the +X+Y wedge and try to split at (-100, -100), clearly outside.
-    const target = atlas.locate({ x: 100, y: 100 })!;
-    assert.throws(
-      () => splitFaceAtInterior(atlas, target, { x: -100, y: -100 }),
-      /not strictly interior/,
-    );
-  });
-
-  it('throws when point lies on a face boundary', () => {
-    const atlas = createInitialAtlas();
-    const target = atlas.locate({ x: 100, y: 100 })!;
-    // A point on the +x axis (boundary of two quadrants) — pick one along the
-    // first half-edge of the face.
-    assert.throws(
-      () => splitFaceAtInterior(atlas, target, { x: 100, y: 0 }),
-      /not strictly interior/,
-    );
-  });
-
-  it('preserves composites of unrelated faces across a split', () => {
-    const atlas = createInitialAtlas();
-    const before = atlas.computeComposites();
-    // Split a non-root face.
-    const target = atlas.faces.find((f) => f !== atlas.root)!;
-    // Pick an interior point: face's interior contains a finite point along
-    // the bisector of its two ideal directions, near (0, 0).
-    const a = target.halfEdges[1];
-    const b = target.halfEdges[2];
-    const pt = { x: (a.ox + b.ox) * 50, y: (a.oy + b.oy) * 50 };
-    splitFaceAtInterior(atlas, target, pt);
-    const after = atlas.computeComposites();
-    for (const f of atlas.faces) {
-      const b0 = before.get(f);
-      const a0 = after.get(f);
-      if (b0 && a0) {
-        assert.ok(M.equals(a0, b0), 'composite for surviving face changed unexpectedly');
-      }
-    }
-  });
-
-  // TODO: add a regression test that exercises non-translation transforms.
-  // The current pure-translation paths in splitFaceAtInterior/splitFaceAlongEdge
-  // mean that the matrix-multiplication ORDER for transform composition is
-  // not exercised — translations commute. Once non-identity (e.g. scale) edge
-  // transforms exist (either via expand/contract operations or a synthetic
-  // constructor for testing), add tests that catch the order bug.
-
-  it('handles repeated splits without violating invariants', () => {
-    const atlas = createInitialAtlas();
-    const t1 = atlas.locate({ x: 100, y: 100 })!;
-    splitFaceAtInterior(atlas, t1, { x: 100, y: 100 });
-    validateAtlas(atlas);
-    const t2 = atlas.locate({ x: -50, y: 50 });
-    assert.ok(t2, 'no face contains (-50, 50) in root coords');
-    const composites = atlas.computeComposites();
-    const localPoint = M.applyToPoint(M.invert(composites.get(t2!)!), { x: -50, y: 50 });
-    splitFaceAtInterior(atlas, t2!, localPoint);
-    validateAtlas(atlas);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// splitFaceAlongEdge
-// ---------------------------------------------------------------------------
-
-describe('splitFaceAlongEdge', () => {
-  it('splits a finite-finite edge after a prior interior split', () => {
-    const atlas = createInitialAtlas();
-    const t = atlas.locate({ x: 100, y: 100 })!;
-    splitFaceAtInterior(atlas, t, { x: 100, y: 100 });
-    validateAtlas(atlas);
-
-    const candidate = atlas.halfEdges.find(
-      (h) =>
-        h.originKind === 'finite' &&
-        h.next.originKind === 'finite' &&
-        h.twin !== null &&
-        h.twin.originKind === 'finite' &&
-        h.twin.next.originKind === 'finite',
-    );
-    assert.ok(candidate, 'expected a finite-finite half-edge after interior split');
-    const beforeFaces = atlas.faces.length;
-    const mid = {
-      x: (candidate!.ox + candidate!.next.ox) / 2,
-      y: (candidate!.oy + candidate!.next.oy) / 2,
-    };
-    splitFaceAlongEdge(atlas, candidate!, mid);
-    assert.equal(atlas.faces.length, beforeFaces + 2, 'expected +2 faces (each side split into 2)');
-    assert.doesNotThrow(() => validateAtlas(atlas));
-  });
-
-  it('throws when point is not on the edge', () => {
-    const atlas = createInitialAtlas();
-    const t = atlas.locate({ x: 100, y: 100 })!;
-    splitFaceAtInterior(atlas, t, { x: 100, y: 100 });
-    const candidate = atlas.halfEdges.find(
-      (h) => h.originKind === 'finite' && h.next.originKind === 'finite' && h.twin !== null,
-    )!;
-    assert.throws(
-      () => splitFaceAlongEdge(atlas, candidate, { x: 1000, y: 1000 }),
-      /not strictly between/,
-    );
-  });
-
-  it('throws when point is at an edge endpoint', () => {
-    const atlas = createInitialAtlas();
-    const t = atlas.locate({ x: 100, y: 100 })!;
-    splitFaceAtInterior(atlas, t, { x: 100, y: 100 });
-    const candidate = atlas.halfEdges.find(
-      (h) => h.originKind === 'finite' && h.next.originKind === 'finite' && h.twin !== null,
-    )!;
-    assert.throws(
-      () => splitFaceAlongEdge(atlas, candidate, { x: candidate.ox, y: candidate.oy }),
-      /not strictly between/,
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
 // walkLine
 // ---------------------------------------------------------------------------
 
@@ -1512,54 +1332,6 @@ describe('walkLine', () => {
 });
 
 // ---------------------------------------------------------------------------
-// boundaryHitToJunction
-// ---------------------------------------------------------------------------
-
-describe('boundaryHitToJunction', () => {
-  it('finite hit → finite junction at the hit point', () => {
-    const atlas = createInitialAtlas();
-    const ne = atlas.locate({ x: 3, y: 5 })!;
-    void ne;
-    const j = boundaryHitToJunction({
-      he: atlas.halfEdges[0],
-      point: { x: 7, y: 11 },
-      u: 0.5,
-      idealDir: null,
-    });
-    assert.equal(j.kind, 'finite');
-    assert.equal(j.x, 7);
-    assert.equal(j.y, 11);
-  });
-
-  it('at-infinity-arc hit → ideal junction in the line direction', () => {
-    const atlas = createInitialAtlas();
-    const j = boundaryHitToJunction({
-      he: atlas.halfEdges[0],
-      point: null,
-      u: null,
-      idealDir: { x: 0.6, y: 0.8 },
-    });
-    assert.equal(j.kind, 'ideal');
-    assert.equal(j.x, 0.6);
-    assert.equal(j.y, 0.8);
-  });
-
-  it('throws when hit has neither point nor idealDir', () => {
-    const atlas = createInitialAtlas();
-    assert.throws(
-      () =>
-        boundaryHitToJunction({
-          he: atlas.halfEdges[0],
-          point: null,
-          u: null,
-          idealDir: null,
-        }),
-      /neither point nor idealDir/,
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
 // subdivideHalfEdge
 // ---------------------------------------------------------------------------
 
@@ -1615,11 +1387,11 @@ describe('subdivideHalfEdge', () => {
     assert.doesNotThrow(() => validateAtlas(atlas));
   });
 
-  it('subdivides a finite-finite half-edge after a prior interior split', () => {
+  it('subdivides a finite-finite half-edge after a prior spoke subdivision', () => {
     const atlas = createInitialAtlas();
-    // Make a finite-finite edge by splitting an interior of one wedge.
-    const ne = atlas.locate({ x: 100, y: 100 })!;
-    splitFaceAtInterior(atlas, ne, { x: 100, y: 100 });
+    // Make a finite-finite edge by subdividing the +x spoke.
+    const spoke = findPlusXSpoke(atlas);
+    subdivideHalfEdge(atlas, spoke, { x: 5, y: 0 });
 
     const ff = atlas.halfEdges.find(
       (h) =>
@@ -1627,7 +1399,7 @@ describe('subdivideHalfEdge', () => {
         h.next.originKind === 'finite' &&
         h.twin !== null,
     );
-    assert.ok(ff, 'no finite-finite half-edge available after interior split');
+    assert.ok(ff, 'no finite-finite half-edge available after spoke subdivision');
 
     const heCount0 = atlas.halfEdges.length;
     const fk0 = ff!.face.halfEdges.length;

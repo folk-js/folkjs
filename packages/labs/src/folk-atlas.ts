@@ -15,8 +15,6 @@ import {
   splitFaceAlongLine,
   translationToWrap,
   unlinkEdgeFromTwin,
-  untwinEdges,
-  wrapEdges,
   type AtlasImage,
   type SplitAtlasAlongLineResult,
   type InsertStripResult,
@@ -25,25 +23,6 @@ import { FolkAtlasRegion } from './folk-atlas-region.ts';
 import { FolkAtlasShape } from './folk-atlas-shape.ts';
 import { ShapeGhostRenderer } from './folk-atlas-ghosts.ts';
 import { SCENES, listSceneNames, type SceneBuilder } from './folk-atlas-scenes.ts';
-
-export {
-  aroundJunction,
-  Atlas,
-  createInitialAtlas,
-  Face,
-  HalfEdge,
-  linkEdgeToTwin,
-  rebaseTwinTransform,
-  rebaseTwinTransformByTranslation,
-  rescaleFaceFrame,
-  splitFaceAtInterior,
-  splitFaceAlongEdge,
-  translationToWrap,
-  unlinkEdgeFromTwin,
-  untwinEdges,
-  validateAtlas,
-  wrapEdges,
-} from './atlas.ts';
 
 /** Which pair of opposite edges of a region are wrapped. */
 export type RegionWrapAxis = 'horizontal' | 'vertical';

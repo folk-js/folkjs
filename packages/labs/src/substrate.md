@@ -119,7 +119,7 @@ stitch(e2, e5, T_d2);
 - **The runtime atlas is a stateful object.** Methods mutate in place and return the relevant new structural pieces (`Face`, `Edge`, `Loop`, `Stitch`, `Link`).
 - **Every structural primitive has a paired inverse function.** `stitch` ↔ `unstitch`, `link` ↔ `unlink`, `createFace` ↔ `deleteFace`, `splitEdge` ↔ `joinEdges`, `splitFace` ↔ `mergeFaces`. The inverse is another function call, not a record. No `Move`/`Op`/`Surgery` type to construct.
 - **Parametric changes are setters, not surgery.** Moving a face, rotating it, dragging a shape, scaling — these change values on existing structure (`face.frame = newFrame`, `shape.position = newPosition`). They don't go through the surgery API; they're plain mutations.
-- **Composite operations** (today's `splitFaceAtInterior`, `splitFaceAlongChord`, `insertStrip`, etc.) are finite sequences of primitives — named macros with their own validity checks but no extra mutation logic. The line between substrate and surgery library lives at the size of the primitive set.
+- **Composite operations** (today's `splitFaceAlongChord`, `insertStrip`, etc.) are finite sequences of primitives — named macros with their own validity checks but no extra mutation logic. The line between substrate and surgery library lives at the size of the primitive set.
 - **Optional journaling later.** A thin wrapper that records each call gives undo stacks and replay. Doesn't need to be designed for now.
 
 ## The intrinsic API (pseudo-Euclidean inside)
