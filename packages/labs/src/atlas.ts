@@ -6,7 +6,6 @@ import {
   isPolygonCCW,
   isPolygonCW,
   type Junction,
-  junctionInTranslatedFrame,
   leftOfDirectedEdge,
   leftOfDirectedEdgeStrict,
   parameterOnSegment,
@@ -48,13 +47,17 @@ export {
 // `next-around-junction = he.twin?.next` (forward) and
 // `prev-around-junction = he.prev.twin` (backward, used at boundaries).
 //
-// **Canonical face frame.** Each `Face` owns k ≥ 3 half-edges in CCW order
-// forming a convex polygonal boundary. By convention `halfEdges[0]` is the
-// anchor: its origin is finite at face-local `(0, 0)`. This pins down the
-// face's local frame. The implementation today only constructs triangle faces
-// (k = 3); the geometry layer is k-gon-ready so future operations (expand,
-// contract, polygon regions) can introduce higher-k faces without touching
-// the core invariants.
+// **Face frame.** Each `Face` owns k ≥ 3 half-edges in CCW order forming a
+// convex polygonal boundary. The face's local coordinate system is whatever
+// the half-edge origins are expressed in — there's no required vertex at
+// `(0, 0)`. A face also carries an explicit `frame: Matrix2D` that maps its
+// face-local coordinates into a chosen reference (consulted as the seed of
+// {@link Atlas.computeComposites} when this face is the root). This lets a
+// face be "moved" by overwriting `frame`, and lets sub-faces produced by a
+// split inherit their parent's frame so that no re-anchoring is needed.
+// At-infinity-only faces are first-class: a single face whose boundary is
+// k ≥ 3 ideal directions covering S¹ is a valid all-ideal face — the empty
+// scene as one face rather than k wedges meeting at a sentinel origin.
 //
 // **Edge transforms.** Each non-null `h.twin` link is a *one-way* pointer:
 // "exiting through `h` lands you in `h.twin.face`, with frame change
@@ -188,10 +191,16 @@ export class HalfEdge {
  * inner (CW) boundary loops.
  *
  * **Outer loop.** `halfEdges` holds the k ≥ 3 CCW-ordered half-edges of the
- * outer boundary. By convention `halfEdges[0]` is the canonical anchor — its
- * origin is finite at face-local `(0, 0)`. This pins down the face's local
- * frame uniquely. Convexity (every interior angle < π) is a model-level
+ * outer boundary. There is no special "anchor" half-edge: any vertex (finite
+ * or ideal) may sit at `halfEdges[0]`, and the face's local coordinates can
+ * be chosen freely. Convexity (every interior angle < π) is a model-level
  * invariant checked by {@link validateAtlas}.
+ *
+ * Faces with no finite vertex (every `halfEdges[i].origin` is ideal) are
+ * legal — they represent unbounded regions that cover an arc of the line at
+ * infinity. The simplest example is a single all-ideal face whose boundary
+ * is k ideal directions spanning S¹ in CCW order, which is the empty-scene
+ * seed that replaces the four-wedge collapse.
  *
  * **Inner loops.** `innerLoops` holds zero or more CW cycles of half-edges,
  * each describing an inner boundary ("hole") inside the outer one. Inner-loop
@@ -200,29 +209,38 @@ export class HalfEdge {
  * half-edges in another face. Inner loops do NOT have to be convex; they
  * just have to be simple, CW, and lie inside the outer polygon.
  *
- * The implementation today only auto-constructs triangle outer loops with no
- * inner loops; richer structures are introduced via {@link addInnerLoop} or
- * by passing them explicitly to the constructor.
+ * **Frame.** `frame` is an explicit affine transform that says where this
+ * face's face-local coordinates sit in some external reference. It is
+ * consulted as the seed of {@link Atlas.computeComposites} when this face is
+ * the atlas root: `composite(root) := root.frame`. Inter-face composites
+ * still propagate via `inv(he.transform)`, so for non-root faces `frame` is
+ * carried but not consulted directly — it becomes meaningful when the face
+ * becomes the root (via {@link Atlas.switchRoot}). Defaults to identity, so
+ * a face with `frame = identity` behaves exactly as it did before frames
+ * existed.
+ *
+ * Sub-faces produced by {@link splitFaceAtVertices} inherit their parent's
+ * `frame` and store their boundary in the parent's coordinate system,
+ * skipping the per-split re-anchoring that the old anchor convention forced.
+ * Twin transforms across the new chord are identity, and external twins are
+ * preserved unchanged.
  */
 export class Face {
   /** The outer boundary loop, CCW. Always present, k ≥ 3. */
   halfEdges: HalfEdge[];
   /** Inner boundary loops, each CW, each with k ≥ 3. Empty if the face has no holes. */
   innerLoops: HalfEdge[][];
+  /**
+   * Affine map: face-local coordinates → reference frame in which this face
+   * is "pinned" when it acts as the atlas root. See class docstring.
+   */
+  frame: M.Matrix2D;
   /** Shapes assigned to this face (managed by the atlas's owner). */
   shapes: Set<Element> = new Set();
 
-  constructor(halfEdges: HalfEdge[], innerLoops: HalfEdge[][] = []) {
+  constructor(halfEdges: HalfEdge[], innerLoops: HalfEdge[][] = [], frame: M.Matrix2D = M.fromValues()) {
     if (halfEdges.length < 3) {
       throw new Error(`Face needs at least 3 half-edges, got ${halfEdges.length}`);
-    }
-    if (halfEdges[0].originKind !== 'finite') {
-      throw new Error('halfEdges[0] (anchor) must have finite origin');
-    }
-    if (halfEdges[0].ox !== 0 || halfEdges[0].oy !== 0) {
-      throw new Error(
-        `halfEdges[0] (anchor) origin must be at face-local (0, 0); got (${halfEdges[0].ox}, ${halfEdges[0].oy})`,
-      );
     }
     this.halfEdges = halfEdges;
     const k = halfEdges.length;
@@ -246,6 +264,8 @@ export class Face {
         he.face = this;
       }
     }
+
+    this.frame = frame;
   }
 
   /** This face's k outer-loop junctions (origins of its outer half-edges) in CCW order. */
@@ -338,7 +358,7 @@ export function* aroundJunction(he: HalfEdge): IterableIterator<HalfEdge> {
 //
 //   - low-level (`./atlas/geometry/point.ts`): `cross`, `applyLinearToDirection`
 //   - junctions (`./atlas/geometry/junction.ts`): `Junction`,
-//     `sameIdealDirection`, `junctionInTranslatedFrame`
+//     `sameIdealDirection`
 //   - line predicates (`./atlas/geometry/line.ts`):
 //     `leftOfDirectedEdge[Strict]`, `parameterOnSegment`
 //   - convex polygons (`./atlas/geometry/polygon.ts`):
@@ -423,7 +443,13 @@ export class Atlas {
 
   /**
    * BFS from `root`, computing the composite transform (face-local →
-   * root-local) for every reachable face.
+   * "root reference frame") for every reachable face.
+   *
+   * The root face is seeded with `root.frame` (its explicit
+   * face-local-to-reference matrix), so `composite(root) = root.frame`. For
+   * the default `root.frame = identity`, this matches the simpler "composite
+   * is face-local → root-local" interpretation used throughout the rest of
+   * the codebase.
    *
    * Convention: `he.transform` maps `he.face local → he.twin.face local`. So
    * the change-of-frame from neighbour B back to the known face A is
@@ -435,7 +461,7 @@ export class Atlas {
    */
   computeComposites(): Map<Face, M.Matrix2D> {
     const out = new Map<Face, M.Matrix2D>();
-    out.set(this.root, M.fromValues());
+    out.set(this.root, this.root.frame);
     const queue: Face[] = [this.root];
     while (queue.length > 0) {
       const f = queue.shift()!;
@@ -514,7 +540,7 @@ export class Atlas {
     let hitDepthLimit = false;
     let hitImagesLimit = false;
 
-    const queue: AtlasImage[] = [{ face: this.root, composite: M.fromValues(), depth: 0 }];
+    const queue: AtlasImage[] = [{ face: this.root, composite: this.root.frame, depth: 0 }];
     let head = 0;
     while (head < queue.length) {
       const img = queue[head++];
@@ -619,15 +645,19 @@ export class Atlas {
   /**
    * Re-anchor the atlas so that `newRoot` is the root face.
    *
-   * Returns the matrix `C = composite_old(newRoot)` (the new root's composite
-   * in the old root's frame). Callers that maintain a view transform on top of
-   * composites should right-multiply their view by `C` to keep all on-screen
-   * positions invariant under the swap, since by construction:
+   * Returns the change-of-view matrix `C` such that callers who maintain a
+   * view transform on top of composites can right-multiply their view by `C`
+   * to keep all on-screen positions invariant under the swap:
    *
    *     view_old · composite_old(X) = (view_old · C) · composite_new(X)
    *
-   * for every face X reachable from both roots. No structural data changes;
-   * this is purely a "what frame are composites expressed in?" change.
+   * for every face X reachable from both roots. With explicit per-face
+   * frames `composite(root) = root.frame`, this works out to:
+   *
+   *     C = composite_old(newRoot) · inv(newRoot.frame)
+   *
+   * which collapses to the simpler `C = composite_old(newRoot)` when all
+   * frames are identity.
    *
    * Returns identity if `newRoot` is already the root, or if it isn't
    * reachable from the current root (defensive — should not happen).
@@ -635,10 +665,10 @@ export class Atlas {
   switchRoot(newRoot: Face): M.Matrix2D {
     if (newRoot === this.root) return M.fromValues();
     const composites = this.computeComposites();
-    const C = composites.get(newRoot);
-    if (!C) return M.fromValues();
+    const oldComposite = composites.get(newRoot);
+    if (!oldComposite) return M.fromValues();
     this.root = newRoot;
-    return C;
+    return M.multiply(oldComposite, M.invert(newRoot.frame));
   }
 }
 
@@ -702,6 +732,36 @@ export function createInitialAtlas(
   const atlas = new Atlas(faces[0]);
   atlas.halfEdges = allHalfEdges;
   atlas.faces = faces;
+  return atlas;
+}
+
+/**
+ * Construct the simplest possible non-empty atlas: a single convex face
+ * whose entire boundary lies on the line at infinity.
+ *
+ * `idealDirections` are the face's vertices in CCW order (each direction is
+ * a unit vector) and together cover S¹ with no gaps. There are no finite
+ * vertices, so the face has no "anchor at the origin"; coordinates inside
+ * the face are simply face-local R². This is the four-wedge collapse: the
+ * empty scene as one face rather than k wedges meeting at a sentinel
+ * origin. Defaults to the four cardinal directions (same axes as the wedge
+ * seed, but with a single face instead of four).
+ */
+export function createAllIdealAtlas(
+  idealDirections: ReadonlyArray<readonly [number, number]> = [
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+    [0, -1],
+  ],
+): Atlas {
+  const n = idealDirections.length;
+  if (n < 3) throw new Error('createAllIdealAtlas needs at least 3 ideal directions');
+  const hes = idealDirections.map(([x, y]) => new HalfEdge('ideal', x, y));
+  const face = new Face(hes);
+  const atlas = new Atlas(face);
+  atlas.halfEdges = hes;
+  atlas.faces = [face];
   return atlas;
 }
 
@@ -1028,17 +1088,6 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
       continue;
     }
 
-    // Anchor canonicality.
-    const anchor = f.halfEdges[0];
-    if (anchor.originKind !== 'finite') {
-      errs.push('face anchor (halfEdges[0]) must have finite origin');
-    }
-    if (Math.abs(anchor.ox) > eps || Math.abs(anchor.oy) > eps) {
-      errs.push(
-        `face anchor origin must be at (0, 0), got (${anchor.ox}, ${anchor.oy})`,
-      );
-    }
-
     // Half-edge cycle integrity (next/prev consistency).
     for (let i = 0; i < k; i++) {
       const he = f.halfEdges[i];
@@ -1255,51 +1304,6 @@ function junctionImageMatches(
 }
 
 // ----------------------------------------------------------------------------
-// Frame-change-at-point helper
-// ----------------------------------------------------------------------------
-
-/**
- * Recompute a twin pair's transforms after re-anchoring one side's frame.
- *
- * Setup:
- *   - `T_old` is the existing edge transform `F → ext` (i.e. `h.transform`,
- *     where `h` lives in face F and `h.twin` lives in face `ext`).
- *   - We're replacing F with a sub-face whose frame relates to F by `R`:
- *     a point `(x, y)` in the sub-frame equals `R · (x, y)` in F's frame.
- *     (`R` is "sub → F"; equivalently, F's frame is the sub-frame composed
- *     with `R`.)
- *
- * After the rebase, the new edge transforms are:
- *   - `fwd: sub → ext  =  T_old · R`  (re-express in the sub-frame, then jump to ext)
- *   - `rev: ext → sub  =  inv(fwd)`   (twins are always inverse pairs)
- *
- * In the operational regime (invariant 7 — translation-only edges), `R` is
- * always a translation. The signature accepts a general `Matrix2DReadonly`
- * so the same helper carries through unchanged once uniform scale is enabled.
- *
- * Pure function: doesn't mutate anything. Returns fresh matrices.
- */
-export function rebaseTwinTransform(
-  T_old: M.Matrix2DReadonly,
-  R: M.Matrix2DReadonly,
-): { fwd: M.Matrix2D; rev: M.Matrix2D } {
-  const fwd = M.multiply(T_old, R);
-  const rev = M.invert(fwd);
-  return { fwd, rev };
-}
-
-/**
- * Convenience for the common case: `R = translate(point)`. Used by the splits
- * to re-anchor a sub-face whose origin sits at `point` in the parent's frame.
- */
-export function rebaseTwinTransformByTranslation(
-  T_old: M.Matrix2DReadonly,
-  point: Point,
-): { fwd: M.Matrix2D; rev: M.Matrix2D } {
-  return rebaseTwinTransform(T_old, M.fromTranslate(point.x, point.y));
-}
-
-// ----------------------------------------------------------------------------
 // Mutation primitives
 // ----------------------------------------------------------------------------
 
@@ -1501,8 +1505,8 @@ export function subdivideAtInfinityArc(
  *   around the original face from entry to exit).
  *
  * `chordHEs[i]` is the chord's half-edge in `faces[i]`. They are twins of
- * each other, with a translation transform encoding the two sub-faces'
- * differing anchor offsets.
+ * each other; the chord twin transforms are identity in both directions
+ * because both sub-faces share the parent's coordinate system.
  */
 export interface SplitChordResult {
   faces: [Face, Face];
@@ -1516,14 +1520,21 @@ export interface SplitChordResult {
  * Constraints:
  *   - `vIdxA !== vIdxB` and the two indices are non-adjacent (the chord
  *     would otherwise coincide with an existing edge).
- *   - Each resulting sub-face must contain at least one finite vertex (used
- *     as its anchor). Throws otherwise.
  *
  * The original face is detached and replaced by two new convex sub-faces.
- * External twin pointers are rewired with a translation update on each
- * preserved edge (sub-frame → original frame is `translate(subAnchor)`).
- * The two new chord half-edges are twins of each other with a translation
- * transform `translate(leftAnchor − rightAnchor)`.
+ * Both sub-faces inherit `face.frame` and store their boundary half-edges
+ * directly in the parent's coordinate system — no re-anchoring at the first
+ * finite vertex, no per-edge transform rebase. As a consequence:
+ *   - The new chord twin pair has identity transforms in both directions
+ *     (the two sub-faces share a coordinate system).
+ *   - External twins keep the same transforms they had before the split.
+ *   - Sub-faces with no finite vertex are legal (the anchor convention is
+ *     gone), so this primitive can split off all-ideal arcs.
+ *
+ * Result ordering: `faces[0]` is the side reached by walking CCW around
+ * `face` from `vIdxA` to `vIdxB` (so `sub0.halfEdges[0].origin()`
+ * = `face.halfEdges[vIdxA].origin()`). `faces[1]` is the other side,
+ * starting at `vIdxB`.
  *
  * The atlas's `root` is replaced with `faces[0]` if it was the split face.
  */
@@ -1546,6 +1557,21 @@ export function splitFaceAtVertices(
     throw new Error(
       'splitFaceAtVertices: chord endpoints are adjacent (would coincide with an edge)',
     );
+  }
+  // The chord's two HEs (one in each sub-face) have origin/target equal to the
+  // chord endpoints. If BOTH endpoints are ideal, the chord HE looks identical
+  // to an at-infinity arc by `originKind` alone — but it isn't, it's a real
+  // line through R² with a twin to the other sub-face. Our HalfEdge model
+  // doesn't carry an explicit arc-vs-chord tag, so the polygon-CCW check and
+  // the at-infinity-twin invariant can't distinguish the two cases. Reject
+  // until the model carries that distinction explicitly.
+  {
+    const j = face.junctions();
+    if (j[vIdxA].kind === 'ideal' && j[vIdxB].kind === 'ideal') {
+      throw new Error(
+        'splitFaceAtVertices: chord between two ideal vertices is not supported (both endpoints at infinity)',
+      );
+    }
   }
 
   // Build the two boundary arcs of original-face vertex INDICES.
@@ -1578,79 +1604,47 @@ export function splitFaceAtVertices(
   const ext0 = cacheExt(arc0);
   const ext1 = cacheExt(arc1);
 
-  // Junction lists in original-face frame.
+  // Junction lists in the parent's frame. No translation: sub-faces use the
+  // parent's coordinate system directly.
   const origJ = face.junctions();
   const verts0 = arc0.map((i) => origJ[i]);
   const verts1 = arc1.map((i) => origJ[i]);
 
-  // Pick anchor: first finite vertex in each arc.
-  const findAnchorIdx = (verts: Junction[]): number => {
-    for (let i = 0; i < verts.length; i++) if (verts[i].kind === 'finite') return i;
-    return -1;
-  };
-  const anchor0 = findAnchorIdx(verts0);
-  const anchor1 = findAnchorIdx(verts1);
-  if (anchor0 < 0) {
-    throw new Error('splitFaceAtVertices: sub-face 0 has no finite vertex for anchor');
-  }
-  if (anchor1 < 0) {
-    throw new Error('splitFaceAtVertices: sub-face 1 has no finite vertex for anchor');
-  }
-  const a0Pt = { x: (verts0[anchor0] as Junction).x, y: (verts0[anchor0] as Junction).y };
-  const a1Pt = { x: (verts1[anchor1] as Junction).x, y: (verts1[anchor1] as Junction).y };
+  const cloneMat = (m: M.Matrix2DReadonly): M.Matrix2D =>
+    M.fromValues(m.a, m.b, m.c, m.d, m.e, m.f);
 
-  // Build sub-face HE list. Pre-rotation index `i` corresponds to vertex
-  // verts[i] and edge verts[i] → verts[(i+1) % n]. Post-rotation index
-  // (so that anchor sits at hes[0]) is `(i - anchorIdx + n) % n`.
-  const buildSubFace = (
-    verts: Junction[],
-    anchorIdx: number,
-    anchorPt: Point,
-  ): { face: Face; hes: HalfEdge[]; preIndexToHE: HalfEdge[]; chordHE: HalfEdge } => {
-    const n = verts.length;
-    const rotated: Junction[] = [];
-    for (let i = 0; i < n; i++) rotated.push(verts[(i + anchorIdx) % n]);
-    const translated = rotated.map((j) => junctionInTranslatedFrame(j, anchorPt));
-    const hes = translated.map((j) => new HalfEdge(j.kind, j.x, j.y));
-    const f = new Face(hes);
-    // Map pre-rotation index → HE for external rewiring.
-    const preIndexToHE: HalfEdge[] = new Array(n);
-    for (let i = 0; i < n; i++) preIndexToHE[i] = hes[((i - anchorIdx) % n + n) % n];
-    // Chord HE: pre-rotation index `n - 1` (closing edge from last vertex to first).
-    const chordHE = preIndexToHE[n - 1];
-    return { face: f, hes, preIndexToHE, chordHE };
+  // Build a sub-face whose HEs preserve the parent's coordinates. The closing
+  // edge (`hes[n - 1]`) is the chord half-edge.
+  const buildSubFace = (verts: Junction[]): { face: Face; hes: HalfEdge[]; chordHE: HalfEdge } => {
+    const hes = verts.map((j) => new HalfEdge(j.kind, j.x, j.y));
+    const f = new Face(hes, [], cloneMat(face.frame));
+    return { face: f, hes, chordHE: hes[hes.length - 1] };
   };
 
-  const sub0 = buildSubFace(verts0, anchor0, a0Pt);
-  const sub1 = buildSubFace(verts1, anchor1, a1Pt);
+  const sub0 = buildSubFace(verts0);
+  const sub1 = buildSubFace(verts1);
 
-  // Wire the chord twin pair. sub0's chord goes from arc-last (vIdxB) to
-  // arc-first (vIdxA) in sub0's frame; sub1's chord goes from arc-last
-  // (vIdxA) to arc-first (vIdxB) in sub1's frame. They're the same physical
-  // edge in opposite directions.
-  // Frame change sub0 → sub1 = translate(a0Pt − a1Pt): a point (x, y) in sub0
-  // is at (x + a0Pt.x, y + a0Pt.y) in original frame, which is at
-  // (x + a0Pt.x − a1Pt.x, y + a0Pt.y − a1Pt.y) in sub1's frame.
-  const sub0ToSub1 = M.fromTranslate(a0Pt.x - a1Pt.x, a0Pt.y - a1Pt.y);
-  const sub1ToSub0 = M.invert(sub0ToSub1);
-  setTwin(sub0.chordHE, sub1.chordHE, sub0ToSub1, sub1ToSub0);
+  // Both sub-faces share the parent's coordinate system, so the chord twin
+  // pair has identity transforms.
+  setTwin(sub0.chordHE, sub1.chordHE, M.fromValues(), M.fromValues());
 
-  // Rewire external twins of preserved HEs.
+  // External twins: the sub-face's local frame == parent's local frame, so
+  // the original `T_old` is still the right sub→ext transform.
   const wireExternals = (
-    sub: { preIndexToHE: HalfEdge[] },
+    sub: { hes: HalfEdge[] },
     ext: Array<{ twin: HalfEdge | null; T_old: M.Matrix2DReadonly | null }>,
-    anchorPt: Point,
   ) => {
     for (let i = 0; i < ext.length; i++) {
       const e = ext[i];
       if (!e.twin) continue;
-      const subHE = sub.preIndexToHE[i];
-      const { fwd, rev } = rebaseTwinTransformByTranslation(e.T_old!, anchorPt);
+      const subHE = sub.hes[i];
+      const fwd = cloneMat(e.T_old!);
+      const rev = M.invert(fwd);
       setTwin(subHE, e.twin, fwd, rev);
     }
   };
-  wireExternals(sub0, ext0, a0Pt);
-  wireExternals(sub1, ext1, a1Pt);
+  wireExternals(sub0, ext0);
+  wireExternals(sub1, ext1);
 
   // Detach old, attach new.
   detachFace(atlas, face);
@@ -1766,8 +1760,6 @@ export function splitFaceAlongChord(
 /**
  * Re-establish `next`, `prev`, and `face` pointers across `face.halfEdges`
  * after an in-place mutation that changed the array's contents/length.
- * The anchor invariant (halfEdges[0].origin at (0, 0), finite kind) is the
- * caller's responsibility.
  */
 function rewireFaceCycle(face: Face) {
   const k = face.halfEdges.length;

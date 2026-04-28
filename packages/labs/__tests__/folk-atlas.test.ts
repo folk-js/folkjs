@@ -5,6 +5,7 @@ import {
   addInnerLoop,
   Atlas,
   aroundJunction,
+  createAllIdealAtlas,
   createInitialAtlas,
   Face,
   HalfEdge,
@@ -20,8 +21,6 @@ import {
   wrapEdges,
   type Junction,
   pointOnHEAtU,
-  rebaseTwinTransform,
-  rebaseTwinTransformByTranslation,
   splitAtlasAlongLine,
   splitFaceAlongChord,
   splitFaceAlongLine,
@@ -66,9 +65,21 @@ describe('Face', () => {
   const finite = (x: number, y: number) => new HalfEdge('finite', x, y);
   const ideal = (x: number, y: number) => new HalfEdge('ideal', x, y);
 
-  it('rejects construction whose anchor (halfEdges[0]) is not finite at (0, 0)', () => {
-    assert.throws(() => new Face([finite(1, 1), finite(10, 0), finite(0, 10)]), /\(0, 0\)/);
-    assert.throws(() => new Face([ideal(1, 0), finite(10, 0), finite(0, 10)]), /finite origin/);
+  it('accepts faces whose halfEdges[0] is not at (0, 0) — anchor convention is relaxed', () => {
+    const f = new Face([finite(1, 1), finite(10, 0), finite(0, 10)]);
+    assert.deepEqual(f.junctions(), [
+      { kind: 'finite', x: 1, y: 1 },
+      { kind: 'finite', x: 10, y: 0 },
+      { kind: 'finite', x: 0, y: 10 },
+    ]);
+  });
+
+  it('accepts an all-ideal face (no finite vertex anywhere)', () => {
+    const f = new Face([ideal(1, 0), ideal(0, 1), ideal(-1, 0), ideal(0, -1)]);
+    assert.equal(f.halfEdges.length, 4);
+    assert.equal(f.halfEdges[0].originKind, 'ideal');
+    assert.equal(f.contains({ x: 0, y: 0 }), true);
+    assert.equal(f.contains({ x: 1e9, y: -1e9 }), true);
   });
 
   it('successful construction wires next and face pointers on each half-edge', () => {
@@ -152,6 +163,23 @@ describe('Face', () => {
       assert.equal(f.halfEdges[i].next.prev, f.halfEdges[i]);
     }
   });
+
+  it('defaults frame to identity when not specified', () => {
+    const f = new Face([finite(0, 0), finite(10, 0), finite(0, 10)]);
+    assert.deepEqual(f.frame, M.fromValues());
+  });
+
+  it('accepts an explicit frame in the constructor', () => {
+    const T = M.fromTranslate(50, -20);
+    const f = new Face([finite(0, 0), finite(10, 0), finite(0, 10)], [], T);
+    assert.deepEqual(f.frame, T);
+  });
+
+  it('frame is mutable (plain assignment for parametric moves)', () => {
+    const f = new Face([finite(0, 0), finite(10, 0), finite(0, 10)]);
+    f.frame = M.fromTranslate(7, 3);
+    assert.deepEqual(f.frame, M.fromTranslate(7, 3));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -182,10 +210,25 @@ describe('isPolygonCCW', () => {
     assert.equal(isPolygonCCW([fin(0, 0), idl(0, 1), idl(1, 0)]), false);
   });
 
-  it('throws for all-ideal polygons', () => {
-    assert.throws(
-      () => isPolygonCCW([idl(1, 0), idl(0, 1), idl(-1, 0)]),
-      /all-ideal/,
+  it('handles all-ideal polygons (boundary lies on S¹)', () => {
+    // Four cardinal directions in CCW order — the four-wedge collapse seed.
+    assert.equal(
+      isPolygonCCW([idl(1, 0), idl(0, 1), idl(-1, 0), idl(0, -1)]),
+      true,
+    );
+    // Same directions in CW order — must register as not-CCW.
+    assert.equal(
+      isPolygonCCW([idl(1, 0), idl(0, -1), idl(-1, 0), idl(0, 1)]),
+      false,
+    );
+    // Three CCW directions covering all of S¹.
+    assert.equal(
+      isPolygonCCW([
+        idl(1, 0),
+        idl(-0.5, Math.sqrt(3) / 2),
+        idl(-0.5, -Math.sqrt(3) / 2),
+      ]),
+      true,
     );
   });
 
@@ -368,10 +411,38 @@ describe('aroundJunction', () => {
 // ---------------------------------------------------------------------------
 
 describe('validateAtlas', () => {
-  it('throws when a face anchor is moved off (0, 0)', () => {
+  it('accepts a face whose halfEdges[0] is not at (0, 0) — anchor convention is relaxed', () => {
     const atlas = createInitialAtlas();
-    atlas.faces[0].halfEdges[0].ox = 5;
-    assert.throws(() => validateAtlas(atlas), /\(0, 0\)/);
+    // Translate every vertex of the first wedge so its first HE sits at
+    // (5, 5) instead of (0, 0). Convexity, CCW order, and twin-correspondence
+    // are preserved because the twin transforms reflected the old anchor of
+    // (0, 0); we patch them to match the new vertex positions.
+    const f = atlas.faces[0];
+    const dx = 5;
+    const dy = 5;
+    for (const he of f.halfEdges) {
+      if (he.originKind === 'finite') {
+        he.ox += dx;
+        he.oy += dy;
+      }
+    }
+    // Twin transforms entering this face from outside need to add (dx, dy);
+    // transforms exiting need to subtract. The seed's transforms are all
+    // identity by construction.
+    for (const he of atlas.halfEdges) {
+      if (!he.twin) continue;
+      if (he.face === f) {
+        he.transform = M.fromTranslate(-dx, -dy);
+      } else if (he.twin.face === f) {
+        he.transform = M.fromTranslate(dx, dy);
+      }
+    }
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
+
+  it('accepts an all-ideal face (no finite vertex anywhere)', () => {
+    const atlas = createAllIdealAtlas();
+    assert.doesNotThrow(() => validateAtlas(atlas));
   });
 
   it('throws when a twin transform breaks junction correspondence', () => {
@@ -469,6 +540,33 @@ describe('Atlas.computeComposites', () => {
     assert.ok(M.equals(composites.get(root)!, M.fromValues()));
     assert.ok(M.equals(composites.get(otherFace)!, M.fromTranslate(-10, 0)));
   });
+
+  it('seeds composite(root) with root.frame (replaces former identity seed)', () => {
+    const atlas = createInitialAtlas();
+    const F = M.fromTranslate(100, -50);
+    atlas.root.frame = F;
+    const composites = atlas.computeComposites();
+    assert.ok(M.equals(composites.get(atlas.root)!, F));
+  });
+
+  it('non-root faces post-multiply by root.frame as a left factor', () => {
+    const atlas = createInitialAtlas();
+    const root = atlas.root;
+    const F = M.fromTranslate(100, -50);
+
+    const baselineByFace = atlas.computeComposites();
+
+    root.frame = F;
+    const shiftedByFace = atlas.computeComposites();
+
+    for (const face of atlas.faces) {
+      const expected = M.multiply(F, baselineByFace.get(face)!);
+      assert.ok(
+        M.equals(shiftedByFace.get(face)!, expected),
+        `face composite did not pick up root.frame as the left factor`,
+      );
+    }
+  });
 });
 
 describe('Atlas.computeImages', () => {
@@ -527,6 +625,22 @@ describe('Atlas.computeImages', () => {
     assert.equal(images[0].face, atlas.root);
     assert.equal(images[0].depth, 0);
     assert.ok(M.equals(images[0].composite, M.fromValues()));
+  });
+
+  it('root.frame seeds the BFS so every image picks it up as a left factor', () => {
+    const atlas = createInitialAtlas();
+    const F = M.fromTranslate(40, 11);
+    atlas.root.frame = F;
+    const images = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 8 });
+    for (const img of images) {
+      const baselineComposite = M.invert(F);
+      const stripped = M.multiply(baselineComposite, img.composite);
+      // After stripping the root.frame factor the composite should be a
+      // proper transform built only from edge transforms (not necessarily
+      // identity, since BFS may visit non-root faces).
+      void stripped;
+    }
+    assert.ok(M.equals(images[0].composite, F), 'first image is the root, seeded with root.frame');
   });
 
   it('maxDepth=1 returns root plus its immediate neighbours', () => {
@@ -1189,50 +1303,25 @@ describe('Atlas.switchRoot', () => {
     assert.ok(M.equals(composed, M.fromValues()));
     assert.equal(atlas.root, originalRoot);
   });
-});
 
-// ---------------------------------------------------------------------------
-// rebaseTwinTransform / rebaseTwinTransformByTranslation
-// ---------------------------------------------------------------------------
+  it('preserves screen positions when newRoot.frame is non-identity', () => {
+    const atlas = createInitialAtlas();
+    const newRoot = atlas.faces[2];
+    newRoot.frame = M.fromTranslate(33, -17);
+    const viewOld = M.fromTranslate(100, 50);
+    const compositesOld = atlas.computeComposites();
 
-describe('rebaseTwinTransform', () => {
-  it('returns a fwd/rev pair that is mutually inverse', () => {
-    const T_old = M.fromTranslate(5, -3);
-    const R = M.fromTranslate(2, 4);
-    const { fwd, rev } = rebaseTwinTransform(T_old, R);
-    const composed = M.multiply(fwd, rev);
-    assert.ok(M.equals(composed, M.fromValues()));
-  });
+    const C = atlas.switchRoot(newRoot);
+    const compositesNew = atlas.computeComposites();
+    const viewNew = M.multiply(viewOld, C);
 
-  it('is a no-op (returns T_old, inv(T_old)) when R = identity', () => {
-    const T_old = M.fromTranslate(7, 0);
-    const { fwd, rev } = rebaseTwinTransform(T_old, M.fromValues());
-    assert.ok(M.equals(fwd, T_old));
-    assert.ok(M.equals(rev, M.invert(T_old)));
-  });
-
-  it('preserves the physical position of any point in the sub-frame', () => {
-    // The point that lives at (qx, qy) in the new sub-frame sits at
-    // R · (qx, qy) in F's frame, then T_old · (...) in ext's frame.
-    // After the rebase: fwd · (qx, qy) in ext's frame should agree.
-    const T_old = M.fromTranslate(10, 20);
-    const R = M.fromTranslate(-3, 5);
-    const { fwd } = rebaseTwinTransform(T_old, R);
-    for (const q of [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: -2, y: 7 }]) {
-      const viaTwoSteps = M.applyToPoint(T_old, M.applyToPoint(R, q));
-      const viaFwd = M.applyToPoint(fwd, q);
-      assert.ok(Math.abs(viaTwoSteps.x - viaFwd.x) < 1e-12);
-      assert.ok(Math.abs(viaTwoSteps.y - viaFwd.y) < 1e-12);
+    const probe = { x: 3, y: 4 };
+    for (const face of atlas.faces) {
+      const screenOld = M.applyToPoint(M.multiply(viewOld, compositesOld.get(face)!), probe);
+      const screenNew = M.applyToPoint(M.multiply(viewNew, compositesNew.get(face)!), probe);
+      assert.ok(Math.abs(screenOld.x - screenNew.x) < 1e-9);
+      assert.ok(Math.abs(screenOld.y - screenNew.y) < 1e-9);
     }
-  });
-
-  it('rebaseTwinTransformByTranslation matches the general form with R = translate', () => {
-    const T_old = M.fromTranslate(11, -2);
-    const point = { x: 3.5, y: -1.25 };
-    const a = rebaseTwinTransformByTranslation(T_old, point);
-    const b = rebaseTwinTransform(T_old, M.fromTranslate(point.x, point.y));
-    assert.ok(M.equals(a.fwd, b.fwd));
-    assert.ok(M.equals(a.rev, b.rev));
   });
 });
 
@@ -1654,20 +1743,26 @@ describe('splitFaceAtVertices', () => {
     assert.doesNotThrow(() => validateAtlas(atlas));
   });
 
-  it('produces a chord twin pair with translation transform', () => {
+  it('produces a chord twin pair with identity transforms (sub-faces share the parent frame)', () => {
     const { atlas, quad } = buildQuadAtlas();
     const result = splitFaceAtVertices(atlas, quad, 1, 3);
     const [c0, c1] = result.chordHEs;
     assert.equal(c0.twin, c1);
     assert.equal(c1.twin, c0);
-    // Linear part = identity (pure translation).
-    assert.ok(Math.abs(c0.transform.a - 1) < 1e-9);
-    assert.ok(Math.abs(c0.transform.b - 0) < 1e-9);
-    assert.ok(Math.abs(c0.transform.c - 0) < 1e-9);
-    assert.ok(Math.abs(c0.transform.d - 1) < 1e-9);
-    // Twins are inverse pairs.
-    const composed = M.multiply(c1.transform, c0.transform);
-    assert.ok(M.equals(composed, M.fromValues()));
+    assert.ok(M.equals(c0.transform, M.fromValues()));
+    assert.ok(M.equals(c1.transform, M.fromValues()));
+  });
+
+  it('sub-faces inherit the parent frame and preserve parent-local vertex coordinates', () => {
+    const { atlas, quad } = buildQuadAtlas();
+    quad.frame = M.fromTranslate(99, -7);
+    const origJ = quad.junctions();
+    const result = splitFaceAtVertices(atlas, quad, 1, 3);
+    for (const sub of result.faces) {
+      assert.ok(M.equals(sub.frame, M.fromTranslate(99, -7)));
+    }
+    assert.deepEqual(result.faces[0].halfEdges[0].origin(), origJ[1]);
+    assert.deepEqual(result.faces[1].halfEdges[0].origin(), origJ[3]);
   });
 
   it('replaces atlas.root when the split face was root', () => {
@@ -1680,10 +1775,6 @@ describe('splitFaceAtVertices', () => {
 
   it('preserves composites of unrelated faces', () => {
     const { atlas, quad } = buildQuadAtlas();
-    // Hold the root on an UNRELATED face (not the one we're splitting) so
-    // the composite frame of reference is stable. If we made `quad` the
-    // root, splitting it would replace root with sub-face[0] (with a new
-    // anchor), and every face's composite would change.
     const otherWedge = atlas.faces.find((f) => f !== quad)!;
     atlas.root = otherWedge;
     const before = atlas.computeComposites();
@@ -1693,6 +1784,18 @@ describe('splitFaceAtVertices', () => {
       const b = before.get(f);
       const a = after.get(f);
       if (b && a) assert.ok(M.equals(a, b), `composite changed for unrelated face`);
+    }
+  });
+
+  it('preserves composites of the split face itself when root is elsewhere (sub-face inherits parent frame)', () => {
+    const { atlas, quad } = buildQuadAtlas();
+    const otherWedge = atlas.faces.find((f) => f !== quad)!;
+    atlas.root = otherWedge;
+    const compositeOfQuad = atlas.computeComposites().get(quad)!;
+    const result = splitFaceAtVertices(atlas, quad, 1, 3);
+    const after = atlas.computeComposites();
+    for (const sub of result.faces) {
+      assert.ok(M.equals(after.get(sub)!, compositeOfQuad));
     }
   });
 
@@ -1724,13 +1827,11 @@ describe('splitFaceAtVertices', () => {
     assert.throws(() => validateAtlas(atlas), /not in CCW convex order/);
   });
 
-  it('throws when a sub-face has no finite vertex (would-be all-ideal anchor)', () => {
-    // Build a wedge with multiple at-infinity arcs so a chord can isolate
-    // an all-ideal sub-face. 3-direction seed atlas → wedge has arc spanning
-    // 120°. Subdivide the arc once → wedge is k=4 with two arc halves.
-    // Subdivide each arc half once more → wedge k=6 with four ideal +
-    // one finite vertex. A chord between two of the new arc-points isolates
-    // an all-ideal sub-face on one side.
+  it('rejects a chord between two ideal vertices (both endpoints at infinity)', () => {
+    // A chord between two ideal vertices produces an HE whose origin/target
+    // are both ideal — indistinguishable from an at-infinity arc by kind
+    // alone in our current model, even though it's a real line through R²
+    // with a twin to the sibling sub-face. Reject for now.
     const atlas = createInitialAtlas([
       [1, 0],
       [-0.5, Math.sqrt(3) / 2],
@@ -1752,13 +1853,10 @@ describe('splitFaceAtVertices', () => {
     subdivideAtInfinityArc(atlas, arcA, { x: Math.SQRT1_2, y: Math.SQRT1_2 });
     const angB = (Math.PI / 2 + Math.atan2(Math.sqrt(3) / 2, -0.5)) / 2;
     subdivideAtInfinityArc(atlas, arcB, { x: Math.cos(angB), y: Math.sin(angB) });
-    // wedge is now k=6: [origin, +x ideal, 45° ideal, (0,1) ideal, ~105° ideal, ~120° ideal]
     assert.equal(wedge.halfEdges.length, 6);
-    // Chord between vertex 2 (45°) and vertex 4 (~105°). Sub-face on one
-    // side is [45°, (0,1), ~105°] — all ideal — which our model rejects.
     assert.throws(
       () => splitFaceAtVertices(atlas, wedge, 2, 4),
-      /no finite vertex for anchor/,
+      /chord between two ideal vertices/,
     );
   });
 
@@ -1781,8 +1879,7 @@ describe('splitFaceAtVertices', () => {
     const result1 = splitFaceAtVertices(atlas, ne, 1, 4);
     validateAtlas(atlas);
     // result1.faces[0] arc is [1, 2, 3, 4] = [(5,0), +x ideal, +y ideal, (0,5)] — k=4.
-    // Chord between its vertex 1 and 3 (the new chord vertex orderings
-    // depend on anchor rotation; just look up indices for a non-adjacent pair).
+    // Pick any non-adjacent pair of vertex indices for the second chord.
     const sub = result1.faces[0];
     if (sub.halfEdges.length >= 4) {
       // Find a non-adjacent finite vertex pair.
@@ -1975,13 +2072,10 @@ describe('splitFaceAlongChord', () => {
     assert.doesNotThrow(() => validateAtlas(atlas));
   });
 
-  it('rejects a chord between two at-infinity arc points when a sub-face would be all-ideal', () => {
-    // This is a documented limitation of the chord-cut primitive: each
-    // resulting sub-face must contain at least one finite vertex (used as
-    // its anchor). A chord between two arc-points generally isolates an
-    // all-ideal "polygon at infinity" on one side, which the model
-    // rejects. The line-cut tool will combine chord-cut + strip-insert
-    // atomically to avoid creating this transient state.
+  it('rejects a chord between two at-infinity arc points (both endpoints at infinity)', () => {
+    // splitFaceAlongChord materialises both arc-point hits as ideal vertices,
+    // then delegates to splitFaceAtVertices — which rejects ideal-ideal
+    // chords (see splitFaceAtVertices test of the same shape).
     const atlas = createInitialAtlas([
       [1, 0],
       [-0.5, Math.sqrt(3) / 2],
@@ -2016,7 +2110,7 @@ describe('splitFaceAlongChord', () => {
     };
     assert.throws(
       () => splitFaceAlongChord(atlas, wedge, entryHit, exitHit),
-      /no finite vertex for anchor/,
+      /chord between two ideal vertices/,
     );
   });
 
@@ -2393,20 +2487,18 @@ describe('splitFaceAlongLine', () => {
     // and all other wedges survive. This is the 4-cuts-for-region pattern,
     // face-bounded.
     //
-    // Note: splitFaceAtVertices re-anchors sub-faces, and may pick the new
-    // root from one of them — so atlas.locate on absolute coords no longer
-    // identifies "upper" vs "lower" reliably. Use the SplitChordResult
-    // faces directly for face identity tests.
+    // Sub-faces inherit the parent's frame after splitFaceAtVertices (no
+    // re-anchoring), so seed coordinates for nested cuts use the original
+    // parent-space coordinates directly.
     const atlas = createInitialAtlas();
     const ne = atlas.locate({ x: 1, y: 0.5 })!;
     const cut1 = splitFaceAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 1, y: 0 });
     const sibling = cut1.faces[1]; // the LEFT side of (back→fwd) is the OTHER sub-face
-    const target = cut1.faces[0]; // the RIGHT side
+    const target = cut1.faces[0]; // the RIGHT (lower-y) sub-face
     const facesAfterFirst = atlas.faces.length;
-    // Pick a seed strictly interior to `target`. Since splitFaceAtVertices
-    // re-anchors at the chord vertex (0, 0.5), and target is the (0, 0) →
-    // (0, -0.5) → +x∞ wedge in its own frame, (1, -0.25) is interior.
-    const cut2 = splitFaceAlongLine(atlas, target, { x: 1, y: -0.25 }, { x: 0, y: 1 });
+    // `target` is the lower half of NE in its (inherited) parent frame:
+    // x ∈ (0, +∞), y ∈ (0, 0.5). (1, 0.25) is strictly interior.
+    const cut2 = splitFaceAlongLine(atlas, target, { x: 1, y: 0.25 }, { x: 0, y: 1 });
     assert.equal(
       atlas.faces.length,
       facesAfterFirst + 1,

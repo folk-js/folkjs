@@ -42,8 +42,9 @@ export function polygonContainsStrict(
 
 /**
  * Whether the convex polygon defined by `verts` (k ≥ 3) is wound CCW. Handles
- * any mix of finite and ideal vertices except an all-ideal cycle (not produced
- * by our operations and not supported).
+ * any mix of finite and ideal vertices, including all-ideal polygons whose
+ * boundary is the line at infinity (the four-wedge collapse / "infinite plane"
+ * seed).
  *
  * Convexity contract: every consecutive triple `(a, b, c)` must satisfy
  * `c` lies left-of-or-on directed edge `a → b` (no right turns). At least
@@ -60,17 +61,30 @@ export function polygonContainsStrict(
  *  2. **Same-ideal-direction edges**: `(a, b)` or `(b, c)` are both ideal
  *     in the same direction (a degenerate at-infinity edge with zero
  *     length). Strip rectangles' two short ends terminate this way.
+ *
+ * **All-ideal polygons** (every vertex is at infinity): the boundary is
+ * interpreted as a sequence of arcs along S¹. CCW is determined by the
+ * angular sweep of the unit-direction vectors — every consecutive pair must
+ * sweep CCW around S¹ (cross ≥ 0), with at least one strictly positive
+ * sweep. (A chord between two ideal vertices cannot be distinguished from
+ * an arc here, so polygons that mix arcs and ideal-ideal chords aren't
+ * supported by this predicate; our mutation primitives reject that case.)
  */
 export function isPolygonCCW(verts: ReadonlyArray<Junction>): boolean {
   const n = verts.length;
   if (n < 3) return false;
   if (verts.every((v) => v.kind === 'ideal')) {
-    throw new Error('isPolygonCCW: all-ideal polygon not supported');
+    let pos = 0;
+    for (let i = 0; i < n; i++) {
+      const a = verts[i];
+      const b = verts[(i + 1) % n];
+      if (sameIdealDirection(a, b)) continue;
+      const x = cross(a.x, a.y, b.x, b.y);
+      if (x < 0) return false;
+      if (x > 0) pos++;
+    }
+    return pos > 0;
   }
-  const R = 1e12;
-  const asFinite = (v: Junction): Point =>
-    v.kind === 'finite' ? { x: v.x, y: v.y } : { x: v.x * R, y: v.y * R };
-
   // The relaxed left-of test admits a tiny negative slack so that
   // "collinear due to floating-point round-off" isn't classified as a
   // right turn. Without this, strip rectangles (whose top/bottom edges
@@ -86,8 +100,7 @@ export function isPolygonCCW(verts: ReadonlyArray<Junction>): boolean {
     const b = verts[(i + 1) % n];
     const c = verts[(i + 2) % n];
     if (sameIdealDirection(a, b) || sameIdealDirection(b, c)) continue;
-    const cFin = asFinite(c);
-    const x = signedTurn(a, b, cFin);
+    const x = signedTurn(a, b, c);
     if (x < -COLLINEAR_EPS) return false;
     if (x > 0) positiveCount++;
   }
@@ -105,20 +118,71 @@ export function isPolygonCW(verts: ReadonlyArray<Junction>): boolean {
 }
 
 /**
- * Signed cross of edge `a → b` with the vector `a → p`. Used by
- * {@link isPolygonCCW} to admit an ULP-level epsilon on the relaxed
- * (non-strict) check while still calling {@link leftOfDirectedEdgeStrict}
- * for the strict turn count via the sign.
+ * Convexity measure for the directed line `a → b` against vertex `c`:
+ * positive means `c` is strictly left of the line, zero means collinear,
+ * negative means strictly right. Applied to every consecutive triple of
+ * a polygon's vertices, this tests "no right turn at b" — equivalent to
+ * convexity for a CCW polygon.
+ *
+ * Each junction kind contributes either a position vector (finite) or an
+ * ideal direction. Crucially, ideal directions are used *as directions*
+ * directly, never converted into "very far finite points" — that hack
+ * only works when the polygon is anchored near the origin. With faces
+ * that can be positioned anywhere via `face.frame`, an ideal `c`
+ * collinear with edge `a → b` (e.g. `(0, h) → (1, h)` extended to `+x∞`)
+ * must register zero, which only happens if we use `c` as a direction.
+ *
+ * Cases:
+ *  - `a, b` both finite: line direction is `b - a`. For finite `c`, use
+ *    displacement `c - a`. For ideal `c`, use the direction `c` itself.
+ *  - `a` finite, `b` ideal: line continues in direction `b` from `a`.
+ *    For finite `c`, use `c - a`. For ideal `c`, use `c`.
+ *  - `a` ideal, `b` finite: line through `b` continues in direction `-a`
+ *    (we approached `b` *from* `a`). For finite `c`, use `c - b`. For
+ *    ideal `c`, use `c`.
+ *  - `a, b` both ideal: along the line at infinity; only meaningful when
+ *    `c` is finite (testing whether `c` lies inside the half-plane bounded
+ *    by the chord-at-infinity from direction `a` to direction `b`). For
+ *    same-direction `(a, b)` callers must skip via `sameIdealDirection`.
+ *    Otherwise: line direction is `b - a` (chord through R²∪S¹ from a
+ *    direction `a` to a direction `b`). Treat `c - midpoint` as the test
+ *    vector — but in practice this configuration only occurs with `c`
+ *    ideal too, which we punt on (return 1 as a no-op convexity vote).
  */
-function signedTurn(a: Junction, b: Junction, p: Point): number {
+function signedTurn(a: Junction, b: Junction, c: Junction): number {
+  // Both a and b ideal: the boundary segment from a to b lies on the line
+  // at infinity (S¹). The convexity contribution is determined by the
+  // angular sweep a → b along S¹: positive if CCW (within 180°). c is
+  // irrelevant here — its convexity is voted on by neighbouring triples.
+  if (a.kind === 'ideal' && b.kind === 'ideal') {
+    return cross(a.x, a.y, b.x, b.y);
+  }
+  // Edge direction (as a 2D vector) for the directed line a → b.
+  let edx: number, edy: number;
   if (a.kind === 'finite' && b.kind === 'finite') {
-    return cross(b.x - a.x, b.y - a.y, p.x - a.x, p.y - a.y);
+    edx = b.x - a.x;
+    edy = b.y - a.y;
+  } else if (a.kind === 'finite' && b.kind === 'ideal') {
+    edx = b.x;
+    edy = b.y;
+  } else {
+    // a ideal, b finite: line through b continues in direction -a.
+    edx = -a.x;
+    edy = -a.y;
   }
-  if (a.kind === 'finite' && b.kind === 'ideal') {
-    return cross(b.x, b.y, p.x - a.x, p.y - a.y);
+  // Test vector from a point on the line to c.
+  let tdx: number, tdy: number;
+  if (c.kind === 'ideal') {
+    // c at infinity in direction (c.x, c.y); use the direction directly.
+    tdx = c.x;
+    tdy = c.y;
+  } else if (a.kind === 'finite') {
+    tdx = c.x - a.x;
+    tdy = c.y - a.y;
+  } else {
+    // a ideal, b finite, c finite: anchor the test vector at b.
+    tdx = c.x - b.x;
+    tdy = c.y - b.y;
   }
-  if (a.kind === 'ideal' && b.kind === 'finite') {
-    return cross(a.x, a.y, b.x - p.x, b.y - p.y);
-  }
-  return 1; // both ideal — sameIdealDirection guard upstream handles this case
+  return cross(edx, edy, tdx, tdy);
 }
