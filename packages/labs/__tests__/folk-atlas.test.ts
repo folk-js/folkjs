@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import * as M from '@folkjs/geometry/Matrix2D';
 import {
+  addInnerLoop,
   Atlas,
   aroundJunction,
   boundaryHitToJunction,
@@ -13,6 +14,7 @@ import {
   rescaleFaceFrame,
   resizeStrip,
   isPolygonCCW,
+  isPolygonCW,
   translationToWrap,
   unlinkEdgeFromTwin,
   untwinEdges,
@@ -3034,6 +3036,227 @@ describe('resizeStrip', () => {
     for (let i = 0; i < splitResult.pairs.length; i++) {
       assert.ok(Math.abs(splitResult.pairs[i].leftChordHE.transform.e - leftSnap[i].e) < 1e-9);
       assert.ok(Math.abs(splitResult.pairs[i].leftChordHE.transform.f - leftSnap[i].f) < 1e-9);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Inner loops (multi-loop faces)
+// ---------------------------------------------------------------------------
+
+/**
+ * Seed atlas whose first wedge face is the +x/+y quadrant — a triangle with
+ * vertices `(0, 0)` (finite anchor) and ideal directions `+x`, `+y`. This
+ * polygon extends to infinity in both axes, so any finite point with
+ * `x ≥ 0` and `y ≥ 0` lies inside its outer loop — convenient for placing
+ * an inner-loop polygon with literal coordinates.
+ */
+function wideQuadrantAtlas(): { atlas: Atlas; face: Face } {
+  const atlas = createInitialAtlas();
+  return { atlas, face: atlas.faces[0] };
+}
+
+describe('isPolygonCW', () => {
+  it('returns true for a CW square', () => {
+    const verts: Junction[] = [
+      { kind: 'finite', x: 0, y: 0 },
+      { kind: 'finite', x: 0, y: 1 },
+      { kind: 'finite', x: 1, y: 1 },
+      { kind: 'finite', x: 1, y: 0 },
+    ];
+    assert.equal(isPolygonCW(verts), true);
+  });
+
+  it('returns false for a CCW square', () => {
+    const verts: Junction[] = [
+      { kind: 'finite', x: 0, y: 0 },
+      { kind: 'finite', x: 1, y: 0 },
+      { kind: 'finite', x: 1, y: 1 },
+      { kind: 'finite', x: 0, y: 1 },
+    ];
+    assert.equal(isPolygonCW(verts), false);
+  });
+});
+
+describe('Face.innerLoops', () => {
+  it('defaults to an empty array on a freshly-constructed seed atlas', () => {
+    const atlas = createInitialAtlas();
+    for (const f of atlas.faces) {
+      assert.deepEqual(f.innerLoops, []);
+    }
+  });
+
+  it('Face constructor wires next/prev/face on a passed inner loop', () => {
+    const outer = [
+      new HalfEdge('finite', 0, 0),
+      new HalfEdge('finite', 10, 0),
+      new HalfEdge('finite', 0, 10),
+    ];
+    // CW inner triangle inside the outer.
+    const inner = [
+      new HalfEdge('finite', 1, 1),
+      new HalfEdge('finite', 1, 2),
+      new HalfEdge('finite', 2, 1),
+    ];
+    const f = new Face(outer, [inner]);
+
+    for (let i = 0; i < 3; i++) {
+      assert.equal(inner[i].face, f);
+      assert.equal(inner[i].next, inner[(i + 1) % 3]);
+      assert.equal(inner[i].prev, inner[(i - 1 + 3) % 3]);
+      assert.equal(inner[i].twin, null, 'inner-loop edges are free by default');
+    }
+    assert.equal(f.innerLoops.length, 1);
+    assert.equal(f.innerLoops[0], inner);
+  });
+});
+
+describe('addInnerLoop', () => {
+  it('adds a CW triangle as an inner loop and atlas validates', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    const loopHEs = addInnerLoop(atlas, face, [
+      { x: 10, y: 5 },
+      { x: 10, y: 20 },
+      { x: 20, y: 5 },
+    ]);
+
+    assert.equal(face.innerLoops.length, 1);
+    assert.equal(face.innerLoops[0], loopHEs);
+    assert.equal(loopHEs.length, 3);
+    for (const he of loopHEs) {
+      assert.equal(he.face, face);
+      assert.equal(he.twin, null);
+      assert.ok(atlas.halfEdges.includes(he));
+    }
+    validateAtlas(atlas);
+  });
+
+  it('rejects a CCW vertex order', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    assert.throws(
+      () =>
+        addInnerLoop(atlas, face, [
+          { x: 10, y: 5 },
+          { x: 20, y: 5 },
+          { x: 10, y: 20 },
+        ]),
+      /CW order/,
+    );
+  });
+
+  it('rejects fewer than 3 vertices', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    assert.throws(
+      () =>
+        addInnerLoop(atlas, face, [
+          { x: 10, y: 5 },
+          { x: 20, y: 5 },
+        ]),
+      /at least 3/,
+    );
+  });
+
+  it('rejects a vertex outside the outer loop', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    // Outside the +x/+y wedge: negative x.
+    assert.throws(
+      () =>
+        addInnerLoop(atlas, face, [
+          { x: -1, y: 5 },
+          { x: 10, y: 20 },
+          { x: 20, y: 5 },
+        ]),
+      /outside the outer loop/,
+    );
+  });
+
+  it('rejects a face that does not belong to the atlas', () => {
+    const { atlas } = wideQuadrantAtlas();
+    const stranger = new Face([
+      new HalfEdge('finite', 0, 0),
+      new HalfEdge('finite', 1, 0),
+      new HalfEdge('finite', 0, 1),
+    ]);
+    assert.throws(
+      () =>
+        addInnerLoop(atlas, stranger, [
+          { x: 0.1, y: 0.1 },
+          { x: 0.1, y: 0.5 },
+          { x: 0.5, y: 0.1 },
+        ]),
+      /face must belong to atlas/,
+    );
+  });
+});
+
+describe('Face.contains with inner loops', () => {
+  it('returns false strictly inside an inner loop', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    addInnerLoop(atlas, face, [
+      { x: 10, y: 5 },
+      { x: 10, y: 20 },
+      { x: 20, y: 5 },
+    ]);
+
+    // Point strictly inside the inner triangle's interior.
+    assert.equal(face.contains({ x: 12, y: 8 }), false);
+  });
+
+  it('returns true at a point lying exactly on the inner-loop boundary', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    addInnerLoop(atlas, face, [
+      { x: 10, y: 5 },
+      { x: 10, y: 20 },
+      { x: 20, y: 5 },
+    ]);
+
+    // Vertex of the inner loop — on the rim of the hole, still "in" the face.
+    assert.equal(face.contains({ x: 10, y: 5 }), true);
+  });
+
+  it('returns true elsewhere inside the outer face', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    addInnerLoop(atlas, face, [
+      { x: 10, y: 5 },
+      { x: 10, y: 20 },
+      { x: 20, y: 5 },
+    ]);
+
+    // Inside the outer face but outside the inner triangle.
+    assert.equal(face.contains({ x: 30, y: 30 }), true);
+  });
+
+  it('returns false outside the outer face regardless of inner loops', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    addInnerLoop(atlas, face, [
+      { x: 10, y: 5 },
+      { x: 10, y: 20 },
+      { x: 20, y: 5 },
+    ]);
+
+    // Negative x is outside the +x/+y wedge.
+    assert.equal(face.contains({ x: -1, y: 5 }), false);
+  });
+});
+
+describe('Face.allHalfEdges', () => {
+  it('iterates outer-loop half-edges then each inner loop', () => {
+    const { atlas, face } = wideQuadrantAtlas();
+    const inner = addInnerLoop(atlas, face, [
+      { x: 10, y: 5 },
+      { x: 10, y: 20 },
+      { x: 20, y: 5 },
+    ]);
+
+    const all = [...face.allHalfEdges()];
+    assert.equal(all.length, face.halfEdges.length + inner.length);
+    // First k entries are the outer loop in order.
+    for (let i = 0; i < face.halfEdges.length; i++) {
+      assert.equal(all[i], face.halfEdges[i]);
+    }
+    // Remaining entries are the inner loop in order.
+    for (let i = 0; i < inner.length; i++) {
+      assert.equal(all[face.halfEdges.length + i], inner[i]);
     }
   });
 });

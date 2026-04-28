@@ -95,6 +95,16 @@ export function isPolygonCCW(verts: ReadonlyArray<Junction>): boolean {
 }
 
 /**
+ * Whether the polygon defined by `verts` is wound CW. Inner loops ("holes")
+ * are CW by convention; the outer loop is CCW. This is just `isPolygonCCW`
+ * applied to the reversed vertex order.
+ */
+export function isPolygonCW(verts: ReadonlyArray<Junction>): boolean {
+  const reversed = [...verts].reverse();
+  return isPolygonCCW(reversed);
+}
+
+/**
  * Signed cross of edge `a → b` with the vector `a → p`. Used by
  * {@link isPolygonCCW} to admit an ULP-level epsilon on the relaxed
  * (non-strict) check while still calling {@link leftOfDirectedEdgeStrict}

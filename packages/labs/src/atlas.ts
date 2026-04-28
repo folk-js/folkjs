@@ -4,6 +4,7 @@ import {
   applyLinearToDirection,
   cross,
   isPolygonCCW,
+  isPolygonCW,
   type Junction,
   junctionInTranslatedFrame,
   leftOfDirectedEdge,
@@ -21,6 +22,7 @@ export {
   applyLinearToDirection,
   cross,
   isPolygonCCW,
+  isPolygonCW,
   type Junction,
   leftOfDirectedEdge,
   leftOfDirectedEdgeStrict,
@@ -182,23 +184,35 @@ export class HalfEdge {
 // ----------------------------------------------------------------------------
 
 /**
- * A convex polygonal face owning k ≥ 3 CCW-ordered half-edges.
+ * A convex polygonal face with one outer (CCW) boundary loop and zero or more
+ * inner (CW) boundary loops.
  *
- * Convention: `halfEdges[0]` is the canonical anchor — its origin is finite
- * at face-local `(0, 0)`. This pins down the face's local frame uniquely.
+ * **Outer loop.** `halfEdges` holds the k ≥ 3 CCW-ordered half-edges of the
+ * outer boundary. By convention `halfEdges[0]` is the canonical anchor — its
+ * origin is finite at face-local `(0, 0)`. This pins down the face's local
+ * frame uniquely. Convexity (every interior angle < π) is a model-level
+ * invariant checked by {@link validateAtlas}.
  *
- * Convexity (every interior angle < π) is a model-level invariant checked by
- * {@link validateAtlas}; operations are responsible for producing only convex
- * sub-faces (decomposing as needed). The implementation today only constructs
- * triangle faces (k = 3), but every method here operates over the full k-gon
- * cycle.
+ * **Inner loops.** `innerLoops` holds zero or more CW cycles of half-edges,
+ * each describing an inner boundary ("hole") inside the outer one. Inner-loop
+ * half-edges have their `face` set to this face and are wired into a CW
+ * cycle via `next`/`prev`. They may be untwinned (a free hole) or twinned to
+ * half-edges in another face. Inner loops do NOT have to be convex; they
+ * just have to be simple, CW, and lie inside the outer polygon.
+ *
+ * The implementation today only auto-constructs triangle outer loops with no
+ * inner loops; richer structures are introduced via {@link addInnerLoop} or
+ * by passing them explicitly to the constructor.
  */
 export class Face {
+  /** The outer boundary loop, CCW. Always present, k ≥ 3. */
   halfEdges: HalfEdge[];
+  /** Inner boundary loops, each CW, each with k ≥ 3. Empty if the face has no holes. */
+  innerLoops: HalfEdge[][];
   /** Shapes assigned to this face (managed by the atlas's owner). */
   shapes: Set<Element> = new Set();
 
-  constructor(halfEdges: HalfEdge[]) {
+  constructor(halfEdges: HalfEdge[], innerLoops: HalfEdge[][] = []) {
     if (halfEdges.length < 3) {
       throw new Error(`Face needs at least 3 half-edges, got ${halfEdges.length}`);
     }
@@ -218,14 +232,32 @@ export class Face {
       he.prev = halfEdges[(i - 1 + k) % k];
       he.face = this;
     }
+
+    this.innerLoops = innerLoops;
+    for (const loop of innerLoops) {
+      if (loop.length < 3) {
+        throw new Error(`Inner loop needs at least 3 half-edges, got ${loop.length}`);
+      }
+      const m = loop.length;
+      for (let i = 0; i < m; i++) {
+        const he = loop[i];
+        he.next = loop[(i + 1) % m];
+        he.prev = loop[(i - 1 + m) % m];
+        he.face = this;
+      }
+    }
   }
 
-  /** This face's k junctions (origins of its half-edges) in CCW order. */
+  /** This face's k outer-loop junctions (origins of its outer half-edges) in CCW order. */
   junctions(): Junction[] {
     return this.halfEdges.map((h) => h.origin());
   }
 
-  /** Iterate this face's half-edges in CCW order, starting at the anchor. */
+  /**
+   * Iterate this face's outer-loop half-edges in CCW order, starting at the
+   * anchor. (Inner-loop half-edges are reached via {@link allHalfEdges} or
+   * by indexing {@link innerLoops}.)
+   */
   *halfEdgesCCW(): IterableIterator<HalfEdge> {
     let he: HalfEdge = this.halfEdges[0];
     do {
@@ -234,9 +266,30 @@ export class Face {
     } while (he !== this.halfEdges[0]);
   }
 
-  /** Test whether `p` (in this face's local frame) lies inside the face. */
+  /** Iterate every half-edge of this face, outer loop first then each inner loop. */
+  *allHalfEdges(): IterableIterator<HalfEdge> {
+    for (const he of this.halfEdges) yield he;
+    for (const loop of this.innerLoops) {
+      for (const he of loop) yield he;
+    }
+  }
+
+  /**
+   * Test whether `p` (in this face's local frame) lies inside the face — i.e.
+   * inside the outer loop and *not strictly inside* any inner loop. Points
+   * exactly on an inner-loop boundary count as inside the face (they lie on
+   * the rim of a hole, not inside it).
+   *
+   * Inner loops are stored CW; the strict-containment test below assumes a
+   * CCW polygon, so we reverse each inner loop's vertex order before testing.
+   */
   contains(p: Point): boolean {
-    return polygonContains(this.junctions(), p);
+    if (!polygonContains(this.junctions(), p)) return false;
+    for (const loop of this.innerLoops) {
+      const verts = loop.map((h) => h.origin()).reverse();
+      if (polygonContainsStrict(verts, p)) return false;
+    }
+    return true;
   }
 }
 
@@ -866,7 +919,7 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
   }
   if (R === 1) return;
 
-  for (const he of face.halfEdges) {
+  for (const he of face.allHalfEdges()) {
     if (he.originKind === 'finite') {
       he.ox *= R;
       he.oy *= R;
@@ -885,6 +938,69 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
     if (targetIsFace) T = M.multiply(scaleR, T);
     he.transform = T;
   }
+}
+
+// ----------------------------------------------------------------------------
+// addInnerLoop — add a hole to an existing face
+// ----------------------------------------------------------------------------
+
+/**
+ * Add an inner (CW) boundary loop to `face`, with all half-edges initially
+ * "free" (`twin = null`). The loop describes a hole in the face: walking off
+ * one of its edges terminates the walk, since there's no neighbour on the
+ * other side. A subsequent `stitch`/`linkEdgeToTwin` call can bind any of
+ * the new free edges to a half-edge in another face.
+ *
+ * `vertices` must be:
+ *   - At least 3 finite points.
+ *   - In CW order (the opposite winding to the face's outer loop).
+ *   - All strictly inside (or on the boundary of) the outer polygon.
+ *
+ * Returns the array of newly-created half-edges, in the order matching
+ * `vertices`. The face's `innerLoops` array is appended to with the same
+ * array, and every new half-edge is added to `atlas.halfEdges`.
+ */
+export function addInnerLoop(
+  atlas: Atlas,
+  face: Face,
+  vertices: ReadonlyArray<Point>,
+): HalfEdge[] {
+  if (!atlas.faces.includes(face)) {
+    throw new Error('addInnerLoop: face must belong to atlas');
+  }
+  if (vertices.length < 3) {
+    throw new Error(`addInnerLoop: need at least 3 vertices, got ${vertices.length}`);
+  }
+
+  const loop: HalfEdge[] = vertices.map((v) => new HalfEdge('finite', v.x, v.y));
+  const m = loop.length;
+  for (let i = 0; i < m; i++) {
+    const he = loop[i];
+    he.next = loop[(i + 1) % m];
+    he.prev = loop[(i - 1 + m) % m];
+    he.face = face;
+    // twin remains null — these are free edges.
+  }
+
+  if (!isPolygonCW(loop.map((h) => h.origin()))) {
+    throw new Error(
+      'addInnerLoop: vertices must be in CW order (a hole is wound opposite to the outer face)',
+    );
+  }
+
+  const outer = face.junctions();
+  for (let i = 0; i < m; i++) {
+    if (!polygonContains(outer, vertices[i])) {
+      throw new Error(
+        `addInnerLoop: vertex (${vertices[i].x}, ${vertices[i].y}) lies outside the outer loop`,
+      );
+    }
+  }
+
+  face.innerLoops.push(loop);
+  for (const he of loop) atlas.halfEdges.push(he);
+
+  return loop;
 }
 
 // ----------------------------------------------------------------------------
@@ -964,6 +1080,58 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     for (const he of f.halfEdges) {
       if (he.isAtInfinity && he.twin !== null) {
         errs.push('at-infinity half-edge has non-null twin');
+      }
+    }
+
+    // Inner loops: each is a CW cycle inside the outer loop, with proper
+    // wiring and finite vertices. Convexity is NOT required for inner loops.
+    for (let li = 0; li < f.innerLoops.length; li++) {
+      const loop = f.innerLoops[li];
+      const m = loop.length;
+      if (m < 3) {
+        errs.push(`face innerLoops[${li}] has ${m} half-edges, expected at least 3`);
+        continue;
+      }
+      for (let i = 0; i < m; i++) {
+        const he = loop[i];
+        if (!allHESet.has(he)) {
+          errs.push(`innerLoops[${li}][${i}] not in atlas.halfEdges`);
+        }
+        if (he.face !== f) errs.push(`innerLoops[${li}][${i}] has wrong .face`);
+        if (he.next !== loop[(i + 1) % m]) {
+          errs.push(`innerLoops[${li}][${i}].next !== innerLoops[${li}][${(i + 1) % m}]`);
+        }
+        if (he.prev !== loop[(i - 1 + m) % m]) {
+          errs.push(`innerLoops[${li}][${i}].prev !== innerLoops[${li}][${(i - 1 + m) % m}]`);
+        }
+        if (he.next.prev !== he) {
+          errs.push(`innerLoops[${li}][${i}].next.prev !== self`);
+        }
+      }
+      // Inner loops are required to be CW. We don't currently support ideal
+      // vertices on inner loops (a hole is a finite region), so a normal
+      // CW check applies.
+      try {
+        const verts = loop.map((h) => h.origin());
+        if (!isPolygonCW(verts)) {
+          errs.push(`face innerLoops[${li}] not in CW order`);
+        }
+        // Every inner-loop vertex must lie inside (or on the boundary of)
+        // the outer loop.
+        for (let i = 0; i < m; i++) {
+          const v = verts[i];
+          if (v.kind !== 'finite') {
+            errs.push(`face innerLoops[${li}][${i}] is ideal; inner loops must be finite`);
+            continue;
+          }
+          if (!polygonContains(f.junctions(), { x: v.x, y: v.y })) {
+            errs.push(
+              `face innerLoops[${li}][${i}] at (${v.x}, ${v.y}) lies outside the outer loop`,
+            );
+          }
+        }
+      } catch (e) {
+        errs.push(`face innerLoops[${li}] orientation check failed: ${(e as Error).message}`);
       }
     }
   }
@@ -1986,7 +2154,8 @@ function setTwin(
 
 function detachFace(atlas: Atlas, face: Face) {
   atlas.faces = atlas.faces.filter((f) => f !== face);
-  const heSet = new Set<HalfEdge>(face.halfEdges);
+  const heSet = new Set<HalfEdge>();
+  for (const he of face.allHalfEdges()) heSet.add(he);
   atlas.halfEdges = atlas.halfEdges.filter((he) => !heSet.has(he));
   // Note: external twins still point INTO this face's half-edges. The caller
   // (a split routine) is expected to re-attach them to new sub-faces' edges.
@@ -1994,7 +2163,7 @@ function detachFace(atlas: Atlas, face: Face) {
 
 function attachFace(atlas: Atlas, face: Face) {
   atlas.faces.push(face);
-  for (const he of face.halfEdges) atlas.halfEdges.push(he);
+  for (const he of face.allHalfEdges()) atlas.halfEdges.push(he);
 }
 
 // ----------------------------------------------------------------------------

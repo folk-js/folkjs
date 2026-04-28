@@ -28,4 +28,5 @@ export {
   polygonContains,
   polygonContainsStrict,
   isPolygonCCW,
+  isPolygonCW,
 } from './polygon.ts';
