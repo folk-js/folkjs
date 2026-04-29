@@ -1,39 +1,39 @@
-import { strict as assert } from 'node:assert';
-import { describe, it } from 'node:test';
 import * as M from '@folkjs/geometry/Matrix2D';
 import type { Point } from '@folkjs/geometry/Vector2';
+import { strict as assert } from 'node:assert';
+import { describe, it } from 'node:test';
 import {
   addInnerLoop,
-  Atlas,
   aroundJunction,
+  Atlas,
   createAllIdealAtlas,
   createInitialAtlas,
   Face,
-  Side,
   insertStrip,
-  Link,
-  link,
-  rescaleFaceFrame,
-  resizeStrip,
   isPolygonCCW,
   isPolygonCW,
-  Stitch,
-  stitch,
-  translationToWrap,
-  unlink,
-  unstitch,
-  type BoundaryHit,
-  type Junction,
+  Link,
+  link,
   pointOnSideAtU,
+  rescaleFaceFrame,
+  resizeStrip,
+  Side,
   splitAtlasAlongLine,
   splitFaceAlongChord,
   splitFaceAlongLine,
   splitFaceAtVertices,
+  Stitch,
+  stitch,
   subdivideAtInfinityArc,
   subdivideSide,
+  translationToWrap,
+  unlink,
+  unstitch,
   uOfPointOnSide,
   validateAtlas,
   walkLine,
+  type BoundaryHit,
+  type Junction,
 } from '../src/atlas.ts';
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,7 @@ describe('Side', () => {
     for (const s of atlas.root.sides) {
       assert.equal(s.kind, 'arc');
       assert.equal(s.kind === 'arc', true);
+      // @ts-expect-error — chord is not an arc
       assert.equal(s.kind === 'chord', false);
     }
     // Cut horizontally → sub-faces have arcs + a chord side.
@@ -264,56 +265,31 @@ describe('isPolygonCCW', () => {
 
   it('handles all-ideal polygons (boundary lies on S¹)', () => {
     // Four cardinal directions in CCW order — the four-wedge collapse seed.
-    assert.equal(
-      isPolygonCCW([idl(1, 0), idl(0, 1), idl(-1, 0), idl(0, -1)]),
-      true,
-    );
+    assert.equal(isPolygonCCW([idl(1, 0), idl(0, 1), idl(-1, 0), idl(0, -1)]), true);
     // Same directions in CW order — must register as not-CCW.
-    assert.equal(
-      isPolygonCCW([idl(1, 0), idl(0, -1), idl(-1, 0), idl(0, 1)]),
-      false,
-    );
+    assert.equal(isPolygonCCW([idl(1, 0), idl(0, -1), idl(-1, 0), idl(0, 1)]), false);
     // Three CCW directions covering all of S¹.
-    assert.equal(
-      isPolygonCCW([
-        idl(1, 0),
-        idl(-0.5, Math.sqrt(3) / 2),
-        idl(-0.5, -Math.sqrt(3) / 2),
-      ]),
-      true,
-    );
+    assert.equal(isPolygonCCW([idl(1, 0), idl(-0.5, Math.sqrt(3) / 2), idl(-0.5, -Math.sqrt(3) / 2)]), true);
   });
 
   it('returns true for a CCW finite quadrilateral (k = 4)', () => {
-    assert.equal(
-      isPolygonCCW([fin(0, 0), fin(10, 0), fin(10, 10), fin(0, 10)]),
-      true,
-    );
+    assert.equal(isPolygonCCW([fin(0, 0), fin(10, 0), fin(10, 10), fin(0, 10)]), true);
   });
 
   it('returns false for a CW finite quadrilateral (k = 4)', () => {
-    assert.equal(
-      isPolygonCCW([fin(0, 0), fin(0, 10), fin(10, 10), fin(10, 0)]),
-      false,
-    );
+    assert.equal(isPolygonCCW([fin(0, 0), fin(0, 10), fin(10, 10), fin(10, 0)]), false);
   });
 
   it('returns false for a genuinely reflex quadrilateral', () => {
     // (5, -5) is below the segment (10,0)→(0,10), creating a concave dip.
     // The triple ((10,0), (5,-5), (0,10)) makes a right turn (negative cross).
-    assert.equal(
-      isPolygonCCW([fin(0, 0), fin(10, 0), fin(5, -5), fin(0, 10)]),
-      false,
-    );
+    assert.equal(isPolygonCCW([fin(0, 0), fin(10, 0), fin(5, -5), fin(0, 10)]), false);
   });
 
   it('handles a k = 4 face with two finite + two ideal vertices', () => {
     // A "trapezoid going to infinity" where every interior angle is < π:
     // (0, 0) → (10, 0) → +(1, 1) → +(-1, 1). Strictly convex.
-    assert.equal(
-      isPolygonCCW([fin(0, 0), fin(10, 0), idl(1, 1), idl(-1, 1)]),
-      true,
-    );
+    assert.equal(isPolygonCCW([fin(0, 0), fin(10, 0), idl(1, 1), idl(-1, 1)]), true);
   });
 
   it('accepts a k = 4 with a colinear chain vertex on a long side', () => {
@@ -321,20 +297,14 @@ describe('isPolygonCCW', () => {
     // along the x-axis (degenerate intermediate vertex (10, 0) on the
     // origin→ideal-x edge). This is a valid "chain" vertex that arises
     // when a long side of a face is twined to several neighbours.
-    assert.equal(
-      isPolygonCCW([fin(0, 0), fin(10, 0), idl(1, 0), idl(0, 1)]),
-      true,
-    );
+    assert.equal(isPolygonCCW([fin(0, 0), fin(10, 0), idl(1, 0), idl(0, 1)]), true);
   });
 
   it('accepts a strip rectangle (k = 4 with same-ideal-direction ends)', () => {
     // Left strip rect: SE finite → NE finite → NW ideal → SW ideal,
     // where NW and SW share the same ideal direction (a degenerate
     // "at-infinity" short edge).
-    assert.equal(
-      isPolygonCCW([fin(0, 0), fin(0, 5), idl(-1, 0), idl(-1, 0)]),
-      true,
-    );
+    assert.equal(isPolygonCCW([fin(0, 0), fin(0, 5), idl(-1, 0), idl(-1, 0)]), true);
   });
 
   it('accepts a strip-rect hexagon (chains on both long sides + ideal ends)', () => {
@@ -441,9 +411,7 @@ describe('aroundJunction', () => {
     const atlas = createInitialAtlas();
     // Find one ideal half-edge that is NOT at-infinity (so it has the
     // ideal-finite kind and a twin).
-    const start = atlas.sides.find(
-      (h) => h.a.kind === 'ideal' && h.kind !== 'arc',
-    )!;
+    const start = atlas.sides.find((h) => h.a.kind === 'ideal' && h.kind !== 'arc')!;
     const fan = [...aroundJunction(start)];
     // An ideal cardinal direction is shared by exactly 2 faces in the seed
     // (e.g. +X is shared by NE and SE).
@@ -882,7 +850,6 @@ describe('stitch', () => {
   });
 });
 
-
 // ---------------------------------------------------------------------------
 // Stitch / stitch / unstitch / Atlas.stitches (chunk C)
 // ---------------------------------------------------------------------------
@@ -1031,14 +998,8 @@ describe('Link', () => {
   it('link() throws when either endpoint is not in the atlas', () => {
     const atlas1 = createInitialAtlas();
     const atlas2 = createInitialAtlas();
-    assert.throws(
-      () => link(atlas1, atlas1.faces[0], atlas2.faces[0], M.fromValues()),
-      /to face not in atlas/,
-    );
-    assert.throws(
-      () => link(atlas1, atlas2.faces[0], atlas1.faces[0], M.fromValues()),
-      /from face not in atlas/,
-    );
+    assert.throws(() => link(atlas1, atlas1.faces[0], atlas2.faces[0], M.fromValues()), /to face not in atlas/);
+    assert.throws(() => link(atlas1, atlas2.faces[0], atlas1.faces[0], M.fromValues()), /from face not in atlas/);
   });
 
   it('unlink() removes the Link and is idempotent', () => {
@@ -1082,11 +1043,7 @@ describe('Link', () => {
     // Make a face that has no twins to anything else, then add a Link
     // pointing at it from the root chain. validateAtlas should accept it.
     const atlas = createInitialAtlas();
-    const orphan = new Face([
-      new Side('finite', 100, 100),
-      new Side('finite', 110, 100),
-      new Side('finite', 105, 110),
-    ]);
+    const orphan = new Face([new Side('finite', 100, 100), new Side('finite', 110, 100), new Side('finite', 105, 110)]);
     atlas.faces.push(orphan);
     for (const s of orphan.sides) atlas.sides.push(s);
     // Without a Link, validation should fail (face unreachable from root).
@@ -1106,11 +1063,7 @@ describe('Link', () => {
     // Add a Link from a → b. Should not deduplicate the existing image of b
     // (it's the same composite — already there via twin chain), but a fresh
     // configuration with a non-trivial transform produces a new image.
-    const fresh = new Face([
-      new Side('finite', 0, 0),
-      new Side('finite', 1, 0),
-      new Side('finite', 0, 1),
-    ]);
+    const fresh = new Face([new Side('finite', 0, 0), new Side('finite', 1, 0), new Side('finite', 0, 1)]);
     atlas.faces.push(fresh);
     for (const s of fresh.sides) atlas.sides.push(s);
     link(atlas, a, fresh, M.fromTranslate(50, 50));
@@ -1135,9 +1088,7 @@ describe('Link', () => {
     // 5 images of root: the original + 4 self-link-induced shrinks.
     assert.equal(rootImages.length, 5);
     // Composites: identity, scale(0.5), scale(0.25), scale(0.125), scale(0.0625).
-    const scales = rootImages
-      .map((img) => img.composite.a)
-      .sort((x, y) => y - x);
+    const scales = rootImages.map((img) => img.composite.a).sort((x, y) => y - x);
     assert.ok(Math.abs(scales[0] - 1) < 1e-9);
     assert.ok(Math.abs(scales[1] - 0.5) < 1e-9);
     assert.ok(Math.abs(scales[2] - 0.25) < 1e-9);
@@ -1172,7 +1123,8 @@ describe('Link', () => {
     //   - the inverse fully restores the pre-wrap edge-stitched state.
     //
     // Build a 3-face strip: W [width 1] | R [width 1] | E [width 1].
-    const w = 1, h = 1;
+    const w = 1,
+      h = 1;
     const mk = (xOffset: number) => {
       const bl = new Side('finite', xOffset, 0);
       const br = new Side('finite', xOffset + w, 0);
@@ -1187,9 +1139,18 @@ describe('Link', () => {
     const atlas = new Atlas(R.face);
     atlas.faces = [W.face, R.face, E.face];
     atlas.sides = [
-      W.bottom, W.right, W.top, W.left,
-      R.bottom, R.right, R.top, R.left,
-      E.bottom, E.right, E.top, E.left,
+      W.bottom,
+      W.right,
+      W.top,
+      W.left,
+      R.bottom,
+      R.right,
+      R.top,
+      R.left,
+      E.bottom,
+      E.right,
+      E.top,
+      E.left,
     ];
     // Edge-stitch W.right ↔ R.left and R.right ↔ E.left (pre-wrap).
     stitch(atlas, W.right, R.left, M.fromValues());
@@ -1690,14 +1651,8 @@ describe('walkLine', () => {
     const last = chain[chain.length - 1];
     // First crossing's entry and last crossing's exit should be at infinity
     // (either via at-infinity arc or no twin).
-    assert.ok(
-      first.entry?.he.kind === 'arc' || first.entry?.he.twin === null,
-      'chain start: entry at infinity',
-    );
-    assert.ok(
-      last.exit.he.kind === 'arc' || last.exit.he.twin === null,
-      'chain end: exit at infinity',
-    );
+    assert.ok(first.entry?.he.kind === 'arc' || first.entry?.he.twin === null, 'chain start: entry at infinity');
+    assert.ok(last.exit.he.kind === 'arc' || last.exit.he.twin === null, 'chain end: exit at infinity');
     // Exactly one host.
     assert.equal(chain.filter((c) => c.isHost).length, 1);
   });
@@ -1705,19 +1660,13 @@ describe('walkLine', () => {
   it('throws when seam is not strictly inside host', () => {
     const atlas = createInitialAtlas();
     const host = atlas.faces[0];
-    assert.throws(
-      () => walkLine(host, { x: 0, y: 0 }, { x: 1, y: 0 }),
-      /not strictly interior/,
-    );
+    assert.throws(() => walkLine(host, { x: 0, y: 0 }, { x: 1, y: 0 }), /not strictly interior/);
   });
 
   it('throws on zero-length direction', () => {
     const atlas = createInitialAtlas();
     const host = atlas.locate({ x: 3, y: 5 })!;
-    assert.throws(
-      () => walkLine(host, { x: 3, y: 5 }, { x: 0, y: 0 }),
-      /zero-length/,
-    );
+    assert.throws(() => walkLine(host, { x: 3, y: 5 }, { x: 0, y: 0 }), /zero-length/);
   });
 });
 
@@ -1783,12 +1732,7 @@ describe('subdivideSide', () => {
     const spoke = findPlusXSpoke(atlas);
     subdivideSide(atlas, spoke, { x: 5, y: 0 });
 
-    const ff = atlas.sides.find(
-      (h) =>
-        h.a.kind === 'finite' &&
-        h.next.a.kind === 'finite' &&
-        h.twin !== null,
-    );
+    const ff = atlas.sides.find((h) => h.a.kind === 'finite' && h.next.a.kind === 'finite' && h.twin !== null);
     assert.ok(ff, 'no finite-finite half-edge available after spoke subdivision');
 
     const heCount0 = atlas.sides.length;
@@ -1855,29 +1799,20 @@ describe('subdivideSide', () => {
     const atlas = createInitialAtlas();
     const arc = atlas.sides.find((h) => h.kind === 'arc');
     assert.ok(arc, 'no at-infinity arc found in seed atlas');
-    assert.throws(
-      () => subdivideSide(atlas, arc!, { x: 0, y: 0 }),
-      /subdivideAtInfinityArc/,
-    );
+    assert.throws(() => subdivideSide(atlas, arc!, { x: 0, y: 0 }), /subdivideAtInfinityArc/);
   });
 
   it('throws when point is at the start endpoint', () => {
     const atlas = createInitialAtlas();
     const spoke = findPlusXSpoke(atlas);
-    assert.throws(
-      () => subdivideSide(atlas, spoke, { x: 0, y: 0 }),
-      /not strictly between endpoints/,
-    );
+    assert.throws(() => subdivideSide(atlas, spoke, { x: 0, y: 0 }), /not strictly between endpoints/);
   });
 
   it('throws when point is not on the edge', () => {
     const atlas = createInitialAtlas();
     const spoke = findPlusXSpoke(atlas);
     // (5, 7) is not on the +x axis.
-    assert.throws(
-      () => subdivideSide(atlas, spoke, { x: 5, y: 7 }),
-      /not on the edge|not strictly between/,
-    );
+    assert.throws(() => subdivideSide(atlas, spoke, { x: 5, y: 7 }), /not on the edge|not strictly between/);
   });
 
   it('handles repeated subdivisions of the same edge', () => {
@@ -1964,29 +1899,20 @@ describe('subdivideAtInfinityArc', () => {
     const atlas = createInitialAtlas();
     const spoke = atlas.sides.find((h) => h.a.kind === 'finite');
     assert.ok(spoke);
-    assert.throws(
-      () => subdivideAtInfinityArc(atlas, spoke!, { x: 1, y: 0 }),
-      /not an at-infinity arc/,
-    );
+    assert.throws(() => subdivideAtInfinityArc(atlas, spoke!, { x: 1, y: 0 }), /not an at-infinity arc/);
   });
 
   it('throws when idealDir is outside the arc sweep', () => {
     const atlas = createInitialAtlas();
     const arc = findNEArc(atlas); // NE arc: (1,0) → (0,1)
     // (-1, -1) (after normalization) is in the SW direction — not in the NE arc.
-    assert.throws(
-      () => subdivideAtInfinityArc(atlas, arc, { x: -1, y: -1 }),
-      /not strictly inside the arc/,
-    );
+    assert.throws(() => subdivideAtInfinityArc(atlas, arc, { x: -1, y: -1 }), /not strictly inside the arc/);
   });
 
   it('throws when idealDir coincides with an arc endpoint', () => {
     const atlas = createInitialAtlas();
     const arc = findNEArc(atlas);
-    assert.throws(
-      () => subdivideAtInfinityArc(atlas, arc, { x: 1, y: 0 }),
-      /not strictly inside the arc/,
-    );
+    assert.throws(() => subdivideAtInfinityArc(atlas, arc, { x: 1, y: 0 }), /not strictly inside the arc/);
   });
 
   it('handles repeated subdivisions of the same arc', () => {
@@ -2163,12 +2089,8 @@ describe('splitFaceAtVertices', () => {
     assert.equal(root.sides.length, 4);
     // Find the +x and -x ideal vertex indices.
     const verts = root.junctions();
-    const idxPlusX = verts.findIndex(
-      (v) => v.kind === 'ideal' && Math.abs(v.x - 1) < 1e-9 && Math.abs(v.y) < 1e-9,
-    );
-    const idxMinusX = verts.findIndex(
-      (v) => v.kind === 'ideal' && Math.abs(v.x + 1) < 1e-9 && Math.abs(v.y) < 1e-9,
-    );
+    const idxPlusX = verts.findIndex((v) => v.kind === 'ideal' && Math.abs(v.x - 1) < 1e-9 && Math.abs(v.y) < 1e-9);
+    const idxMinusX = verts.findIndex((v) => v.kind === 'ideal' && Math.abs(v.x + 1) < 1e-9 && Math.abs(v.y) < 1e-9);
     assert.ok(idxPlusX >= 0 && idxMinusX >= 0);
     const result = splitFaceAtVertices(atlas, root, idxPlusX, idxMinusX, { x: 0, y: 0 });
     assert.equal(atlas.faces.length, 2);
@@ -2204,16 +2126,9 @@ describe('splitFaceAtVertices', () => {
     // of "the +x ↔ -x line" has the same antipodal endpoints on S¹).
     const atlas = createAllIdealAtlas();
     const verts = atlas.root.junctions();
-    const idxPlusX = verts.findIndex(
-      (v) => v.kind === 'ideal' && Math.abs(v.x - 1) < 1e-9 && Math.abs(v.y) < 1e-9,
-    );
-    const idxMinusX = verts.findIndex(
-      (v) => v.kind === 'ideal' && Math.abs(v.x + 1) < 1e-9 && Math.abs(v.y) < 1e-9,
-    );
-    assert.throws(
-      () => splitFaceAtVertices(atlas, atlas.root, idxPlusX, idxMinusX),
-      /requires a finite anchor/,
-    );
+    const idxPlusX = verts.findIndex((v) => v.kind === 'ideal' && Math.abs(v.x - 1) < 1e-9 && Math.abs(v.y) < 1e-9);
+    const idxMinusX = verts.findIndex((v) => v.kind === 'ideal' && Math.abs(v.x + 1) < 1e-9 && Math.abs(v.y) < 1e-9);
+    assert.throws(() => splitFaceAtVertices(atlas, atlas.root, idxPlusX, idxMinusX), /requires a finite anchor/);
   });
 
   it('throws when ideal-ideal chord endpoints are not antipodal', () => {
@@ -2226,41 +2141,26 @@ describe('splitFaceAtVertices', () => {
     const atlas = createAllIdealAtlas();
     const root = atlas.root;
     const arcPlusXPlusY = root.sides.find(
-      (h) =>
-        h.kind === 'arc' && Math.abs(h.a.x - 1) < 1e-9 && Math.abs(h.next.a.y - 1) < 1e-9,
+      (h) => h.kind === 'arc' && Math.abs(h.a.x - 1) < 1e-9 && Math.abs(h.next.a.y - 1) < 1e-9,
     )!;
     subdivideAtInfinityArc(atlas, arcPlusXPlusY, { x: Math.SQRT1_2, y: Math.SQRT1_2 });
     const verts = root.junctions();
-    const idxPlusX = verts.findIndex(
-      (v) => v.kind === 'ideal' && Math.abs(v.x - 1) < 1e-9 && Math.abs(v.y) < 1e-9,
-    );
-    const idxPlusY = verts.findIndex(
-      (v) => v.kind === 'ideal' && Math.abs(v.x) < 1e-9 && Math.abs(v.y - 1) < 1e-9,
-    );
+    const idxPlusX = verts.findIndex((v) => v.kind === 'ideal' && Math.abs(v.x - 1) < 1e-9 && Math.abs(v.y) < 1e-9);
+    const idxPlusY = verts.findIndex((v) => v.kind === 'ideal' && Math.abs(v.x) < 1e-9 && Math.abs(v.y - 1) < 1e-9);
     assert.ok(idxPlusX >= 0 && idxPlusY >= 0);
-    const dist = Math.min(
-      Math.abs(idxPlusX - idxPlusY),
-      verts.length - Math.abs(idxPlusX - idxPlusY),
-    );
+    const dist = Math.min(Math.abs(idxPlusX - idxPlusY), verts.length - Math.abs(idxPlusX - idxPlusY));
     assert.ok(dist >= 2, 'expected non-adjacent vertices for the test setup');
-    assert.throws(
-      () => splitFaceAtVertices(atlas, root, idxPlusX, idxPlusY, { x: 0, y: 0 }),
-      /must be antipodal/,
-    );
+    assert.throws(() => splitFaceAtVertices(atlas, root, idxPlusX, idxPlusY, { x: 0, y: 0 }), /must be antipodal/);
   });
 
   it('handles repeated chord splits without violating invariants', () => {
     // Subdivide both spokes of the NE wedge → k=5 face, then chord-split
     // twice. This exercises the "subdivision + chord split" combo well.
     const atlas = createInitialAtlas();
-    const spokeX = atlas.sides.find(
-      (h) => h.a.kind === 'finite' && h.next.a.kind === 'ideal' && h.next.a.x === 1,
-    )!;
+    const spokeX = atlas.sides.find((h) => h.a.kind === 'finite' && h.next.a.kind === 'ideal' && h.next.a.x === 1)!;
     const ne = spokeX.face;
     subdivideSide(atlas, spokeX, { x: 5, y: 0 });
-    const spokeY = ne.sides.find(
-      (h) => h.a.kind === 'ideal' && h.a.x === 0 && h.a.y === 1,
-    )!;
+    const spokeY = ne.sides.find((h) => h.a.kind === 'ideal' && h.a.x === 0 && h.a.y === 1)!;
     subdivideSide(atlas, spokeY, { x: 0, y: 5 });
     // ne is now a k=5 polygon: [(0,0), (5,0), +x ideal, +y ideal, (0,5)].
     assert.equal(ne.sides.length, 5);
@@ -2322,12 +2222,8 @@ describe('splitFaceAtVertices', () => {
 
     const subA = split.face;
     const subB = split.fresh;
-    const aWrap = subA.sides.find(
-      (he) => he.twin && he.twin.face === subB && he.twin !== split.freshChordSide,
-    );
-    const bWrap = subB.sides.find(
-      (he) => he.twin && he.twin.face === subA && he.twin !== split.faceChordSide,
-    );
+    const aWrap = subA.sides.find((he) => he.twin && he.twin.face === subB && he.twin !== split.freshChordSide);
+    const bWrap = subB.sides.find((he) => he.twin && he.twin.face === subA && he.twin !== split.faceChordSide);
     assert.ok(aWrap, 'subA must retain a wrap HE twinned across to subB');
     assert.ok(bWrap, 'subB must retain a wrap HE twinned across to subA');
     assert.equal(aWrap!.twin, bWrap, 'wrap twins must point at each other');
@@ -2523,9 +2419,7 @@ describe('splitFaceAlongChord', () => {
     )!;
     const wedge = arc.face;
     // To make a chord possible (need k >= 4), subdivide the +x spoke first.
-    const spoke = wedge.sides.find(
-      (h) => h.a.kind === 'finite' && h.next.a.kind === 'ideal' && h.next.a.x === 1,
-    )!;
+    const spoke = wedge.sides.find((h) => h.a.kind === 'finite' && h.next.a.kind === 'ideal' && h.next.a.x === 1)!;
     subdivideSide(atlas, spoke, { x: 4, y: 0 });
     // wedge is now a k=4 quad: [origin→(4,0), (4,0)→+x ideal, arc, +y ideal→origin]
     const quad = wedge;
@@ -2563,12 +2457,10 @@ describe('splitFaceAlongChord', () => {
     const atlas = createAllIdealAtlas();
     const root = atlas.root;
     const arcPlusX = root.sides.find(
-      (h) =>
-        h.kind === 'arc' && Math.abs(h.a.x - 1) < 1e-9 && Math.abs(h.next.a.x) < 1e-9,
+      (h) => h.kind === 'arc' && Math.abs(h.a.x - 1) < 1e-9 && Math.abs(h.next.a.x) < 1e-9,
     )!;
     const arcMinusX = root.sides.find(
-      (h) =>
-        h.kind === 'arc' && Math.abs(h.a.x + 1) < 1e-9 && Math.abs(h.next.a.x) < 1e-9,
+      (h) => h.kind === 'arc' && Math.abs(h.a.x + 1) < 1e-9 && Math.abs(h.next.a.x) < 1e-9,
     )!;
     const entryHit: BoundaryHit = {
       kind: 'ideal',
@@ -2594,10 +2486,7 @@ describe('splitFaceAlongChord', () => {
     const he = quad.sides[0];
     const hit: BoundaryHit = { kind: 'finite', he, point: { x: 1, y: 0 }, u: 0.2 };
     const hit2: BoundaryHit = { kind: 'finite', he, point: { x: 4, y: 0 }, u: 0.8 };
-    assert.throws(
-      () => splitFaceAlongChord(atlas, quad, hit, hit2),
-      /same half-edge/,
-    );
+    assert.throws(() => splitFaceAlongChord(atlas, quad, hit, hit2), /same half-edge/);
   });
 
   it('throws when an entry hit is not on the given face', () => {
@@ -2616,10 +2505,7 @@ describe('splitFaceAlongChord', () => {
       point: { x: 0, y: 0 },
       u: 0,
     };
-    assert.throws(
-      () => splitFaceAlongChord(atlas, ne, entryHit, exitHit),
-      /not on face/,
-    );
+    assert.throws(() => splitFaceAlongChord(atlas, ne, entryHit, exitHit), /not on face/);
   });
 
   it('preserves composites of unrelated faces after a chord split', () => {
@@ -2697,9 +2583,7 @@ describe('splitAtlasAlongLine', () => {
     const ne = atlas.locate({ x: 1, y: 1 })!;
     const dir = { x: -2 / Math.sqrt(5), y: -1 / Math.sqrt(5) };
     const result = splitAtlasAlongLine(atlas, ne, { x: 1, y: 1 }, dir);
-    const collectVerts = (
-      pair: { rightFace: Face; leftFace: Face; leftOffset: Point },
-    ) => {
+    const collectVerts = (pair: { rightFace: Face; leftFace: Face; leftOffset: Point }) => {
       const verts: Junction[] = [];
       verts.push(...pair.rightFace.junctions());
       // leftFace is re-anchored by leftOffset; un-translate finite vertices
@@ -2723,10 +2607,7 @@ describe('splitAtlasAlongLine', () => {
       'first crossed face should be NE wedge',
     );
     const last = collectVerts(result.pairs[result.pairs.length - 1]);
-    assert.ok(
-      hasIdeal(last, -1, 0) && hasIdeal(last, 0, -1),
-      'last crossed face should be SW wedge',
-    );
+    assert.ok(hasIdeal(last, -1, 0) && hasIdeal(last, 0, -1), 'last crossed face should be SW wedge');
   });
 
   it('refreshes stale HE references between chained splits (subdivision side-effects)', () => {
@@ -2791,12 +2672,8 @@ describe('splitAtlasAlongLine', () => {
       const b = result.pairs[i + 1];
       // Some HE in a.leftFace should have a twin in b.leftFace (the shared
       // edge across the chain boundary, "above the line" half).
-      const hasLeftConnection = a.leftFace.sides.some(
-        (h) => h.twin && h.twin.face === b.leftFace,
-      );
-      const hasRightConnection = a.rightFace.sides.some(
-        (h) => h.twin && h.twin.face === b.rightFace,
-      );
+      const hasLeftConnection = a.leftFace.sides.some((h) => h.twin && h.twin.face === b.leftFace);
+      const hasRightConnection = a.rightFace.sides.some((h) => h.twin && h.twin.face === b.rightFace);
       assert.ok(hasLeftConnection, `no left-side twin connection between pairs ${i} and ${i + 1}`);
       assert.ok(hasRightConnection, `no right-side twin connection between pairs ${i} and ${i + 1}`);
     }
@@ -2819,11 +2696,7 @@ describe('splitAtlasAlongLine', () => {
      * splitAtlasAlongLine. Direction is left in root frame (root = local
      * for the seed atlas's translation-only composites).
      */
-    const cutAtRoot = (
-      atlas: Atlas,
-      seedRoot: { x: number; y: number },
-      direction: { x: number; y: number },
-    ) => {
+    const cutAtRoot = (atlas: Atlas, seedRoot: { x: number; y: number }, direction: { x: number; y: number }) => {
       const composites = atlas.computeComposites();
       let host: Face | null = null;
       let seedLocal: { x: number; y: number } = seedRoot;
@@ -2835,10 +2708,7 @@ describe('splitAtlasAlongLine', () => {
           break;
         }
       }
-      assert.ok(
-        host,
-        `no face contains seed (${seedRoot.x}, ${seedRoot.y}) in root frame`,
-      );
+      assert.ok(host, `no face contains seed (${seedRoot.x}, ${seedRoot.y}) in root frame`);
       splitAtlasAlongLine(atlas, host!, seedLocal, direction);
     };
 
@@ -2886,10 +2756,7 @@ describe('splitAtlasAlongLine', () => {
           [x0 + inset, y1 - inset],
           [cx, cy],
         ]) {
-          assert.ok(
-            atlas.locate({ x, y }),
-            `lost coverage near rect corner (${x}, ${y}) in ${name}`,
-          );
+          assert.ok(atlas.locate({ x, y }), `lost coverage near rect corner (${x}, ${y}) in ${name}`);
         }
       });
     }
@@ -2941,11 +2808,7 @@ describe('splitFaceAlongLine', () => {
 
     // NW gets exactly one extra vertex (a subdivision point on its +y arm
     // shared with NE) — going from 3 to 4 half-edges.
-    assert.equal(
-      nwHesAfter,
-      nwHesBefore + 1,
-      'NW should gain exactly one boundary subdivision, not be split',
-    );
+    assert.equal(nwHesAfter, nwHesBefore + 1, 'NW should gain exactly one boundary subdivision, not be split');
   });
 
   it('preserves point coverage for finite samples on either side of the cut', () => {
@@ -2980,11 +2843,7 @@ describe('splitFaceAlongLine', () => {
     const target = cut1.face; // the RIGHT (lower-y) sub-face is the kept original
     const facesAfterFirst = atlas.faces.length;
     const cut2 = splitFaceAlongLine(atlas, target, { x: 1, y: 0.25 }, { x: 0, y: 1 });
-    assert.equal(
-      atlas.faces.length,
-      facesAfterFirst + 1,
-      'second cut should add exactly one face (split target only)',
-    );
+    assert.equal(atlas.faces.length, facesAfterFirst + 1, 'second cut should add exactly one face (split target only)');
     assert.ok(atlas.faces.includes(sibling), 'sibling sub-face should be untouched');
     assert.ok(atlas.faces.includes(target), 'target survives identity-preserving split');
     assert.ok(atlas.faces.includes(cut2.face));
@@ -2996,29 +2855,20 @@ describe('splitFaceAlongLine', () => {
     const atlas = createInitialAtlas();
     const ne = atlas.locate({ x: 1, y: 0.5 })!;
     // Origin (0, 0) is a vertex of NE, not interior.
-    assert.throws(
-      () => splitFaceAlongLine(atlas, ne, { x: 0, y: 0 }, { x: 1, y: 0 }),
-      /seam is not strictly interior/,
-    );
+    assert.throws(() => splitFaceAlongLine(atlas, ne, { x: 0, y: 0 }, { x: 1, y: 0 }), /seam is not strictly interior/);
   });
 
   it('throws on zero-length direction', () => {
     const atlas = createInitialAtlas();
     const ne = atlas.locate({ x: 1, y: 0.5 })!;
-    assert.throws(
-      () => splitFaceAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 0, y: 0 }),
-      /zero-length direction/,
-    );
+    assert.throws(() => splitFaceAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 0, y: 0 }), /zero-length direction/);
   });
 
   it('throws when host is not in the atlas', () => {
     const atlas = createInitialAtlas();
     const a = createInitialAtlas();
     const stranger = a.faces[0];
-    assert.throws(
-      () => splitFaceAlongLine(atlas, stranger, { x: 1, y: 0.5 }, { x: 1, y: 0 }),
-      /host not in atlas/,
-    );
+    assert.throws(() => splitFaceAlongLine(atlas, stranger, { x: 1, y: 0.5 }, { x: 1, y: 0 }), /host not in atlas/);
   });
 
   it('cuts an all-ideal seed face into two half-planes (line-through-the-empty-canvas)', () => {
@@ -3184,10 +3034,7 @@ describe('insertStrip', () => {
 
   it('rejects empty chain (N=0)', () => {
     const atlas = createInitialAtlas();
-    assert.throws(
-      () => insertStrip(atlas, { pairs: [] }, 0.5),
-      /at least one face crossing/,
-    );
+    assert.throws(() => insertStrip(atlas, { pairs: [] }, 0.5), /at least one face crossing/);
   });
 
   it('rejects N=1 chain with finite chord endpoints (would need a 4-HE strip)', () => {
@@ -3263,10 +3110,7 @@ describe('insertStrip', () => {
     const dir = { x: -2 / Math.sqrt(5), y: -1 / Math.sqrt(5) };
     const perp = { x: -dir.y, y: dir.x }; // (1, -2)/√5
     const mid = { x: 0.25 * perp.x, y: 0.25 * perp.y };
-    assert.ok(
-      result.stripFace.contains(mid),
-      `strip should contain interior midpoint ${JSON.stringify(mid)}`,
-    );
+    assert.ok(result.stripFace.contains(mid), `strip should contain interior midpoint ${JSON.stringify(mid)}`);
   });
 
   it('point coverage is preserved after split + strip insertion (off-line samples)', () => {
@@ -3302,14 +3146,8 @@ describe('insertStrip', () => {
       const botOrigin = bot.origin();
       const topTarget = top.target(); // = A in top
       if (botOrigin.kind === 'finite' && topTarget.kind === 'finite') {
-        assert.ok(
-          Math.abs(topTarget.x - (botOrigin.x + 0.5 * perp.x)) < 1e-9,
-          `top.target.x mismatch at step ${i}`,
-        );
-        assert.ok(
-          Math.abs(topTarget.y - (botOrigin.y + 0.5 * perp.y)) < 1e-9,
-          `top.target.y mismatch at step ${i}`,
-        );
+        assert.ok(Math.abs(topTarget.x - (botOrigin.x + 0.5 * perp.x)) < 1e-9, `top.target.x mismatch at step ${i}`);
+        assert.ok(Math.abs(topTarget.y - (botOrigin.y + 0.5 * perp.y)) < 1e-9, `top.target.y mismatch at step ${i}`);
       } else if (botOrigin.kind === 'ideal' && topTarget.kind === 'ideal') {
         // Both ideal in the same direction.
         assert.ok(Math.abs(topTarget.x - botOrigin.x) < 1e-9, `ideal direction mismatch`);
@@ -3360,14 +3198,8 @@ describe('insertStrip', () => {
       x: ro.x - lo.x + 0.5 * perp.x,
       y: ro.y - lo.y + 0.5 * perp.y,
     };
-    assert.ok(
-      Math.abs(o.x - expected.x) < 1e-9,
-      `composed offset x: got ${o.x}, expected ${expected.x}`,
-    );
-    assert.ok(
-      Math.abs(o.y - expected.y) < 1e-9,
-      `composed offset y: got ${o.y}, expected ${expected.y}`,
-    );
+    assert.ok(Math.abs(o.x - expected.x) < 1e-9, `composed offset x: got ${o.x}, expected ${expected.x}`);
+    assert.ok(Math.abs(o.y - expected.y) < 1e-9, `composed offset y: got ${o.y}, expected ${expected.y}`);
     void N;
   });
 
@@ -3534,12 +3366,7 @@ describe('insertStrip', () => {
     // formerly-aliased array.
     const atlas = createAllIdealAtlas();
     const root = atlas.root;
-    const splitResult = splitAtlasAlongLine(
-      atlas,
-      root,
-      { x: 0, y: 0 },
-      { x: 1 / Math.sqrt(2), y: 1 / Math.sqrt(2) },
-    );
+    const splitResult = splitAtlasAlongLine(atlas, root, { x: 0, y: 0 }, { x: 1 / Math.sqrt(2), y: 1 / Math.sqrt(2) });
     insertStrip(atlas, splitResult, 0.5);
 
     // Second cut, perpendicular to the first, hosted by the strip.
@@ -3676,7 +3503,7 @@ describe('resizeStrip', () => {
     }
   });
 
-  it('round-trip h → h\' → h restores topHE origins and left-chord transforms', () => {
+  it("round-trip h → h' → h restores topHE origins and left-chord transforms", () => {
     const { stripResult, splitResult } = setupStrip(0.5);
     const topSnap = stripResult.topSides.map((h) => ({ x: h.a.x, y: h.a.y }));
     const leftSnap = splitResult.pairs.map((p) => ({
@@ -3783,17 +3610,9 @@ describe('Face.innerLoops', () => {
   });
 
   it('Face constructor wires next/prev/face on a passed inner loop', () => {
-    const outer = [
-      new Side('finite', 0, 0),
-      new Side('finite', 10, 0),
-      new Side('finite', 0, 10),
-    ];
+    const outer = [new Side('finite', 0, 0), new Side('finite', 10, 0), new Side('finite', 0, 10)];
     // CW inner triangle inside the outer.
-    const inner = [
-      new Side('finite', 1, 1),
-      new Side('finite', 1, 2),
-      new Side('finite', 2, 1),
-    ];
+    const inner = [new Side('finite', 1, 1), new Side('finite', 1, 2), new Side('finite', 2, 1)];
     const f = new Face(outer, [inner]);
 
     for (let i = 0; i < 3; i++) {
@@ -3870,11 +3689,7 @@ describe('addInnerLoop', () => {
 
   it('rejects a face that does not belong to the atlas', () => {
     const { atlas } = wideQuadrantAtlas();
-    const stranger = new Face([
-      new Side('finite', 0, 0),
-      new Side('finite', 1, 0),
-      new Side('finite', 0, 1),
-    ]);
+    const stranger = new Face([new Side('finite', 0, 0), new Side('finite', 1, 0), new Side('finite', 0, 1)]);
     assert.throws(
       () =>
         addInnerLoop(atlas, stranger, [
