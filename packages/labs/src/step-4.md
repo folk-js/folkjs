@@ -177,34 +177,64 @@ Each chunk is independently shippable, lands a measurable code reduction, and un
 
 ### Chunk E — `Link` as a second binding kind
 
-**Change:** add `Link`, `link`, `unlink`. `computeImages` BFS extends to follow links as well as stitches. Returns the same `AtlasImage[]` shape.
+Originally framed as "additive, unlocks recursive zoom." Re-scoped post-A/C/B as the **substrate-completion move that retires the asymmetric edge-twin model entirely**. Today's `linkEdgeToTwin` × 2 wrap-toggle in `folk-atlas.ts` is morally a poorly-typed Link — `substrate.md`'s "closed surface placed by a Link" pattern. Once Link exists at the substrate level, the asymmetric model is redundant and `Side.twin` / `Side.transform` can go away entirely. Done in three phases:
 
-**Depends on:** nothing (additive); cleaner with B done first.
+#### Phase 1 — introduce `Link` (additive) ✅ landed
 
-**Deletes:** nothing existing. Unlocks the recursive-zoom and hypertext demos as one-paragraph configurations.
+**Change:** add the substrate primitive without touching existing wraps.
+
+**What landed:**
+- `Link` class: `from`, `to`, `transform` (direction `to → from` per `substrate.md`'s "places child inside parent at T" reading).
+- `Atlas.links: Set<Link>` — explicitly persisted (unlike `Atlas.stitches`, which can be derived from edge back-references; Link has no natural per-face holder since many parents may target one child).
+- `Atlas.outgoingLinks(face)` — linear-scan helper.
+- `link(atlas, from, to, T): Link` and `unlink(atlas, l)` exports.
+- `Atlas.computeImages` BFS extended to follow outgoing links with the **same cap and self-loop semantics as twin pointers**: a self-link only tiles when the linked face is the BFS root, matching today's wrap-region behaviour for the asymmetric-twin pattern (this is what "default to current behaviour" means for return-path policy).
+- `validateAtlas` extended: per-Link endpoint membership check; reachability traversal extended to follow links in both directions.
+- 10 new tests covering link/unlink, the recursive-zoom 1-line spike (which now actually works), non-root self-link suppression, and Link reachability.
+
+**Net delta:** +~120 lines `atlas.ts`, +~150 lines tests. All 230 tests pass.
+
+**Available now:** recursive zoom as a one-line configuration (`link(atlas, face, face, scaleTransform)`), and the substrate primitive needed for Phases 2 + 3.
+
+#### Phase 2 — rewrite `FolkAtlas#wrapRegionAxis` to use Link ✅ landed
+
+**Change:** the wrap toggle in `folk-atlas.ts` switched from `linkEdgeToTwin` × 2 (raw asymmetric edge twins) to a clean `stitch` (cylinder loop) + `link` (face placement) composition.
+
+**What landed:**
+- Wrap-on captures the outer↔region edge stitches' state (the partner Side reference plus the original outer→region transform), `unstitch`es them, installs `stitch(atlas, heA, heB, translationToWrap(heA, heB))` for the cylinder loop, and `link(atlas, outerFace, regionFace, inv(outerToRegion))` from each formerly-bordering outer face to the region.
+- Wrap-off reads the saved state, dismantles the cylinder Stitch and Links via `unstitch`/`unlink`, then `stitch`es the original outer↔region edges back with the captured transforms.
+- A WeakMap-keyed `#wrapMetadata` on `FolkAtlas` holds per-region per-axis state across the wrap toggle. Captured at wrap-on, consulted at wrap-off, dropped after each transition.
+- `rescaleFaceFrame` extended to also conjugate Link transforms touching the rescaled face — analogous to its existing twin-transform conjugation. Without this, `setRegionScale` on a wrapped region would visibly snap the placement.
+- `#findExternalIncomingTwin` deleted (only consumer was the old wrap-off path; the new path reads outer-side references straight from the saved state).
+- 2 new tests at the substrate level (since `wrapRegionAxis` itself is on a DOM element and not unit-testable in node): one composes the full wrap-on → BFS-tile → wrap-off cycle and verifies the topology / images / restoration; one verifies `rescaleFaceFrame` correctly conjugates Link transforms.
+
+**Net delta:** −5 lines `folk-atlas.ts` (`#findExternalIncomingTwin` deleted; `wrapRegionAxis` slightly longer due to saved-state plumbing — that growth is paid back when Phase 3 deletes `linkEdgeToTwin` / `unlinkEdgeFromTwin` entirely), +20 lines `atlas.ts` (Link conjugation in `rescaleFaceFrame`), +130 lines tests. All 232 tests pass.
+
+**Walker compatibility (no extra work needed):** `screenToFaceLocal` and shape drag already iterate `computeImages`, which after Phase 1 includes Link-placed images. So a pointer over a Link-placed copy of the wrapped region correctly resolves to the region face; shape drags into / out of a wrapped region work without renderer changes. The original concern about "walking off a free edge into a Link's child" turned out to be a non-issue for our pointer-pick path because we already do polygon-in-polygon containment checks against every BFS image, not edge-following.
+
+#### Phase 3 — retire the asymmetric machinery (cleanup)
+
+**Change:** delete `linkEdgeToTwin`, `unlinkEdgeFromTwin`, `wrapEdges`, `untwinEdges` (the latter two have been deprecated aliases since chunk C). Remove `Side.twin` and `Side.transform` from the data model — `Side.stitch.transformFrom(self)` becomes the only navigation. Drop the asymmetric-twin commentary block from `atlas.ts`'s module header. Drop `validateAtlas`'s bidirectional-reachability special case (no longer needed when reciprocity is structural; reachability through stitches is automatic) and the similarity-only check (Klein bottle, RP², Dehn twist all become legal — substrate.md's `(R², similarity)` model is enforced *if at all* via per-face model space, not via a global validator).
+
+**Depends on:** Phase 2 (the only consumer of the asymmetric primitives).
+
+**Deletes:**
+- ~80 lines for `linkEdgeToTwin` / `unlinkEdgeFromTwin` / `wrapEdges` / `untwinEdges` and their docstrings
+- ~50 lines of asymmetric-twin invariant comments in the `atlas.ts` module header
+- ~50 lines of bidirectional-reachability + similarity-only blocks in `validateAtlas`
+- The `Side.twin` / `Side.transform` removal cascades through every call site that uses them, replacing with `side.stitch.transformFrom(side)` — net reduction since navigation through Stitch is more terse and the per-edge transform field becomes redundant data
+
+**Unlocks:** Klein bottle, RP², Dehn-twisted torus, general transforms in stitches. The asymmetric-twin trap is eliminated by construction (Stitch is reciprocal-only, Link is the only directional binding, no third axis).
 
 ### Chunk F — drop the similarity-only constraint and the named twin primitives
 
-**Change:** `wrapEdges` / `linkEdgeToTwin` / `untwinEdges` / `unlinkEdgeFromTwin` are deleted in favour of `stitch` / `unstitch`. The similarity-only check is removed from `validateAtlas` (rotation, reflection, non-uniform scale, shear all become legal in stitch transforms).
+Folded into chunk E Phase 3 above. The original chunk F was carved out as a separate step before we recognised Link was the underlying substrate gap; with Link in place, F is not separate work, it's just things that fall out of Phase 3.
 
-**Depends on:** B, C.
+## Status / current ordering
 
-**Deletes:**
-- The four primitive functions above (~150 lines from `atlas.ts`)
-- The similarity-only block in `validateAtlas` (~30 lines)
+Landed: **A** → **C** → **B** → **E Phase 1**. Pending: **E Phase 2** (rewrite wrap), **E Phase 3** (retire asymmetric machinery, fold in F).
 
-**Unlocks:** Klein bottle, RP², Dehn-twisted torus, recursive zoom with similarity transforms (the substrate stops refusing them).
-
-## Suggested ordering
-
-1. **A** — independent, biggest deletion, no new types. Start here.
-2. **C** — independent of A; preps B.
-3. **B** — the structural redesign. Pairs naturally with D and F as a single "kill HalfEdge" milestone if appetite allows; otherwise B alone first, D and F follow.
-4. **D** — payoff after B.
-5. **F** — small cleanup once B + C are in.
-6. **E** — any time after C; not on the critical path.
-
-A and C can land in either order; they don't interact. B + D + F together comprise the "kill HalfEdge" milestone and may want to be one PR or three back-to-back.
+Chunk D ("lift macros to a folder") was reconsidered and dropped — moving `splitFaceAlongChord` etc. to `atlas/macros/` is organizational, not substrate, work. The macros stay where they are; what improves them is *better building blocks*, not better folder structure. Better building blocks is what E Phases 2 + 3 deliver.
 
 ## How we'll know we're on the right track
 

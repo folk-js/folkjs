@@ -330,6 +330,64 @@ export class Stitch {
 }
 
 // ----------------------------------------------------------------------------
+// Link — directed face → face binding
+// ----------------------------------------------------------------------------
+
+/**
+ * A directed binding from one face to another, with a transform placing the
+ * `to` face's outline inside the `from` face's frame.
+ *
+ * Where `Stitch` is the symmetric edge-level binding (used to glue two
+ * face-local boundary segments into one logical seam), `Link` is the
+ * face-level binding used to express:
+ *
+ *  - **Recursive structures**: a face linked to itself with a similarity
+ *    transform tiles depth-bounded copies of itself (`recursive zoom`).
+ *  - **Hypertext-like multigraphs**: many parents pointing at one child face,
+ *    each with its own placement transform.
+ *  - **Embedding closed/wrapped regions**: a face whose interior edges are
+ *    fully self-stitched (a closed surface) can be placed inside a host
+ *    face by a single Link. From outside, the host renders the wrapped
+ *    region at the link's placement; from inside, the region's stitches
+ *    loop forever and there is no automatic exit. Today's "asymmetric edge
+ *    twin" pattern in `folk-atlas.ts`'s region-wrap toggle is morally a
+ *    poorly-typed instance of this — see `step-4.md` Phase 2.
+ *
+ * The transform's direction is `to → from`: a `to`-local point `p` is
+ * placed at parent-frame coordinates `transform · p` inside `from`. This
+ * matches `substrate.md`'s natural reading "places the child inside the
+ * parent at transform T" and means a child's composite is `composite[from]
+ * · link.transform`.
+ *
+ * Multiplicity:
+ *  - Many parents may target the same `to` face (the same child rendered
+ *    in many places).
+ *  - A face may have multiple outgoing links (to the same or different
+ *    children).
+ *  - A face linked to itself (`from === to`) is a self-link, used for
+ *    recursive zoom.
+ *
+ * Return-path policy is per-walker. {@link Atlas.computeImages} (the BFS
+ * renderer) follows links forward but does not synthesise a return — once
+ * a walker enters a child via Link, the only way back out is through some
+ * other binding the child has, OR by terminating the walk. The renderer's
+ * cap on images-per-face plus self-loop suppression for non-root faces
+ * preserves the same surface behaviour today's asymmetric-twin pattern
+ * delivered for the wrap-region case.
+ */
+export class Link {
+  from: Face;
+  to: Face;
+  transform: M.Matrix2D;
+
+  constructor(from: Face, to: Face, transform: M.Matrix2D) {
+    this.from = from;
+    this.to = to;
+    this.transform = transform;
+  }
+}
+
+// ----------------------------------------------------------------------------
 // Face
 // ----------------------------------------------------------------------------
 
@@ -622,6 +680,13 @@ export interface ComputeImagesOptions {
 export class Atlas {
   sides: Side[] = [];
   faces: Face[] = [];
+  /**
+   * Directed face → face bindings ({@link Link}). Persisted explicitly
+   * because Links don't have a natural per-face back-reference holder
+   * (a child face may be the target of many Links from many parents),
+   * unlike {@link stitches} which is derivable from edge-level back-refs.
+   */
+  links: Set<Link> = new Set();
   root: Face;
 
   constructor(root: Face) {
@@ -647,6 +712,19 @@ export class Atlas {
       if (he.stitch) set.add(he.stitch);
     }
     return set;
+  }
+
+  /**
+   * Outgoing {@link Link}s from `face`. Linear scan over `atlas.links`;
+   * cheap for the small link counts typical schemes use, but callers in
+   * hot paths should cache.
+   */
+  outgoingLinks(face: Face): Link[] {
+    const out: Link[] = [];
+    for (const link of this.links) {
+      if (link.from === face) out.push(link);
+    }
+    return out;
   }
 
   /**
@@ -804,6 +882,26 @@ export class Atlas {
         queue.push({
           face: twin.face,
           composite: M.multiply(img.composite, M.invert(he.transform)),
+          depth: img.depth + 1,
+        });
+      }
+
+      // Outgoing {@link Link} expansion. Same cap / self-loop semantics
+      // as twin-based wraps: a self-link (link.from === link.to) only
+      // tiles when the linked face is the BFS root, matching today's
+      // wrap-region behaviour. The link's transform maps
+      // `link.to`-local coordinates into `link.from`-local coordinates,
+      // so the child's composite is `parent.composite · link.transform`.
+      for (const link of this.links) {
+        if (link.from !== img.face) continue;
+        if ((counts.get(link.to) ?? 0) >= capOf(link.to)) {
+          if (capOf(link.to) > 1) hitImagesLimit = true;
+          continue;
+        }
+        if (link.to === img.face && img.face !== this.root) continue;
+        queue.push({
+          face: link.to,
+          composite: M.multiply(img.composite, link.transform),
           depth: img.depth + 1,
         });
       }
@@ -1167,6 +1265,45 @@ export function unstitch(s: Stitch): void {
 }
 
 /**
+ * Place `to` inside `from`'s frame at `transform`, returning the resulting
+ * {@link Link} handle. The directed face → face binding allows recursive
+ * structures, hypertext-style multigraphs, and embedded closed/wrapped
+ * regions — see {@link Link} for the broader picture.
+ *
+ * Pre-conditions:
+ *  - both faces live in `atlas`
+ *
+ * Effect:
+ *  - allocates a new `Link l = { from, to, transform }`
+ *  - adds `l` to `atlas.links`
+ *
+ * Multiplicity is unrestricted: the same `(from, to)` pair may be linked
+ * multiple times with different transforms (rare but legal — e.g. tiling
+ * a child at several positions inside one parent), and any face may have
+ * many incoming or outgoing links. A self-link (`from === to`) is the
+ * substrate-level expression of recursive zoom.
+ */
+export function link(
+  atlas: Atlas,
+  from: Face,
+  to: Face,
+  transform: M.Matrix2D,
+): Link {
+  if (!atlas.faces.includes(from)) throw new Error('link: from face not in atlas');
+  if (!atlas.faces.includes(to)) throw new Error('link: to face not in atlas');
+  const l = new Link(from, to, transform);
+  atlas.links.add(l);
+  return l;
+}
+
+/**
+ * Remove a {@link Link} from the atlas. No-op if the link is already absent.
+ */
+export function unlink(atlas: Atlas, l: Link): void {
+  atlas.links.delete(l);
+}
+
+/**
  * @deprecated Use {@link stitch}. This is a thin wrapper that ignores the
  * returned `Stitch` handle, kept for source compatibility during the
  * chunk-C transition.
@@ -1264,6 +1401,20 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
     if (sourceIsFace) T = M.multiply(T, Sinv);
     if (targetIsFace) T = M.multiply(S, T);
     he.transform = T;
+  }
+  // Same conjugation for {@link Link} transforms touching `face`. A link's
+  // transform maps `to` frame → `from` frame; if the rescaled face is one
+  // of the endpoints, we must rewrite the transform so the on-screen
+  // placement of the link's child stays invariant under the rescale —
+  // exactly analogous to the twin-transform conjugation above.
+  for (const link of atlas.links) {
+    const fromIsFace = link.from === face;
+    const toIsFace = link.to === face;
+    if (!fromIsFace && !toIsFace) continue;
+    let T = link.transform;
+    if (toIsFace) T = M.multiply(T, Sinv);
+    if (fromIsFace) T = M.multiply(S, T);
+    link.transform = T;
   }
 }
 
@@ -1575,12 +1726,25 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     }
   }
 
-  // ---- reachability from root (bidirectional under asymmetric twins) ----
-  // A face is "reachable" if it can be visited by following twin links
-  // either OUT of the current face (`he.twin.face`) OR INTO the current
-  // face (some other half-edge `g` with `g.twin === he`). Symmetric twins
-  // make these two equivalent; asymmetric wraps may make them diverge.
-  // We pre-compute incoming pointers once per validation pass.
+  // ---- per-link checks ----
+  for (const link of atlas.links) {
+    if (!allFaceSet.has(link.from)) {
+      errs.push('link.from not in atlas.faces');
+    }
+    if (!allFaceSet.has(link.to)) {
+      errs.push('link.to not in atlas.faces');
+    }
+  }
+
+  // ---- reachability from root ----
+  // A face is reachable if it can be visited by following:
+  //   - twin pointers in either direction (forward via `he.twin`, backward
+  //     via the incoming-pointer index — symmetric twins make these
+  //     equivalent, asymmetric wraps don't)
+  //   - links in either direction (outgoing via `link.from === f`, incoming
+  //     via `link.to === f`)
+  // Either kind of binding propagates reachability — an isolated face that
+  // is the target of a link from the root chain is considered reachable.
   const incoming = new Map<Face, Side[]>();
   for (const h of atlas.sides) {
     if (h.twin) {
@@ -1588,6 +1752,16 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
       if (list) list.push(h);
       else incoming.set(h.twin.face, [h]);
     }
+  }
+  const linksByFrom = new Map<Face, Link[]>();
+  const linksByTo = new Map<Face, Link[]>();
+  for (const link of atlas.links) {
+    const fromList = linksByFrom.get(link.from);
+    if (fromList) fromList.push(link);
+    else linksByFrom.set(link.from, [link]);
+    const toList = linksByTo.get(link.to);
+    if (toList) toList.push(link);
+    else linksByTo.set(link.to, [link]);
   }
   const reachable = new Set<Face>();
   const queue: Face[] = [atlas.root];
@@ -1606,6 +1780,24 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
         if (!reachable.has(ih.face)) {
           reachable.add(ih.face);
           queue.push(ih.face);
+        }
+      }
+    }
+    const outLinks = linksByFrom.get(f);
+    if (outLinks) {
+      for (const l of outLinks) {
+        if (!reachable.has(l.to)) {
+          reachable.add(l.to);
+          queue.push(l.to);
+        }
+      }
+    }
+    const inLinks = linksByTo.get(f);
+    if (inLinks) {
+      for (const l of inLinks) {
+        if (!reachable.has(l.from)) {
+          reachable.add(l.from);
+          queue.push(l.from);
         }
       }
     }

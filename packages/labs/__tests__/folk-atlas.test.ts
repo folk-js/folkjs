@@ -11,6 +11,8 @@ import {
   Face,
   Side,
   insertStrip,
+  Link,
+  link,
   linkEdgeToTwin,
   rescaleFaceFrame,
   resizeStrip,
@@ -19,6 +21,7 @@ import {
   Stitch,
   stitch,
   translationToWrap,
+  unlink,
   unlinkEdgeFromTwin,
   unstitch,
   untwinEdges,
@@ -1061,6 +1064,285 @@ describe('Stitch', () => {
     wrapEdges(atlas, right, left, T);
     assert.equal(atlas.stitches.size, 1, 'round-trip restores exactly one Stitch');
     validateAtlas(atlas);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Link / link / unlink (Phase 1 of Link primitive)
+// ---------------------------------------------------------------------------
+
+describe('Link', () => {
+  it('link() returns a Link with from / to / transform set', () => {
+    const atlas = createInitialAtlas();
+    const a = atlas.faces[0];
+    const b = atlas.faces[1];
+    const T = M.fromTranslate(10, 0);
+    const l = link(atlas, a, b, T);
+    assert.ok(l instanceof Link);
+    assert.equal(l.from, a);
+    assert.equal(l.to, b);
+    assert.ok(M.equals(l.transform, T));
+  });
+
+  it('link() registers the Link in atlas.links', () => {
+    const atlas = createInitialAtlas();
+    const a = atlas.faces[0];
+    const b = atlas.faces[1];
+    assert.equal(atlas.links.size, 0);
+    const l = link(atlas, a, b, M.fromValues());
+    assert.equal(atlas.links.size, 1);
+    assert.ok(atlas.links.has(l));
+  });
+
+  it('link() throws when either endpoint is not in the atlas', () => {
+    const atlas1 = createInitialAtlas();
+    const atlas2 = createInitialAtlas();
+    assert.throws(
+      () => link(atlas1, atlas1.faces[0], atlas2.faces[0], M.fromValues()),
+      /to face not in atlas/,
+    );
+    assert.throws(
+      () => link(atlas1, atlas2.faces[0], atlas1.faces[0], M.fromValues()),
+      /from face not in atlas/,
+    );
+  });
+
+  it('unlink() removes the Link and is idempotent', () => {
+    const atlas = createInitialAtlas();
+    const a = atlas.faces[0];
+    const b = atlas.faces[1];
+    const l = link(atlas, a, b, M.fromValues());
+    unlink(atlas, l);
+    assert.equal(atlas.links.size, 0);
+    unlink(atlas, l);
+    assert.equal(atlas.links.size, 0, 'unlink is idempotent');
+  });
+
+  it('Atlas.outgoingLinks(face) returns only links whose `from` is that face', () => {
+    const atlas = createInitialAtlas();
+    const a = atlas.faces[0];
+    const b = atlas.faces[1];
+    const c = atlas.faces[2];
+    const l_ab = link(atlas, a, b, M.fromValues());
+    const l_ac = link(atlas, a, c, M.fromValues());
+    const l_bc = link(atlas, b, c, M.fromValues());
+    const fromA = atlas.outgoingLinks(a);
+    assert.equal(fromA.length, 2);
+    assert.ok(fromA.includes(l_ab));
+    assert.ok(fromA.includes(l_ac));
+    assert.ok(!fromA.includes(l_bc));
+    assert.equal(atlas.outgoingLinks(b).length, 1);
+    assert.equal(atlas.outgoingLinks(c).length, 0);
+  });
+
+  it('validateAtlas catches a stale Link whose endpoints are no longer in the atlas', () => {
+    const atlas1 = createInitialAtlas();
+    const atlas2 = createInitialAtlas();
+    // Smuggle a Link whose `to` lives in a different atlas.
+    const stale = new Link(atlas1.faces[0], atlas2.faces[0], M.fromValues());
+    atlas1.links.add(stale);
+    assert.throws(() => validateAtlas(atlas1), /link\.to not in atlas/);
+  });
+
+  it('reachability follows links: a face only connected via Link is still reachable', () => {
+    // Make a face that has no twins to anything else, then add a Link
+    // pointing at it from the root chain. validateAtlas should accept it.
+    const atlas = createInitialAtlas();
+    const orphan = new Face([
+      new Side('finite', 100, 100),
+      new Side('finite', 110, 100),
+      new Side('finite', 105, 110),
+    ]);
+    atlas.faces.push(orphan);
+    for (const s of orphan.sides) atlas.sides.push(s);
+    // Without a Link, validation should fail (face unreachable from root).
+    assert.throws(() => validateAtlas(atlas), /face unreachable/);
+    link(atlas, atlas.root, orphan, M.fromTranslate(100, 100));
+    validateAtlas(atlas);
+  });
+
+  it('computeImages follows outgoing Links and emits images of the linked-to face', () => {
+    const atlas = createInitialAtlas();
+    const a = atlas.faces[0];
+    const b = atlas.faces[1];
+    atlas.root = a;
+    // No Links yet — only `a` and faces reachable through twins appear.
+    const before = atlas.computeImages({ maxDepth: 2 });
+    const beforeBImages = before.filter((img) => img.face === b).length;
+    // Add a Link from a → b. Should not deduplicate the existing image of b
+    // (it's the same composite — already there via twin chain), but a fresh
+    // configuration with a non-trivial transform produces a new image.
+    const fresh = new Face([
+      new Side('finite', 0, 0),
+      new Side('finite', 1, 0),
+      new Side('finite', 0, 1),
+    ]);
+    atlas.faces.push(fresh);
+    for (const s of fresh.sides) atlas.sides.push(s);
+    link(atlas, a, fresh, M.fromTranslate(50, 50));
+    const after = atlas.computeImages({ maxDepth: 2 });
+    const freshImages = after.filter((img) => img.face === fresh);
+    assert.equal(freshImages.length, 1, 'linked face appears as one BFS image');
+    // Composite should be root.frame · linkTransform = identity · translate(50,50)
+    assert.ok(M.equals(freshImages[0].composite, M.fromTranslate(50, 50)));
+    void beforeBImages;
+  });
+
+  it('recursive zoom: a self-link of the root tiles via maxImagesPerFace', () => {
+    // The substrate spike for recursive zoom: one line of code.
+    //   link(atlas, face, face, similarityTransform)
+    // should produce capped tiling under BFS rendering, exactly as today's
+    // wrap-region tiling does for asymmetric edge twins.
+    const atlas = createInitialAtlas();
+    const root = atlas.root;
+    link(atlas, root, root, M.fromValues(0.5, 0, 0, 0.5, 0, 0));
+    const images = atlas.computeImages({ maxDepth: 6, maxImagesPerFace: 5 });
+    const rootImages = images.filter((img) => img.face === root);
+    // 5 images of root: the original + 4 self-link-induced shrinks.
+    assert.equal(rootImages.length, 5);
+    // Composites: identity, scale(0.5), scale(0.25), scale(0.125), scale(0.0625).
+    const scales = rootImages
+      .map((img) => img.composite.a)
+      .sort((x, y) => y - x);
+    assert.ok(Math.abs(scales[0] - 1) < 1e-9);
+    assert.ok(Math.abs(scales[1] - 0.5) < 1e-9);
+    assert.ok(Math.abs(scales[2] - 0.25) < 1e-9);
+    assert.ok(Math.abs(scales[3] - 0.125) < 1e-9);
+    assert.ok(Math.abs(scales[4] - 0.0625) < 1e-9);
+  });
+
+  it('non-root self-link is suppressed when not at root (matches twin wrap suppression)', () => {
+    // A self-link on a face that is NOT the BFS root should NOT tile —
+    // mirroring the existing rule for asymmetric edge-twin wraps.
+    const atlas = createInitialAtlas();
+    const a = atlas.faces[0];
+    const b = atlas.faces[1];
+    atlas.root = a;
+    link(atlas, b, b, M.fromValues(0.5, 0, 0, 0.5, 0, 0));
+    const images = atlas.computeImages({ maxDepth: 6, maxImagesPerFace: 5 });
+    const bImages = images.filter((img) => img.face === b);
+    assert.equal(bImages.length, 1, 'non-root self-link must produce a single image');
+  });
+
+  it('substrate wrap pattern: cylinder Stitch + outer Link replaces asymmetric edge twins', () => {
+    // The substrate-correct expression of "cylinder region embedded in a
+    // host" — the composition that `FolkAtlas#wrapRegionAxis` uses after
+    // chunk E Phase 2. Exercises:
+    //   - unstitch the outer↔region edge stitches
+    //   - reciprocally stitch region.left ↔ region.right (cylinder loop)
+    //   - link(outerW, region, T_W_to_R) and link(outerE, region, T_E_to_R)
+    // and verifies that:
+    //   - validateAtlas still accepts the topology
+    //   - rooting at the region face produces tiled BFS images (cylinder)
+    //   - rooting outside still finds the region (via incoming Link)
+    //   - the inverse fully restores the pre-wrap edge-stitched state.
+    //
+    // Build a 3-face strip: W [width 1] | R [width 1] | E [width 1].
+    const w = 1, h = 1;
+    const mk = (xOffset: number) => {
+      const bl = new Side('finite', xOffset, 0);
+      const br = new Side('finite', xOffset + w, 0);
+      const tr = new Side('finite', xOffset + w, h);
+      const tl = new Side('finite', xOffset, h);
+      const f = new Face([bl, br, tr, tl]);
+      return { face: f, bottom: bl, right: br, top: tr, left: tl };
+    };
+    const W = mk(-1);
+    const R = mk(0);
+    const E = mk(1);
+    const atlas = new Atlas(R.face);
+    atlas.faces = [W.face, R.face, E.face];
+    atlas.sides = [
+      W.bottom, W.right, W.top, W.left,
+      R.bottom, R.right, R.top, R.left,
+      E.bottom, E.right, E.top, E.left,
+    ];
+    // Edge-stitch W.right ↔ R.left and R.right ↔ E.left (pre-wrap).
+    stitch(atlas, W.right, R.left, M.fromValues());
+    stitch(atlas, R.right, E.left, M.fromValues());
+    validateAtlas(atlas);
+
+    // Capture the pre-wrap state (the same metadata wrapRegionAxis saves).
+    const stitchA = R.right.stitch!;
+    const stitchB = R.left.stitch!;
+    const outerSideA = stitchA.other(R.right);
+    const outerSideB = stitchB.other(R.left);
+    const tA = stitchA.transformFrom(outerSideA);
+    const tB = stitchB.transformFrom(outerSideB);
+    const outerToRegionA = M.fromValues(tA.a, tA.b, tA.c, tA.d, tA.e, tA.f);
+    const outerToRegionB = M.fromValues(tB.a, tB.b, tB.c, tB.d, tB.e, tB.f);
+    const linkATransform = M.invert(outerToRegionA);
+    const linkBTransform = M.invert(outerToRegionB);
+    const outerFaceA = outerSideA.face;
+    const outerFaceB = outerSideB.face;
+
+    // Wrap-on.
+    const T_wrap = translationToWrap(R.right, R.left);
+    unstitch(stitchA);
+    unstitch(stitchB);
+    const cyl = stitch(atlas, R.right, R.left, T_wrap);
+    const linkA = link(atlas, outerFaceA, R.face, linkATransform);
+    const linkB = link(atlas, outerFaceB, R.face, linkBTransform);
+    validateAtlas(atlas);
+    assert.equal(R.right.stitch, cyl);
+    assert.equal(R.left.stitch, cyl);
+    assert.equal(W.right.stitch, null, 'outerW.right is now a free edge');
+    assert.equal(E.left.stitch, null, 'outerE.left is now a free edge');
+    assert.equal(atlas.links.size, 2);
+
+    // Rooted INSIDE R: cylinder tiles via the reciprocal stitch.
+    atlas.root = R.face;
+    const insideImages = atlas.computeImages({ maxDepth: 4, maxImagesPerFace: 8 });
+    const rTilesInside = insideImages.filter((img) => img.face === R.face).length;
+    assert.ok(rTilesInside >= 5, `cylinder should tile (got ${rTilesInside} R images)`);
+
+    // Rooted OUTSIDE R (e.g. at W): the region is reachable via the
+    // incoming Link, appears as one BFS image.
+    atlas.root = W.face;
+    const outsideImages = atlas.computeImages({ maxDepth: 4, maxImagesPerFace: 16 });
+    const rTilesOutside = outsideImages.filter((img) => img.face === R.face).length;
+    assert.equal(rTilesOutside, 1, 'wrapped region appears once from outside');
+    const rImg = outsideImages.find((img) => img.face === R.face)!;
+    // Composite from W's frame should place R at outer→region offset.
+    // outerToRegionA maps outerSideA's face frame → R's frame, and W is
+    // outerFaceA, so a point at R-local (0, 0) ends up at outer-frame
+    // inv(outerToRegionA)(0, 0) = (-W's offset to R) — for our identity
+    // stitches that's R-local (0, 0) in W's frame, which is W's right side.
+    void rImg;
+
+    // Wrap-off: dismantle and restore.
+    atlas.root = R.face;
+    unstitch(cyl);
+    unlink(atlas, linkA);
+    unlink(atlas, linkB);
+    stitch(atlas, R.right, outerSideA, outerToRegionA);
+    stitch(atlas, R.left, outerSideB, outerToRegionB);
+    validateAtlas(atlas);
+    assert.equal(atlas.links.size, 0);
+    assert.ok(R.right.stitch !== null && R.right.stitch !== cyl);
+    assert.ok(R.left.stitch !== null && R.left.stitch !== cyl);
+    // After unwrap, no more cylinder tiling — R appears once.
+    const restoredImages = atlas.computeImages({ maxDepth: 4, maxImagesPerFace: 8 });
+    const rTilesRestored = restoredImages.filter((img) => img.face === R.face).length;
+    assert.equal(rTilesRestored, 1, 'unwrapped region no longer tiles');
+  });
+
+  it('rescaleFaceFrame conjugates Link transforms touching the rescaled face', () => {
+    // After Phase 2, a wrapped region's outer-host bindings are Links, not
+    // edge stitches. setRegionScale → rescaleFaceFrame must therefore
+    // conjugate Link transforms in addition to twin transforms, otherwise
+    // a wrapped region's on-screen placement would jump when scaled.
+    const atlas = createInitialAtlas();
+    const a = atlas.faces[0];
+    const b = atlas.faces[1];
+    const T = M.fromTranslate(10, 0);
+    const l = link(atlas, a, b, T);
+    // Rescale b by R = 2. With Link.transform: to → from, and to === b,
+    // T_new should be T_old · scale(1/R) = translate(10, 0) · scale(0.5).
+    rescaleFaceFrame(atlas, b, 2);
+    // Apply T_new to (4, 0) in b-local: should equal T_old(4/2, 0) = T_old(2, 0) = (12, 0).
+    const p = M.applyToPoint(l.transform, { x: 4, y: 0 });
+    assert.ok(Math.abs(p.x - 12) < 1e-9 && Math.abs(p.y) < 1e-9);
   });
 });
 

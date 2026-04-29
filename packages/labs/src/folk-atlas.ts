@@ -8,13 +8,17 @@ import {
   Face,
   Side,
   insertStrip,
-  linkEdgeToTwin,
+  link,
+  Link,
   rescaleFaceFrame,
   resizeStrip,
   splitAtlasAlongLine,
   splitFaceAlongLine,
+  Stitch,
+  stitch,
   translationToWrap,
-  unlinkEdgeFromTwin,
+  unlink,
+  unstitch,
   type AtlasImage,
   type SplitAtlasAlongLineResult,
   type InsertStripResult,
@@ -102,6 +106,27 @@ interface RegionBackEntry {
   svg: SVGSVGElement;
   primary: SVGPolygonElement;
   ghosts: SVGPolygonElement[];
+}
+
+/**
+ * Saved per-axis wrap state for {@link FolkAtlas#wrapRegionAxis}, captured
+ * at wrap-on so unwrap can fully restore the pre-wrap edge stitches.
+ *
+ * After wrap-on the region's two opposite sides on this axis are bound by
+ * `cylinderStitch` (the cylinder loop), and each formerly-bordering outer
+ * face is now connected to the region via `linkA` / `linkB`. The
+ * `outerSide*` references and `outerToRegion*` transforms are captured
+ * from the pre-wrap edge stitches and used verbatim at wrap-off to
+ * recreate them.
+ */
+interface AxisWrapState {
+  cylinderStitch: Stitch;
+  outerSideA: Side;
+  outerSideB: Side;
+  outerToRegionA: M.Matrix2D;
+  outerToRegionB: M.Matrix2D;
+  linkA: Link;
+  linkB: Link;
 }
 
 /**
@@ -1297,24 +1322,45 @@ export class FolkAtlas extends ReactiveElement {
   // -------------------------------------------------------------------------
 
   /**
-   * Toggle wrapping of the region across the given axis (asymmetric model).
+   * Per-region per-axis wrap state, captured when wrap turns ON so the
+   * inverse can fully restore the pre-wrap topology when wrap turns OFF.
    *
-   * Horizontal wrap re-aims the region's *left* and *right* edges so they
-   * point at *each other* (cylinder-cycle on the inside). Crucially the
-   * outside neighbours are left alone: their inside-facing twin pointers
-   * still reference our left/right edges, so from outside the region
-   * still looks like a normal face you can enter from any side. From
-   * inside, the wrap loops the interior onto itself indefinitely.
+   * Wrapping a region installs (a) a reciprocal {@link Stitch} between
+   * the region's two opposite sides — the cylinder loop — and (b) a
+   * directed {@link Link} from each adjacent outer face to the region —
+   * the placement of the (now-closed) region inside its hosts. The
+   * captured `outerSide*` references and `outerToRegion*` transforms let
+   * us restitch the original outer↔region edges on unwrap.
    *
-   * Vertical wrap is the same with top/bottom.
+   * Substrate background: this is the substrate-natural expression of
+   * a "closed surface placed by a Link" (`substrate.md`'s phrasing).
+   * From outside, BFS rendering follows the Link to draw the region at
+   * its placement. From inside (root === region), the cylinder Stitch
+   * tiles the region indefinitely (capped). There is no return path —
+   * once a walker enters the closed region, the only way back out is
+   * by switching the BFS root.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  #wrapMetadata = new WeakMap<FolkAtlasRegion, { h?: AxisWrapState; v?: AxisWrapState }>();
+
+  /**
+   * Toggle wrapping of the region across the given axis.
    *
-   * This relies on the asymmetric-twin model (`he.twin.twin !== he` is
-   * allowed). Outside.twin still points at us; our edge points at our
-   * opposite edge. The two cycles are decoupled.
+   * Wrap-on: replace the two outer↔region edge stitches on the wrap axis
+   * with a reciprocal cylinder-loop Stitch (region.heA ↔ region.heB) plus
+   * one Link per outer face that previously bordered those edges. The
+   * region becomes a topologically closed surface placed inside its
+   * former neighbours.
    *
-   * Toggling a second time restores the original "outside twin" link by
-   * re-twinning each region edge to its outside neighbour with identity
-   * transform (which is what the original split produced).
+   * Wrap-off: read the saved metadata, dismantle the cylinder Stitch and
+   * the Links, and re-stitch the original outer↔region edges with the
+   * original transforms.
+   *
+   * Constraints:
+   *  - `region`'s face must be a "clean rectangle" (4 finite-finite sides).
+   *  - The wrap-axis sides must currently be edge-stitched to outer faces
+   *    (true after region creation; surgery on the outer faces could
+   *    invalidate the saved side references — wrap-off would then fail).
    */
   wrapRegionAxis(region: FolkAtlasRegion, axis: RegionWrapAxis): void {
     const face = this.#regionFaces.get(region);
@@ -1331,48 +1377,102 @@ export class FolkAtlas extends ReactiveElement {
     const heB = axis === 'horizontal' ? sides.left : sides.bottom;
 
     if (isCurrentlyWrapped) {
-      // Find the outside twins BEFORE mutating anything. We only consider
-      // half-edges whose face is *different* from the region face — that
-      // skips the wrap partner inside the region (which currently holds
-      // the matching `twin === heA/heB` pointer) and finds the original
-      // outside neighbour preserved by the asymmetric wrap.
-      //
-      // The outside half-edge still carries its original transform
-      // (`outer.transform` maps outer.face → heA/heB.face), so we recover
-      // the inbound transform we need for the region's edge as
-      // `inv(outer.transform)`. This restores whatever non-identity
-      // transform the original split installed (region cuts can produce
-      // translation transforms when the cut crosses other faces).
-      const outerA = this.#findExternalIncomingTwin(heA);
-      const outerB = this.#findExternalIncomingTwin(heB);
-      const tA = outerA ? M.invert(outerA.transform) : M.fromValues();
-      const tB = outerB ? M.invert(outerB.transform) : M.fromValues();
-      unlinkEdgeFromTwin(heA);
-      unlinkEdgeFromTwin(heB);
-      try {
-        if (outerA) linkEdgeToTwin(this.#atlas, heA, outerA, tA);
-        if (outerB) linkEdgeToTwin(this.#atlas, heB, outerB, tB);
-      } catch (err) {
-        console.warn('[folk-atlas] wrapRegionAxis: unwrap re-link failed:', err);
-      }
-      if (axis === 'horizontal') region.wrapH = false;
-      else region.wrapV = false;
-    } else {
-      try {
-        const T = translationToWrap(heA, heB);
-        // Asymmetric: re-aim heA → heB and heB → heA, leaving the outside
-        // neighbours' twin pointers (which still reference heA/heB)
-        // untouched.
-        unlinkEdgeFromTwin(heA);
-        unlinkEdgeFromTwin(heB);
-        linkEdgeToTwin(this.#atlas, heA, heB, T);
-        linkEdgeToTwin(this.#atlas, heB, heA, M.invert(T));
-      } catch (err) {
-        console.warn('[folk-atlas] wrapRegionAxis: wrap failed:', err);
+      const meta = this.#wrapMetadata.get(region);
+      const axisState = meta && (axis === 'horizontal' ? meta.h : meta.v);
+      if (!axisState) {
+        console.warn('[folk-atlas] wrapRegionAxis: no saved wrap state for unwrap');
         return;
       }
-      if (axis === 'horizontal') region.wrapH = true;
-      else region.wrapV = true;
+      try {
+        unstitch(axisState.cylinderStitch);
+        unlink(this.#atlas, axisState.linkA);
+        unlink(this.#atlas, axisState.linkB);
+        stitch(this.#atlas, heA, axisState.outerSideA, axisState.outerToRegionA);
+        stitch(this.#atlas, heB, axisState.outerSideB, axisState.outerToRegionB);
+      } catch (err) {
+        console.warn('[folk-atlas] wrapRegionAxis: unwrap failed:', err);
+        return;
+      }
+      if (axis === 'horizontal') {
+        if (meta) delete meta.h;
+        region.wrapH = false;
+      } else {
+        if (meta) delete meta.v;
+        region.wrapV = false;
+      }
+    } else {
+      const stitchA = heA.stitch;
+      const stitchB = heB.stitch;
+      if (!stitchA || !stitchB) {
+        console.warn(
+          '[folk-atlas] wrapRegionAxis: outer↔region edges are not stitched (cannot wrap)',
+        );
+        return;
+      }
+      const outerSideA = stitchA.other(heA);
+      const outerSideB = stitchB.other(heB);
+      const outerFaceA = outerSideA.face;
+      const outerFaceB = outerSideB.face;
+      // Capture the original outer→region transforms (they're about to be
+      // wiped by `unstitch`). Clone via fromValues so the saved state
+      // doesn't alias the live `.transform` field that's about to clear.
+      const tA = stitchA.transformFrom(outerSideA);
+      const tB = stitchB.transformFrom(outerSideB);
+      const outerToRegionA = M.fromValues(tA.a, tA.b, tA.c, tA.d, tA.e, tA.f);
+      const outerToRegionB = M.fromValues(tB.a, tB.b, tB.c, tB.d, tB.e, tB.f);
+      // Link convention is `to → from` ("places child inside parent at T
+      // applied to child outline"). Our Links go outerFace → region, so
+      // link.transform maps region-frame → outer-frame, which is the
+      // INVERSE of the captured outer-frame → region-frame transform.
+      const linkATransform = M.invert(outerToRegionA);
+      const linkBTransform = M.invert(outerToRegionB);
+
+      let T: M.Matrix2D;
+      try {
+        T = translationToWrap(heA, heB);
+      } catch (err) {
+        console.warn(
+          '[folk-atlas] wrapRegionAxis: cannot derive wrap transform:',
+          err,
+        );
+        return;
+      }
+
+      let cylinderStitch: Stitch;
+      let linkA: Link;
+      let linkB: Link;
+      try {
+        unstitch(stitchA);
+        unstitch(stitchB);
+        cylinderStitch = stitch(this.#atlas, heA, heB, T);
+        linkA = link(this.#atlas, outerFaceA, face, linkATransform);
+        linkB = link(this.#atlas, outerFaceB, face, linkBTransform);
+      } catch (err) {
+        console.warn('[folk-atlas] wrapRegionAxis: wrap-on failed:', err);
+        return;
+      }
+
+      let meta = this.#wrapMetadata.get(region);
+      if (!meta) {
+        meta = {};
+        this.#wrapMetadata.set(region, meta);
+      }
+      const axisState: AxisWrapState = {
+        cylinderStitch,
+        outerSideA,
+        outerSideB,
+        outerToRegionA,
+        outerToRegionB,
+        linkA,
+        linkB,
+      };
+      if (axis === 'horizontal') {
+        meta.h = axisState;
+        region.wrapH = true;
+      } else {
+        meta.v = axisState;
+        region.wrapV = true;
+      }
     }
 
     this.#scheduleUpdate();
@@ -1462,19 +1562,6 @@ export class FolkAtlas extends ReactiveElement {
     // `splitFaceAlongLine: seam is not strictly interior to host` error.
     this.#lastComposites = new Map();
     this.#scheduleUpdate();
-  }
-
-  /**
-   * Find the *outside* half-edge whose `twin === he` — i.e. the half-edge
-   * in a different face that points at `he`. Skips the wrap partner that
-   * lives inside the same face. Used by unwrap to restore the original
-   * reciprocal twin after a wrap is undone.
-   */
-  #findExternalIncomingTwin(he: Side): Side | null {
-    for (const candidate of this.#atlas.sides) {
-      if (candidate.twin === he && candidate.face !== he.face) return candidate;
-    }
-    return null;
   }
 
   /**
