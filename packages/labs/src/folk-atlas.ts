@@ -1592,9 +1592,9 @@ export class FolkAtlas extends ReactiveElement {
       left: Side | null;
     };
     for (const he of face.sides) {
-      if (he.originKind !== 'finite' || he.next.originKind !== 'finite') return null;
-      const dx = he.next.ox - he.ox;
-      const dy = he.next.oy - he.oy;
+      if (he.a.kind !== 'finite' || he.next.a.kind !== 'finite') return null;
+      const dx = he.next.a.x - he.a.x;
+      const dy = he.next.a.y - he.a.y;
       if (Math.abs(dx) >= Math.abs(dy)) {
         // Predominantly horizontal.
         if (dx > 0) sides.bottom = he;
@@ -2733,7 +2733,7 @@ export class FolkAtlas extends ReactiveElement {
     const visited = new Set<Side>();
     for (const he of this.#atlas.sides) {
       if (visited.has(he)) continue;
-      if (he.originKind !== 'finite') {
+      if (he.a.kind !== 'finite') {
         visited.add(he);
         continue;
       }
@@ -2742,7 +2742,7 @@ export class FolkAtlas extends ReactiveElement {
       const rep = fan.find((h) => composites.has(h.face)) ?? fan[0];
       const composite = composites.get(rep.face);
       if (!composite) continue;
-      const sp = M.applyToPoint(M.multiply(view, composite), { x: rep.ox, y: rep.oy });
+      const sp = M.applyToPoint(M.multiply(view, composite), { x: rep.a.x, y: rep.a.y });
       if (sp.x < clipRect.minX || sp.x > clipRect.maxX) continue;
       if (sp.y < clipRect.minY || sp.y > clipRect.maxY) continue;
       ctx.beginPath();
@@ -2848,7 +2848,7 @@ function faceScreenPolygon(
   for (const he of face.sidesCCW()) {
     const start = heEndScreen(he, 'origin');
     const end = heEndScreen(he, 'target');
-    const isStrokable = !he.isAtInfinity;
+    const isStrokable = he.kind !== 'arc';
 
     polygon.push(start);
 
