@@ -6,7 +6,7 @@ import {
   Atlas,
   createAllIdealAtlas,
   Face,
-  HalfEdge,
+  Side,
   insertStrip,
   linkEdgeToTwin,
   rescaleFaceFrame,
@@ -109,11 +109,11 @@ interface RegionBackEntry {
  * face's local frame, together with the face used to project it.
  *
  * The polygon is in `face`'s frame, so screen-space rendering goes through
- * `composite(face) · view`. When `face` is destroyed by a subsequent atlas
- * mutation (e.g. a child region carves through it), {@link
- * FolkAtlas.relocateOrphanedRegions} picks a new surviving face that contains
- * the polygon's centroid and re-expresses every vertex in that face's frame
- * via the old/new composites — so the polygon's screen position is preserved.
+ * `composite(face) · view`. When the face's interior is carved away by a
+ * subsequent atlas mutation (e.g. a child region cuts through it), {@link
+ * FolkAtlas#revalidateRegionPlacements} picks a new surviving face that
+ * contains the polygon's centroid and re-expresses every vertex in that
+ * face's frame — so the polygon's screen position is preserved.
  *
  * Concretely for nested rectangles in `zoom-deep`: a parent region's
  * outer-rectangle polygon ends up anchored to the deepest child's centre face
@@ -688,59 +688,64 @@ export class FolkAtlas extends ReactiveElement {
   }
 
   /**
-   * Re-locate every shape whose face is no longer in the atlas (e.g. because
-   * it was just split). Each orphan shape's *physical* position must be
-   * preserved across the `oldRoot ← newRoot` shift captured in `K` (returned
-   * by {@link #compensateViewAfterMutation}).
+   * After a mutation, re-validate every tracked shape against the current
+   * face boundaries and reassign any whose face-local coordinates are no
+   * longer contained by their face.
    *
-   * Math, for an orphan at `p_oldFace` in the destroyed `oldFace`:
-   *   p_oldRoot  = oldComp(oldFace) · p_oldFace
-   *   p_newRoot  = inv(K) · p_oldRoot
-   *   p_newFace  = inv(newComp(newFace)) · p_newRoot
-   * `K` is the identity in the common case where the root survived, and
-   * the K from `#compensateViewAfterMutation` otherwise — including the
-   * "whole atlas replaced" case (e.g. cutting an empty all-ideal seed),
-   * where the previous heuristic would silently drop every orphan.
+   * Identity-preserving primitives (the only kind we have, post chunk A)
+   * never destroy a face object — `splitFaceAtVertices` keeps the original
+   * face and allocates a fresh one for the other half. So a shape's
+   * `face` reference is always still a real face in the atlas; the only
+   * thing that can change is whether the face's *boundary* still encloses
+   * the shape. If the cut ran through the shape's neighbourhood and the
+   * shape ended up on the other side, we project its face-local position
+   * to the root frame and find whichever surviving face now contains it.
+   *
+   * Cost: O(N_shapes × N_faces) in the worst case, same as the previous
+   * orphan-relocation pass. Nearly all shapes early-exit on the first
+   * containment check (their face still owns them), so the typical cost
+   * is O(N_shapes) plus one composite multiply per genuinely-displaced
+   * shape.
    */
-  #relocateOrphanedShapes(
-    oldComposites: ReadonlyMap<Face, M.Matrix2D>,
-    newComposites: ReadonlyMap<Face, M.Matrix2D>,
-    K: M.Matrix2DReadonly,
-  ) {
+  #revalidateShapePlacements() {
+    if (this.#shapeFaces.size === 0) return;
     const presentFaces = new Set(this.#atlas.faces);
-    const orphans: Array<[FolkAtlasShape, Face]> = [];
-    for (const [shape, face] of this.#shapeFaces) {
-      if (!presentFaces.has(face)) orphans.push([shape, face]);
-    }
-    if (orphans.length === 0) return;
+    const composites = this.#atlas.computeComposites();
+    // Snapshot the entries so we can safely call `#assignShape` (which
+    // mutates `#shapeFaces`) inside the loop.
+    const entries = [...this.#shapeFaces];
+    for (const [shape, face] of entries) {
+      const localPos = { x: shape.x, y: shape.y };
+      if (presentFaces.has(face) && face.contains(localPos)) continue;
 
-    const Kinv = M.invert(K);
-
-    for (const [shape, oldFace] of orphans) {
-      const oldFaceRoot = oldComposites.get(oldFace);
-      this.#shapeFaces.delete(shape);
-      oldFace.shapes.delete(shape);
-      if (!oldFaceRoot) continue; // mystery orphan: never had an old composite
-
-      // p_newRoot = inv(K) · oldComp(oldFace) · (shape.x, shape.y)
-      const M_oldFace_to_newRoot = M.multiply(Kinv, oldFaceRoot);
-      const pNewRoot = M.applyToPoint(M_oldFace_to_newRoot, { x: shape.x, y: shape.y });
+      // Need to relocate. Project to root frame using the shape's current
+      // face composite (if reachable), then find the new host.
+      const composite = composites.get(face);
+      if (!composite) {
+        // Face no longer reachable from root (shouldn't happen with
+        // identity-preserving primitives, but defend against it).
+        this.#shapeFaces.delete(shape);
+        face.shapes.delete(shape);
+        continue;
+      }
+      const rootPos = M.applyToPoint(composite, localPos);
 
       let placed = false;
       for (const newFace of this.#atlas.faces) {
-        const newFaceRoot = newComposites.get(newFace);
-        if (!newFaceRoot) continue;
-        const pNewFace = M.applyToPoint(M.invert(newFaceRoot), pNewRoot);
-        if (newFace.contains(pNewFace)) {
-          this.#assignShape(shape, newFace, pNewFace);
+        if (newFace === face) continue; // already failed above
+        const newComp = composites.get(newFace);
+        if (!newComp) continue;
+        const newLocal = M.applyToPoint(M.invert(newComp), rootPos);
+        if (newFace.contains(newLocal)) {
+          this.#assignShape(shape, newFace, newLocal);
           placed = true;
           break;
         }
       }
       if (!placed) {
-        // Numerical edge case (e.g. point landed exactly on a boundary and
-        // every contains check returned strictly false). Fall back to the
-        // new root — better than dropping the shape.
+        // Numerical edge case (point landed exactly on a boundary and
+        // every contains check returned strictly false). Fall back to
+        // the atlas root — better than dropping the shape.
         this.#assignShape(shape, this.#atlas.root, { x: 0, y: 0 });
       }
     }
@@ -1234,8 +1239,8 @@ export class FolkAtlas extends ReactiveElement {
 
   /**
    * Run a single face-bounded line cut sourced from a screen-coord seed.
-   * Handles host lookup, frame conversion, view compensation, and orphan
-   * relocation.
+   * Handles host lookup, frame conversion, and post-cut shape/region
+   * re-validation.
    *
    * Uses {@link splitFaceAlongLine} (NOT {@link splitAtlasAlongLine}) so
    * the cut terminates at the host face's boundary rather than propagating
@@ -1249,6 +1254,12 @@ export class FolkAtlas extends ReactiveElement {
    * boolean lets `createRegionAtScreenRect` distinguish "cut applied" from
    * "cut bailed out" (host not found / split threw / etc) without us
    * having to thread error sentinels through the call stack.
+   *
+   * Identity-preserving split (`splitFaceAlongLine` → `splitFaceAtVertices`)
+   * means: `host` survives the cut as the kept side, `atlas.root` is never
+   * replaced, no view K-matrix compensation is needed. Shapes whose
+   * face-local coordinates are now outside their face's (smaller) boundary
+   * are reassigned to whichever surviving face geometrically contains them.
    */
   #runOneRegionCut(seedClientX: number, seedClientY: number, direction: Point): boolean {
     if (this.#lastComposites.size === 0) {
@@ -1269,17 +1280,15 @@ export class FolkAtlas extends ReactiveElement {
       console.warn('[folk-atlas] region cut: seed not in any face');
       return false;
     }
-    const oldComposites = new Map(this.#lastComposites);
     try {
       splitFaceAlongLine(this.#atlas, host, seedLocal, direction);
     } catch (err) {
       console.warn('[folk-atlas] region cut split failed:', err);
       return false;
     }
-    const { newComposites, K } = this.#compensateViewAfterMutation(oldComposites);
-    this.#lastComposites = newComposites;
-    this.#relocateOrphanedShapes(oldComposites, newComposites, K);
-    this.#relocateOrphanedRegions(oldComposites, newComposites, K);
+    this.#lastComposites = this.#atlas.computeComposites();
+    this.#revalidateShapePlacements();
+    this.#revalidateRegionPlacements();
     return true;
   }
 
@@ -1461,8 +1470,8 @@ export class FolkAtlas extends ReactiveElement {
    * lives inside the same face. Used by unwrap to restore the original
    * reciprocal twin after a wrap is undone.
    */
-  #findExternalIncomingTwin(he: HalfEdge): HalfEdge | null {
-    for (const candidate of this.#atlas.halfEdges) {
+  #findExternalIncomingTwin(he: Side): Side | null {
+    for (const candidate of this.#atlas.sides) {
       if (candidate.twin === he && candidate.face !== he.face) return candidate;
     }
     return null;
@@ -1483,19 +1492,19 @@ export class FolkAtlas extends ReactiveElement {
    * bottom → right → top → left.
    */
   #regionSides(face: Face): {
-    bottom: HalfEdge;
-    right: HalfEdge;
-    top: HalfEdge;
-    left: HalfEdge;
+    bottom: Side;
+    right: Side;
+    top: Side;
+    left: Side;
   } | null {
-    if (face.halfEdges.length !== 4) return null;
+    if (face.sides.length !== 4) return null;
     const sides = { bottom: null, right: null, top: null, left: null } as {
-      bottom: HalfEdge | null;
-      right: HalfEdge | null;
-      top: HalfEdge | null;
-      left: HalfEdge | null;
+      bottom: Side | null;
+      right: Side | null;
+      top: Side | null;
+      left: Side | null;
     };
-    for (const he of face.halfEdges) {
+    for (const he of face.sides) {
       if (he.originKind !== 'finite' || he.next.originKind !== 'finite') return null;
       const dx = he.next.ox - he.ox;
       const dy = he.next.oy - he.oy;
@@ -1510,81 +1519,71 @@ export class FolkAtlas extends ReactiveElement {
       }
     }
     if (!sides.bottom || !sides.right || !sides.top || !sides.left) return null;
-    return sides as { bottom: HalfEdge; right: HalfEdge; top: HalfEdge; left: HalfEdge };
+    return sides as { bottom: Side; right: Side; top: Side; left: Side };
   }
 
   /**
-   * After an atlas mutation, walk all regions and try to re-locate them.
-   * Two pieces of state need updating:
-   *
-   *   1. `#regionOutlines.get(region)` — the rendered polygon. Its anchor
-   *      face may have been destroyed; if so we pick a *new* surviving face
-   *      that contains the outline's centroid in the root frame, then re-
-   *      express every vertex into that face's local frame so screen-space
-   *      geometry is preserved.
-   *
-   *   2. `#regionFaces.get(region)` — the operational face used by wrap /
-   *      scale. Same centroid-based pick.
+   * After an atlas mutation, walk all regions and re-validate that each
+   * region's bound face still contains the region's outline centroid. If
+   * not (the region's interior was carved away by the cut), pick a new
+   * surviving face that contains the centroid in the root frame, re-
+   * express the outline vertices into its local frame, and re-bind both
+   * `#regionFaces` and `#regionOutlines`.
    *
    * Why centroid (not the old face's `(0, 0)` anchor): a region's centre
-   * face has its anchor at one of its corners (the first finite vertex
-   * picked by `splitFaceAtVertices`). After a child carves four cuts inside
-   * it, that corner ends up in one of the four newly-created strip faces —
-   * never in the new centre face — so an anchor-based rebind would
-   * silently re-bind the parent region to its bottom strip. The polygon's
-   * geometric centre, by contrast, sits inside whichever new face owns the
-   * inside of the original rect: for a child carve that's the child's
-   * centre face (which is by construction inside the parent's rect), so
-   * the parent's outline lands on a face that's actually inside its old
-   * rectangle and the polygon re-projection produces the correct
-   * concentric-rectangle picture.
+   * face has its anchor at one of its corners. After a child carves four
+   * cuts inside it, that corner ends up in one of the four newly-created
+   * strip faces — never in the new centre face — so an anchor-based
+   * rebind would silently re-bind the parent region to its bottom strip.
+   * The polygon's geometric centre, by contrast, sits inside whichever
+   * new face owns the inside of the original rect.
+   *
+   * Identity-preserving primitives keep face objects alive even after
+   * cuts, so `outline.face` is always still a valid Face — but its
+   * boundary may have shrunk. The containment check on the centroid is
+   * what tells us whether to rebind.
    *
    * Regions whose centroid lands in no face after the mutation (degenerate
-   * cuts, polygon entirely off the surviving atlas) are dropped from both
-   * maps — the element stays in the DOM but renders empty.
+   * cuts) are dropped from both maps — the element stays in the DOM but
+   * renders empty.
    */
-  #relocateOrphanedRegions(
-    oldComposites: ReadonlyMap<Face, M.Matrix2D>,
-    newComposites: ReadonlyMap<Face, M.Matrix2D>,
-    K: M.Matrix2DReadonly,
-  ): void {
+  #revalidateRegionPlacements(): void {
     if (this.#regionOutlines.size === 0) return;
-    const survivors = new Set(this.#atlas.faces);
-    const Kinv = M.invert(K);
+    const presentFaces = new Set(this.#atlas.faces);
+    const composites = this.#atlas.computeComposites();
     for (const [region, outline] of this.#regionOutlines) {
-      if (survivors.has(outline.face)) continue;
-      const oldFaceComp = oldComposites.get(outline.face);
-      if (!oldFaceComp) {
+      const centroidLocal = polygonCentroid(outline.vertices);
+      const oldFaceStillValid =
+        presentFaces.has(outline.face) && outline.face.contains(centroidLocal);
+      if (oldFaceStillValid) continue;
+
+      const oldComp = composites.get(outline.face);
+      if (!oldComp) {
         this.#regionOutlines.delete(region);
         this.#regionFaces.delete(region);
         continue;
       }
-      // Map outline.face-local → newRoot-local in one shot:
-      //   p_newRoot = inv(K) · oldComp(outline.face) · p_local
-      const M_oldFace_to_newRoot = M.multiply(Kinv, oldFaceComp);
-      const centroidLocal = polygonCentroid(outline.vertices);
-      const centroidNewRoot = M.applyToPoint(M_oldFace_to_newRoot, centroidLocal);
+      const centroidRoot = M.applyToPoint(oldComp, centroidLocal);
       let newFace: Face | null = null;
-      let newFaceComp: M.Matrix2D | null = null;
+      let newComp: M.Matrix2D | null = null;
       for (const f of this.#atlas.faces) {
-        const comp = newComposites.get(f);
+        if (f === outline.face) continue;
+        const comp = composites.get(f);
         if (!comp) continue;
-        const local = M.applyToPoint(M.invert(comp), centroidNewRoot);
+        const local = M.applyToPoint(M.invert(comp), centroidRoot);
         if (f.contains(local)) {
           newFace = f;
-          newFaceComp = comp;
+          newComp = comp;
           break;
         }
       }
-      if (!newFace || !newFaceComp) {
+      if (!newFace || !newComp) {
         this.#regionOutlines.delete(region);
         this.#regionFaces.delete(region);
         continue;
       }
-      // Re-express every vertex from `outline.face` (destroyed) into
-      // `newFace`'s local frame, routing through newRoot via inv(K).
-      const newRootToNew = M.invert(newFaceComp);
-      const M_oldFace_to_newFace = M.multiply(newRootToNew, M_oldFace_to_newRoot);
+      // Re-express every vertex from outline.face's frame into newFace's.
+      const M_oldFace_to_newFace = M.multiply(M.invert(newComp), oldComp);
       const newVertices = outline.vertices.map((v) =>
         M.applyToPoint(M_oldFace_to_newFace, v),
       );
@@ -1933,7 +1932,12 @@ export class FolkAtlas extends ReactiveElement {
         ? gizmo.direction
         : { x: -gizmo.direction.x, y: -gizmo.direction.y };
 
-    const oldComposites = new Map(this.#lastComposites);
+    // Snapshot the host's pre-split composite so we can re-express the
+    // gizmo anchor into the new strip face's frame after the mutation.
+    // Identity-preserving primitives keep `gizmo.hostFace` alive but its
+    // boundary changes; in this codepath the gizmo follows the inserted
+    // strip face (a brand-new face), so we route through `oldHostComp`.
+    const oldHostComp = this.#lastComposites.get(gizmo.hostFace);
 
     let split: SplitAtlasAlongLineResult;
     try {
@@ -1956,31 +1960,22 @@ export class FolkAtlas extends ReactiveElement {
 
     gizmo.committed = { split, strip, sign, height: initialHeight };
 
-    // Compensate the view first so `#x, #y` is correct for the post-
-    // mutation root, then relocate any shapes whose face was replaced.
-    const { newComposites, K } = this.#compensateViewAfterMutation(oldComposites);
-    this.#lastComposites = newComposites;
-    this.#relocateOrphanedShapes(oldComposites, newComposites, K);
-    this.#relocateOrphanedRegions(oldComposites, newComposites, K);
+    // Identity-preserving split: the original `hostFace` survives, so
+    // `atlas.root` is unchanged, and there is no view K-matrix to thread.
+    // We just refresh the composites cache and re-validate per-face state.
+    this.#lastComposites = this.#atlas.computeComposites();
+    this.#revalidateShapePlacements();
+    this.#revalidateRegionPlacements();
 
-    // Re-anchor the gizmo onto the strip face so it survives the loss
-    // of `hostFace`. The strip's frame is global-aligned to `hostFace`'s
-    // frame (translation-only edges), so direction is preserved and only
-    // points need re-expressing.
-    //
-    // Math: with K = oldRoot ← newRoot, the old/new screen positions of
-    // any point P agree iff
-    //     view_old · oldComp(host) · P_host
-    //   = view_new · newComp(strip) · P_strip
-    //   = (view_old · K) · newComp(strip) · P_strip
-    // ⇒ P_strip = inv(newComp(strip)) · inv(K) · oldComp(host) · P_host
-    const oldHostComp = oldComposites.get(gizmo.hostFace);
-    const newStripComp = newComposites.get(strip.stripFace);
+    // Re-anchor the gizmo onto the strip face so subsequent resize drags
+    // expand the strip rather than the original host. The strip's frame
+    // is global-aligned to the (pre-split) host frame (translation-only
+    // edges), so direction is preserved and only the gizmo's anchor
+    // points need re-expressing into the strip's frame:
+    //   p_strip = inv(stripComp) · oldHostComp · p_host
+    const newStripComp = this.#lastComposites.get(strip.stripFace);
     if (oldHostComp && newStripComp) {
-      const M_host_to_strip = M.multiply(
-        M.invert(newStripComp),
-        M.multiply(M.invert(K), oldHostComp),
-      );
+      const M_host_to_strip = M.multiply(M.invert(newStripComp), oldHostComp);
       gizmo.anchor = M.applyToPoint(M_host_to_strip, gizmo.anchor);
       gizmo.drawStart = M.applyToPoint(M_host_to_strip, gizmo.drawStart);
       gizmo.drawEnd = M.applyToPoint(M_host_to_strip, gizmo.drawEnd);
@@ -2173,69 +2168,6 @@ export class FolkAtlas extends ReactiveElement {
     // subsequent point-locates and the next render see the new frame.
     this.#lastImages = this.#atlas.computeImages();
     this.#lastComposites = this.#atlas.computeComposites();
-  }
-
-  /**
-   * Compensate `#x, #y` so on-screen positions stay invariant across an
-   * atlas mutation that may have replaced `atlas.root`.
-   *
-   * Mutation primitives like `splitFaceAlongChord` reassign
-   * `atlas.root = sub0` directly when they destroy the current root face
-   * (sub0 is a brand-new face whose `(0,0)` anchor sits at some non-zero
-   * position in the OLD root's frame). Without compensation, every
-   * subsequent render uses `view · newComposite(F)` instead of
-   * `view · oldComposite(F)`, and the entire scene jumps by the
-   * `oldRoot ← newRoot` translation — sometimes very far, depending on
-   * where the new root's anchor landed.
-   *
-   * The compensation is `oldRoot ← newRoot = oldComposite(F) · inv(newComposite(F))`
-   * for any face `F` that exists in both the pre- and post-mutation
-   * composite maps. Under the similarity-only edge-transform model this
-   * matrix is itself a similarity (uniform scale + translation), so we
-   * apply the full `view_new = view_old · K` update — translation parts
-   * shift `#x, #y`, scale part multiplies `#scale`. For pure-translation
-   * mutations (line cuts, region cuts) the scale part is 1 and this
-   * reduces to the original translation-only behaviour.
-   *
-   * Caller responsibility: snapshot `oldComposites` (e.g. from
-   * `#lastComposites`) before the mutation, call this immediately
-   * after, and ensure `#scheduleUpdate` runs so `#lastComposites`
-   * gets refreshed on the next frame.
-   *
-   * Returns the freshly-computed new composites and the `K` matrix that
-   * was applied (identity when no compensation was needed). `K` is also
-   * the matrix any caller needs to re-express points across the
-   * `oldRoot → newRoot` change (e.g. to re-anchor a gizmo whose original
-   * face was destroyed).
-   */
-  #compensateViewAfterMutation(
-    oldComposites: Map<Face, M.Matrix2D>,
-  ): { newComposites: Map<Face, M.Matrix2D>; K: M.Matrix2D } {
-    const newComposites = this.#atlas.computeComposites();
-    // No compensation needed if the root survived.
-    if (oldComposites.has(this.#atlas.root)) {
-      return { newComposites, K: M.fromValues() };
-    }
-    // Find any face that exists in both maps to anchor the shift.
-    let oldM: M.Matrix2DReadonly | null = null;
-    let newM: M.Matrix2DReadonly | null = null;
-    for (const [face, mNew] of newComposites) {
-      const mOld = oldComposites.get(face);
-      if (mOld) {
-        oldM = mOld;
-        newM = mNew;
-        break;
-      }
-    }
-    if (!oldM || !newM) return { newComposites, K: M.fromValues() }; // whole atlas replaced
-    // K = oldRoot ← newRoot, via the surviving anchor face F:
-    //   oldRoot ← newRoot = (oldRoot ← F) · (F ← newRoot)
-    //                     = oldComposite(F)  · inv(newComposite(F))
-    const K = M.multiply(oldM, M.invert(newM));
-    this.#x += this.#scale * K.e;
-    this.#y += this.#scale * K.f;
-    this.#scale *= K.a;
-    return { newComposites, K };
   }
 
   // ---- Render loop ----
@@ -2711,8 +2643,8 @@ export class FolkAtlas extends ReactiveElement {
 
     // Pass 4: finite junctions, deduplicated via aroundJunction.
     ctx.fillStyle = VERTEX_FILL;
-    const visited = new Set<HalfEdge>();
-    for (const he of this.#atlas.halfEdges) {
+    const visited = new Set<Side>();
+    for (const he of this.#atlas.sides) {
       if (visited.has(he)) continue;
       if (he.originKind !== 'finite') {
         visited.add(he);
@@ -2785,9 +2717,9 @@ function projectFaceScreenAABB(
  * has `k` vertices for `k` half-edges.
  *
  * The interesting case is **chord half-edges** (both endpoints ideal but
- * `chordAnchor` set — the HE represents a finite chord line through R²,
+ * `anchor` set — the HE represents a finite chord line through R²,
  * not an at-infinity arc). A chord HE's screen segment lives at
- * `chordAnchor + R · direction`, which is *not* `R · direction`. When two
+ * `anchor + R · direction`, which is *not* `R · direction`. When two
  * consecutive HEs disagree on where their shared ideal vertex sits in
  * screen space (e.g. a digon with two parallel chord HEs at different
  * anchors), we emit BOTH endpoints of the chord as separate polygon
@@ -2801,7 +2733,7 @@ function projectFaceScreenAABB(
  *    be visibly stroked. It's `false` for:
  *      - Implicit "infinity corners" between chord HEs with mismatched
  *        endpoints (no underlying HE exists).
- *      - At-infinity-arc HEs (both endpoints ideal, no `chordAnchor`):
+ *      - At-infinity-arc HEs (both endpoints ideal, no `anchor`):
  *        no geometry between two points at infinity to draw.
  */
 function faceScreenPolygon(
@@ -2812,21 +2744,21 @@ function faceScreenPolygon(
   const polygon: Point[] = [];
   const edgeStrokeMask: boolean[] = [];
 
-  const heEndScreen = (he: HalfEdge, which: 'origin' | 'target'): Point => {
+  const heEndScreen = (he: Side, which: 'origin' | 'target'): Point => {
     const j = which === 'origin' ? he.origin() : he.target();
     if (j.kind === 'finite') {
       return M.applyToPoint(screen, { x: j.x, y: j.y });
     }
-    if (he.chordAnchor) {
+    if (he.anchor) {
       return M.applyToPoint(screen, {
-        x: he.chordAnchor.x + R * j.x,
-        y: he.chordAnchor.y + R * j.y,
+        x: he.anchor.x + R * j.x,
+        y: he.anchor.y + R * j.y,
       });
     }
     return M.applyToPoint(screen, { x: R * j.x, y: R * j.y });
   };
 
-  for (const he of face.halfEdgesCCW()) {
+  for (const he of face.sidesCCW()) {
     const start = heEndScreen(he, 'origin');
     const end = heEndScreen(he, 'target');
     const isStrokable = !he.isAtInfinity;
@@ -2947,7 +2879,7 @@ function intersectY(a: Point, b: Point, y: number): Point {
  * `face`'s local frame, so projecting through `face`'s composite gives the
  * face's on-screen polygon at construction time. As the atlas mutates around
  * the polygon, the outline's anchor face migrates (see
- * `FolkAtlas#relocateOrphanedRegions`) but its on-screen geometry is preserved.
+ * `FolkAtlas#revalidateRegionPlacements`) but its on-screen geometry is preserved.
  *
  * Ideal junctions are dropped — outlines describe finite carve rectangles, not
  * the seed-atlas wedges that reach to infinity.

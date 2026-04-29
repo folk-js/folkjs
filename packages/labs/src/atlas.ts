@@ -37,7 +37,7 @@ export {
 // See `sia.md` for the full design. Summary of the model used here:
 //
 // **Edge-primary geometry.** The atlas is a graph of half-edges. There is no
-// `Vertex` class. Each `HalfEdge` carries its own intrinsic geometric data:
+// `Vertex` class. Each `Side` carries its own intrinsic geometric data:
 // the kind (`finite` or `ideal`) and face-local coordinates of its starting
 // junction (a face-local point for finite, a unit direction for ideal). A
 // half-edge's target is just `next.origin` (derived).
@@ -106,7 +106,7 @@ export {
 // top of this file for backward compatibility.
 
 // ----------------------------------------------------------------------------
-// HalfEdge
+// Side
 // ----------------------------------------------------------------------------
 
 /**
@@ -125,38 +125,38 @@ export {
  *
  *   - An **at-infinity arc** on S¹: the boundary of an unbounded face along
  *     a piece of the line at infinity. The endpoints span an angular wedge
- *     CCW on S¹. `twin === null` and `chordAnchor === null`.
+ *     CCW on S¹. `twin === null` and `anchor === null`.
  *   - A **chord** through R²: a real straight line whose two limit
  *     directions on S¹ are antipodal (origin and `next.origin` are negatives
  *     of each other). `twin !== null` (chords are always twinned to the
- *     chord on the other sub-face) and `chordAnchor` stores any one finite
+ *     chord on the other sub-face) and `anchor` stores any one finite
  *     point on the line, in face-local coordinates. The line itself is then
- *     determined by `(chordAnchor, direction = origin)`.
+ *     determined by `(anchor, direction = origin)`.
  *
  * Two ideal directions don't pin down a chord by themselves (any parallel
- * line shares the same antipodal endpoints), which is why `chordAnchor` is
+ * line shares the same antipodal endpoints), which is why `anchor` is
  * needed to encode the offset along the chord's perpendicular.
  */
-export class HalfEdge {
+export class Side {
   originKind: 'finite' | 'ideal';
   /** Face-local x of starting junction (finite) or unit-direction x (ideal). */
   ox: number;
   /** Face-local y of starting junction (finite) or unit-direction y (ideal). */
   oy: number;
   /** Next half-edge CCW around `face`. */
-  next!: HalfEdge;
+  next!: Side;
   /** Previous half-edge CCW around `face` (i.e. the `he` such that `he.next === this`). */
-  prev!: HalfEdge;
+  prev!: Side;
   /** Owning face. */
   face!: Face;
   /** Twin half-edge in the adjacent face, or null at a boundary. */
-  twin: HalfEdge | null = null;
+  twin: Side | null = null;
   /**
    * Any one finite point on the chord line, in face-local coordinates. Only
    * set on chord HEs (both endpoints ideal AND `twin !== null`). For all
    * other HEs this is `null`. See class docstring.
    */
-  chordAnchor: Point | null = null;
+  anchor: Point | null = null;
   /**
    * Affine map: this face's local frame → twin face's local frame.
    *
@@ -175,6 +175,20 @@ export class HalfEdge {
    * a model-level invariant.
    */
   transform: M.Matrix2D = M.fromValues();
+
+  /**
+   * Reciprocal-binding back-reference. When this half-edge is part of a
+   * symmetric twin pair (`this.twin.twin === this` and the transforms are
+   * mutually inverse), both `this.stitch` and `this.twin.stitch` reference
+   * the same {@link Stitch} object. When the binding is asymmetric (e.g.
+   * region-wrap toggles installed via {@link linkEdgeToTwin}) or when this
+   * half-edge has no twin, `stitch` is `null`.
+   *
+   * Chunk C: this is a parallel view onto the existing twin/transform
+   * fields. Chunk B will make `Side.stitch` the source of truth and remove
+   * the redundant pointer/transform pair.
+   */
+  stitch: Stitch | null = null;
 
   constructor(originKind: 'finite' | 'ideal', ox: number, oy: number) {
     this.originKind = originKind;
@@ -200,31 +214,118 @@ export class HalfEdge {
   }
 
   /**
+   * Single-discriminator classification of this side's geometric kind:
+   *
+   *   - `'segment'` — both endpoints finite. Straight line segment in R².
+   *   - `'ray'`     — origin finite, target ideal. Half-line from origin
+   *                   in the target's direction.
+   *   - `'antiRay'` — origin ideal, target finite. Half-line ending at the
+   *                   target, coming from the origin's direction.
+   *   - `'chord'`   — both endpoints ideal AND `anchor !== null`. A real
+   *                   line through R² whose two limit directions are
+   *                   antipodal; `anchor` pins the line's perpendicular
+   *                   offset.
+   *   - `'arc'`     — both endpoints ideal AND `anchor === null`. A piece
+   *                   of S¹ on the boundary of an unbounded face.
+   *
+   * Use this in switch statements / dispatch tables instead of chaining the
+   * legacy `originKind` + `isChord` + `isAtInfinity` predicates.
+   */
+  get kind(): 'segment' | 'ray' | 'antiRay' | 'chord' | 'arc' {
+    if (this.originKind === 'finite' && this.next.originKind === 'finite') return 'segment';
+    if (this.originKind === 'finite' && this.next.originKind === 'ideal') return 'ray';
+    if (this.originKind === 'ideal' && this.next.originKind === 'finite') return 'antiRay';
+    return this.anchor === null ? 'arc' : 'chord';
+  }
+
+  /**
    * Whether this is an at-infinity arc — both endpoints ideal AND not a
    * chord. Geometrically: a piece of S¹ on the boundary of an unbounded
    * face. Distinguished from a chord (which also has both endpoints ideal,
-   * but `chordAnchor !== null` and `twin !== null`).
+   * but `anchor !== null` and `twin !== null`).
+   *
+   * @deprecated Prefer `side.kind === 'arc'`.
    */
   get isAtInfinity(): boolean {
-    return (
-      this.originKind === 'ideal' &&
-      this.next.originKind === 'ideal' &&
-      this.chordAnchor === null
-    );
+    return this.kind === 'arc';
   }
 
   /**
    * Whether this is a chord through R² between two antipodal ideal vertices.
    * Geometrically: a real straight line in R² whose two limit directions are
-   * stored at the endpoints, with `chordAnchor` pinpointing which parallel
+   * stored at the endpoints, with `anchor` pinpointing which parallel
    * line it is.
+   *
+   * @deprecated Prefer `side.kind === 'chord'`.
    */
   get isChord(): boolean {
-    return (
-      this.originKind === 'ideal' &&
-      this.next.originKind === 'ideal' &&
-      this.chordAnchor !== null
-    );
+    return this.kind === 'chord';
+  }
+}
+
+/**
+ * @deprecated Use {@link Side}. Kept as a type alias for one transitional
+ * release so external imports continue to compile.
+ */
+export type HalfEdge = Side;
+
+// ----------------------------------------------------------------------------
+// Stitch — reciprocal binding between two half-edges
+// ----------------------------------------------------------------------------
+
+/**
+ * A reciprocal binding between two half-edges with an implicit transform.
+ *
+ * `Stitch` is a thin handle that names a bidirectional twin pair as a single
+ * first-class object. Both `a` and `b` hold a back-reference to the same
+ * `Stitch` via their `.stitch` field; reciprocity is structural — there is
+ * no way to construct a `Stitch` whose endpoints disagree.
+ *
+ * The transform `(a.face frame → b.face frame)` lives on `a.transform` (and
+ * its inverse on `b.transform`); `Stitch.transform` is a getter that reads
+ * from `a` so there is no synchronization burden between Stitch and HE state.
+ *
+ * Stitches are allocated automatically by the symmetric primitives — chord
+ * pairs from {@link splitFaceAtVertices}, subdivided pairs from
+ * {@link subdivideSide}, strip-to-chord pairs from {@link insertStrip},
+ * and explicit calls to {@link stitch} or {@link wrapEdges}. Asymmetric
+ * one-way bindings established via {@link linkEdgeToTwin} do NOT allocate
+ * a Stitch — `.stitch` stays `null` on both endpoints.
+ *
+ * The set of all stitches in an atlas is derived on demand via the
+ * {@link Atlas.stitches} getter; it is not persisted state, so there is no
+ * separate atlas-level bookkeeping to keep in sync.
+ *
+ * After chunk B (when `Side` replaces `Side`), `Stitch` becomes the
+ * source of truth for cross-face navigation; the redundant twin/transform
+ * pair on the HE will be removed.
+ */
+export class Stitch {
+  a: Side;
+  b: Side;
+
+  constructor(a: Side, b: Side) {
+    this.a = a;
+    this.b = b;
+  }
+
+  /** Transform mapping `a.face` frame → `b.face` frame. */
+  get transform(): M.Matrix2DReadonly {
+    return this.a.transform;
+  }
+
+  /** Given one of the stitch's endpoints, return the other. */
+  other(self: Side): Side {
+    if (self === this.a) return this.b;
+    if (self === this.b) return this.a;
+    throw new Error('Stitch.other: argument is not an endpoint of this stitch');
+  }
+
+  /** Transform mapping `self.face` frame → the other endpoint's frame. */
+  transformFrom(self: Side): M.Matrix2DReadonly {
+    if (self === this.a) return this.a.transform;
+    if (self === this.b) return this.b.transform;
+    throw new Error('Stitch.transformFrom: argument is not an endpoint of this stitch');
   }
 }
 
@@ -236,13 +337,13 @@ export class HalfEdge {
  * A convex polygonal face with one outer (CCW) boundary loop and zero or more
  * inner (CW) boundary loops.
  *
- * **Outer loop.** `halfEdges` holds the k ≥ 3 CCW-ordered half-edges of the
+ * **Outer loop.** `sides` holds the k ≥ 3 CCW-ordered half-edges of the
  * outer boundary. There is no special "anchor" half-edge: any vertex (finite
- * or ideal) may sit at `halfEdges[0]`, and the face's local coordinates can
+ * or ideal) may sit at `sides[0]`, and the face's local coordinates can
  * be chosen freely. Convexity (every interior angle < π) is a model-level
  * invariant checked by {@link validateAtlas}.
  *
- * Faces with no finite vertex (every `halfEdges[i].origin` is ideal) are
+ * Faces with no finite vertex (every `sides[i].origin` is ideal) are
  * legal — they represent unbounded regions that cover an arc of the line at
  * infinity. The simplest example is a single all-ideal face whose boundary
  * is k ideal directions spanning S¹ in CCW order, which is the empty-scene
@@ -282,9 +383,9 @@ export class Face {
    * boundary HEs must be chords with antipodal ideal endpoints (validated
    * in {@link validateAtlas}).
    */
-  halfEdges: HalfEdge[];
+  sides: Side[];
   /** Inner boundary loops, each CW, each with k ≥ 3. Empty if the face has no holes. */
-  innerLoops: HalfEdge[][];
+  innerLoops: Side[][];
   /**
    * Affine map: face-local coordinates → reference frame in which this face
    * is "pinned" when it acts as the atlas root. See class docstring.
@@ -293,27 +394,27 @@ export class Face {
   /** Shapes assigned to this face (managed by the atlas's owner). */
   shapes: Set<Element> = new Set();
 
-  constructor(halfEdges: HalfEdge[], innerLoops: HalfEdge[][] = [], frame: M.Matrix2D = M.fromValues()) {
+  constructor(sides: Side[], innerLoops: Side[][] = [], frame: M.Matrix2D = M.fromValues()) {
     // k=2 is allowed: a "digon" face whose two boundary HEs are both
     // chords (a slab between two parallel lines through R²). Inner loops
     // remain k≥3 (holes don't have a meaningful 2-edge configuration —
     // they're CW finite cycles).
-    if (halfEdges.length < 2) {
-      throw new Error(`Face needs at least 2 half-edges, got ${halfEdges.length}`);
+    if (sides.length < 2) {
+      throw new Error(`Face needs at least 2 half-edges, got ${sides.length}`);
     }
     // Defensive copy: every mutation primitive (subdivideAtInfinityArc,
-    // subdivideHalfEdge, …) splices `face.halfEdges` in place. If the
+    // subdivideSide, …) splices `face.sides` in place. If the
     // caller hands us an array that's also referenced from elsewhere
-    // (e.g. `atlas.halfEdges`), every splice would silently mutate both
+    // (e.g. `atlas.sides`), every splice would silently mutate both
     // — corrupting both arrays. Owning a private copy makes such aliasing
     // impossible from the Face's side, regardless of what the caller does
     // with the original array.
-    this.halfEdges = halfEdges.slice();
-    const k = this.halfEdges.length;
+    this.sides = sides.slice();
+    const k = this.sides.length;
     for (let i = 0; i < k; i++) {
-      const he = this.halfEdges[i];
-      he.next = this.halfEdges[(i + 1) % k];
-      he.prev = this.halfEdges[(i - 1 + k) % k];
+      const he = this.sides[i];
+      he.next = this.sides[(i + 1) % k];
+      he.prev = this.sides[(i - 1 + k) % k];
       he.face = this;
     }
 
@@ -339,25 +440,25 @@ export class Face {
 
   /** This face's k outer-loop junctions (origins of its outer half-edges) in CCW order. */
   junctions(): Junction[] {
-    return this.halfEdges.map((h) => h.origin());
+    return this.sides.map((h) => h.origin());
   }
 
   /**
    * Iterate this face's outer-loop half-edges in CCW order, starting at the
-   * anchor. (Inner-loop half-edges are reached via {@link allHalfEdges} or
+   * anchor. (Inner-loop half-edges are reached via {@link allSides} or
    * by indexing {@link innerLoops}.)
    */
-  *halfEdgesCCW(): IterableIterator<HalfEdge> {
-    let he: HalfEdge = this.halfEdges[0];
+  *sidesCCW(): IterableIterator<Side> {
+    let he: Side = this.sides[0];
     do {
       yield he;
       he = he.next;
-    } while (he !== this.halfEdges[0]);
+    } while (he !== this.sides[0]);
   }
 
   /** Iterate every half-edge of this face, outer loop first then each inner loop. */
-  *allHalfEdges(): IterableIterator<HalfEdge> {
-    for (const he of this.halfEdges) yield he;
+  *allSides(): IterableIterator<Side> {
+    for (const he of this.sides) yield he;
     for (const loop of this.innerLoops) {
       for (const he of loop) yield he;
     }
@@ -372,7 +473,7 @@ export class Face {
    * Inner loops are stored CW; the strict-containment test below assumes a
    * CCW polygon, so we reverse each inner loop's vertex order before testing.
    *
-   * **Chord half-edges** (ideal-ideal with `chordAnchor !== null`) need an
+   * **Chord half-edges** (ideal-ideal with `anchor !== null`) need an
    * extra half-plane test on top of `polygonContains`: that predicate treats
    * any ideal-ideal edge as "the line at infinity, no constraint on finite
    * points", which is correct for at-infinity arcs but wrong for chords —
@@ -381,13 +482,13 @@ export class Face {
    */
   contains(p: Point): boolean {
     if (!polygonContains(this.junctions(), p)) return false;
-    for (const he of this.halfEdges) {
+    for (const he of this.sides) {
       if (!he.isChord) continue;
       const a = he.origin();
       const b = he.target();
       const dx = b.x - a.x;
       const dy = b.y - a.y;
-      const ax = he.chordAnchor!;
+      const ax = he.anchor!;
       const c = dx * (p.y - ax.y) - dy * (p.x - ax.x);
       if (c < 0) return false;
     }
@@ -409,15 +510,15 @@ export class Face {
  * twin/next so that boundary junctions (where forward walks hit a null twin)
  * are still fully enumerated.
  */
-export function* aroundJunction(he: HalfEdge): IterableIterator<HalfEdge> {
+export function* aroundJunction(he: Side): IterableIterator<Side> {
   // Forward: cur, cur.twin?.next, cur.twin?.next.twin?.next, ...
   // Stops at null twin or when the cycle closes back to `he`.
-  const seen = new Set<HalfEdge>();
-  let cur: HalfEdge | null = he;
+  const seen = new Set<Side>();
+  let cur: Side | null = he;
   while (cur && !seen.has(cur)) {
     seen.add(cur);
     yield cur;
-    const t: HalfEdge | null = cur.twin;
+    const t: Side | null = cur.twin;
     cur = t ? t.next : null;
   }
   if (cur === he) return; // closed cycle
@@ -450,12 +551,12 @@ export function* aroundJunction(he: HalfEdge): IterableIterator<HalfEdge> {
 //   - convex polygons (`./atlas/geometry/polygon.ts`):
 //     `polygonContains[Strict]`, `isPolygonCCW`
 //
-// Atlas-aware geometry — parameterisation and traversal of `HalfEdge`s —
+// Atlas-aware geometry — parameterisation and traversal of `Side`s —
 // stays here, defined further down near `walkLine`:
-//   - `pointOnHEAtU`, `uOfPointOnHE`, `intersectLineWithHE`, `findExit`
+//   - `pointOnSideAtU`, `uOfPointOnSide`, `intersectLineWithSide`, `findExit`
 //   - line traversal: `walkLine` (returns a chain of `FaceCrossing`s)
 //
-// The mutation primitives further down (`subdivideHalfEdge`,
+// The mutation primitives further down (`subdivideSide`,
 // `subdivideAtInfinityArc`, `splitFaceAtVertices`, `splitFaceAlongChord`, …)
 // all consume these.
 
@@ -519,12 +620,33 @@ export interface ComputeImagesOptions {
  * floating-point drift.
  */
 export class Atlas {
-  halfEdges: HalfEdge[] = [];
+  sides: Side[] = [];
   faces: Face[] = [];
   root: Face;
 
   constructor(root: Face) {
     this.root = root;
+  }
+
+  /**
+   * Every reciprocal-binding {@link Stitch} reachable in this atlas, derived
+   * on demand from the half-edges' `.stitch` back-references.
+   *
+   * Not persisted state — the set is rebuilt each call. For atlas sizes that
+   * fit on a screen this is cheap (one pass over `sides` with a Set
+   * de-dup). Callers that need to iterate stitches many times in a frame
+   * should cache the result.
+   *
+   * Asymmetric twin pairs (those bound via {@link linkEdgeToTwin} without a
+   * matching reciprocal call, e.g. region-wrap toggles) do not appear here —
+   * they have no Stitch by design.
+   */
+  get stitches(): Set<Stitch> {
+    const set = new Set<Stitch>();
+    for (const he of this.sides) {
+      if (he.stitch) set.add(he.stitch);
+    }
+    return set;
   }
 
   /**
@@ -552,7 +674,7 @@ export class Atlas {
     while (queue.length > 0) {
       const f = queue.shift()!;
       const mf = out.get(f)!;
-      for (const he of f.halfEdgesCCW()) {
+      for (const he of f.sidesCCW()) {
         const twin = he.twin;
         if (twin && !out.has(twin.face)) {
           out.set(twin.face, M.multiply(mf, M.invert(he.transform)));
@@ -660,7 +782,7 @@ export class Atlas {
       }
       if (shouldExpand && !shouldExpand(img)) continue;
 
-      for (const he of img.face.halfEdgesCCW()) {
+      for (const he of img.face.sidesCCW()) {
         const twin = he.twin;
         if (!twin) continue;
         if ((counts.get(twin.face) ?? 0) >= capOf(twin.face)) {
@@ -784,19 +906,19 @@ export function createInitialAtlas(
   if (n < 3) throw new Error('createInitialAtlas needs at least 3 ideal directions');
 
   const faces: Face[] = [];
-  const allHalfEdges: HalfEdge[] = [];
+  const allSides: Side[] = [];
 
   // For each adjacent pair (a, b) in idealDirections, create a wedge face
   // with origin O = (0, 0), then ideal directions a, b in CCW order.
   for (let i = 0; i < n; i++) {
     const [ax, ay] = idealDirections[i];
     const [bx, by] = idealDirections[(i + 1) % n];
-    const he0 = new HalfEdge('finite', 0, 0); // O → A
-    const he1 = new HalfEdge('ideal', ax, ay); // A → B (at infinity)
-    const he2 = new HalfEdge('ideal', bx, by); // B → O
+    const he0 = new Side('finite', 0, 0); // O → A
+    const he1 = new Side('ideal', ax, ay); // A → B (at infinity)
+    const he2 = new Side('ideal', bx, by); // B → O
     const f = new Face([he0, he1, he2]);
     faces.push(f);
-    allHalfEdges.push(he0, he1, he2);
+    allSides.push(he0, he1, he2);
   }
 
   // Twin the half-axes shared between consecutive wedges.
@@ -805,8 +927,8 @@ export function createInitialAtlas(
   for (let i = 0; i < n; i++) {
     const me = faces[i];
     const next = faces[(i + 1) % n];
-    const a = me.halfEdges[2];
-    const b = next.halfEdges[0];
+    const a = me.sides[2];
+    const b = next.sides[0];
     a.twin = b;
     b.twin = a;
     // transforms remain identity (default)
@@ -816,7 +938,7 @@ export function createInitialAtlas(
   // have no twin — already null by default.
 
   const atlas = new Atlas(faces[0]);
-  atlas.halfEdges = allHalfEdges;
+  atlas.sides = allSides;
   atlas.faces = faces;
   return atlas;
 }
@@ -843,15 +965,15 @@ export function createAllIdealAtlas(
 ): Atlas {
   const n = idealDirections.length;
   if (n < 3) throw new Error('createAllIdealAtlas needs at least 3 ideal directions');
-  const hes = idealDirections.map(([x, y]) => new HalfEdge('ideal', x, y));
+  const hes = idealDirections.map(([x, y]) => new Side('ideal', x, y));
   const face = new Face(hes);
   const atlas = new Atlas(face);
-  // Critical: `atlas.halfEdges` must NOT alias `face.halfEdges`. The Face
+  // Critical: `atlas.sides` must NOT alias `face.sides`. The Face
   // constructor stores its argument array by reference, and atlas-wide
-  // mutators (e.g. `subdivideAtInfinityArc`'s `atlas.halfEdges.splice`)
+  // mutators (e.g. `subdivideAtInfinityArc`'s `atlas.sides.splice`)
   // would otherwise also splice the face's outer-loop array, doubling the
   // mutation and corrupting the face's HE list. Take a fresh copy here.
-  atlas.halfEdges = [...hes];
+  atlas.sides = [...hes];
   atlas.faces = [face];
   return atlas;
 }
@@ -872,7 +994,7 @@ export function createAllIdealAtlas(
  * Throws if the geometry is incompatible with a pure translation, or if
  * either half-edge has an ideal endpoint.
  */
-export function translationToWrap(heA: HalfEdge, heB: HalfEdge, eps = 1e-6): M.Matrix2D {
+export function translationToWrap(heA: Side, heB: Side, eps = 1e-6): M.Matrix2D {
   if (heA.originKind !== 'finite' || heA.next.originKind !== 'finite') {
     throw new Error('translationToWrap: heA must have two finite endpoints');
   }
@@ -919,13 +1041,13 @@ export function translationToWrap(heA: HalfEdge, heB: HalfEdge, eps = 1e-6): M.M
  */
 export function linkEdgeToTwin(
   atlas: Atlas,
-  he: HalfEdge,
-  target: HalfEdge,
+  he: Side,
+  target: Side,
   transform: M.Matrix2D,
   eps = 1e-6,
 ): void {
   if (he === target) throw new Error('linkEdgeToTwin: cannot twin a half-edge to itself');
-  if (!atlas.halfEdges.includes(he) || !atlas.halfEdges.includes(target)) {
+  if (!atlas.sides.includes(he) || !atlas.sides.includes(target)) {
     throw new Error('linkEdgeToTwin: half-edges must belong to atlas');
   }
   if (he.twin !== null) throw new Error('linkEdgeToTwin: he must currently be untwinned');
@@ -959,64 +1081,115 @@ export function linkEdgeToTwin(
  * touch the partner's twin pointer (the partner may still point at `he`,
  * which is allowed under the asymmetric model).
  *
+ * If the pair was reciprocal-with-{@link Stitch}, this asymmetric break
+ * invalidates the Stitch's structural-reciprocity invariant — so we clear
+ * the `.stitch` back-reference on BOTH endpoints (the partner's `.stitch`
+ * also becomes stale). The atlas-level Stitch view ({@link Atlas.stitches})
+ * is derived, so no separate de-registration is needed.
+ *
  * No-op when `he.twin === null`.
  */
-export function unlinkEdgeFromTwin(he: HalfEdge): void {
+export function unlinkEdgeFromTwin(he: Side): void {
   if (!he.twin) return;
+  if (he.stitch !== null) {
+    const s = he.stitch;
+    s.a.stitch = null;
+    s.b.stitch = null;
+  }
   he.twin = null;
   he.transform = M.fromValues();
 }
 
 /**
- * Twin `heA` to `heB` under `transformAtoB` *symmetrically* — both
- * `heA.twin = heB` and `heB.twin = heA`, with mutually inverse transforms.
+ * Reciprocally bind two half-edges with a transform, returning the resulting
+ * {@link Stitch} handle. This is the substrate's symmetric binding primitive.
  *
- * This is the natural "wrap a strip into a cylinder" operation: a single
- * cycle, both edges referring to each other. For an asymmetric link
- * (e.g. one-way wrap where outside still points in but the wrap loops back
- * to itself), use {@link linkEdgeToTwin} directly.
+ * `Stitch.a` is `heA`, `Stitch.b` is `heB`, and `Stitch.transform` is the
+ * `a → b` change of frame. Both endpoints get a back-reference to the same
+ * `Stitch` via `.stitch`, so reciprocity is structurally guaranteed (the
+ * asymmetric-twin trap is impossible to express here).
  *
- * The standard cycle-closure invariant (walks between two faces give a
- * unique composite) is *intentionally* violated in the global sense once
- * non-trivial twin transforms exist on a loop — that's what gives us
- * holonomy. Per-link junction-correspondence is still required and
- * `validateAtlas` still checks it.
+ * For asymmetric one-way bindings — used today by region-wrap toggling
+ * where the outside neighbour still points INTO the wrapped region while
+ * the inside loops to itself — use {@link linkEdgeToTwin} directly.
  *
- * Pre-conditions (all enforced via the underlying primitive):
+ * Pre-conditions:
  *  - both half-edges live in `atlas`
  *  - both have `twin === null`
  *  - both are finite-finite
  *  - `transformAtoB` satisfies the junction-correspondence equations
  *
  * Effect:
- *  - heA.twin = heB; heB.twin = heA
- *  - heA.transform = transformAtoB; heB.transform = inv(transformAtoB)
+ *  - allocates a new {@link Stitch} `s`; `s.a = heA`, `s.b = heB`
+ *  - `heA.twin = heB`; `heB.twin = heA`
+ *  - `heA.transform = transformAtoB`; `heB.transform = inv(transformAtoB)`
+ *  - `heA.stitch = heB.stitch = s`
  */
-export function wrapEdges(
+export function stitch(
   atlas: Atlas,
-  heA: HalfEdge,
-  heB: HalfEdge,
+  heA: Side,
+  heB: Side,
   transformAtoB: M.Matrix2D,
   eps = 1e-6,
-): void {
+): Stitch {
   if (heB.twin !== null) {
-    throw new Error('wrapEdges: heB must currently be untwinned (use linkEdgeToTwin for asymmetric links)');
+    throw new Error('stitch: heB must currently be untwinned (use linkEdgeToTwin for asymmetric links)');
   }
   linkEdgeToTwin(atlas, heA, heB, transformAtoB, eps);
   linkEdgeToTwin(atlas, heB, heA, M.invert(transformAtoB), eps);
+  // Both pointers are now in place but neither has a Stitch (linkEdgeToTwin
+  // is asymmetric and intentionally doesn't allocate one). Promote the pair
+  // to a real Stitch via setTwin, which detects an existing reciprocal pair
+  // and just attaches a fresh Stitch back-reference.
+  return setTwin(heA, heB, heA.transform, heB.transform);
 }
 
 /**
- * Symmetric inverse of {@link wrapEdges}: clear both `he.twin` and its
- * current partner's `twin` pointer (when the pointer is reciprocal).
+ * Symmetric inverse of {@link stitch}: clear the reciprocal binding and
+ * dispose of the {@link Stitch} object. Both endpoints' `.stitch`,
+ * `.twin`, and `.transform` are reset.
  *
- * For asymmetric cleanup, use {@link unlinkEdgeFromTwin} directly on each
- * side independently.
+ * The atlas-level stitch view ({@link Atlas.stitches}) is derived, so the
+ * disposed Stitch will simply not appear in the next iteration; there is
+ * no separate de-registration step.
+ */
+export function unstitch(s: Stitch): void {
+  if (s.a.twin === s.b) {
+    s.a.twin = null;
+    s.a.transform = M.fromValues();
+  }
+  if (s.b.twin === s.a) {
+    s.b.twin = null;
+    s.b.transform = M.fromValues();
+  }
+  if (s.a.stitch === s) s.a.stitch = null;
+  if (s.b.stitch === s) s.b.stitch = null;
+}
+
+/**
+ * @deprecated Use {@link stitch}. This is a thin wrapper that ignores the
+ * returned `Stitch` handle, kept for source compatibility during the
+ * chunk-C transition.
+ */
+export function wrapEdges(
+  atlas: Atlas,
+  heA: Side,
+  heB: Side,
+  transformAtoB: M.Matrix2D,
+  eps = 1e-6,
+): void {
+  stitch(atlas, heA, heB, transformAtoB, eps);
+}
+
+/**
+ * @deprecated Use {@link unstitch} when you have the {@link Stitch} handle
+ * (the common case). This legacy form clears both sides of a reciprocal
+ * twin pair given just one of its half-edges.
  *
  * No-op when `he.twin === null`. When `he`'s partner is not reciprocal
  * (`he.twin.twin !== he`), only `he`'s pointer is cleared.
  */
-export function untwinEdges(he: HalfEdge): void {
+export function untwinEdges(he: Side): void {
   const partner = he.twin;
   if (!partner) return;
   unlinkEdgeFromTwin(he);
@@ -1026,7 +1199,7 @@ export function untwinEdges(he: HalfEdge): void {
 /**
  * Rescale a face's local frame by a uniform positive factor `R` around the
  * face-local origin `(0, 0)`. The face's own stored geometry (every finite
- * half-edge of `face.halfEdges`) is transformed as `p ↦ R·p`, and every twin
+ * half-edge of `face.sides`) is transformed as `p ↦ R·p`, and every twin
  * transform that touches the face's frame is conjugated by `scale(R)` so
  * projected screen positions of the boundary stay invariant.
  *
@@ -1073,7 +1246,7 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
   }
   if (R === 1) return;
 
-  for (const he of face.allHalfEdges()) {
+  for (const he of face.allSides()) {
     if (he.originKind === 'finite') {
       he.ox = R * he.ox;
       he.oy = R * he.oy;
@@ -1082,7 +1255,7 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
 
   const S = M.fromValues(R, 0, 0, R, 0, 0);
   const Sinv = M.fromValues(1 / R, 0, 0, 1 / R, 0, 0);
-  for (const he of atlas.halfEdges) {
+  for (const he of atlas.sides) {
     if (!he.twin) continue;
     const sourceIsFace = he.face === face;
     const targetIsFace = he.twin.face === face;
@@ -1112,13 +1285,13 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
  *
  * Returns the array of newly-created half-edges, in the order matching
  * `vertices`. The face's `innerLoops` array is appended to with the same
- * array, and every new half-edge is added to `atlas.halfEdges`.
+ * array, and every new half-edge is added to `atlas.sides`.
  */
 export function addInnerLoop(
   atlas: Atlas,
   face: Face,
   vertices: ReadonlyArray<Point>,
-): HalfEdge[] {
+): Side[] {
   if (!atlas.faces.includes(face)) {
     throw new Error('addInnerLoop: face must belong to atlas');
   }
@@ -1126,7 +1299,7 @@ export function addInnerLoop(
     throw new Error(`addInnerLoop: need at least 3 vertices, got ${vertices.length}`);
   }
 
-  const loop: HalfEdge[] = vertices.map((v) => new HalfEdge('finite', v.x, v.y));
+  const loop: Side[] = vertices.map((v) => new Side('finite', v.x, v.y));
   const m = loop.length;
   for (let i = 0; i < m; i++) {
     const he = loop[i];
@@ -1152,7 +1325,7 @@ export function addInnerLoop(
   }
 
   face.innerLoops.push(loop);
-  for (const he of loop) atlas.halfEdges.push(he);
+  for (const he of loop) atlas.sides.push(he);
 
   return loop;
 }
@@ -1172,12 +1345,12 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     errs.push('atlas.root not in atlas.faces');
   }
 
-  const allHESet = new Set(atlas.halfEdges);
+  const allSidesSet = new Set(atlas.sides);
   const allFaceSet = new Set(atlas.faces);
 
   // ---- per-face checks ----
   for (const f of atlas.faces) {
-    const k = f.halfEdges.length;
+    const k = f.sides.length;
     // k=2 (digon / slab) is allowed; see the chord-vs-arc invariant block
     // below for the additional requirements that case imposes.
     if (k < 2) {
@@ -1187,22 +1360,22 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
 
     // Half-edge cycle integrity (next/prev consistency).
     for (let i = 0; i < k; i++) {
-      const he = f.halfEdges[i];
-      if (!allHESet.has(he)) errs.push('half-edge in face not in atlas.halfEdges');
+      const he = f.sides[i];
+      if (!allSidesSet.has(he)) errs.push('half-edge in face not in atlas.sides');
       if (he.face !== f) errs.push('half-edge in face has wrong .face');
-      if (he.next !== f.halfEdges[(i + 1) % k]) {
-        errs.push(`face.halfEdges[${i}].next !== face.halfEdges[${(i + 1) % k}]`);
+      if (he.next !== f.sides[(i + 1) % k]) {
+        errs.push(`face.sides[${i}].next !== face.sides[${(i + 1) % k}]`);
       }
-      if (he.prev !== f.halfEdges[(i - 1 + k) % k]) {
-        errs.push(`face.halfEdges[${i}].prev !== face.halfEdges[${(i - 1 + k) % k}]`);
+      if (he.prev !== f.sides[(i - 1 + k) % k]) {
+        errs.push(`face.sides[${i}].prev !== face.sides[${(i - 1 + k) % k}]`);
       }
       if (he.next.prev !== he) {
-        errs.push(`face.halfEdges[${i}].next.prev !== self`);
+        errs.push(`face.sides[${i}].next.prev !== self`);
       }
     }
 
     // Ideal direction unit length.
-    for (const he of f.halfEdges) {
+    for (const he of f.sides) {
       if (he.originKind === 'ideal') {
         const len = Math.hypot(he.ox, he.oy);
         if (Math.abs(len - 1) > eps) {
@@ -1221,15 +1394,15 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     }
 
     // Boundary half-edge invariants for ideal-ideal HEs:
-    //   - An at-infinity arc (`chordAnchor === null`) has null twin: the
+    //   - An at-infinity arc (`anchor === null`) has null twin: the
     //     line at infinity is not crossed by twin links.
-    //   - A chord (`chordAnchor !== null`) MUST have a non-null twin (the
+    //   - A chord (`anchor !== null`) MUST have a non-null twin (the
     //     chord HE on the other sub-face), and its origin/target ideal
     //     directions must be antipodal (the two limit directions of a real
     //     line in R²).
-    for (const he of f.halfEdges) {
+    for (const he of f.sides) {
       if (he.originKind !== 'ideal' || he.next.originKind !== 'ideal') continue;
-      if (he.chordAnchor === null) {
+      if (he.anchor === null) {
         if (he.twin !== null) errs.push('at-infinity arc half-edge has non-null twin');
       } else {
         if (he.twin === null) errs.push('chord half-edge has null twin');
@@ -1247,13 +1420,13 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     // the LEFT of the first chord's direction (interior side under CCW
     // traversal).
     if (k === 2) {
-      const h0 = f.halfEdges[0];
-      const h1 = f.halfEdges[1];
+      const h0 = f.sides[0];
+      const h1 = f.sides[1];
       if (!h0.isChord || !h1.isChord) {
         errs.push('digon face: both half-edges must be chord HEs');
       } else {
-        const a0 = h0.chordAnchor!;
-        const a1 = h1.chordAnchor!;
+        const a0 = h0.anchor!;
+        const a1 = h1.anchor!;
         const o0 = h0.origin();
         const t0 = h0.target();
         const dirX = t0.x - o0.x;
@@ -1282,8 +1455,8 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
       }
       for (let i = 0; i < m; i++) {
         const he = loop[i];
-        if (!allHESet.has(he)) {
-          errs.push(`innerLoops[${li}][${i}] not in atlas.halfEdges`);
+        if (!allSidesSet.has(he)) {
+          errs.push(`innerLoops[${li}][${i}] not in atlas.sides`);
         }
         if (he.face !== f) errs.push(`innerLoops[${li}][${i}] has wrong .face`);
         if (he.next !== loop[(i + 1) % m]) {
@@ -1325,11 +1498,11 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
   }
 
   // ---- per-half-edge checks (twin transform consistency) ----
-  for (const h of atlas.halfEdges) {
+  for (const h of atlas.sides) {
     if (!allFaceSet.has(h.face)) errs.push('halfEdge.face not in atlas');
 
     if (h.twin) {
-      if (!allHESet.has(h.twin)) errs.push('halfEdge.twin not in atlas');
+      if (!allSidesSet.has(h.twin)) errs.push('halfEdge.twin not in atlas');
 
       // Junction correspondence (one-way; symmetric inverse-pair is NOT
       // required — see module header on asymmetric twins):
@@ -1366,14 +1539,50 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     }
   }
 
+  // ---- per-stitch checks (reciprocal-binding consistency) ----
+  // A Stitch is a structural reciprocity contract: both endpoints reference
+  // the same Stitch object, both twin pointers go each way, and the two
+  // transforms are mutually inverse. The Atlas-level set is derived from
+  // .stitch back-references, so we iterate that for free.
+  const seenStitches = new Set<Stitch>();
+  for (const h of atlas.sides) {
+    const s = h.stitch;
+    if (s === null) continue;
+    if (s.a !== h && s.b !== h) {
+      errs.push('halfEdge.stitch does not reference this half-edge as a or b');
+      continue;
+    }
+    if (seenStitches.has(s)) continue;
+    seenStitches.add(s);
+    if (!allSidesSet.has(s.a) || !allSidesSet.has(s.b)) {
+      errs.push('stitch endpoint not in atlas.sides');
+      continue;
+    }
+    if (s.a.stitch !== s || s.b.stitch !== s) {
+      errs.push('stitch back-references not symmetric (a.stitch !== s || b.stitch !== s)');
+    }
+    if (s.a.twin !== s.b || s.b.twin !== s.a) {
+      errs.push('stitch endpoints are not reciprocally twinned');
+    }
+    // Transforms must be mutually inverse. Tolerance generous enough to
+    // absorb compounded floating-point error from chained mutations.
+    const composed = M.multiply(s.a.transform, s.b.transform);
+    const id = M.fromValues();
+    if (!matricesAreClose(composed, id, eps * 1000)) {
+      errs.push(
+        `stitch transforms not mutually inverse (a·b = ${matrixToString(composed)})`,
+      );
+    }
+  }
+
   // ---- reachability from root (bidirectional under asymmetric twins) ----
   // A face is "reachable" if it can be visited by following twin links
   // either OUT of the current face (`he.twin.face`) OR INTO the current
   // face (some other half-edge `g` with `g.twin === he`). Symmetric twins
   // make these two equivalent; asymmetric wraps may make them diverge.
   // We pre-compute incoming pointers once per validation pass.
-  const incoming = new Map<Face, HalfEdge[]>();
-  for (const h of atlas.halfEdges) {
+  const incoming = new Map<Face, Side[]>();
+  for (const h of atlas.sides) {
     if (h.twin) {
       const list = incoming.get(h.twin.face);
       if (list) list.push(h);
@@ -1385,15 +1594,15 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
   reachable.add(atlas.root);
   while (queue.length > 0) {
     const f = queue.shift()!;
-    for (const he of f.halfEdgesCCW()) {
+    for (const he of f.sidesCCW()) {
       if (he.twin && !reachable.has(he.twin.face)) {
         reachable.add(he.twin.face);
         queue.push(he.twin.face);
       }
     }
-    const incomingHEs = incoming.get(f);
-    if (incomingHEs) {
-      for (const ih of incomingHEs) {
+    const incomingSides = incoming.get(f);
+    if (incomingSides) {
+      for (const ih of incomingSides) {
         if (!reachable.has(ih.face)) {
           reachable.add(ih.face);
           queue.push(ih.face);
@@ -1448,20 +1657,65 @@ function junctionImageMatches(
 // ----------------------------------------------------------------------------
 
 /**
- * Result of {@link subdivideHalfEdge}: the new vertex's position and the
+ * Result of an identity-preserving split.
+ *
+ *  - `face` is the original face that was passed to the split, mutated in
+ *    place to hold the CCW arc from `vIdxA` to `vIdxB` (inclusive) plus
+ *    the new chord HE that closes back to `vIdxA`. Identity is preserved:
+ *    shapes inside this side keep their face-local coordinates, external
+ *    bindings on the kept arc stay attached, and `atlas.root` is
+ *    unaffected.
+ *  - `fresh` is a newly-allocated face holding the CCW arc from `vIdxB`
+ *    to `vIdxA` (inclusive) plus its closing chord HE. Re-anchored: its
+ *    finite vertices are translated so the centroid sits at face-local
+ *    `(0, 0)`. Callers that track per-face data (shape coordinates,
+ *    region outline vertices) for points that fell on this side should
+ *    apply `(p.x - freshOffset.x, p.y - freshOffset.y)` to translate
+ *    them into `fresh`'s frame.
+ *  - `faceChordSide` and `freshChordSide` are the new chord half-edges, twin-
+ *    paired with translation transforms encoding the offset between
+ *    `face`'s frame (unchanged) and `fresh`'s frame (translated by
+ *    `-freshOffset`).
+ *
+ * Note: `face` and `fresh` correspond to the legacy `faces[0]` (right of
+ * the chord under CCW convention) and `faces[1]` respectively.
+ * `splitFaceAlongChord`'s docstring convention — "faces[0] is on the
+ * RIGHT of entry→exit direction" — translates to "`face` is on the right,
+ * `fresh` is on the left."
+ */
+export interface SplitChordResult {
+  face: Face;
+  fresh: Face;
+  faceChordSide: Side;
+  freshChordSide: Side;
+  /**
+   * Translation applied to `fresh`'s local frame relative to the original
+   * face's frame. A point at `p` in the pre-split face's frame is at
+   * `(p.x - freshOffset.x, p.y - freshOffset.y)` in `fresh`'s frame.
+   * `face` itself is NOT re-anchored (its frame matches the pre-split frame).
+   */
+  freshOffset: Point;
+  /** @deprecated Use `face` / `fresh`. Provided as `[face, fresh]` for back-compat. */
+  faces: [Face, Face];
+  /** @deprecated Use `faceChordSide` / `freshChordSide`. Provided as `[faceChordSide, freshChordSide]`. */
+  chordSides: [Side, Side];
+}
+
+/**
+ * Result of {@link subdivideSide}: the new vertex's position and the
  * two replacement half-edges in each affected face.
  */
-export interface SubdivideHalfEdgeResult {
+export interface SubdivideSideResult {
   /** Position of the inserted vertex in `halfEdge.face`'s local frame. */
   newVertex: Point;
   /** Replacement half-edges in `halfEdge.face`, in CCW order: `[origin→new, new→target]`. */
-  faceHalves: [HalfEdge, HalfEdge];
+  faceHalves: [Side, Side];
   /**
    * Replacement half-edges in `halfEdge.twin.face` (or `null` if no twin),
    * in CCW order: `[oldTwin.origin→new, new→oldTwin.target]` (i.e. opposite
    * directions of `faceHalves`).
    */
-  twinHalves: [HalfEdge, HalfEdge] | null;
+  twinHalves: [Side, Side] | null;
 }
 
 /**
@@ -1477,28 +1731,28 @@ export interface SubdivideHalfEdgeResult {
  * Supported edge kinds:
  *   - finite-finite, finite-ideal, ideal-finite — `u` is in the standard
  *     edge parameter range.
- *   - **chord** (ideal-ideal twinned, `chordAnchor` set) — `u` is the
- *     position along the chord line relative to `chordAnchor`; subdividing
+ *   - **chord** (ideal-ideal twinned, `anchor` set) — `u` is the
+ *     position along the chord line relative to `anchor`; subdividing
  *     replaces the chord with a (ideal-finite, finite-ideal) pair, both of
- *     which are regular mixed HEs (no `chordAnchor` needed on the halves
+ *     which are regular mixed HEs (no `anchor` needed on the halves
  *     because the finite midpoint pinpoints the line).
  *
  * Use {@link subdivideAtInfinityArc} for at-infinity arcs (ideal-ideal,
- * untwinned, no chordAnchor).
+ * untwinned, no anchor).
  *
  * Mutates the existing `Face` objects in place — face identity is preserved,
  * shapes assigned to either face stay assigned.
  */
-export function subdivideHalfEdge(
+export function subdivideSide(
   atlas: Atlas,
-  halfEdge: HalfEdge,
+  side: Side,
   point: Point,
-): SubdivideHalfEdgeResult {
-  if (!atlas.halfEdges.includes(halfEdge)) {
-    throw new Error('subdivideHalfEdge: halfEdge not in atlas');
+): SubdivideSideResult {
+  if (!atlas.sides.includes(side)) {
+    throw new Error('subdivideSide: side not in atlas');
   }
-  if (halfEdge.isAtInfinity) {
-    throw new Error('subdivideHalfEdge: at-infinity arc — use subdivideAtInfinityArc');
+  if (side.isAtInfinity) {
+    throw new Error('subdivideSide: at-infinity arc — use subdivideAtInfinityArc');
   }
 
   // Validate the point lies strictly between the two endpoints, with
@@ -1508,73 +1762,73 @@ export function subdivideHalfEdge(
   //   - chord (ideal-ideal): u ∈ (-∞, ∞) — both endpoints are at infinity
   //     in opposite directions, so any finite u corresponds to a finite
   //     point strictly between them.
-  const u = uOfPointOnHE(halfEdge, point);
-  const isFF = halfEdge.originKind === 'finite' && halfEdge.next.originKind === 'finite';
-  const isChord = halfEdge.isChord;
+  const u = uOfPointOnSide(side, point);
+  const isFF = side.originKind === 'finite' && side.next.originKind === 'finite';
+  const isChord = side.isChord;
   if (!Number.isFinite(u)) {
-    throw new Error(`subdivideHalfEdge: u is not finite (u = ${u})`);
+    throw new Error(`subdivideSide: u is not finite (u = ${u})`);
   }
   if (!isChord) {
     const uMin = 1e-9;
     const uMaxEnd = isFF ? 1 - 1e-9 : Infinity;
     if (u <= uMin || u >= uMaxEnd) {
       throw new Error(
-        `subdivideHalfEdge: point not strictly between endpoints (u = ${u}, isFF = ${isFF})`,
+        `subdivideSide: point not strictly between endpoints (u = ${u}, isFF = ${isFF})`,
       );
     }
   }
-  const projected = pointOnHEAtU(halfEdge, u);
+  const projected = pointOnSideAtU(side, u);
   const dx = projected.x - point.x;
   const dy = projected.y - point.y;
   if (dx * dx + dy * dy > 1e-12) {
-    throw new Error('subdivideHalfEdge: point is not on the edge');
+    throw new Error('subdivideSide: point is not on the edge');
   }
 
   // ---- F side ----
-  const F = halfEdge.face;
-  const origin = halfEdge.origin();
-  const he_A = new HalfEdge(origin.kind, origin.x, origin.y); // origin → newVertex
-  const he_B = new HalfEdge('finite', point.x, point.y); // newVertex → target
-  he_A.face = F;
-  he_B.face = F;
+  const F = side.face;
+  const origin = side.origin();
+  const s_A = new Side(origin.kind, origin.x, origin.y); // origin → newVertex
+  const s_B = new Side('finite', point.x, point.y); // newVertex → target
+  s_A.face = F;
+  s_B.face = F;
 
-  const fIdx = F.halfEdges.indexOf(halfEdge);
-  F.halfEdges.splice(fIdx, 1, he_A, he_B);
+  const fIdx = F.sides.indexOf(side);
+  F.sides.splice(fIdx, 1, s_A, s_B);
   rewireFaceCycle(F);
 
-  // Update atlas half-edge index.
-  const heIdx = atlas.halfEdges.indexOf(halfEdge);
-  atlas.halfEdges.splice(heIdx, 1, he_A, he_B);
+  // Update atlas side index.
+  const sIdx = atlas.sides.indexOf(side);
+  atlas.sides.splice(sIdx, 1, s_A, s_B);
 
   // ---- G (twin) side ----
-  let twinHalves: [HalfEdge, HalfEdge] | null = null;
-  if (halfEdge.twin) {
-    const T = halfEdge.transform;
-    const twin = halfEdge.twin;
+  let twinHalves: [Side, Side] | null = null;
+  if (side.twin) {
+    const T = side.transform;
+    const twin = side.twin;
     const G = twin.face;
     const tOrigin = twin.origin();
     const pointInG = M.applyToPoint(T, point);
 
-    const tw_A = new HalfEdge(tOrigin.kind, tOrigin.x, tOrigin.y); // twin.origin → newVertex'
-    const tw_B = new HalfEdge('finite', pointInG.x, pointInG.y); // newVertex' → twin.target
+    const tw_A = new Side(tOrigin.kind, tOrigin.x, tOrigin.y); // twin.origin → newVertex'
+    const tw_B = new Side('finite', pointInG.x, pointInG.y); // newVertex' → twin.target
     tw_A.face = G;
     tw_B.face = G;
 
-    const gIdx = G.halfEdges.indexOf(twin);
-    G.halfEdges.splice(gIdx, 1, tw_A, tw_B);
+    const gIdx = G.sides.indexOf(twin);
+    G.sides.splice(gIdx, 1, tw_A, tw_B);
     rewireFaceCycle(G);
 
-    const twinIdx = atlas.halfEdges.indexOf(twin);
-    atlas.halfEdges.splice(twinIdx, 1, tw_A, tw_B);
+    const twinIdx = atlas.sides.indexOf(twin);
+    atlas.sides.splice(twinIdx, 1, tw_A, tw_B);
 
     // Twin pairs (transforms preserve the original T — frames F and G are unchanged):
-    //   he_A (F: origin → newP)  ↔  tw_B (G: newP' → twin.target = origin')
-    //   he_B (F: newP → target)  ↔  tw_A (G: twin.origin = target' → newP')
+    //   s_A (F: origin → newP)  ↔  tw_B (G: newP' → twin.target = origin')
+    //   s_B (F: newP → target)  ↔  tw_A (G: twin.origin = target' → newP')
     const T_fwd = M.fromValues(T.a, T.b, T.c, T.d, T.e, T.f);
     const T_rev = M.invert(T_fwd);
-    setTwin(he_A, tw_B, T_fwd, M.fromValues(T_rev.a, T_rev.b, T_rev.c, T_rev.d, T_rev.e, T_rev.f));
+    setTwin(s_A, tw_B, T_fwd, M.fromValues(T_rev.a, T_rev.b, T_rev.c, T_rev.d, T_rev.e, T_rev.f));
     setTwin(
-      he_B,
+      s_B,
       tw_A,
       M.fromValues(T_fwd.a, T_fwd.b, T_fwd.c, T_fwd.d, T_fwd.e, T_fwd.f),
       M.fromValues(T_rev.a, T_rev.b, T_rev.c, T_rev.d, T_rev.e, T_rev.f),
@@ -1582,7 +1836,7 @@ export function subdivideHalfEdge(
     twinHalves = [tw_A, tw_B];
   }
 
-  return { newVertex: point, faceHalves: [he_A, he_B], twinHalves };
+  return { newVertex: point, faceHalves: [s_A, s_B], twinHalves };
 }
 
 /**
@@ -1593,7 +1847,7 @@ export interface SubdivideAtInfinityArcResult {
   /** Unit direction of the inserted ideal vertex, in the face's frame. */
   newIdealDir: Point;
   /** Replacement half-edges, in CCW order: `[arcStart→new, new→arcEnd]`. */
-  arcHalves: [HalfEdge, HalfEdge];
+  arcHalves: [Side, Side];
 }
 
 /**
@@ -1605,16 +1859,16 @@ export interface SubdivideAtInfinityArcResult {
  */
 export function subdivideAtInfinityArc(
   atlas: Atlas,
-  arcHE: HalfEdge,
+  arcSide: Side,
   idealDir: Point,
 ): SubdivideAtInfinityArcResult {
-  if (!atlas.halfEdges.includes(arcHE)) {
-    throw new Error('subdivideAtInfinityArc: arcHE not in atlas');
+  if (!atlas.sides.includes(arcSide)) {
+    throw new Error('subdivideAtInfinityArc: arcSide not in atlas');
   }
-  if (!arcHE.isAtInfinity) {
+  if (!arcSide.isAtInfinity) {
     throw new Error('subdivideAtInfinityArc: half-edge is not an at-infinity arc');
   }
-  if (arcHE.twin !== null) {
+  if (arcSide.twin !== null) {
     throw new Error('subdivideAtInfinityArc: at-infinity arc unexpectedly has a twin');
   }
 
@@ -1622,8 +1876,8 @@ export function subdivideAtInfinityArc(
   if (len < 1e-9) throw new Error('subdivideAtInfinityArc: idealDir has zero length');
   const dir = { x: idealDir.x / len, y: idealDir.y / len };
 
-  const a = arcHE.origin();
-  const b = arcHE.next.origin();
+  const a = arcSide.origin();
+  const b = arcSide.next.origin();
   // Arc CCW sweep is from `a` to `b`; `dir` must lie strictly between them
   // angularly. Equivalent: `dir` is left-of-strict the radial `a→0` and
   // right-of-strict the radial `0→b` — i.e. the cross signs match.
@@ -1636,41 +1890,22 @@ export function subdivideAtInfinityArc(
     );
   }
 
-  const F = arcHE.face;
-  const arc_A = new HalfEdge('ideal', a.x, a.y); // a → newIdeal
-  const arc_B = new HalfEdge('ideal', dir.x, dir.y); // newIdeal → b
+  const F = arcSide.face;
+  const arc_A = new Side('ideal', a.x, a.y); // a → newIdeal
+  const arc_B = new Side('ideal', dir.x, dir.y); // newIdeal → b
   arc_A.face = F;
   arc_B.face = F;
 
-  const fIdx = F.halfEdges.indexOf(arcHE);
-  F.halfEdges.splice(fIdx, 1, arc_A, arc_B);
+  const fIdx = F.sides.indexOf(arcSide);
+  F.sides.splice(fIdx, 1, arc_A, arc_B);
   rewireFaceCycle(F);
 
-  const heIdx = atlas.halfEdges.indexOf(arcHE);
-  atlas.halfEdges.splice(heIdx, 1, arc_A, arc_B);
+  const heIdx = atlas.sides.indexOf(arcSide);
+  atlas.sides.splice(heIdx, 1, arc_A, arc_B);
 
   // No twins for at-infinity arc halves.
 
   return { newIdealDir: dir, arcHalves: [arc_A, arc_B] };
-}
-
-/**
- * Result of a chord split: the two sub-faces and the two half-edges of the
- * new chord (twin pair). The sub-face ordering is documented per primitive:
- * - {@link splitFaceAtVertices}: `faces[0]` is the sub-face whose boundary
- *   arc traverses CCW from vertex A to vertex B (geometrically: on the
- *   *right* of the directed chord A → B). `faces[1]` is the other side.
- * - {@link splitFaceAlongChord}: `faces[0]` is the side on the *right* of
- *   the chord direction `entry → exit` (= the side reached by going CCW
- *   around the original face from entry to exit).
- *
- * `chordHEs[i]` is the chord's half-edge in `faces[i]`. They are twins of
- * each other; the chord twin transforms are pure translations encoding the
- * difference between the two sub-faces' re-anchored origins.
- */
-export interface SplitChordResult {
-  faces: [Face, Face];
-  chordHEs: [HalfEdge, HalfEdge];
 }
 
 /**
@@ -1713,79 +1948,84 @@ function centroidOfFinite(verts: Junction[]): Point {
 
 /**
  * Split `face` along a straight chord between two of its existing vertices
- * `face.halfEdges[vIdxA].origin()` and `face.halfEdges[vIdxB].origin()`.
+ * `face.sides[vIdxA].origin()` and `face.sides[vIdxB].origin()`.
+ *
+ * **Identity-preserving.** `face` is mutated in place to hold the CCW arc
+ * from `vIdxA` to `vIdxB` plus the new chord HE; a freshly-allocated `fresh`
+ * face holds the other half. Consequences for callers:
+ *
+ *  - `atlas.root` is never replaced by this primitive — `face` survives,
+ *    so a root that was the split face stays root.
+ *  - Shapes and per-face data tracked against `face` stay attached without
+ *    any K-matrix view compensation. (Whether they belong on the kept side
+ *    or on `fresh` is a containment check the caller does — see
+ *    `freshOffset`.)
+ *  - External stitches/links on the kept arc are unchanged.
+ *  - External stitches on the moved arc keep their `.twin` pointers (the
+ *    HE objects move from `face` to `fresh`, identity preserved); their
+ *    transforms are rebased so they map into `fresh`'s frame.
  *
  * Constraints:
  *   - `vIdxA !== vIdxB` and the two indices are non-adjacent (the chord
  *     would otherwise coincide with an existing edge).
- *   - When BOTH chord endpoints are ideal, `chordAnchor` (a finite point on
+ *   - When BOTH chord endpoints are ideal, `anchor` (a finite point on
  *     the chord line, in `face`-local coordinates) is REQUIRED and the two
  *     ideal endpoints must be antipodal on S¹ (so they really are the limit
  *     directions of the same line). This is the only case where the chord's
- *     line is underdetermined by its endpoints alone — see {@link HalfEdge}
+ *     line is underdetermined by its endpoints alone — see {@link Side}
  *     class doc.
  *
- * The original face is detached and replaced by two new convex sub-faces.
- * Each sub-face is **re-anchored**: its finite vertices are translated so
- * that the centroid of its finite vertices sits at face-local `(0, 0)`,
- * and the chord twin / external twin transforms absorb that translation.
- * This is the depth-locality invariant — a sub-face's vertex magnitudes
- * are bounded by the sub-face's own size, not by how deeply it is nested,
- * so deeply-nested rescales don't accumulate float error in storage.
+ * **Re-anchoring.** Only `fresh` is re-anchored: its finite vertices are
+ * translated so the centroid sits at face-local `(0, 0)`. `face` keeps its
+ * original frame and vertex coordinates. The depth-locality invariant
+ * (vertex magnitudes bounded by face size for safe rescaling around (0, 0))
+ * holds for `fresh` by construction; for `face` it holds inductively
+ * provided the original face already satisfied it.
  *
- *   - The new chord twin pair has translation-only transforms encoding
- *     `(offset_arc0 − offset_arc1)` between the two sub-faces' frames.
- *   - External twins are conjugated by `translate(offset)` so the boundary
- *     projection from the external face into the sub-face is consistent.
- *   - Ideal vertices (unit directions on S¹) are translation-invariant and
- *     keep their stored components unchanged.
- *   - When the chord is ideal-ideal, each sub-face's chord HE stores a
- *     `chordAnchor` translated by `-offset_i` from the parent-frame anchor.
+ * The chord twin transforms are pure translations encoding `(0 - freshOffset)`
+ * (face → fresh) and `(freshOffset - 0)` (fresh → face). Ideal vertices
+ * (unit directions on S¹) are translation-invariant so their stored
+ * components are unchanged; chord-HE anchors on the moved arc are
+ * translated by `-freshOffset` to match the re-anchored frame.
  *
- * Result ordering: `faces[0]` is the side reached by walking CCW around
- * `face` from `vIdxA` to `vIdxB`. `faces[1]` is the other side, starting
- * at `vIdxB`. (Note: `sub0.halfEdges[0].origin()` is the *re-anchored*
- * image of `face.halfEdges[vIdxA].origin()`, not the parent's vertex
- * verbatim.)
- *
- * The atlas's `root` is replaced with `faces[0]` if it was the split face.
+ * Inner loops on `face` are dropped (set to `[]`) by this primitive — same
+ * behaviour as before. Inner-loop preservation across cuts is a future
+ * concern.
  */
 export function splitFaceAtVertices(
   atlas: Atlas,
   face: Face,
   vIdxA: number,
   vIdxB: number,
-  chordAnchor: Point | null = null,
+  anchor: Point | null = null,
 ): SplitChordResult {
   if (!atlas.faces.includes(face)) throw new Error('splitFaceAtVertices: face not in atlas');
-  const k = face.halfEdges.length;
+  const k = face.sides.length;
   if (vIdxA === vIdxB) throw new Error('splitFaceAtVertices: vIdxA === vIdxB');
   if (vIdxA < 0 || vIdxA >= k || vIdxB < 0 || vIdxB >= k) {
     throw new Error('splitFaceAtVertices: vertex index out of range');
   }
   // Ideal-ideal chord case: validate that the two endpoints are antipodal on
   // S¹ (limit directions of the same line through R²) and that the caller
-  // supplied a finite `chordAnchor` to pin down which parallel line it is.
+  // supplied a finite `anchor` to pin down which parallel line it is.
   // For all other cases (at least one finite endpoint), the chord is fully
-  // determined by its endpoints, and `chordAnchor` is ignored.
+  // determined by its endpoints, and `anchor` is ignored.
   const eps = 1e-9;
+  const origJ = face.junctions();
+  const jA = origJ[vIdxA];
+  const jB = origJ[vIdxB];
   let chordIsIdealIdeal = false;
-  {
-    const j = face.junctions();
-    const jA = j[vIdxA];
-    const jB = j[vIdxB];
-    if (jA.kind === 'ideal' && jB.kind === 'ideal') {
-      chordIsIdealIdeal = true;
-      if (!chordAnchor) {
-        throw new Error(
-          'splitFaceAtVertices: ideal-ideal chord requires a finite chordAnchor (the chord line is otherwise underdetermined)',
-        );
-      }
-      if (Math.abs(jA.x + jB.x) > eps || Math.abs(jA.y + jB.y) > eps) {
-        throw new Error(
-          'splitFaceAtVertices: ideal-ideal chord endpoints must be antipodal on S¹',
-        );
-      }
+  if (jA.kind === 'ideal' && jB.kind === 'ideal') {
+    chordIsIdealIdeal = true;
+    if (!anchor) {
+      throw new Error(
+        'splitFaceAtVertices: ideal-ideal chord requires a finite anchor (the chord line is otherwise underdetermined)',
+      );
+    }
+    if (Math.abs(jA.x + jB.x) > eps || Math.abs(jA.y + jB.y) > eps) {
+      throw new Error(
+        'splitFaceAtVertices: ideal-ideal chord endpoints must be antipodal on S¹',
+      );
     }
   }
   // Adjacency check.
@@ -1809,15 +2049,10 @@ export function splitFaceAtVertices(
         'splitFaceAtVertices: chord endpoints are adjacent (would coincide with an edge)',
       );
     }
-    // Validate against every existing chord HE between vIdxA and vIdxB
-    // (one for k≥3, two for k=2 — the slab's bottom and top).
-    const j = face.junctions();
-    const jA = j[vIdxA];
-    const jB = j[vIdxB];
     const dirX = jB.x - jA.x;
     const dirY = jB.y - jA.y;
     for (let i = 0; i < k; i++) {
-      const he = face.halfEdges[i];
+      const he = face.sides[i];
       const ni = (i + 1) % k;
       const isBetween =
         (i === vIdxA && ni === vIdxB) || (i === vIdxB && ni === vIdxA);
@@ -1827,14 +2062,11 @@ export function splitFaceAtVertices(
           'splitFaceAtVertices: adjacent HE between ideal endpoints is not a chord (cannot produce a valid digon)',
         );
       }
-      const existing = he.chordAnchor!;
-      const dx = chordAnchor!.x - existing.x;
-      const dy = chordAnchor!.y - existing.y;
-      // Cross of new chord direction with (newAnchor - existingAnchor).
-      // Zero ⇒ collinear ⇒ new chord is on the same line as the existing
-      // chord (degenerate digon).
-      const cross = dirX * dy - dirY * dx;
-      if (Math.abs(cross) <= eps) {
+      const existing = he.anchor!;
+      const dx = anchor!.x - existing.x;
+      const dy = anchor!.y - existing.y;
+      const cr = dirX * dy - dirY * dx;
+      if (Math.abs(cr) <= eps) {
         throw new Error(
           'splitFaceAtVertices: parallel-chord cut anchor lies on existing chord line (degenerate digon)',
         );
@@ -1843,8 +2075,8 @@ export function splitFaceAtVertices(
   }
 
   // Build the two boundary arcs of original-face vertex INDICES.
-  // arc0: CCW from vIdxA to vIdxB (inclusive both ends).
-  // arc1: CCW from vIdxB to vIdxA (inclusive both ends).
+  // arc0 (CCW from vIdxA to vIdxB, inclusive) → kept by `face`.
+  // arc1 (CCW from vIdxB to vIdxA, inclusive) → moves to `fresh`.
   const arc0: number[] = [];
   for (let i = vIdxA; ; i = (i + 1) % k) {
     arc0.push(i);
@@ -1856,225 +2088,146 @@ export function splitFaceAtVertices(
     if (i === vIdxA) break;
   }
 
-  // Cache external twins of the preserved HEs (every HE EXCEPT the closing
-  // chord) for each arc. arc[i] is the index in face.halfEdges of the HE that
-  // goes from vertex `arc[i]` to vertex `arc[i+1]`. Preserved indices are
-  // `arc[0..arc.length-2]`; arc[-1] would be the chord which doesn't exist
-  // pre-split.
-  const cacheExt = (arc: number[]) => {
-    const exts: Array<{ twin: HalfEdge | null; T_old: M.Matrix2DReadonly | null }> = [];
-    for (let i = 0; i < arc.length - 1; i++) {
-      const he = face.halfEdges[arc[i]];
-      exts.push({ twin: he.twin, T_old: he.twin ? he.transform : null });
-    }
-    return exts;
-  };
-  const ext0 = cacheExt(arc0);
-  const ext1 = cacheExt(arc1);
+  // The actual HE objects per arc, keyed off the original index. arc[i] is
+  // the index of the HE going from vertex `arc[i]` to vertex `arc[i+1]`;
+  // the closing HE (arc[length-1]) is the *next* arc's first HE — it's not
+  // part of THIS arc. So the HEs we keep/move per arc are arc[0..length-2].
+  const arc0Sides = arc0.slice(0, -1).map((i) => face.sides[i]);
+  const arc1Sides = arc1.slice(0, -1).map((i) => face.sides[i]);
+  const arc1Set = new Set(arc1Sides);
 
-  // Junction lists in the parent's frame.
-  const origJ = face.junctions();
-  const verts0 = arc0.map((i) => origJ[i]);
+  // Re-anchor offset: `face` stays at offset (0, 0) (identity-preserving);
+  // `fresh` re-anchors its finite-vertex centroid to face-local (0, 0).
   const verts1 = arc1.map((i) => origJ[i]);
+  const freshOffset = centroidOfFinite(verts1);
 
-  // Re-anchor offsets: one per sub-face, computed in the parent's frame.
-  // `centroidOf` returns the area-weighted centroid of the finite vertices
-  // (or their average for low counts), which we then subtract from each
-  // sub-face's vertex coords to put face-local `(0, 0)` at a meaningful
-  // interior point. For all-ideal sub-faces (which exist only when the
-  // chord is itself ideal-ideal — e.g. cutting an empty all-ideal canvas)
-  // the centroid falls through to `(0, 0)` and we don't translate anything,
-  // which is the right thing: ideal junctions are translation-invariant
-  // and the chord's geometry is carried by `chordAnchor` instead.
-  const offset0 = centroidOfFinite(verts0);
-  const offset1 = centroidOfFinite(verts1);
+  // Build the new chord half-edges. faceChordSide closes face's loop from
+  // vIdxB back to vIdxA (origin at vIdxB's position in face's UNCHANGED
+  // frame). freshChordSide closes fresh's loop from vIdxA back to vIdxB
+  // (origin at vIdxA's position, translated into fresh's re-anchored frame
+  // when finite).
+  const faceChordSide = new Side(jB.kind, jB.x, jB.y);
+  const freshChordOX = jA.kind === 'finite' ? jA.x - freshOffset.x : jA.x;
+  const freshChordOY = jA.kind === 'finite' ? jA.y - freshOffset.y : jA.y;
+  const freshChordSide = new Side(jA.kind, freshChordOX, freshChordOY);
 
+  // Chord anchors for the ideal-ideal case. The parent-frame `anchor`
+  // pinpoints which parallel real line the chord represents; in `face`'s
+  // unchanged frame we store it verbatim, in `fresh`'s frame we translate
+  // by `-freshOffset` so the line equation matches its re-anchored coords.
+  if (chordIsIdealIdeal) {
+    faceChordSide.anchor = { x: anchor!.x, y: anchor!.y };
+    freshChordSide.anchor = {
+      x: anchor!.x - freshOffset.x,
+      y: anchor!.y - freshOffset.y,
+    };
+  }
+
+  // Twin the chord HEs. face → fresh translates by -freshOffset (fresh's
+  // origin sits at +freshOffset in face's frame), and the inverse goes
+  // the other way. Linear part stays identity (pure translation).
+  const T_faceToFresh = M.fromTranslate(-freshOffset.x, -freshOffset.y);
+  const T_freshToFace = M.fromTranslate(freshOffset.x, freshOffset.y);
+  setTwin(faceChordSide, freshChordSide, T_faceToFresh, T_freshToFace);
+
+  // Re-anchor arc1's HEs in place: they're moving from face's frame into
+  // fresh's frame (translated by -freshOffset). Finite origins shift,
+  // ideal origins are translation-invariant, chord anchors shift.
+  for (const he of arc1Sides) {
+    if (he.originKind === 'finite') {
+      he.ox -= freshOffset.x;
+      he.oy -= freshOffset.y;
+    }
+    if (he.anchor !== null) {
+      he.anchor = {
+        x: he.anchor.x - freshOffset.x,
+        y: he.anchor.y - freshOffset.y,
+      };
+    }
+  }
+
+  // Allocate `fresh` from the moved arc1 HEs plus the new closing chord.
+  // Face's constructor wires .face / .next / .prev on every HE in the
+  // passed list, including reassigning .face on the moved HEs to `fresh`.
   const cloneMat = (m: M.Matrix2DReadonly): M.Matrix2D =>
     M.fromValues(m.a, m.b, m.c, m.d, m.e, m.f);
+  const fresh = new Face([...arc1Sides, freshChordSide], [], cloneMat(face.frame));
 
-  const translateJunctions = (verts: Junction[], off: Point): Junction[] =>
-    verts.map((j) =>
-      j.kind === 'finite' ? { kind: 'finite', x: j.x - off.x, y: j.y - off.y } : j,
-    );
+  // Reset `face`'s outer loop to the kept arc plus the new closing chord,
+  // and rewire its cycle. Inner loops are dropped (matching pre-existing
+  // behaviour — preservation across cuts is future work). This also sets
+  // faceChordSide.face = face via rewireFaceCycle.
+  face.sides = [...arc0Sides, faceChordSide];
+  face.innerLoops = [];
+  rewireFaceCycle(face);
 
-  // Build a sub-face from re-anchored vertices. The closing edge
-  // (`hes[n - 1]`) is the chord half-edge.
-  const buildSubFace = (
-    vertsLocal: Junction[],
-  ): { face: Face; hes: HalfEdge[]; chordHE: HalfEdge } => {
-    const hes = vertsLocal.map((j) => new HalfEdge(j.kind, j.x, j.y));
-    const f = new Face(hes, [], cloneMat(face.frame));
-    return { face: f, hes, chordHE: hes[hes.length - 1] };
-  };
-
-  const sub0 = buildSubFace(translateJunctions(verts0, offset0));
-  const sub1 = buildSubFace(translateJunctions(verts1, offset1));
-
-  // Preserve chord anchors of inherited HEs. For a digon-producing cut
-  // (k=3 face → digon + triangle, or k=2 → 2 sub-digons) one or both
-  // preserved HEs are themselves chords whose anchor must be carried over
-  // (translated into the sub-face's frame). For other cuts, no preserved
-  // HE is a chord and this loop is a no-op.
-  const preserveChordAnchors = (
-    sub: { hes: HalfEdge[] },
-    arc: number[],
-    off: Point,
-  ) => {
-    for (let i = 0; i < arc.length - 1; i++) {
-      const orig = face.halfEdges[arc[i]];
-      if (orig.chordAnchor !== null) {
-        sub.hes[i].chordAnchor = {
-          x: orig.chordAnchor.x - off.x,
-          y: orig.chordAnchor.y - off.y,
-        };
-      }
+  // Update transforms across the split. Each HE's transform maps its own
+  // face's frame to its twin's face's frame; if either endpoint moved
+  // (i.e. is in arc1Set, hence now lives in `fresh` instead of `face`),
+  // the transform must be conjugated to absorb the frame shift.
+  //
+  // Rules (with offset_face = (0, 0), offset_fresh = freshOffset):
+  //   - me in arc1, twin in arc1 (both moved):
+  //       T_new = translate(-fresh) · T_old · translate(+fresh)
+  //   - me in arc1, twin elsewhere (external or kept):
+  //       T_new = T_old · translate(+fresh)
+  //   - me elsewhere, twin in arc1:
+  //       T_new = translate(-fresh) · T_old
+  //   - neither: unchanged.
+  //
+  // Each HE updates its own transform independently — symmetric pairs are
+  // both visited and both get the right answer; asymmetric wraps (where
+  // partner.twin !== me) work by construction because we only ever touch
+  // *our* transform based on where *we* point.
+  //
+  // The chord HEs themselves were just allocated and explicitly twinned;
+  // skip them so we don't double-conjugate.
+  if (freshOffset.x !== 0 || freshOffset.y !== 0) {
+    const posOff = M.fromTranslate(freshOffset.x, freshOffset.y);
+    const negOff = M.fromTranslate(-freshOffset.x, -freshOffset.y);
+    for (const h of atlas.sides) {
+      if (!h.twin) continue;
+      if (h === faceChordSide || h === freshChordSide) continue;
+      const meInArc1 = arc1Set.has(h);
+      const twinInArc1 = arc1Set.has(h.twin);
+      if (!meInArc1 && !twinInArc1) continue;
+      let T = h.transform;
+      if (meInArc1) T = M.multiply(T, posOff);
+      if (twinInArc1) T = M.multiply(negOff, T);
+      h.transform = T;
     }
-  };
-  preserveChordAnchors(sub0, arc0, offset0);
-  preserveChordAnchors(sub1, arc1, offset1);
-
-  // Chord twin transforms: a point in `sub0`-local maps to `sub1`-local by
-  // adding `offset0` (→ parent-local) and subtracting `offset1` (→ sub1-
-  // local), i.e. translating by `offset0 − offset1`. The reverse swaps.
-  // Linear part stays identity, so the chord transform is pure translation.
-  const dx = offset0.x - offset1.x;
-  const dy = offset0.y - offset1.y;
-  setTwin(sub0.chordHE, sub1.chordHE, M.fromTranslate(dx, dy), M.fromTranslate(-dx, -dy));
-
-  // Chord anchor for the ideal-ideal case. The parent-frame `chordAnchor`
-  // pinpoints the chord line; each sub-face's anchor is translated by its
-  // own `-offset` so that the line equation is consistent with its
-  // re-anchored vertex coordinates.
-  if (chordIsIdealIdeal) {
-    sub0.chordHE.chordAnchor = {
-      x: chordAnchor!.x - offset0.x,
-      y: chordAnchor!.y - offset0.y,
-    };
-    sub1.chordHE.chordAnchor = {
-      x: chordAnchor!.x - offset1.x,
-      y: chordAnchor!.y - offset1.y,
-    };
   }
 
-  // Wire twins for inherited HEs. There are two flavours:
-  //
-  //   (a) "external" — partner is in another face that wasn't touched by
-  //       this split. The partner's twin pointer must now refer to the
-  //       new sub-HE (the original HE is about to be orphaned). Frame
-  //       change is one-sided: the sub-face was re-anchored, the partner
-  //       wasn't. New transform: T_old · translate(off).
-  //
-  //   (b) "self-loop" — partner is *also* in the face being split (a wrap
-  //       edge: pre-split, both endpoints lived in `face`). After the
-  //       split the partner ended up as a new HE in either sub0 or sub1,
-  //       so we must resolve it through `originalToSubHE` and set the
-  //       twin to the *new* HE. Frame change is two-sided here: BOTH
-  //       sides re-anchored. New transform:
-  //         translate(-partnerOff) · T_old · translate(off).
-  //       Each self-loop pair is seen twice (once from each side); we
-  //       wire it on the first encounter and skip the second via `wired`.
-  const originalToSubHE = new Map<
-    HalfEdge,
-    { hes: HalfEdge[]; idx: number; off: Point }
-  >();
-  for (let i = 0; i < arc0.length - 1; i++) {
-    originalToSubHE.set(face.halfEdges[arc0[i]], {
-      hes: sub0.hes,
-      idx: i,
-      off: offset0,
-    });
-  }
-  for (let i = 0; i < arc1.length - 1; i++) {
-    originalToSubHE.set(face.halfEdges[arc1[i]], {
-      hes: sub1.hes,
-      idx: i,
-      off: offset1,
-    });
-  }
-  // Two further wrinkles:
-  //
-  //   - "Asymmetric" pre-split twins. If the captured `e.twin` was twinned
-  //     to something *other* than `orig` (i.e. `e.twin.twin !== orig`),
-  //     then orig's twin pointer was a one-way binding into a partner
-  //     that already routes elsewhere (the canonical case is wrap edges
-  //     installed via `linkEdgeToTwin`: the outer face's HE points at the
-  //     wrap edge, but the wrap edge points back at its wrap partner, not
-  //     the outer). Calling the symmetric `setTwin` here would clobber
-  //     the partner's outbound twin/transform — destroying the wrap.
-  //     We instead update only OUR side of the binding via a one-way
-  //     write, leaving the partner's twin pointer intact.
-  //
-  //   - To avoid double-wiring symmetric self-loop pairs (which appear
-  //     once on each side of the cut), we track every HE we've already
-  //     handled in `wired` and skip it the second time around.
-  const wired = new Set<HalfEdge>();
-  const wireExternals = (
-    sub: { hes: HalfEdge[] },
-    arc: number[],
-    ext: Array<{ twin: HalfEdge | null; T_old: M.Matrix2DReadonly | null }>,
-    off: Point,
-  ) => {
-    for (let i = 0; i < ext.length; i++) {
-      const e = ext[i];
-      if (!e.twin) continue;
-      const orig = face.halfEdges[arc[i]];
-      if (wired.has(orig)) continue;
-      const subHE = sub.hes[i];
-      const symmetric = e.twin.twin === orig;
-      const partnerInSub = originalToSubHE.get(e.twin);
-      if (partnerInSub) {
-        const partnerHE = partnerInSub.hes[partnerInSub.idx];
-        const partnerOff = partnerInSub.off;
-        const fwd = M.multiply(
-          M.fromTranslate(-partnerOff.x, -partnerOff.y),
-          M.multiply(e.T_old!, M.fromTranslate(off.x, off.y)),
-        );
-        const rev = M.invert(fwd);
-        setTwin(subHE, partnerHE, fwd, rev);
-        wired.add(orig);
-        wired.add(e.twin);
-      } else {
-        const fwd = M.multiply(e.T_old!, M.fromTranslate(off.x, off.y));
-        if (symmetric) {
-          const rev = M.invert(fwd);
-          setTwin(subHE, e.twin, fwd, rev);
-        } else {
-          subHE.twin = e.twin;
-          subHE.transform = fwd;
-        }
-        wired.add(orig);
-      }
-    }
-  };
-  wireExternals(sub0, arc0, ext0, offset0);
-  wireExternals(sub1, arc1, ext1, offset1);
-
-  // Detach old, attach new.
-  detachFace(atlas, face);
-  attachFace(atlas, sub0.face);
-  attachFace(atlas, sub1.face);
-
-  if (atlas.root === face) atlas.root = sub0.face;
+  // Register the new face and its two new chord HEs with the atlas.
+  // The arc1 HEs that moved to `fresh` are already in `atlas.sides` —
+  // they kept their object identity, only their .face pointer changed.
+  atlas.sides.push(faceChordSide, freshChordSide);
+  atlas.faces.push(fresh);
 
   return {
-    faces: [sub0.face, sub1.face],
-    chordHEs: [sub0.chordHE, sub1.chordHE],
+    face,
+    fresh,
+    faceChordSide,
+    freshChordSide,
+    freshOffset,
+    faces: [face, fresh],
+    chordSides: [faceChordSide, freshChordSide],
   };
 }
 
 /**
  * Split `face` along a chord whose endpoints are described by two
  * {@link BoundaryHit}s on `face`'s boundary. Composes
- * {@link subdivideHalfEdge} / {@link subdivideAtInfinityArc} (to materialise
+ * {@link subdivideSide} / {@link subdivideAtInfinityArc} (to materialise
  * each chord endpoint as an actual vertex when it lands mid-edge or
  * mid-arc) followed by {@link splitFaceAtVertices}.
  *
  * Side-effect: subdividing a non-arc edge also subdivides the neighbouring
  * face's twin half-edge (introducing one collinear chain vertex over there
- * — see {@link subdivideHalfEdge}). At-infinity-arc subdivisions only touch
+ * — see {@link subdivideSide}). At-infinity-arc subdivisions only touch
  * `face`.
  *
- * `chordAnchor` (in `face`-local coordinates) is required when both
+ * `anchor` (in `face`-local coordinates) is required when both
  * boundary hits are at-infinity (i.e. both endpoints will be ideal); see
  * {@link splitFaceAtVertices}. Otherwise it's ignored — the chord is
  * already pinpointed by its finite endpoint(s). Callers walking a finite
@@ -2089,7 +2242,7 @@ export function splitFaceAlongChord(
   face: Face,
   entryHit: BoundaryHit,
   exitHit: BoundaryHit,
-  chordAnchor: Point | null = null,
+  anchor: Point | null = null,
 ): SplitChordResult {
   if (!atlas.faces.includes(face)) {
     throw new Error('splitFaceAlongChord: face not in atlas');
@@ -2122,14 +2275,14 @@ export function splitFaceAlongChord(
    *     opposite directions, so any finite `u` is interior. There is no
    *     short-circuit — we always subdivide.
    */
-  const materialise = (hit: BoundaryHit): HalfEdge => {
+  const materialise = (hit: BoundaryHit): Side => {
     if (hit.point) {
       const u = hit.u!;
       const isChord = hit.he.isChord;
       if (!isChord && u <= eps) return hit.he;
       const isFF = hit.he.originKind === 'finite' && hit.he.next.originKind === 'finite';
       if (isFF && u >= 1 - eps) return hit.he.next;
-      const r = subdivideHalfEdge(atlas, hit.he, hit.point);
+      const r = subdivideSide(atlas, hit.he, hit.point);
       return r.faceHalves[1];
     }
     if (hit.idealDir) {
@@ -2155,20 +2308,20 @@ export function splitFaceAlongChord(
 
   // Subdivision is in-place and preserves Face identity; HE object references
   // for the OTHER hit's `.he` remain valid even if their array index shifts.
-  const entryVertHE = materialise(entryHit);
-  const exitVertHE = materialise(exitHit);
+  const entryVertSide = materialise(entryHit);
+  const exitVertSide = materialise(exitHit);
 
-  if (entryVertHE === exitVertHE) {
+  if (entryVertSide === exitVertSide) {
     throw new Error('splitFaceAlongChord: entry and exit collapsed to the same vertex');
   }
 
-  const entryIdx = face.halfEdges.indexOf(entryVertHE);
-  const exitIdx = face.halfEdges.indexOf(exitVertHE);
+  const entryIdx = face.sides.indexOf(entryVertSide);
+  const exitIdx = face.sides.indexOf(exitVertSide);
   if (entryIdx < 0 || exitIdx < 0) {
     throw new Error('splitFaceAlongChord: post-materialisation vertex HE not in face');
   }
 
-  return splitFaceAtVertices(atlas, face, entryIdx, exitIdx, chordAnchor);
+  return splitFaceAtVertices(atlas, face, entryIdx, exitIdx, anchor);
 }
 
 // ----------------------------------------------------------------------------
@@ -2176,43 +2329,71 @@ export function splitFaceAlongChord(
 // ----------------------------------------------------------------------------
 
 /**
- * Re-establish `next`, `prev`, and `face` pointers across `face.halfEdges`
+ * Re-establish `next`, `prev`, and `face` pointers across `face.sides`
  * after an in-place mutation that changed the array's contents/length.
  */
 function rewireFaceCycle(face: Face) {
-  const k = face.halfEdges.length;
+  const k = face.sides.length;
   for (let i = 0; i < k; i++) {
-    const he = face.halfEdges[i];
+    const he = face.sides[i];
     he.face = face;
-    he.next = face.halfEdges[(i + 1) % k];
-    he.prev = face.halfEdges[(i - 1 + k) % k];
+    he.next = face.sides[(i + 1) % k];
+    he.prev = face.sides[(i - 1 + k) % k];
   }
 }
 
+/**
+ * Internal helper: wire a reciprocal twin pair (twin pointers + transforms)
+ * AND ensure both endpoints reference a shared {@link Stitch} back-reference.
+ *
+ * Three cases:
+ *  - Both `a` and `b` already share the same Stitch: just update transforms
+ *    (this is the resize-an-existing-pair case, e.g. {@link resizeStrip}).
+ *  - One or both has a different/dangling Stitch: clear back-refs on the
+ *    stale Stitch's endpoints (no atlas-set bookkeeping needed since
+ *    `Atlas.stitches` is derived), then allocate a fresh Stitch.
+ *  - Neither has a Stitch: allocate a fresh Stitch.
+ *
+ * Returns the resulting Stitch. Used by the symmetric mutation primitives
+ * ({@link splitFaceAtVertices}, {@link subdivideSide}, {@link insertStrip})
+ * and by the public {@link stitch} export.
+ */
 function setTwin(
-  a: HalfEdge,
-  b: HalfEdge,
+  a: Side,
+  b: Side,
   transformAB: M.Matrix2D,
   transformBA: M.Matrix2D,
-) {
+): Stitch {
+  if (a.stitch !== null && a.stitch === b.stitch) {
+    a.twin = b;
+    b.twin = a;
+    a.transform = transformAB;
+    b.transform = transformBA;
+    return a.stitch;
+  }
+  if (a.stitch !== null) {
+    const s = a.stitch;
+    s.a.stitch = null;
+    s.b.stitch = null;
+  }
+  if (b.stitch !== null) {
+    const s = b.stitch;
+    s.a.stitch = null;
+    s.b.stitch = null;
+  }
   a.twin = b;
   b.twin = a;
   a.transform = transformAB;
   b.transform = transformBA;
-}
-
-function detachFace(atlas: Atlas, face: Face) {
-  atlas.faces = atlas.faces.filter((f) => f !== face);
-  const heSet = new Set<HalfEdge>();
-  for (const he of face.allHalfEdges()) heSet.add(he);
-  atlas.halfEdges = atlas.halfEdges.filter((he) => !heSet.has(he));
-  // Note: external twins still point INTO this face's half-edges. The caller
-  // (a split routine) is expected to re-attach them to new sub-faces' edges.
+  const fresh = new Stitch(a, b);
+  a.stitch = fresh;
+  b.stitch = fresh;
+  return fresh;
 }
 
 function attachFace(atlas: Atlas, face: Face) {
   atlas.faces.push(face);
-  for (const he of face.allHalfEdges()) atlas.halfEdges.push(he);
+  for (const he of face.allSides()) atlas.sides.push(he);
 }
 
 // ----------------------------------------------------------------------------
@@ -2236,7 +2417,7 @@ function attachFace(atlas: Atlas, face: Face) {
  *     hit is at infinity, otherwise `null`.
  */
 export interface BoundaryHit {
-  he: HalfEdge;
+  he: Side;
   point: Point | null;
   u: number | null;
   idealDir: Point | null;
@@ -2265,7 +2446,7 @@ const WALK_EPS = 1e-9;
 /**
  * Find where the line `p + s * d` (s > eps) exits `face`. Returns `null` if
  * no forward exit exists (degenerate face / numerical issue) or if the only
- * candidate exit would equal `excludeHE` (the boundary the line just entered).
+ * candidate exit would equal `excludeSide` (the boundary the line just entered).
  *
  * Three exit kinds are supported, in priority order:
  *
@@ -2288,14 +2469,14 @@ function findExit(
   face: Face,
   p: Point,
   d: Point,
-  excludeHE: HalfEdge | null,
+  excludeSide: Side | null,
   eps = WALK_EPS,
 ): BoundaryHit | null {
-  let best: { he: HalfEdge; s: number; u: number } | null = null;
-  let arcExit: HalfEdge | null = null;
+  let best: { he: Side; s: number; u: number } | null = null;
+  let arcExit: Side | null = null;
 
-  for (const he of face.halfEdgesCCW()) {
-    if (he === excludeHE) continue;
+  for (const he of face.sidesCCW()) {
+    if (he === excludeSide) continue;
     if (he.isAtInfinity) {
       const a = he.origin();
       const b = he.next.origin();
@@ -2312,7 +2493,7 @@ function findExit(
       }
       continue;
     }
-    const hit = intersectLineWithHE(p, d, he, eps);
+    const hit = intersectLineWithSide(p, d, he, eps);
     if (!hit) continue;
     if (best === null || hit.s < best.s) best = { he, s: hit.s, u: hit.u };
   }
@@ -2320,7 +2501,7 @@ function findExit(
   if (best) {
     return {
       he: best.he,
-      point: pointOnHEAtU(best.he, best.u),
+      point: pointOnSideAtU(best.he, best.u),
       u: best.u,
       idealDir: null,
     };
@@ -2340,8 +2521,8 @@ function findExit(
   // arcExit branch above. `d` is unit-length; ideal-vertex directions are
   // unit-length by construction.
   const cornerEps = 1e-6;
-  for (const he of face.halfEdgesCCW()) {
-    if (he === excludeHE) continue;
+  for (const he of face.sidesCCW()) {
+    if (he === excludeSide) continue;
     if (he.originKind !== 'ideal') continue;
     if (he.isAtInfinity) continue;
     if (he.prev.isAtInfinity) continue;
@@ -2361,128 +2542,119 @@ function findExit(
 }
 
 /**
- * Intersect the parametric line `p + s * d` with half-edge `he` (in the same
- * frame as `p` and `d`). Returns `(s, u)` for a valid forward intersection
- * (`s > eps`, `u` within the edge's parameter range). At-infinity edges are
- * handled separately by the caller.
+ * Per-side ray parametrisation. Every non-arc side carries a finite line
+ * `start + u · dir` with a u-range `[uMin, uMax]`; this helper extracts that
+ * representation in one place so dispatch on side kind happens exactly once
+ * per query path. The unified form replaces what used to be a 5-way `if`
+ * cascade in every geometry helper that operated on a side.
+ *
+ * Returns `null` for at-infinity arcs (which have no finite parametrisation).
+ *
+ * Conventions per kind:
+ *  - `segment` (finite → finite): `start = origin`, `dir = target − origin`,
+ *    `u ∈ [0, 1]`. `|dir|` is the edge length.
+ *  - `ray` (finite → ideal): `start = origin`, `dir = target's ideal
+ *    direction` (unit vector), `u ∈ [0, ∞)`.
+ *  - `antiRay` (ideal → finite): `start = target` (the finite end),
+ *    `dir = origin's ideal direction` (unit vector), `u ∈ [0, ∞)`.
+ *  - `chord` (ideal → ideal, `anchor !== null`): `start = anchor`, `dir =
+ *    origin's ideal direction` (unit vector), `u ∈ (-∞, ∞)`.
+ *
+ * Because `dir` is unit-length for ray/antiRay/chord but a real edge vector
+ * for segment, callers that compute distances from `dir` should normalise
+ * by `|dir|²` (which equals 1 in the unit cases — so a single uniform
+ * formula `((p − start) · dir) / |dir|²` works for every kind).
  */
-function intersectLineWithHE(
+function rayParam(
+  side: Side,
+): { start: Point; dir: Point; uMin: number; uMax: number } | null {
+  const o = side.origin();
+  const t = side.target();
+  switch (side.kind) {
+    case 'segment':
+      return {
+        start: { x: o.x, y: o.y },
+        dir: { x: t.x - o.x, y: t.y - o.y },
+        uMin: 0,
+        uMax: 1,
+      };
+    case 'ray':
+      return {
+        start: { x: o.x, y: o.y },
+        dir: { x: t.x, y: t.y },
+        uMin: 0,
+        uMax: Infinity,
+      };
+    case 'antiRay':
+      return {
+        start: { x: t.x, y: t.y },
+        dir: { x: o.x, y: o.y },
+        uMin: 0,
+        uMax: Infinity,
+      };
+    case 'chord':
+      return {
+        start: side.anchor!,
+        dir: { x: o.x, y: o.y },
+        uMin: -Infinity,
+        uMax: Infinity,
+      };
+    case 'arc':
+      return null;
+  }
+}
+
+/**
+ * Intersect the parametric line `p + s * d` with side `side` (in the same
+ * frame as `p` and `d`). Returns `(s, u)` for a valid forward intersection
+ * (`s > eps`, `u` within the side's parameter range). At-infinity arcs
+ * are handled separately by the caller (returns `null` here).
+ */
+function intersectLineWithSide(
   p: Point,
   d: Point,
-  he: HalfEdge,
+  side: Side,
   eps: number,
 ): { s: number; u: number } | null {
-  const o = he.origin();
-  const t = he.target();
-  if (he.isAtInfinity) return null;
-
-  let edgeStart: Point;
-  let A: Point;
-  let uMax: number;
-  let uMin = 0;
-
-  if (o.kind === 'finite' && t.kind === 'finite') {
-    edgeStart = { x: o.x, y: o.y };
-    A = { x: t.x - o.x, y: t.y - o.y };
-    uMax = 1;
-  } else if (o.kind === 'finite' && t.kind === 'ideal') {
-    edgeStart = { x: o.x, y: o.y };
-    A = { x: t.x, y: t.y };
-    uMax = Infinity;
-  } else if (o.kind === 'ideal' && t.kind === 'finite') {
-    // Edge runs from ideal direction `o` to finite `t`. Parameterize with
-    // `u = 0` at the finite target and `u → ∞` at the ideal end; travel
-    // direction from target toward the ideal end is `+o`.
-    edgeStart = { x: t.x, y: t.y };
-    A = { x: o.x, y: o.y };
-    uMax = Infinity;
-  } else if (he.isChord) {
-    // Chord through R² between two antipodal ideal vertices. The chord
-    // line passes through `chordAnchor` in direction `o` (origin's ideal
-    // direction). Parameter `u = 0` at `chordAnchor`, `u → +∞` at origin
-    // (target = -origin), `u → -∞` at target (since target = -origin).
-    edgeStart = { x: he.chordAnchor!.x, y: he.chordAnchor!.y };
-    A = { x: o.x, y: o.y };
-    uMax = Infinity;
-    uMin = -Infinity;
-  } else {
-    return null;
-  }
-
-  const det = A.x * d.y - A.y * d.x;
+  const r = rayParam(side);
+  if (!r) return null;
+  const det = r.dir.x * d.y - r.dir.y * d.x;
   if (Math.abs(det) < eps) return null;
-  const rx = edgeStart.x - p.x;
-  const ry = edgeStart.y - p.y;
-  const s = (A.x * ry - A.y * rx) / det;
+  const rx = r.start.x - p.x;
+  const ry = r.start.y - p.y;
+  const s = (r.dir.x * ry - r.dir.y * rx) / det;
   const u = (d.x * ry - d.y * rx) / det;
   if (s < eps) return null;
-  if (uMin === 0 && u < -eps) return null;
-  if (uMin !== 0 && Number.isFinite(uMin) && u < uMin - eps) return null;
-  if (uMax !== Infinity && u > uMax + eps) return null;
-  const uLow = uMin === -Infinity ? -Infinity : 0;
-  const uClamped =
-    uMax === Infinity
-      ? Math.max(uLow, u)
-      : Math.max(uLow, Math.min(uMax, u));
-  return { s, u: uClamped };
+  if (Number.isFinite(r.uMin) && u < r.uMin - eps) return null;
+  if (Number.isFinite(r.uMax) && u > r.uMax + eps) return null;
+  return { s, u: Math.max(r.uMin, Math.min(r.uMax, u)) };
 }
 
 /**
- * Position on `he` at edge-parameter `u`, in `he.face`'s local frame.
+ * Position on `side` at edge-parameter `u`, in `side.face`'s local frame.
  *
- * Parameter conventions (matching {@link uOfPointOnHE}):
- *   - finite → finite: `u ∈ [0, 1]`, `u = 0` at origin, `u = 1` at target.
- *   - finite → ideal:  `u ∈ [0, ∞)`, `u = 0` at the finite origin.
- *   - ideal  → finite: `u ∈ [0, ∞)`, `u = 0` at the finite target,
- *     increasing toward the ideal direction.
- *   - chord  (ideal-ideal twinned, both endpoints ideal & antipodal):
- *     `u ∈ (-∞, ∞)`, `u = 0` at `chordAnchor`, increasing in the origin
- *     ideal direction (= `-target`).
- *   - at-infinity arc (ideal-ideal, no chordAnchor): throws — there's no
- *     finite point on S¹.
+ * Parameter conventions (matching {@link uOfPointOnSide}, see {@link rayParam}):
+ *   - segment: `u ∈ [0, 1]`.
+ *   - ray / antiRay: `u ∈ [0, ∞)`.
+ *   - chord: `u ∈ (-∞, ∞)`, `u = 0` at `anchor`.
+ *   - at-infinity arc: throws — there's no finite point on S¹.
  */
-export function pointOnHEAtU(he: HalfEdge, u: number): Point {
-  const o = he.origin();
-  const t = he.target();
-  if (o.kind === 'finite' && t.kind === 'finite') {
-    return { x: o.x + u * (t.x - o.x), y: o.y + u * (t.y - o.y) };
-  }
-  if (o.kind === 'finite' && t.kind === 'ideal') {
-    return { x: o.x + u * t.x, y: o.y + u * t.y };
-  }
-  if (o.kind === 'ideal' && t.kind === 'finite') {
-    return { x: t.x + u * o.x, y: t.y + u * o.y };
-  }
-  if (he.isChord) {
-    return { x: he.chordAnchor!.x + u * o.x, y: he.chordAnchor!.y + u * o.y };
-  }
-  throw new Error('pointOnHEAtU: at-infinity arc has no finite point');
+export function pointOnSideAtU(side: Side, u: number): Point {
+  const r = rayParam(side);
+  if (!r) throw new Error('pointOnSideAtU: at-infinity arc has no finite point');
+  return { x: r.start.x + u * r.dir.x, y: r.start.y + u * r.dir.y };
 }
 
 /**
- * Compute the edge-parameter `u` of finite point `p` on half-edge `he`
- * (in `he.face`'s frame), assuming `p` is collinear with the edge.
- * Parameter conventions match {@link pointOnHEAtU}.
+ * Compute the edge-parameter `u` of finite point `p` on side `side`
+ * (in `side.face`'s frame), assuming `p` is collinear with the edge.
+ * Parameter conventions match {@link pointOnSideAtU}.
  */
-export function uOfPointOnHE(he: HalfEdge, p: Point): number {
-  const o = he.origin();
-  const t = he.target();
-  if (o.kind === 'finite' && t.kind === 'finite') {
-    const Ax = t.x - o.x;
-    const Ay = t.y - o.y;
-    const len2 = Ax * Ax + Ay * Ay;
-    return ((p.x - o.x) * Ax + (p.y - o.y) * Ay) / len2;
-  }
-  if (o.kind === 'finite' && t.kind === 'ideal') {
-    return (p.x - o.x) * t.x + (p.y - o.y) * t.y;
-  }
-  if (o.kind === 'ideal' && t.kind === 'finite') {
-    return (p.x - t.x) * o.x + (p.y - t.y) * o.y;
-  }
-  if (he.isChord) {
-    return (p.x - he.chordAnchor!.x) * o.x + (p.y - he.chordAnchor!.y) * o.y;
-  }
-  throw new Error('uOfPointOnHE: at-infinity arc has no finite point');
+export function uOfPointOnSide(side: Side, p: Point): number {
+  const r = rayParam(side);
+  if (!r) throw new Error('uOfPointOnSide: at-infinity arc has no finite point');
+  const len2 = r.dir.x * r.dir.x + r.dir.y * r.dir.y;
+  return ((p.x - r.start.x) * r.dir.x + (p.y - r.start.y) * r.dir.y) / len2;
 }
 
 /**
@@ -2569,7 +2741,7 @@ function walkLineDirection(
     const dirInTwin = applyLinearToDirection(T, prevDirection);
     const lenT = Math.hypot(dirInTwin.x, dirInTwin.y);
     const dirInTwinUnit = { x: dirInTwin.x / lenT, y: dirInTwin.y / lenT };
-    const uOnTwin = uOfPointOnHE(twin, entryPointInTwin);
+    const uOnTwin = uOfPointOnSide(twin, entryPointInTwin);
     const entryHit: BoundaryHit = {
       he: twin,
       point: entryPointInTwin,
@@ -2607,21 +2779,26 @@ function walkLineDirection(
 /**
  * One sub-face pair from a {@link splitAtlasAlongLine} chain step.
  *
- * `leftFace` is the sub-face on the *left* of the line direction at this
- * step (i.e., +perp side); `rightFace` is on the *right* (−perp side).
- * `leftChordHE` and `rightChordHE` are the chord half-edges in their
- * respective sub-faces (twin pair within this step).
+ * `rightFace` is the sub-face on the *right* of the line direction at this
+ * step (−perp side). It is the original Face object that was split, mutated
+ * in place by the identity-preserving {@link splitFaceAtVertices} — its
+ * frame and the coordinates of its kept vertices are unchanged.
  *
- * `originalFace` is kept as a record of which face was split — note the
- * original Face object has been detached from the atlas and should not be
- * dereferenced for geometry afterwards.
+ * `leftFace` is on the *left* of the line direction (+perp side) and is
+ * a freshly-allocated face. `leftOffset` is the re-anchor translation
+ * applied to its frame: a point at parent-frame coordinates `p` is at
+ * `(p.x - leftOffset.x, p.y - leftOffset.y)` in `leftFace`'s frame.
+ *
+ * `leftChordSide` and `rightChordSide` are the chord half-edges in their
+ * respective sub-faces (twin pair within this step).
  */
 export interface ChainSplitPair {
-  originalFace: Face;
-  leftFace: Face;
   rightFace: Face;
-  leftChordHE: HalfEdge;
-  rightChordHE: HalfEdge;
+  leftFace: Face;
+  rightChordSide: Side;
+  leftChordSide: Side;
+  /** Re-anchor offset of `leftFace`'s frame relative to the pre-split frame. */
+  leftOffset: Point;
 }
 
 /**
@@ -2654,43 +2831,38 @@ function captureHit(hit: BoundaryHit): CapturedHit {
 }
 
 /**
- * Find a finite-bearing half-edge of `face` whose parameter range contains
- * the geometric point `p` (in `face`'s frame). Prefers an HE whose origin
+ * Find a finite-bearing side of `face` whose parameter range contains the
+ * geometric point `p` (in `face`'s frame). Prefers a side whose origin
  * coincides with `p` (returns u=0) so chord-endpoint vertices created by
  * prior subdivisions are reused rather than duplicated.
  */
-function findHEForFinitePoint(face: Face, p: Point): { he: HalfEdge; u: number } {
+function findSideForFinitePoint(face: Face, p: Point): { he: Side; u: number } {
   const eps = 1e-7;
-  // Prefer HE whose ORIGIN matches p (existing vertex coincidence).
-  for (const he of face.halfEdges) {
-    if (he.originKind !== 'finite') continue;
-    if (Math.abs(he.ox - p.x) < eps && Math.abs(he.oy - p.y) < eps) {
-      return { he, u: 0 };
+  // Prefer side whose ORIGIN matches p (existing vertex coincidence).
+  for (const side of face.sides) {
+    if (side.originKind !== 'finite') continue;
+    if (Math.abs(side.ox - p.x) < eps && Math.abs(side.oy - p.y) < eps) {
+      return { he: side, u: 0 };
     }
   }
-  // Then any HE that contains p in its parameter range (with collinearity
-  // tolerance). Range depends on edge kind:
-  //   - finite-finite:  u ∈ [0, 1]
-  //   - mixed (finite-ideal / ideal-finite): u ∈ [0, ∞)
-  //   - chord (ideal-ideal twinned): u ∈ (-∞, ∞), origin at u → +∞,
-  //     target at u → -∞, chordAnchor at u = 0.
-  for (const he of face.halfEdges) {
-    if (he.isAtInfinity) continue;
-    const isFF = he.originKind === 'finite' && he.next.originKind === 'finite';
-    const isChord = he.isChord;
-    const u = uOfPointOnHE(he, p);
+  // Otherwise find any non-arc side that contains p in its parameter range
+  // (with collinearity tolerance). Per-kind u-range comes from `rayParam`.
+  for (const side of face.sides) {
+    const r = rayParam(side);
+    if (!r) continue; // at-infinity arc — no finite point on it
+    const u = uOfPointOnSide(side, p);
     if (!Number.isFinite(u)) continue;
-    if (!isChord && u < -eps) continue;
-    if (isFF && u > 1 + eps) continue;
-    const uClamped = isChord ? u : Math.max(0, isFF ? Math.min(1, u) : u);
-    const proj = pointOnHEAtU(he, uClamped);
+    if (Number.isFinite(r.uMin) && u < r.uMin - eps) continue;
+    if (Number.isFinite(r.uMax) && u > r.uMax + eps) continue;
+    const uClamped = Math.max(r.uMin, Math.min(r.uMax, u));
+    const proj = pointOnSideAtU(side, uClamped);
     const dx = proj.x - p.x;
     const dy = proj.y - p.y;
     if (dx * dx + dy * dy < eps * eps) {
-      return { he, u: uClamped };
+      return { he: side, u: uClamped };
     }
   }
-  throw new Error(`findHEForFinitePoint: no half-edge contains point (${p.x}, ${p.y})`);
+  throw new Error(`findSideForFinitePoint: no side contains point (${p.x}, ${p.y})`);
 }
 
 /**
@@ -2712,12 +2884,12 @@ function findHEForFinitePoint(face: Face, p: Point): { he: HalfEdge; u: number }
  * The first loop covers both cases by accepting any HE (arc or finite-
  * bearing) whose origin matches the direction.
  */
-function findArcForIdealDir(face: Face, idealDir: Point): HalfEdge {
+function findSideForIdealDir(face: Face, idealDir: Point): Side {
   const eps = 1e-9;
   // Either an arc starting at idealDir, or a finite-bearing HE coming out
   // of the ideal corner (corner exit). materialise() short-circuits in
   // both cases since the chord endpoint already coincides with origin().
-  for (const he of face.halfEdges) {
+  for (const he of face.sides) {
     if (he.originKind !== 'ideal') continue;
     if (Math.abs(he.ox - idealDir.x) >= eps) continue;
     if (Math.abs(he.oy - idealDir.y) >= eps) continue;
@@ -2726,7 +2898,7 @@ function findArcForIdealDir(face: Face, idealDir: Point): HalfEdge {
   // Arc sweep fallback: a stale `idealDir` may sit strictly inside an arc
   // whose endpoints didn't yet contain a vertex matching it — materialise()
   // will subdivide.
-  for (const he of face.halfEdges) {
+  for (const he of face.sides) {
     if (!he.isAtInfinity) continue;
     const a = he.origin();
     const b = he.next.origin();
@@ -2738,22 +2910,22 @@ function findArcForIdealDir(face: Face, idealDir: Point): HalfEdge {
     }
   }
   throw new Error(
-    `findArcForIdealDir: no at-infinity arc contains direction (${idealDir.x}, ${idealDir.y})`,
+    `findSideForIdealDir: no at-infinity arc contains direction (${idealDir.x}, ${idealDir.y})`,
   );
 }
 
 /**
  * Given a captured hit and a (possibly mutated) face, build a fresh
  * {@link BoundaryHit} with an HE reference that is guaranteed to be in
- * `face.halfEdges`.
+ * `face.sides`.
  */
 function refreshHit(face: Face, captured: CapturedHit): BoundaryHit {
   if (captured.point) {
-    const { he, u } = findHEForFinitePoint(face, captured.point);
+    const { he, u } = findSideForFinitePoint(face, captured.point);
     return { he, point: captured.point, u, idealDir: null };
   }
   if (captured.idealDir) {
-    const he = findArcForIdealDir(face, captured.idealDir);
+    const he = findSideForIdealDir(face, captured.idealDir);
     return { he, point: null, u: null, idealDir: captured.idealDir };
   }
   throw new Error('refreshHit: captured has neither point nor idealDir');
@@ -2778,7 +2950,7 @@ function refreshHit(face: Face, captured: CapturedHit): BoundaryHit {
  *   (degenerate exit). Callers should perturb if needed.
  * - When a face's chord has both endpoints at infinity (e.g. the line
  *   passes through an all-ideal face entirely with no finite crossings),
- *   the chord line is recorded via {@link HalfEdge.chordAnchor}. For the
+ *   the chord line is recorded via {@link Side.anchor}. For the
  *   host face this anchor is `seam` directly; for non-host faces in the
  *   chain we use the entry-hit's finite point if available, falling back
  *   to mapping the host's seam through the chain's twin transforms.
@@ -2819,7 +2991,7 @@ export function splitAtlasAlongLine(
     face: c.face,
     entry: c.entry ? captureHit(c.entry) : null,
     exit: captureHit(c.exit),
-    chordAnchor:
+    anchor:
       c.isHost && c.seam
         ? { x: c.seam.x, y: c.seam.y }
         : c.entry && c.entry.point
@@ -2837,17 +3009,17 @@ export function splitAtlasAlongLine(
   for (const c of captured) {
     const entryHit = refreshHit(c.face, c.entry!);
     const exitHit = refreshHit(c.face, c.exit);
-    const result = splitFaceAlongChord(atlas, c.face, entryHit, exitHit, c.chordAnchor);
+    const result = splitFaceAlongChord(atlas, c.face, entryHit, exitHit, c.anchor);
     // splitFaceAlongChord doc: faces[0] is on the RIGHT of entry→exit
     // direction; faces[1] is on the LEFT. Line direction in this face's
     // frame matches entry→exit direction (translation-only twins
     // preserve direction across the chain).
     pairs.push({
-      originalFace: c.face,
-      rightFace: result.faces[0],
-      leftFace: result.faces[1],
-      rightChordHE: result.chordHEs[0],
-      leftChordHE: result.chordHEs[1],
+      rightFace: result.face,
+      leftFace: result.fresh,
+      rightChordSide: result.faceChordSide,
+      leftChordSide: result.freshChordSide,
+      leftOffset: result.freshOffset,
     });
   }
 
@@ -2927,10 +3099,10 @@ export function splitFaceAlongLine(
  */
 export interface InsertStripResult {
   stripFace: Face;
-  /** Strip's bottom half-edge per chain step (twin of `splitResult.pairs[i].rightChordHE`). */
-  bottomHEs: HalfEdge[];
-  /** Strip's top half-edge per chain step (twin of `splitResult.pairs[i].leftChordHE`). */
-  topHEs: HalfEdge[];
+  /** Strip's bottom half-edge per chain step (twin of `splitResult.pairs[i].rightChordSide`). */
+  bottomSides: Side[];
+  /** Strip's top half-edge per chain step (twin of `splitResult.pairs[i].leftChordSide`). */
+  topSides: Side[];
 }
 
 /**
@@ -2949,7 +3121,7 @@ export interface InsertStripResult {
  * crossing — typically because the host was an all-ideal face like the
  * empty-canvas seed — the chord HE pair is ideal-ideal. The resulting
  * strip is a digon (k=2 face) bounded by two parallel chord HEs: bottom
- * twin to `rightChordHE`, top twin to `leftChordHE`, anchored `height`
+ * twin to `rightChordSide`, top twin to `leftChordSide`, anchored `height`
  * perpendicular apart in the strip's local frame.
  *
  * Strip frame: global-aligned (translation-only twins, matching the rest
@@ -2987,7 +3159,7 @@ export function insertStrip(
   // (parallelogram with two free side boundaries), which isn't supported
   // yet — reject explicitly so callers get a clear signal.
   if (N === 1) {
-    const r = splitResult.pairs[0].rightChordHE;
+    const r = splitResult.pairs[0].rightChordSide;
     if (r.origin().kind !== 'ideal' || r.target().kind !== 'ideal') {
       throw new Error(
         'insertStrip: single-face chain with finite chord endpoints is not yet supported (only ideal-ideal chords produce a valid digon strip)',
@@ -2997,12 +3169,12 @@ export function insertStrip(
 
   // ---- Determine line direction d in any face's frame ----
   // Translation-only twins → d is the same across all faces and the strip.
-  // rightChordHE goes B → A (i.e., in -d direction). For an ideal-ideal
+  // rightChordSide goes B → A (i.e., in -d direction). For an ideal-ideal
   // chord (N=1 case), origin is the +d ideal vertex (B) by the convention
   // in splitFaceAtVertices: the right sub-face's chord goes B → A.
   let d: Point | null = null;
   for (const pair of splitResult.pairs) {
-    const r = pair.rightChordHE;
+    const r = pair.rightChordSide;
     const ro = r.origin();
     const rt = r.target();
     if (ro.kind === 'finite' && rt.kind === 'finite') {
@@ -3040,7 +3212,7 @@ export function insertStrip(
   const cPositions: Point[] = new Array(N + 1);
   if (N >= 2) cPositions[1] = { x: 0, y: 0 };
   for (let i = 2; i < N; i++) {
-    const r = splitResult.pairs[i - 1].rightChordHE;
+    const r = splitResult.pairs[i - 1].rightChordSide;
     const ro = r.origin();
     const rt = r.target();
     if (ro.kind !== 'finite' || rt.kind !== 'finite') {
@@ -3074,17 +3246,17 @@ export function insertStrip(
   };
 
   // ---- Build strip face's half-edges ----
-  // bottomHEs[i]: origin = A in bot, target (implicit via .next) = B in bot.
-  // topHEs[i]:    origin = B in top, target (implicit via .next) = A in top.
-  const bottomHEs: HalfEdge[] = [];
+  // bottomSides[i]: origin = A in bot, target (implicit via .next) = B in bot.
+  // topSides[i]:    origin = B in top, target (implicit via .next) = A in top.
+  const bottomSides: Side[] = [];
   for (let i = 0; i < N; i++) {
     const j = aJunction(i, 'bot');
-    bottomHEs.push(new HalfEdge(j.kind, j.x, j.y));
+    bottomSides.push(new Side(j.kind, j.x, j.y));
   }
-  const topHEs: HalfEdge[] = [];
+  const topSides: Side[] = [];
   for (let i = 0; i < N; i++) {
     const j = bJunction(i, 'top');
-    topHEs.push(new HalfEdge(j.kind, j.x, j.y));
+    topSides.push(new Side(j.kind, j.x, j.y));
   }
 
   // CCW order around the strip:
@@ -3093,27 +3265,27 @@ export function insertStrip(
   // Rotate so anchor is hes[0]:
   //   [B[1], B[2], ..., B[N-1], T[N-1], ..., T[0], B[0]]
   // For N=1 this collapses to [T[0], B[0]] — a 2-HE digon.
-  const stripHEs: HalfEdge[] = [
-    ...bottomHEs.slice(1),
-    ...topHEs.slice().reverse(),
-    bottomHEs[0],
+  const stripSides: Side[] = [
+    ...bottomSides.slice(1),
+    ...topSides.slice().reverse(),
+    bottomSides[0],
   ];
 
   // For N=1 (digon strip) both HEs are ideal-ideal chords; set their
   // anchors so the slab has bottom at (0, 0) and top at height·perp.
-  // Cycle is [topHEs[0], bottomHEs[0]] for N=1 (verified by the slice
+  // Cycle is [topSides[0], bottomSides[0]] for N=1 (verified by the slice
   // construction above with N=1).
   if (N === 1) {
-    bottomHEs[0].chordAnchor = { x: 0, y: 0 };
-    topHEs[0].chordAnchor = { x: height * perp.x, y: height * perp.y };
+    bottomSides[0].anchor = { x: 0, y: 0 };
+    topSides[0].anchor = { x: height * perp.x, y: height * perp.y };
   }
 
-  const stripFace = new Face(stripHEs);
+  const stripFace = new Face(stripSides);
 
   // ---- Wire chord twin pairs to strip's bottom/top half-edges ----
   for (let i = 0; i < N; i++) {
-    const r = splitResult.pairs[i].rightChordHE;
-    const l = splitResult.pairs[i].leftChordHE;
+    const r = splitResult.pairs[i].rightChordSide;
+    const l = splitResult.pairs[i].leftChordSide;
     const ro = r.origin(); // B in rightFace frame
     const rt = r.target(); // A in rightFace frame
     const lo = l.origin(); // A in leftFace frame
@@ -3130,7 +3302,7 @@ export function insertStrip(
       const stripA = aJunction(i, 'bot');
       oR = { x: (stripA as { x: number; y: number }).x - rt.x, y: (stripA as { x: number; y: number }).y - rt.y };
     } else {
-      const rAnchor = r.chordAnchor!;
+      const rAnchor = r.anchor!;
       // Strip's bottom chord anchor (in strip frame) is (0, 0).
       oR = { x: -rAnchor.x, y: -rAnchor.y };
     }
@@ -3143,7 +3315,7 @@ export function insertStrip(
       const stripB = bJunction(i, 'top');
       oL = { x: (stripB as { x: number; y: number }).x - lt.x, y: (stripB as { x: number; y: number }).y - lt.y };
     } else {
-      const lAnchor = l.chordAnchor!;
+      const lAnchor = l.anchor!;
       // Strip's top chord anchor is height · perp.
       oL = { x: height * perp.x - lAnchor.x, y: height * perp.y - lAnchor.y };
     }
@@ -3153,29 +3325,29 @@ export function insertStrip(
     const T_LtoS = M.fromTranslate(oL.x, oL.y);
     const T_StoL = M.invert(T_LtoS);
 
-    setTwin(r, bottomHEs[i], T_RtoS, T_StoR);
-    setTwin(l, topHEs[i], T_LtoS, T_StoL);
+    setTwin(r, bottomSides[i], T_RtoS, T_StoR);
+    setTwin(l, topSides[i], T_LtoS, T_StoL);
   }
 
   attachFace(atlas, stripFace);
 
-  return { stripFace, bottomHEs, topHEs };
+  return { stripFace, bottomSides, topSides };
 }
 
 /**
  * Resize an existing strip's perpendicular thickness in place.
  *
  * Mutates only the +n (top) side of the strip:
- *  - Each finite `topHEs[i]` origin shifts by `Δ · perp` in the strip's frame
+ *  - Each finite `topSides[i]` origin shifts by `Δ · perp` in the strip's frame
  *    (where `Δ = newHeight − oldHeight`, `perp = (-d.y, d.x)`, the 90° CCW
  *    rotation of the line direction).
- *  - The `leftChordHE ↔ topHEs[i]` twin transforms shift by the same `Δ · perp`,
+ *  - The `leftChordSide ↔ topSides[i]` twin transforms shift by the same `Δ · perp`,
  *    keeping the chord-image correspondence (`T · h.next.origin = h.twin.origin`)
  *    exact under the new height.
  *
  * Untouched (independent of `height` by construction):
- *  - `bottomHEs` and `rightChordHE ↔ bottomHEs[i]` twin transforms.
- *  - The strip face's anchor (`halfEdges[0]`, which is `bottomHEs[1]`).
+ *  - `bottomSides` and `rightChordSide ↔ bottomSides[i]` twin transforms.
+ *  - The strip face's anchor (`sides[0]`, which is `bottomSides[1]`).
  *
  * Visual effect: the −n side of the cut (the "right" side) stays planted,
  * while the +n side gets pushed away as the strip grows. This matches the
@@ -3207,7 +3379,7 @@ export function resizeStrip(
   if (!(newHeight > 0)) {
     throw new Error('resizeStrip: newHeight must be positive');
   }
-  const N = stripResult.bottomHEs.length;
+  const N = stripResult.bottomSides.length;
   if (N !== splitResult.pairs.length) {
     throw new Error(
       `resizeStrip: chain length mismatch (strip ${N} vs split ${splitResult.pairs.length})`,
@@ -3222,15 +3394,15 @@ export function resizeStrip(
   //  (a) For N >= 3 there are two adjacent finite bottom origins (c[1], c[2]),
   //      and c[2] - c[1] = chordLen[1] · d. Direction is exact.
   //  (b) For N == 2 there is only c[1] on the bottom, so we read perp directly
-  //      from topHEs[0] - bottomHEs[1] = oldHeight · perp, then derive d.
+  //      from topSides[0] - bottomSides[1] = oldHeight · perp, then derive d.
   //  (c) For N == 1 (digon strip from an ideal-ideal cut) all bottom/top HEs
   //      are ideal-ideal chords; d is one of the chord's ideal endpoints,
-  //      and perp is recovered from the (top.chordAnchor − bot.chordAnchor)
+  //      and perp is recovered from the (top.anchor − bot.anchor)
   //      direction (which equals oldHeight · perp).
   let d: Point;
   if (N === 1) {
-    const b = stripResult.bottomHEs[0];
-    const t = stripResult.topHEs[0];
+    const b = stripResult.bottomSides[0];
+    const t = stripResult.topSides[0];
     if (!b.isChord || !t.isChord) {
       throw new Error('resizeStrip: N=1 strip must have chord HEs on bottom and top');
     }
@@ -3238,7 +3410,7 @@ export function resizeStrip(
     if (o.kind !== 'ideal') {
       throw new Error('resizeStrip: N=1 chord origin must be ideal');
     }
-    // `insertStrip` builds the digon strip so that `topHEs[0].origin` is
+    // `insertStrip` builds the digon strip so that `topSides[0].origin` is
     // the +d ideal vertex (per the bJunction(0, 'top') case where i ===
     // N-1). Reading the line direction off the top HE's origin keeps
     // `perp = (-d.y, d.x)` consistent with the original construction —
@@ -3246,14 +3418,14 @@ export function resizeStrip(
     // moves it the right way.
     d = { x: o.x, y: o.y };
   } else {
-    const b1 = stripResult.bottomHEs[1].origin();
+    const b1 = stripResult.bottomSides[1].origin();
     if (b1.kind !== 'finite') {
-      throw new Error('resizeStrip: bottomHEs[1] expected to be finite');
+      throw new Error('resizeStrip: bottomSides[1] expected to be finite');
     }
     let dxRaw = 0;
     let dyRaw = 0;
     if (N >= 3) {
-      const b2 = stripResult.bottomHEs[2].origin();
+      const b2 = stripResult.bottomSides[2].origin();
       if (b2.kind === 'finite') {
         dxRaw = b2.x - b1.x;
         dyRaw = b2.y - b1.y;
@@ -3261,7 +3433,7 @@ export function resizeStrip(
     }
     if (dxRaw === 0 && dyRaw === 0) {
       // N == 2 fallback (or unexpected ideal middle origin): derive perp first.
-      const t0 = stripResult.topHEs[0].origin();
+      const t0 = stripResult.topSides[0].origin();
       if (t0.kind !== 'finite') {
         throw new Error('resizeStrip: cannot recover line direction from strip');
       }
@@ -3291,13 +3463,13 @@ export function resizeStrip(
   // direction is translation-invariant, but the line through R² shifts
   // perpendicularly by exactly Δ · perp.
   for (let i = 0; i < N; i++) {
-    const t = stripResult.topHEs[i];
+    const t = stripResult.topSides[i];
     if (t.originKind === 'finite') {
       t.ox += dpx;
       t.oy += dpy;
     } else if (t.isChord) {
-      const a = t.chordAnchor!;
-      t.chordAnchor = { x: a.x + dpx, y: a.y + dpy };
+      const a = t.anchor!;
+      t.anchor = { x: a.x + dpx, y: a.y + dpy };
     }
   }
 
@@ -3306,8 +3478,8 @@ export function resizeStrip(
   // translation part. The linear part is identity (translation), so we
   // build the new matrix by adding to .e/.f and inverting for the back-edge.
   for (let i = 0; i < N; i++) {
-    const l = splitResult.pairs[i].leftChordHE;
-    const t = stripResult.topHEs[i];
+    const l = splitResult.pairs[i].leftChordSide;
+    const t = stripResult.topSides[i];
     const oldT = l.transform;
     const T_LtoS = M.fromValues(
       oldT.a,
