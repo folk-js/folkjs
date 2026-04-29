@@ -248,11 +248,98 @@ The asymmetric-twin trap is eliminated by construction. `Stitch` is reciprocal-o
 
 The original chunk F (drop similarity-only + delete the named twin primitives) was carved out as a separate step before we recognised Link was the underlying substrate gap. With Link in place, those weren't separate work — they were things that fell out of Phase 3 once the asymmetric model became unreachable.
 
+### Cleanup pass — drop deprecated aliases, consolidate dispatch ✅ landed
+
+After Phase 3 there was a layer of transitional debris: deprecated type aliases (`HalfEdge = Side`), deprecated result fields (`SplitChordResult.faces`, `chordSides`), deprecated getters (`Side.isAtInfinity`, `Side.isChord`), and `Side`'s redundant `originKind`/`ox`/`oy`/`twin`/`transform` storage (now derivable from `a: Junction` plus `stitch`).
+
+**What landed:**
+- `HalfEdge` type alias deleted; ~150 reads/writes migrated to use `Side` and `Side.a` directly.
+- `SplitChordResult.faces` and `chordSides` array accessors deleted; consumers migrated to direct fields (`face`, `fresh`, `faceChordSide`, `freshChordSide`).
+- `Side.isAtInfinity` / `Side.isChord` getters deleted; ~40 call sites migrated to `side.kind === 'arc'` / `=== 'chord'`.
+- `BoundaryHit` / `CapturedHit` rewritten as proper discriminated unions (`{ kind: 'finite', … } | { kind: 'ideal', … }`), eliminating optional-field plumbing across consumers.
+- `Side.originKind` / `ox` / `oy` collapsed into `Side.a: Junction`. The Junction descriptor was already canonical for `Face.junctions()` consumers; now it's also the storage shape on `Side` itself.
+- `Side.twin` / `Side.transform` *fields* deleted and replaced by getters that delegate to `Stitch` (`stitch.other(self)` / `stitch.transformFrom(self)`). `Stitch` gained `transformAtoB` / `transformBtoA` direct fields and is now the single source of truth for edge-level transforms; arcs (which have no stitch) just expose `null` / identity.
+- Internal `matricesAreClose` / `matrixToString` helpers deleted; `validateAtlas` uses `M.equals` and inlines string formatting.
+
+**Net delta:** ~−180 lines `atlas.ts` net (after accounting for new Stitch storage and discriminated-union reshaping); 216 tests pass; TypeScript build clean.
+
+**Why this matters:** the post-cleanup substrate is genuinely smaller. `Side` is now a thin geometry+topology pointer record (origin junction, neighbour pointers, optional anchor, optional stitch back-ref) with derived getters; `Stitch` is the authoritative edge-binding object; `Link` handles directed cross-face placement. The "asymmetric edge twin" axis is gone in storage as well as in spirit.
+
+### `createFace` substrate primitive ✅ landed
+
+Adds the missing "build a polygon face from a CCW list of junctions and register it with the atlas" primitive — until now, the only way to construct a face was either via the seed-atlas builders (`createInitialAtlas`, `createAllIdealAtlas`), via `splitFaceAtVertices` (which reuses pre-existing Side objects), or by hand inside `insertStrip` (~30 lines of side-allocation + rotation + cycle wiring + atlas registration).
+
+**What landed:**
+- `createFace(atlas, junctions, options?)` exported as the substrate primitive: takes a CCW list of `Junction`s, builds the `Side` objects, wires the cycle, optionally pins ideal-ideal chord lines via an `anchors: Map<number, Point>` option, registers the face + its sides with the atlas, returns the new `Face`.
+- `insertStrip` rewritten on top of `createFace`. The bottom/top junction arrays are computed as before (this is the strip-specific layout logic), but the side construction, cycle rotation, anchor pinning, `new Face`, and `attachFace` are replaced by a single `createFace` call. Recovery of `bottomSides` / `topSides` from the new face's `sides` array becomes a slice + a small reverse loop (the legacy "rotate so first finite vertex is at sides[0]" cosmetic was dropped — Face's `sides[0]` no longer carries any anchor convention; the strip's `(0, 0)` anchor lives in its frame, not in cycle position).
+- The chord-twin stitching loop in `insertStrip` was extracted into a small `stitchAndTranslate` helper that captures the "translate to whichever endpoint is finite, fall back to chord anchor for ideal-ideal" pattern in one place. Right and left chords pass different `(stripForOrigin, stripForTarget)` pairs to express their direction asymmetry (right goes B→A, left goes A→B).
+
+**Net delta:** atlas.ts +33 lines (createFace primitive ~50 with full doc; insertStrip body shrank ~17 net). 220 tests pass (was 215, added 5 direct `createFace` tests; one `insertStrip` test rewritten to assert the semantic property `(0, 0) is a finite vertex of the strip` instead of the former cosmetic `sides[0].a is finite at (0, 0)`).
+
+**Why the LOC didn't drop the way the audit projected:** the audit estimated `−80` LOC for "createFace + partial insertStrip dissolution." Reality: `insertStrip`'s 250-line body is dominated by line-direction inference (~30), vertex-layout maths (~30), chord-twin wiring (~50) and digon-special-case bookkeeping (~10). Face construction proper was ~20 lines pre-refactor. `createFace` can only dissolve those 20 — the rest is genuinely strip-specific and stays. The audit's "strip isn't special" instinct is right at the level of substrate primitives (the strip face IS just `createFace + stitching`), but the *layout maths* between the chord chain and the strip's vertex coordinates is something only the strip macro knows, and that's where most of the lines are.
+
+**What this unlocks anyway:**
+- Future macros that build a face from junctions (recess scheme, hex tile, Klein-bottle quad, …) can now do it in one line instead of copy-pasting the side-build + face-construction + atlas-register dance.
+- The `Face` constructor + `attachFace` helper combo is no longer a public composition contract; `createFace` is the single substrate entry point. Direct `new Face(...)` survives only inside the seed-atlas builders (which precede `Atlas` itself) and inside `splitFaceAtVertices` (which reuses pre-existing Side objects rather than building from junctions).
+
+### Macro surface collapse — split primitives ✅ landed
+
+The post-cleanup audit flagged the surgery surface as suspicious: `subdivideSide` and `subdivideAtInfinityArc` were two near-identical functions distinguished only by whether the side being subdivided was an arc; `splitFaceAlongLine` and `splitAtlasAlongLine` were two ways to start a line cut, diverging only on whether the cut propagated through twin edges.
+
+**What landed:**
+- `subdivideAtInfinityArc` deleted; `subdivideSide` now handles both arc and non-arc inputs uniformly. The `at: Point` argument is interpreted as a finite point on non-arcs, and as a unit ideal direction on arcs (the side's `kind` discriminator picks). Result type unified: `SubdivideSideResult { newVertex, faceHalves, twinHalves: [Side, Side] | null }` where `twinHalves` is `null` for arcs (and for free non-arc sides, just like before).
+- `splitFaceAlongLine` and `splitAtlasAlongLine` deleted; both folded into `splitAlongLine(atlas, host, seam, direction, options?: { propagate?: boolean })`. `propagate: true` (default) walks the chain across the atlas; `propagate: false` cuts only the host face. Result type unified: `SplitAlongLineResult { pairs: ChainSplitPair[] }` always — face-bounded cuts return a single-element `pairs` array.
+
+**Net delta:** −68 lines `atlas.ts`, −10 lines tests, −1 line `folk-atlas.ts`. 215 tests pass (was 216; one redundant "throws on at-infinity arcs" test deleted as the new `subdivideSide` handles both cases natively, replaced with two more meaningful arc-edge-case tests).
+
+**Why this matters:** the substrate primitive surface is now strictly smaller. A subdivision is "insert a vertex on this side at this location" — one operation, kind-dispatched internally. A line cut is "cut along this line, optionally propagating" — one operation, parameterised. Callers no longer have to know the side is an arc to pick the right function; they no longer have to know whether they want propagation to import the right name. The mental model is "what do I want to do (subdivide / cut)" instead of "which kind of input am I starting from."
+
 ## Status / current ordering
 
-Landed: **A** → **C** → **B** → **E Phase 1**. Pending: **E Phase 2** (rewrite wrap), **E Phase 3** (retire asymmetric machinery, fold in F).
+Landed: **A** → **C** → **B** → **E Phase 1** → **E Phase 2** → **E Phase 3** → **cleanup pass** → **macro surface collapse** → **`createFace` primitive**.
 
-Chunk D ("lift macros to a folder") was reconsidered and dropped — moving `splitFaceAlongChord` etc. to `atlas/macros/` is organizational, not substrate, work. The macros stay where they are; what improves them is *better building blocks*, not better folder structure. Better building blocks is what E Phases 2 + 3 deliver.
+### Bug fix: Link transforms now re-derive from the stitch chain after cuts ✅ landed
+
+The `links` commit (`e644523`, `E Phase 1`) replaced the asymmetric edge-twin wrap pattern with `Stitch` (cylinder loop) + `Link` (host-side placement). For a cylinder region this installs **two** Links — one from each side neighbour — and the wrap-on logic chooses both transforms so that, in the pre-cut topology, walking from any root via either link reaches the region at the same world position. Composite consistency is encoded by the equation
+`composite(link_a.from, R) · link_a.transform = composite(link_b.from, R) · link_b.transform` for every BFS root `R`.
+
+Cuts on a face adjacent to the wrapped region break this equation. The cut chain conjugates `Stitch` transforms, which shifts `composite(link.from, R)` for each link source. `link.transform` was a one-time snapshot at wrap-on, so it stays frozen while the chain composites drift. When BFS from one root picks `link_a` (e.g. because `link_a.from` is dequeued first) and BFS from another root picks `link_b`, the two roots place the region at *different* world positions. The user-visible symptom is the region appearing to "stay put" while the surrounding geometry shifts by exactly the strip's `height · perp` — a clean signature of the link-vs-chain divergence.
+
+**Fix.** Both `splitFaceAtVertices` AND `insertStrip` now re-derive each `Link.transform` from a stitch-only BFS along `link.from → link.to`:
+
+```
+function recomputeLinkTransformsFromStitchChain(atlas) {
+  for (const link of atlas.links) {
+    if (link.from === link.to) continue;            // self-link (recursive zoom): no chain to derive
+    const chain = bfsCompositeViaStitchesOnly(atlas, link.from, link.to);
+    if (chain) link.transform = chain;
+  }
+}
+```
+
+The helper `bfsCompositeViaStitchesOnly(atlas, from, target)` BFS-walks twins (no link traversal) from `from` to `target`, returning the composite mapping `target`-frame → `from`-frame, or `null` if `target` is unreachable via stitches.
+
+Three call sites are needed: `splitFaceAtVertices` (post stitch conjugation), `insertStrip` (post chord-stitch → strip-stitch swap), and `resizeStrip` (post top-stitch `Δ·perp` shift).
+
+The `resizeStrip` call site is the one that completes the fix. The line-cut UI flow is:
+1. `#commitCutGizmo` triggers `splitAlongLine + insertStrip` *once* at the gesture's first-cross-epsilon delta — this is the strip's *initial* height, not the user's final intended height.
+2. Subsequent drag motion in the same gesture calls `#resizeCutStrip` → `resizeStrip(... newHeight)` repeatedly, mutating the strip top-row stitches by `Δ·perp` each tick.
+
+Without a `resizeStrip` recompute, every cut leaves Link transforms frozen at the *initial-commit* height while the visible strip is at the *final-drag* height, so links are stale by `(finalH − initialH) · perp`. This produced the user-reported "each cut introduces error, the next cut 'fixes' the previous" cascade: each `splitAlongLine + insertStrip` call inside the next gesture re-derives links against the *current* (post-resize) state of all earlier strips, fixing the previous cut's stale value, but the new gesture's own resize phase then leaves *its* link-derived chain stale until the next cut.
+
+`resizeStrip` now takes an optional `atlas` parameter and calls `recomputeLinkTransformsFromStitchChain(atlas)` after mutating top-row transforms. `folk-atlas.ts` passes `this.#atlas` through. With all three call sites in place, link composites stay synchronised through arbitrarily long cut + resize sequences.
+
+Self-links (recursive zoom) keep their original transform — there's no stitch chain to derive it from, and the self-link's transform encodes a deliberate scale/translate.
+
+**Why this works.** Re-derivation keeps every Link in sync with the post-cut conjugated stitch reality. From any root, the stitch chain to `link.to` via `link.from` and the link path to `link.to` give identical composites, so multi-link wrap setups stay self-consistent through any sequence of cuts. The pattern mirrors how the asymmetric-twin model handled this pre-`E1`: the asymmetric edge's transform got conjugated in place by `splitFaceAtVertices`, keeping the wrap edge in sync with the cut. The `Link` system lost this property when transforms became face-level rather than side-level, and recomputing from the chain restores it.
+
+**Constraints.**
+- Faces with closed-surface topology (a torus region: every wrap-axis edge has a self-stitch) are unreachable via stitches from outside, so `bfsCompositeViaStitchesOnly` returns `null` and the Link is left alone — its transform is the *only* placement of the region inside its host, and there's no chain to compete with.
+- The cylinder-h, cylinder-v, and torus scenes all stay consistent under propagating line cuts after this fix, with the wrapped region's BFS image staying anchored to its world position from any root.
+
+All 221 substrate tests pass; manual verification via `cylinder-h` scene + diagonal cut on the left of the region confirms the region no longer drifts as the BFS root crosses the cut.
+
+Chunk D ("lift macros to a folder") was reconsidered and dropped — moving `splitFaceAlongChord` etc. to `atlas/macros/` is organizational, not substrate, work. The macros stay where they are; what improves them is *better building blocks*, not better folder structure. Better building blocks is what E Phases 2 + 3 + the macro-surface collapse delivered.
 
 ## How we'll know we're on the right track
 

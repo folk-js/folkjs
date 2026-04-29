@@ -170,7 +170,7 @@ export const SCENES: Record<string, SceneBuilder> = {
     // Russian-doll stack of N nested scaled regions to demonstrate "infinite"
     // (well, deep) zoom. Each region is carved INSIDE its parent via a
     // face-bounded cut (no propagation through twin edges — see
-    // `splitFaceAlongLine`), so deep cuts don't slice every parent above
+    // `splitAlongLine` with `propagate: false`), so deep cuts don't slice every parent above
     // them. Each level then gets a uniform interior scale; combined with a
     // shrinking screen footprint per level, the result is a self-similar
     // tunnel the user can wheel-zoom into.

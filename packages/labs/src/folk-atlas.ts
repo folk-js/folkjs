@@ -12,15 +12,14 @@ import {
   Link,
   rescaleFaceFrame,
   resizeStrip,
-  splitAtlasAlongLine,
-  splitFaceAlongLine,
+  splitAlongLine,
   Stitch,
   stitch,
   translationToWrap,
   unlink,
   unstitch,
   type AtlasImage,
-  type SplitAtlasAlongLineResult,
+  type SplitAlongLineResult,
   type InsertStripResult,
 } from './atlas.ts';
 import { FolkAtlasRegion } from './folk-atlas-region.ts';
@@ -187,7 +186,7 @@ interface LineCutGizmo {
 
   /**
    * Set once the line-cut mutation is committed to the atlas:
-   * `splitAtlasAlongLine` subdivides every face the line crosses into a
+   * `splitAlongLine` subdivides every face the line crosses into a
    * left/right pair, and `insertStrip` opens the seam to the current
    * |delta|. The gizmo holds onto the resulting per-step pairs and
    * strip metadata so subsequent handle drags resize the strip in place
@@ -197,7 +196,7 @@ interface LineCutGizmo {
    * re-anchored to `strip.stripFace`.
    */
   committed: {
-    split: SplitAtlasAlongLineResult;
+    split: SplitAlongLineResult;
     strip: InsertStripResult;
     /** Sign of `delta` at commit time — picks which side the strip pushes. */
     sign: 1 | -1;
@@ -1163,7 +1162,7 @@ export class FolkAtlas extends ReactiveElement {
    *
    * `screenRect` is in CSS pixels relative to the atlas's bounding rect —
    * the natural output of a tool drag. We convert to face-local coordinates
-   * per cut because each `splitAtlasAlongLine` call may reassign
+   * per cut because each `splitAlongLine` call may reassign
    * `atlas.root` and shift the root frame.
    *
    * Returns the created region element (already appended to the region
@@ -1190,7 +1189,7 @@ export class FolkAtlas extends ReactiveElement {
     // Seeds are placed at the *midpoint* of each cut line (not at the rect's
     // corners): a corner sits on the boundary of two existing wedge faces in
     // the seed atlas and on the boundary of subsequent cut faces, which makes
-    // `splitAtlasAlongLine`'s `face.contains` lookups and walk-line entry
+    // `splitAlongLine`'s `face.contains` lookups and walk-line entry
     // computations degenerate. Midpoints are guaranteed strictly interior to
     // their host face after every previous parallel cut.
     //
@@ -1267,20 +1266,21 @@ export class FolkAtlas extends ReactiveElement {
    * Handles host lookup, frame conversion, and post-cut shape/region
    * re-validation.
    *
-   * Uses {@link splitFaceAlongLine} (NOT {@link splitAtlasAlongLine}) so
-   * the cut terminates at the host face's boundary rather than propagating
-   * through twin edges. Region carving is meant to live entirely inside
-   * its host face — otherwise carving a region inside a deeply nested
-   * scaled face would slice every level above it. The "global" line-cut
-   * tool (`#commitCutGizmo`) deliberately uses the propagating variant
-   * since cutting through space is its defining behaviour.
+   * Uses {@link splitAlongLine} with `propagate: false` so the cut
+   * terminates at the host face's boundary rather than propagating through
+   * twin edges. Region carving is meant to live entirely inside its host
+   * face — otherwise carving a region inside a deeply nested scaled face
+   * would slice every level above it. The "global" line-cut tool
+   * (`#commitCutGizmo`) deliberately uses the propagating variant
+   * (`propagate: true`) since cutting through space is its defining
+   * behaviour.
    *
    * Returns `true` iff the cut actually mutated the atlas. Returning a
    * boolean lets `createRegionAtScreenRect` distinguish "cut applied" from
    * "cut bailed out" (host not found / split threw / etc) without us
    * having to thread error sentinels through the call stack.
    *
-   * Identity-preserving split (`splitFaceAlongLine` → `splitFaceAtVertices`)
+   * Identity-preserving split (`splitAlongLine` → `splitFaceAtVertices`)
    * means: `host` survives the cut as the kept side, `atlas.root` is never
    * replaced, no view K-matrix compensation is needed. Shapes whose
    * face-local coordinates are now outside their face's (smaller) boundary
@@ -1306,7 +1306,7 @@ export class FolkAtlas extends ReactiveElement {
       return false;
     }
     try {
-      splitFaceAlongLine(this.#atlas, host, seedLocal, direction);
+      splitAlongLine(this.#atlas, host, seedLocal, direction, { propagate: false });
     } catch (err) {
       console.warn('[folk-atlas] region cut split failed:', err);
       return false;
@@ -1559,7 +1559,7 @@ export class FolkAtlas extends ReactiveElement {
     // `#runOneRegionCut`'s host lookup) would otherwise compose the new
     // face vertices with old composites and pick a non-existent or
     // boundary-coincident "host", producing the misleading
-    // `splitFaceAlongLine: seam is not strictly interior to host` error.
+    // `splitAlongLine: seam is not strictly interior to host` error.
     this.#lastComposites = new Map();
     this.#scheduleUpdate();
   }
@@ -2026,9 +2026,9 @@ export class FolkAtlas extends ReactiveElement {
     // strip face (a brand-new face), so we route through `oldHostComp`.
     const oldHostComp = this.#lastComposites.get(gizmo.hostFace);
 
-    let split: SplitAtlasAlongLineResult;
+    let split: SplitAlongLineResult;
     try {
-      split = splitAtlasAlongLine(this.#atlas, gizmo.hostFace, gizmo.anchor, direction);
+      split = splitAlongLine(this.#atlas, gizmo.hostFace, gizmo.anchor, direction);
     } catch (err) {
       console.warn('[folk-atlas] line cut split failed:', err);
       this.#clearCutGizmo();
@@ -2094,7 +2094,7 @@ export class FolkAtlas extends ReactiveElement {
     const newHeight = Math.max(FolkAtlas.#COMMIT_EPS, Math.abs(gizmo.delta));
     if (newHeight === c.height) return;
     try {
-      resizeStrip(c.strip, c.split, c.height, newHeight);
+      resizeStrip(c.strip, c.split, c.height, newHeight, this.#atlas);
     } catch (err) {
       console.warn('[folk-atlas] line cut resize failed:', err);
       return;
@@ -2356,6 +2356,36 @@ export class FolkAtlas extends ReactiveElement {
     this.#renderShapes(visibleComposites);
     this.#ghosts.update(extras);
     this.#renderRegions(fullComposites, extras, view);
+
+    // Debug hook: window.__atlasDump() prints the current root's composite
+    // map so we can compare composites for the wrapped region across roots.
+    // Attached lazily on first render to avoid polluting the global namespace
+    // for non-debugging users.
+    if (typeof window !== 'undefined' && !(window as { __atlasDump?: unknown }).__atlasDump) {
+      const self = this;
+      (window as unknown as { __atlasDump: () => void }).__atlasDump = () => {
+        const rootIdx = self.#atlas.faces.indexOf(self.#atlas.root);
+        const fmt = (m: M.Matrix2DReadonly) =>
+          `[a=${m.a.toFixed(3)} b=${m.b.toFixed(3)} c=${m.c.toFixed(3)} d=${m.d.toFixed(3)} ` +
+          `e=${m.e.toFixed(3)} f=${m.f.toFixed(3)}]`;
+        console.log(
+          `[atlasDump] root=F${rootIdx} (${self.#atlas.faces.length} faces, ` +
+            `${self.#atlas.sides.length} sides, ${self.#atlas.links.size} links)`,
+        );
+        const composites = self.#atlas.computeComposites();
+        for (let i = 0; i < self.#atlas.faces.length; i++) {
+          const f = self.#atlas.faces[i];
+          const c = composites.get(f);
+          const k = f.sides.length;
+          console.log(`  F${i} (k=${k}): composite=${c ? fmt(c) : 'unreachable'}`);
+        }
+        for (const link of self.#atlas.links) {
+          const fIdx = self.#atlas.faces.indexOf(link.from);
+          const tIdx = self.#atlas.faces.indexOf(link.to);
+          console.log(`  link F${fIdx} → F${tIdx}: ${fmt(link.transform)}`);
+        }
+      };
+    }
     if (this.debug) {
       this.#debug.style.display = '';
       this.#renderDebug(visibleComposites, view);

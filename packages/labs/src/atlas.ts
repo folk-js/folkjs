@@ -412,8 +412,8 @@ export class Face {
     if (sides.length < 2) {
       throw new Error(`Face needs at least 2 half-edges, got ${sides.length}`);
     }
-    // Defensive copy: every mutation primitive (subdivideAtInfinityArc,
-    // subdivideSide, …) splices `face.sides` in place. If the
+    // Defensive copy: every mutation primitive (subdivideSide, …) splices
+    // `face.sides` in place. If the
     // caller hands us an array that's also referenced from elsewhere
     // (e.g. `atlas.sides`), every splice would silently mutate both
     // — corrupting both arrays. Owning a private copy makes such aliasing
@@ -567,8 +567,7 @@ export function* aroundJunction(he: Side): IterableIterator<Side> {
 //   - line traversal: `walkLine` (returns a chain of `FaceCrossing`s)
 //
 // The mutation primitives further down (`subdivideSide`,
-// `subdivideAtInfinityArc`, `splitFaceAtVertices`, `splitFaceAlongChord`, …)
-// all consume these.
+// `splitFaceAtVertices`, `splitFaceAlongChord`, …) all consume these.
 
 // ----------------------------------------------------------------------------
 // Atlas
@@ -1013,7 +1012,7 @@ export function createAllIdealAtlas(
   const atlas = new Atlas(face);
   // Critical: `atlas.sides` must NOT alias `face.sides`. The Face
   // constructor stores its argument array by reference, and atlas-wide
-  // mutators (e.g. `subdivideAtInfinityArc`'s `atlas.sides.splice`)
+  // mutators (e.g. `subdivideSide`'s `atlas.sides.splice`)
   // would otherwise also splice the face's outer-loop array, doubling the
   // mutation and corrupting the face's HE list. Take a fresh copy here.
   atlas.sides = [...hes];
@@ -1692,42 +1691,45 @@ export interface SplitChordResult {
 
 /**
  * Result of {@link subdivideSide}: the new vertex's position and the
- * two replacement half-edges in each affected face.
+ * replacement sides in both the source face and (if the original side
+ * was stitched) the partner face.
  */
 export interface SubdivideSideResult {
-  /** Position of the inserted vertex in `halfEdge.face`'s local frame. */
+  /**
+   * Origin of the inserted vertex, in `side.face`'s local frame. For arcs
+   * this is the unit direction of the new ideal vertex; otherwise it is the
+   * finite point that was inserted.
+   */
   newVertex: Point;
-  /** Replacement half-edges in `halfEdge.face`, in CCW order: `[origin→new, new→target]`. */
+  /** Replacement sides in `side.face`, in CCW order: `[origin→new, new→target]`. */
   faceHalves: [Side, Side];
   /**
-   * Replacement half-edges in `halfEdge.twin.face` (or `null` if no twin),
-   * in CCW order: `[oldTwin.origin→new, new→oldTwin.target]` (i.e. opposite
-   * directions of `faceHalves`).
+   * Replacement sides in the partner face if the original side was stitched,
+   * else `null`. CCW order: `[oldTwin.origin→new, new→oldTwin.target]` (i.e.
+   * opposite directions of `faceHalves`). Always `null` for arc subdivisions
+   * (arcs are never stitched).
    */
   twinHalves: [Side, Side] | null;
 }
 
 /**
- * Insert a finite vertex on a half-edge (and its twin), without otherwise
- * changing either incident face's shape.
+ * Insert a vertex on a side (and its stitched twin, if any), without
+ * otherwise changing either incident face's shape.
  *
- * After this call, both incident faces have one extra vertex (`k → k+1`),
- * with the new vertex positioned at `point` in `halfEdge.face`'s frame and
- * at `T·point` in the twin face's frame. The new vertex is collinear with
- * its two adjacent vertices (a "chain vertex" — see {@link isPolygonCCW});
- * the face's interior is unchanged.
+ * After this call, the affected face(s) gain one chain vertex (`k → k+1`)
+ * collinear with its two adjacent vertices; the face's interior is unchanged.
  *
- * Supported edge kinds:
- *   - finite-finite, finite-ideal, ideal-finite — `u` is in the standard
- *     edge parameter range.
- *   - **chord** (ideal-ideal twinned, `anchor` set) — `u` is the
- *     position along the chord line relative to `anchor`; subdividing
- *     replaces the chord with a (ideal-finite, finite-ideal) pair, both of
- *     which are regular mixed HEs (no `anchor` needed on the halves
- *     because the finite midpoint pinpoints the line).
- *
- * Use {@link subdivideAtInfinityArc} for at-infinity arcs (ideal-ideal,
- * untwinned, no anchor).
+ * Behaviour by side kind (the `at` argument is interpreted accordingly):
+ *   - `segment` / `ray` / `antiRay`: `at` is a finite point on the side,
+ *     strictly between the two endpoints.
+ *   - `chord` (ideal-ideal stitched, `anchor` set): `at` is a finite point
+ *     on the chord line. Subdividing replaces the chord with a
+ *     (ideal-finite, finite-ideal) pair — neither needs an `anchor` because
+ *     the finite midpoint pinpoints the line.
+ *   - `arc` (ideal-ideal untwinned): `at` is interpreted as the unit
+ *     direction of the new ideal vertex, which must lie strictly inside the
+ *     arc's CCW angular sweep. Arcs have no twin so only the one face is
+ *     touched.
  *
  * Mutates the existing `Face` objects in place — face identity is preserved,
  * shapes assigned to either face stay assigned.
@@ -1735,49 +1737,67 @@ export interface SubdivideSideResult {
 export function subdivideSide(
   atlas: Atlas,
   side: Side,
-  point: Point,
+  at: Point,
 ): SubdivideSideResult {
   if (!atlas.sides.includes(side)) {
     throw new Error('subdivideSide: side not in atlas');
   }
-  if (side.kind === 'arc') {
-    throw new Error('subdivideSide: at-infinity arc — use subdivideAtInfinityArc');
-  }
 
-  // Validate the point lies strictly between the two endpoints, with
-  // collinearity tolerance. Range depends on edge kind:
-  //   - finite-finite:    u ∈ (0, 1)
-  //   - finite-ideal / ideal-finite: u ∈ (0, ∞)
-  //   - chord (ideal-ideal): u ∈ (-∞, ∞) — both endpoints are at infinity
-  //     in opposite directions, so any finite u corresponds to a finite
-  //     point strictly between them.
-  const u = uOfPointOnSide(side, point);
-  const isFF = side.a.kind === 'finite' && side.next.a.kind === 'finite';
-  const isChord = side.kind === 'chord';
-  if (!Number.isFinite(u)) {
-    throw new Error(`subdivideSide: u is not finite (u = ${u})`);
-  }
-  if (!isChord) {
-    const uMin = 1e-9;
-    const uMaxEnd = isFF ? 1 - 1e-9 : Infinity;
-    if (u <= uMin || u >= uMaxEnd) {
+  // ---- validate `at` and compute the inserted-junction descriptor ----
+  let newOrigin: Junction;
+  if (side.kind === 'arc') {
+    const len = Math.hypot(at.x, at.y);
+    if (len < 1e-9) throw new Error('subdivideSide: arc subdivision direction has zero length');
+    const dir = { x: at.x / len, y: at.y / len };
+    const a = side.origin();
+    const b = side.next.origin();
+    // CCW sweep a → b; `dir` must lie strictly between them angularly.
+    const eps = 1e-9;
+    const aCrossDir = cross(a.x, a.y, dir.x, dir.y);
+    const dirCrossB = cross(dir.x, dir.y, b.x, b.y);
+    if (aCrossDir <= eps || dirCrossB <= eps) {
       throw new Error(
-        `subdivideSide: point not strictly between endpoints (u = ${u}, isFF = ${isFF})`,
+        'subdivideSide: ideal direction is not strictly inside the arc (a×d, d×b must both be > 0)',
       );
     }
-  }
-  const projected = pointOnSideAtU(side, u);
-  const dx = projected.x - point.x;
-  const dy = projected.y - point.y;
-  if (dx * dx + dy * dy > 1e-12) {
-    throw new Error('subdivideSide: point is not on the edge');
+    newOrigin = { kind: 'ideal', x: dir.x, y: dir.y };
+  } else {
+    // Validate `at` lies strictly between the two endpoints, with
+    // collinearity tolerance. Range depends on side kind:
+    //   - segment:     u ∈ (0, 1)
+    //   - ray/antiRay: u ∈ (0, ∞)
+    //   - chord:       u ∈ (-∞, ∞) — both endpoints are at infinity in
+    //                  opposite directions, so any finite u corresponds to a
+    //                  finite point strictly between them.
+    const u = uOfPointOnSide(side, at);
+    const isFF = side.kind === 'segment';
+    const isChord = side.kind === 'chord';
+    if (!Number.isFinite(u)) {
+      throw new Error(`subdivideSide: u is not finite (u = ${u})`);
+    }
+    if (!isChord) {
+      const uMin = 1e-9;
+      const uMaxEnd = isFF ? 1 - 1e-9 : Infinity;
+      if (u <= uMin || u >= uMaxEnd) {
+        throw new Error(
+          `subdivideSide: point not strictly between endpoints (u = ${u}, isFF = ${isFF})`,
+        );
+      }
+    }
+    const projected = pointOnSideAtU(side, u);
+    const dx = projected.x - at.x;
+    const dy = projected.y - at.y;
+    if (dx * dx + dy * dy > 1e-12) {
+      throw new Error('subdivideSide: point is not on the edge');
+    }
+    newOrigin = { kind: 'finite', x: at.x, y: at.y };
   }
 
   // ---- F side ----
   const F = side.face;
   const origin = side.origin();
   const s_A = new Side(origin.kind, origin.x, origin.y); // origin → newVertex
-  const s_B = new Side('finite', point.x, point.y); // newVertex → target
+  const s_B = new Side(newOrigin.kind, newOrigin.x, newOrigin.y); // newVertex → target
   s_A.face = F;
   s_B.face = F;
 
@@ -1785,21 +1805,20 @@ export function subdivideSide(
   F.sides.splice(fIdx, 1, s_A, s_B);
   rewireFaceCycle(F);
 
-  // Update atlas side index.
   const sIdx = atlas.sides.indexOf(side);
   atlas.sides.splice(sIdx, 1, s_A, s_B);
 
-  // ---- G (twin) side ----
+  // ---- G (twin) side, only when stitched (arcs are never stitched) ----
   let twinHalves: [Side, Side] | null = null;
-  if (side.twin) {
+  if (side.stitch) {
     const T = side.transform;
-    const twin = side.twin;
+    const twin = side.stitch.other(side);
     const G = twin.face;
     const tOrigin = twin.origin();
-    const pointInG = M.applyToPoint(T, point);
+    const pointInG = M.applyToPoint(T, at);
 
-    const tw_A = new Side(tOrigin.kind, tOrigin.x, tOrigin.y); // twin.origin → newVertex'
-    const tw_B = new Side('finite', pointInG.x, pointInG.y); // newVertex' → twin.target
+    const tw_A = new Side(tOrigin.kind, tOrigin.x, tOrigin.y);
+    const tw_B = new Side('finite', pointInG.x, pointInG.y);
     tw_A.face = G;
     tw_B.face = G;
 
@@ -1810,7 +1829,7 @@ export function subdivideSide(
     const twinIdx = atlas.sides.indexOf(twin);
     atlas.sides.splice(twinIdx, 1, tw_A, tw_B);
 
-    // Twin pairs (transforms preserve the original T — frames F and G are unchanged):
+    // Twin pairs (T preserves frame relationships F ↔ G):
     //   s_A (F: origin → newP)  ↔  tw_B (G: newP' → twin.target = origin')
     //   s_B (F: newP → target)  ↔  tw_A (G: twin.origin = target' → newP')
     const T_fwd = M.fromValues(T.a, T.b, T.c, T.d, T.e, T.f);
@@ -1825,76 +1844,7 @@ export function subdivideSide(
     twinHalves = [tw_A, tw_B];
   }
 
-  return { newVertex: point, faceHalves: [s_A, s_B], twinHalves };
-}
-
-/**
- * Result of {@link subdivideAtInfinityArc}: the new ideal vertex's direction
- * and the two replacement half-edges in the affected face.
- */
-export interface SubdivideAtInfinityArcResult {
-  /** Unit direction of the inserted ideal vertex, in the face's frame. */
-  newIdealDir: Point;
-  /** Replacement half-edges, in CCW order: `[arcStart→new, new→arcEnd]`. */
-  arcHalves: [Side, Side];
-}
-
-/**
- * Insert an ideal vertex on an at-infinity arc, without changing the face's
- * shape. The arc has no twin, so this only touches the one face.
- *
- * `idealDir` must lie strictly inside the arc's CCW angular sweep (between
- * the arc's start and end ideal directions).
- */
-export function subdivideAtInfinityArc(
-  atlas: Atlas,
-  arcSide: Side,
-  idealDir: Point,
-): SubdivideAtInfinityArcResult {
-  if (!atlas.sides.includes(arcSide)) {
-    throw new Error('subdivideAtInfinityArc: arcSide not in atlas');
-  }
-  if (arcSide.kind !== 'arc') {
-    throw new Error('subdivideAtInfinityArc: side is not an at-infinity arc');
-  }
-  if (arcSide.twin !== null) {
-    throw new Error('subdivideAtInfinityArc: at-infinity arc unexpectedly has a twin');
-  }
-
-  const len = Math.hypot(idealDir.x, idealDir.y);
-  if (len < 1e-9) throw new Error('subdivideAtInfinityArc: idealDir has zero length');
-  const dir = { x: idealDir.x / len, y: idealDir.y / len };
-
-  const a = arcSide.origin();
-  const b = arcSide.next.origin();
-  // Arc CCW sweep is from `a` to `b`; `dir` must lie strictly between them
-  // angularly. Equivalent: `dir` is left-of-strict the radial `a→0` and
-  // right-of-strict the radial `0→b` — i.e. the cross signs match.
-  const eps = 1e-9;
-  const aCrossDir = cross(a.x, a.y, dir.x, dir.y);
-  const dirCrossB = cross(dir.x, dir.y, b.x, b.y);
-  if (aCrossDir <= eps || dirCrossB <= eps) {
-    throw new Error(
-      'subdivideAtInfinityArc: idealDir is not strictly inside the arc (a×d, d×b must both be > 0)',
-    );
-  }
-
-  const F = arcSide.face;
-  const arc_A = new Side('ideal', a.x, a.y); // a → newIdeal
-  const arc_B = new Side('ideal', dir.x, dir.y); // newIdeal → b
-  arc_A.face = F;
-  arc_B.face = F;
-
-  const fIdx = F.sides.indexOf(arcSide);
-  F.sides.splice(fIdx, 1, arc_A, arc_B);
-  rewireFaceCycle(F);
-
-  const heIdx = atlas.sides.indexOf(arcSide);
-  atlas.sides.splice(heIdx, 1, arc_A, arc_B);
-
-  // No twins for at-infinity arc halves.
-
-  return { newIdealDir: dir, arcHalves: [arc_A, arc_B] };
+  return { newVertex: at, faceHalves: [s_A, s_B], twinHalves };
 }
 
 /**
@@ -2193,6 +2143,10 @@ export function splitFaceAtVertices(
     }
   }
 
+  // Re-derive Link transforms from the current stitch chain. See
+  // {@link recomputeLinkTransformsFromStitchChain} for why this is needed.
+  recomputeLinkTransformsFromStitchChain(atlas);
+
   // Register the new face and its two new chord HEs with the atlas.
   // The arc1 HEs that moved to `fresh` are already in `atlas.sides` —
   // they kept their object identity, only their .face pointer changed.
@@ -2205,14 +2159,12 @@ export function splitFaceAtVertices(
 /**
  * Split `face` along a chord whose endpoints are described by two
  * {@link BoundaryHit}s on `face`'s boundary. Composes
- * {@link subdivideSide} / {@link subdivideAtInfinityArc} (to materialise
- * each chord endpoint as an actual vertex when it lands mid-edge or
- * mid-arc) followed by {@link splitFaceAtVertices}.
+ * {@link subdivideSide} (to materialise each chord endpoint as an actual
+ * vertex when it lands mid-side) followed by {@link splitFaceAtVertices}.
  *
- * Side-effect: subdividing a non-arc edge also subdivides the neighbouring
- * face's twin half-edge (introducing one collinear chain vertex over there
- * — see {@link subdivideSide}). At-infinity-arc subdivisions only touch
- * `face`.
+ * Side-effect: subdividing a stitched side also subdivides the partner
+ * face's side (introducing one collinear chain vertex over there — see
+ * {@link subdivideSide}). Arc subdivisions only touch `face`.
  *
  * `anchor` (in `face`-local coordinates) is required when both
  * boundary hits are at-infinity (i.e. both endpoints will be ideal); see
@@ -2286,8 +2238,8 @@ export function splitFaceAlongChord(
     ) {
       return hit.he.next;
     }
-    const r = subdivideAtInfinityArc(atlas, hit.he, hit.idealDir);
-    return r.arcHalves[1];
+    const r = subdivideSide(atlas, hit.he, hit.idealDir);
+    return r.faceHalves[1];
   };
 
   // Subdivision is in-place and preserves Face identity; HE object references
@@ -2378,6 +2330,125 @@ function setTwin(
 function attachFace(atlas: Atlas, face: Face) {
   atlas.faces.push(face);
   for (const he of face.allSides()) atlas.sides.push(he);
+}
+
+/**
+ * BFS from `from` to `target` via stitches only (no link traversal).
+ * Returns the composite mapping `target`-frame → `from`-frame, or `null`
+ * if `target` is unreachable from `from` via stitches.
+ */
+function bfsCompositeViaStitchesOnly(
+  atlas: Atlas,
+  from: Face,
+  target: Face,
+): M.Matrix2D | null {
+  const out = new Map<Face, M.Matrix2D>();
+  out.set(from, M.fromValues());
+  if (from === target) return out.get(from)!;
+  const queue: Face[] = [from];
+  while (queue.length > 0) {
+    const f = queue.shift()!;
+    const mf = out.get(f)!;
+    for (const he of f.sidesCCW()) {
+      const twin = he.twin;
+      if (!twin || out.has(twin.face)) continue;
+      const composite = M.multiply(mf, M.invert(he.transform));
+      if (twin.face === target) return composite;
+      out.set(twin.face, composite);
+      queue.push(twin.face);
+    }
+  }
+  void atlas;
+  return null;
+}
+
+/**
+ * Re-derive every {@link Link}'s `transform` from the current stitch
+ * chain `link.from → link.to`. Called by {@link splitFaceAtVertices}
+ * after stitch conjugation AND by {@link insertStrip} after the strip's
+ * chord stitches replace the temporary kept↔fresh chord stitch.
+ *
+ * **Why this is needed.** Wrap-on captures `link.transform` as a
+ * snapshot of the original outer↔region stitch transform. Subsequent
+ * mutations (cuts that conjugate stitches, strip insertions that re-wire
+ * stitches with strip-thickness offsets) shift `composite(link.to from
+ * link.from)` along the surviving stitch chain, but `link.transform`
+ * stays frozen. With multiple Links to the same wrapped region (e.g. a
+ * cylinder's left- and right-side Links), BFS from different roots picks
+ * different links and the two link-derived composites drift apart by the
+ * accumulated stitch conjugations — visible as "the wrapped region stays
+ * in place while everything else shifts by the strip thickness" when the
+ * BFS root crosses the cut.
+ *
+ * The fix: every time the substrate mutates stitches in a way that could
+ * shift the chain composite (`splitFaceAtVertices`, `insertStrip`),
+ * recompute every Link's transform from the post-mutation chain. This
+ * keeps the link consistent with the stitch reality, and consistent with
+ * any sibling link to the same target.
+ *
+ * Self-links (`from === to`, recursive-zoom pattern) are left alone:
+ * there's no stitch chain to derive from, and the self-link's transform
+ * is the deliberate recursive transform.
+ *
+ * Closed-surface targets (e.g. a torus region whose every wrap-axis edge
+ * is self-stitched) are unreachable from outside via stitches, so
+ * `bfsCompositeViaStitchesOnly` returns `null` and the Link is left
+ * untouched — its transform is the *only* placement of the region.
+ */
+function recomputeLinkTransformsFromStitchChain(atlas: Atlas): void {
+  for (const link of atlas.links) {
+    if (link.from === link.to) continue;
+    const composite = bfsCompositeViaStitchesOnly(atlas, link.from, link.to);
+    if (composite) {
+      link.transform = composite;
+    }
+  }
+}
+
+/**
+ * Build a fresh face from a CCW polygon of {@link Junction}s and register
+ * it with `atlas`. Returns the new {@link Face}; its `sides` array follows
+ * the input junction order, so callers can index `face.sides[i]` to find
+ * the side whose origin is `junctions[i]` for subsequent stitching.
+ *
+ * The new sides are unstitched and unlinked — caller wires whatever
+ * topology they need afterwards.
+ *
+ * `options.anchors` provides per-side line-pinning anchors for ideal-ideal
+ * chord sides (a finite point on the chord line, in face-local
+ * coordinates). Map keys are side indices into `junctions`. Required for
+ * any side whose origin AND target (= next junction) are both ideal and
+ * antipodal, ignored otherwise — matching the {@link Side.anchor}
+ * convention. See the {@link Side} class doc for why ideal-ideal chords
+ * need an anchor.
+ *
+ * `options.frame` defaults to identity. Pass an existing frame to align
+ * the new face with another (e.g. `splitFaceAtVertices` reuses the parent
+ * face's frame for its `fresh` half).
+ */
+export function createFace(
+  atlas: Atlas,
+  junctions: ReadonlyArray<Junction>,
+  options?: {
+    anchors?: ReadonlyMap<number, Point>;
+    frame?: M.Matrix2D;
+  },
+): Face {
+  if (junctions.length < 2) {
+    throw new Error(`createFace: need at least 2 sides, got ${junctions.length}`);
+  }
+  const sides: Side[] = junctions.map((j) => new Side(j.kind, j.x, j.y));
+  if (options?.anchors) {
+    for (const [i, p] of options.anchors) {
+      if (i < 0 || i >= sides.length) {
+        throw new Error(`createFace: anchor index ${i} out of range`);
+      }
+      sides[i].anchor = { x: p.x, y: p.y };
+    }
+  }
+  const face = new Face(sides, [], options?.frame);
+  attachFace(atlas, face);
+  return face;
 }
 
 // ----------------------------------------------------------------------------
@@ -2756,11 +2827,11 @@ function walkLineDirection(
 }
 
 // ----------------------------------------------------------------------------
-// Atlas-level line cut: splitAtlasAlongLine
+// Line cut: splitAlongLine
 // ----------------------------------------------------------------------------
 
 /**
- * One sub-face pair from a {@link splitAtlasAlongLine} chain step.
+ * One sub-face pair from a {@link splitAlongLine} chain step.
  *
  * `rightFace` is the sub-face on the *right* of the line direction at this
  * step (−perp side). It is the original Face object that was split, mutated
@@ -2785,16 +2856,29 @@ export interface ChainSplitPair {
 }
 
 /**
- * Result of {@link splitAtlasAlongLine}: per-step sub-face pairs in the
- * order they were crossed by the walked line (from −direction infinity to
- * +direction infinity).
+ * Result of {@link splitAlongLine}: per-step sub-face pairs in the order
+ * they were crossed by the walked line (from −direction infinity to
+ * +direction infinity). For face-bounded cuts (`propagate: false`) `pairs`
+ * has exactly one element — the host's split.
  *
  * Consumers (e.g. the line-cut tool gizmo) hold this result during a drag
  * so they can update the affected sub-faces in real-time as the chord is
  * pulled apart by a strip insertion.
  */
-export interface SplitAtlasAlongLineResult {
+export interface SplitAlongLineResult {
   pairs: ChainSplitPair[];
+}
+
+export interface SplitAlongLineOptions {
+  /**
+   * When true (default), the line is propagated through the atlas — every
+   * face crossed by the line is split, with chord HE pairs stitched
+   * together across face boundaries. When false, only `host` is split;
+   * neighbouring faces are untouched (the cut terminates at the host's
+   * own boundary). Use `propagate: false` for region-creation primitives
+   * where deep nested regions shouldn't slice every level above them.
+   */
+  propagate?: boolean;
 }
 
 /**
@@ -2911,61 +2995,105 @@ function refreshHit(face: Face, captured: CapturedHit): BoundaryHit {
 }
 
 /**
- * Cut every face crossed by a line through the atlas, in line-traversal
- * order. Composes {@link walkLine} → {@link splitFaceAlongChord}.
+ * Cut faces along a line. Composes {@link splitFaceAlongChord} per face,
+ * optionally walking through twin edges to propagate the cut across the
+ * atlas.
  *
- * The line is specified by an interior `seam` point of `host` and a
- * direction; the line extends infinitely in both directions. Each crossed
- * face is split along the chord between its (entry, exit) hits with the
- * line.
+ * Geometry:
+ *   - `seam` must be strictly interior to `host` (in `host`'s local frame).
+ *   - `direction` is a non-zero 2D vector; the function normalises it.
+ *   - The cut is the chord through `seam` in `±direction`, clipped at each
+ *     face's boundary.
  *
- * Result ordering: `pairs[i]` corresponds to the i-th face in the walk
- * chain (from −direction infinity to +direction infinity). For each pair,
- * `leftFace` is on the +perp side of the line direction and `rightFace`
- * is on the −perp side.
+ * Behaviour by `options.propagate`:
+ *   - `true` (default): line is propagated through the atlas via
+ *     {@link walkLine}. Every face crossed is split; chord HEs across
+ *     face boundaries are stitched. `pairs[i]` corresponds to the i-th
+ *     face in the walk chain (−direction infinity to +direction infinity).
+ *   - `false`: face-bounded cut — only `host` is split. Neighbouring faces
+ *     are untouched (the cut terminates at the host's own boundary).
+ *     Used by region-creation primitives where deep nested regions
+ *     shouldn't slice every parent above them. Returns a `pairs` array
+ *     with exactly one element.
+ *
+ * For each pair, `leftFace` is on the +perp side of the line direction
+ * and `rightFace` is on the −perp side. `rightFace` always equals the
+ * identity-preserved original; `leftFace` is freshly allocated.
  *
  * Limitations:
  * - The walked line must not pass exactly through an existing vertex
  *   (degenerate exit). Callers should perturb if needed.
- * - When a face's chord has both endpoints at infinity (e.g. the line
- *   passes through an all-ideal face entirely with no finite crossings),
- *   the chord line is recorded via {@link Side.anchor}. For the
- *   host face this anchor is `seam` directly; for non-host faces in the
- *   chain we use the entry-hit's finite point if available, falling back
- *   to mapping the host's seam through the chain's twin transforms.
+ * - In the propagating case, throws if the chain visits the same face
+ *   twice — a signal that the line crossed a wrapped edge and looped
+ *   back. Refuses before any mutation so callers can recover.
+ * - When a face's chord has both endpoints at infinity (e.g. cutting an
+ *   all-ideal face entirely with no finite crossings), the chord line is
+ *   recorded via {@link Side.anchor}. For the host face this anchor is
+ *   `seam` directly; for non-host faces in a propagating chain we use
+ *   the entry-hit's finite point when available.
  */
-export function splitAtlasAlongLine(
+export function splitAlongLine(
   atlas: Atlas,
   host: Face,
   seam: Point,
   direction: Point,
-): SplitAtlasAlongLineResult {
-  const chain = walkLine(host, seam, direction);
+  options: SplitAlongLineOptions = {},
+): SplitAlongLineResult {
+  const { propagate = true } = options;
 
-  // Refuse to cut along a chain that visits the same face twice. That
-  // signals the line crossed a wrapped (asymmetric) edge and looped
-  // back through a topological cycle (e.g. a cylinder seam). A chord
-  // through such a chain would need to be subdivided in lock-step at
-  // every revisit (not yet supported) or it would break the wrap.
-  // Refuse early — before any mutation — so callers can recover
-  // cleanly.
+  if (!atlas.faces.includes(host)) {
+    throw new Error('splitAlongLine: host not in atlas');
+  }
+  if (!polygonContainsStrict(host.junctions(), seam)) {
+    throw new Error('splitAlongLine: seam is not strictly interior to host');
+  }
+  const len = Math.hypot(direction.x, direction.y);
+  if (len < WALK_EPS) throw new Error('splitAlongLine: zero-length direction');
+  const d = { x: direction.x / len, y: direction.y / len };
+
+  const toPair = (r: SplitChordResult): ChainSplitPair => ({
+    rightFace: r.face,
+    leftFace: r.fresh,
+    rightChordSide: r.faceChordSide,
+    leftChordSide: r.freshChordSide,
+    leftOffset: r.freshOffset,
+  });
+
+  if (!propagate) {
+    // Face-bounded path: find both boundary exits in `host` and split.
+    // splitFaceAlongChord materialises both endpoints (subdividing host's
+    // boundary edges if needed) but never reaches into their twins — so
+    // only `host` is mutated. We pass `seam` as the chord anchor: it's a
+    // finite point on the chord line, in `host`-local coordinates, which
+    // is exactly what {@link splitFaceAtVertices} needs when both
+    // boundary hits land at infinity.
+    const dNeg = { x: -d.x, y: -d.y };
+    const forwardExit = findExit(host, seam, d, null);
+    if (!forwardExit) throw new Error('splitAlongLine: no forward exit from host');
+    const backwardExit = findExit(host, seam, dNeg, null);
+    if (!backwardExit) throw new Error('splitAlongLine: no backward exit from host');
+    const r = splitFaceAlongChord(atlas, host, backwardExit, forwardExit, seam);
+    return { pairs: [toPair(r)] };
+  }
+
+  // Propagating path: walk the line, refuse on wrapped chains, split
+  // each face. HE references go stale as we mutate; capture the geometric
+  // position up front and re-resolve before each split.
+  const chain = walkLine(host, seam, d);
+
   {
     const seen = new Set<Face>();
     for (const c of chain) {
       if (seen.has(c.face)) {
-        throw new Error('splitAtlasAlongLine: cut crosses a wrapped (asymmetric) edge — refusing');
+        throw new Error('splitAlongLine: cut crosses a wrapped (asymmetric) edge — refusing');
       }
       seen.add(c.face);
     }
   }
 
-  // Capture all entry/exit geometry up front. HE references will become
-  // stale as we mutate; the geometric position remains valid in each
-  // face's frame because subdivision preserves face identity and frame.
-  // We also capture each crossing's chord anchor (a finite point on the
-  // chord line, in the face's local frame) for the ideal-ideal-chord
-  // case: host crossings have `seam` directly; non-host crossings use
-  // the entry hit's finite point when present.
+  // Capture each crossing's chord anchor for the ideal-ideal-chord case:
+  // host crossings have `seam` directly; non-host crossings use the entry
+  // hit's finite point when present.
   const captured = chain.map((c) => ({
     face: c.face,
     entry: c.entry ? captureHit(c.entry) : null,
@@ -2979,89 +3107,17 @@ export function splitAtlasAlongLine(
   }));
 
   for (const c of captured) {
-    if (!c.entry) {
-      throw new Error('splitAtlasAlongLine: missing entry for crossing');
-    }
+    if (!c.entry) throw new Error('splitAlongLine: missing entry for crossing');
   }
 
   const pairs: ChainSplitPair[] = [];
   for (const c of captured) {
     const entryHit = refreshHit(c.face, c.entry!);
     const exitHit = refreshHit(c.face, c.exit);
-    const result = splitFaceAlongChord(atlas, c.face, entryHit, exitHit, c.anchor);
-    // splitFaceAlongChord doc: faces[0] is on the RIGHT of entry→exit
-    // direction; faces[1] is on the LEFT. Line direction in this face's
-    // frame matches entry→exit direction (translation-only twins
-    // preserve direction across the chain).
-    pairs.push({
-      rightFace: result.face,
-      leftFace: result.fresh,
-      rightChordSide: result.faceChordSide,
-      leftChordSide: result.freshChordSide,
-      leftOffset: result.freshOffset,
-    });
+    pairs.push(toPair(splitFaceAlongChord(atlas, c.face, entryHit, exitHit, c.anchor)));
   }
 
   return { pairs };
-}
-
-/**
- * Face-bounded line cut: split exactly one face along the chord between
- * the line's two boundary intersections. Does **not** propagate through
- * twin edges to neighbouring faces.
- *
- * Conceptually a single iteration of {@link splitAtlasAlongLine} that
- * skips the {@link walkLine} chain traversal. Used by region-creation
- * primitives where the cut is meant to terminate at the host's bounds
- * (so deep nested regions don't slice every level above them).
- *
- * Geometry:
- *   - `seam` must be strictly interior to `host` (in `host`'s local frame).
- *   - `direction` is a non-zero 2D vector; the function normalises it.
- *   - The cut is the chord through `seam` in `±direction`, clipped to the
- *     host's boundary on both sides.
- *
- * The result mirrors {@link splitFaceAlongChord}: `faces[0]` is on the
- * RIGHT of the (back-exit → forward-exit) direction, `faces[1]` on the
- * LEFT, with their respective chord half-edges twinned across the chord.
- * No twin links outside the host are touched.
- *
- * Throws if the line cannot find both a forward and backward boundary
- * exit, or if the resulting chord would be degenerate (e.g. ideal-to-ideal
- * on a face with no finite intersections).
- */
-export function splitFaceAlongLine(
-  atlas: Atlas,
-  host: Face,
-  seam: Point,
-  direction: Point,
-): SplitChordResult {
-  if (!atlas.faces.includes(host)) {
-    throw new Error('splitFaceAlongLine: host not in atlas');
-  }
-  if (!polygonContainsStrict(host.junctions(), seam)) {
-    throw new Error('splitFaceAlongLine: seam is not strictly interior to host');
-  }
-  const len = Math.hypot(direction.x, direction.y);
-  if (len < WALK_EPS) throw new Error('splitFaceAlongLine: zero-length direction');
-  const d = { x: direction.x / len, y: direction.y / len };
-  const dNeg = { x: -d.x, y: -d.y };
-
-  const forwardExit = findExit(host, seam, d, null);
-  if (!forwardExit) throw new Error('splitFaceAlongLine: no forward exit from host');
-  const backwardExit = findExit(host, seam, dNeg, null);
-  if (!backwardExit) throw new Error('splitFaceAlongLine: no backward exit from host');
-
-  // splitFaceAlongChord materialises both endpoints (subdividing host's
-  // boundary edges if needed) but never reaches into their twins. So a
-  // chord cut here only mutates `host` and its half-edges; neighbouring
-  // faces are completely untouched.
-  //
-  // We pass `seam` as the chord anchor: it's a finite point on the chord
-  // line, in `host`-local coordinates, which is exactly what
-  // {@link splitFaceAtVertices} needs when both boundary hits land at
-  // infinity (e.g. cutting an all-ideal face).
-  return splitFaceAlongChord(atlas, host, backwardExit, forwardExit, seam);
 }
 
 // ----------------------------------------------------------------------------
@@ -3085,7 +3141,7 @@ export interface InsertStripResult {
 }
 
 /**
- * Open the chord twin pairs from a {@link splitAtlasAlongLine} result by
+ * Open the chord twin pairs from a {@link splitAlongLine} result by
  * `height` perpendicular to the line direction, inserting a single strip
  * face between the left (above) and right (below) sub-faces.
  *
@@ -3121,7 +3177,7 @@ export interface InsertStripResult {
  */
 export function insertStrip(
   atlas: Atlas,
-  splitResult: SplitAtlasAlongLineResult,
+  splitResult: SplitAlongLineResult,
   height: number,
 ): InsertStripResult {
   const N = splitResult.pairs.length;
@@ -3207,108 +3263,103 @@ export function insertStrip(
   }
 
   // ---- Per-chain-step junction at A or B side, on bot or top of strip ----
+  // A is the −d-end vertex of step i; B is the +d-end vertex. For the
+  // first/last step these are ideal (the line direction itself); for
+  // interior steps they're the spoke-crossing finite vertices c[i] / c[i+1].
   const aJunction = (i: number, perpSide: 'bot' | 'top'): Junction => {
     if (i === 0) return { kind: 'ideal', x: -d!.x, y: -d!.y };
     const p = cPositions[i];
-    if (perpSide === 'top') {
-      return { kind: 'finite', x: p.x + height * perp.x, y: p.y + height * perp.y };
-    }
-    return { kind: 'finite', x: p.x, y: p.y };
+    const dy = perpSide === 'top' ? height * perp.y : 0;
+    const dx = perpSide === 'top' ? height * perp.x : 0;
+    return { kind: 'finite', x: p.x + dx, y: p.y + dy };
   };
   const bJunction = (i: number, perpSide: 'bot' | 'top'): Junction => {
     if (i === N - 1) return { kind: 'ideal', x: d!.x, y: d!.y };
     const p = cPositions[i + 1];
-    if (perpSide === 'top') {
-      return { kind: 'finite', x: p.x + height * perp.x, y: p.y + height * perp.y };
-    }
-    return { kind: 'finite', x: p.x, y: p.y };
+    const dy = perpSide === 'top' ? height * perp.y : 0;
+    const dx = perpSide === 'top' ? height * perp.x : 0;
+    return { kind: 'finite', x: p.x + dx, y: p.y + dy };
   };
 
-  // ---- Build strip face's half-edges ----
-  // bottomSides[i]: origin = A in bot, target (implicit via .next) = B in bot.
-  // topSides[i]:    origin = B in top, target (implicit via .next) = A in top.
-  const bottomSides: Side[] = [];
+  // ---- Strip face vertices in CCW order ----
+  // Bottom edges go +d (B[0] → … → B[N-1]); top edges go −d (T[N-1] → … → T[0]).
+  // CCW: [B[0], B[1], …, B[N-1], T[N-1], T[N-2], …, T[0]]. For N=1 this
+  // is [B[0], T[0]] — a 2-HE digon between two parallel chord lines.
+  const bottomJ: Junction[] = [];
+  const topJ: Junction[] = [];
   for (let i = 0; i < N; i++) {
-    const j = aJunction(i, 'bot');
-    bottomSides.push(new Side(j.kind, j.x, j.y));
+    bottomJ.push(aJunction(i, 'bot'));
+    topJ.push(bJunction(i, 'top'));
   }
-  const topSides: Side[] = [];
-  for (let i = 0; i < N; i++) {
-    const j = bJunction(i, 'top');
-    topSides.push(new Side(j.kind, j.x, j.y));
-  }
+  const stripJ: Junction[] = [...bottomJ, ...topJ.slice().reverse()];
 
-  // CCW order around the strip:
-  //   [B[0], B[1], ..., B[N-1], T[N-1], T[N-2], ..., T[0]]
-  // Anchor (first finite vertex with origin (0, 0)) is B[1].origin = c[1].
-  // Rotate so anchor is hes[0]:
-  //   [B[1], B[2], ..., B[N-1], T[N-1], ..., T[0], B[0]]
-  // For N=1 this collapses to [T[0], B[0]] — a 2-HE digon.
-  const stripSides: Side[] = [
-    ...bottomSides.slice(1),
-    ...topSides.slice().reverse(),
-    bottomSides[0],
-  ];
+  // For N=1 (digon strip) both sides are ideal-ideal chords; pin them so
+  // the slab has bottom at (0, 0) and top at height·perp. Index 0 is
+  // the bottom chord, index 1 the top.
+  const anchors =
+    N === 1
+      ? new Map<number, Point>([
+          [0, { x: 0, y: 0 }],
+          [1, { x: height * perp.x, y: height * perp.y }],
+        ])
+      : undefined;
 
-  // For N=1 (digon strip) both HEs are ideal-ideal chords; set their
-  // anchors so the slab has bottom at (0, 0) and top at height·perp.
-  // Cycle is [topSides[0], bottomSides[0]] for N=1 (verified by the slice
-  // construction above with N=1).
-  if (N === 1) {
-    bottomSides[0].anchor = { x: 0, y: 0 };
-    topSides[0].anchor = { x: height * perp.x, y: height * perp.y };
-  }
+  const stripFace = createFace(atlas, stripJ, { anchors });
 
-  const stripFace = new Face(stripSides);
+  // stripFace.sides[i] follows stripJ[i]: bottom sides at indices 0..N-1,
+  // top sides at indices N..2N-1 in reverse (T[N-1] first).
+  const bottomSides: Side[] = stripFace.sides.slice(0, N);
+  const topSides: Side[] = new Array(N);
+  for (let i = 0; i < N; i++) topSides[i] = stripFace.sides[2 * N - 1 - i];
 
   // ---- Wire chord twin pairs to strip's bottom/top half-edges ----
+  // T_CtoS is a pure translation from the chord's face frame to the strip
+  // frame. Anchor the translation to whichever chord endpoint is finite
+  // (or the chord anchor for N=1 ideal-ideal chords). The caller passes
+  // the strip-frame junctions matching chord.origin / chord.target — the
+  // mapping is direction-dependent (right chord goes B→A, left goes A→B).
+  const stitchAndTranslate = (
+    chord: Side,
+    stripSide: Side,
+    stripForOrigin: Junction,
+    stripForTarget: Junction,
+    stripAnchor: Point,
+  ): void => {
+    const co = chord.origin();
+    const ct = chord.target();
+    let off: Point;
+    if (co.kind === 'finite') {
+      off = { x: (stripForOrigin as Point).x - co.x, y: (stripForOrigin as Point).y - co.y };
+    } else if (ct.kind === 'finite') {
+      off = { x: (stripForTarget as Point).x - ct.x, y: (stripForTarget as Point).y - ct.y };
+    } else {
+      const a = chord.anchor!;
+      off = { x: stripAnchor.x - a.x, y: stripAnchor.y - a.y };
+    }
+    const T_CtoS = M.fromTranslate(off.x, off.y);
+    setTwin(chord, stripSide, T_CtoS, M.invert(T_CtoS));
+  };
+
+  const bottomAnchor: Point = { x: 0, y: 0 };
+  const topAnchor: Point = { x: height * perp.x, y: height * perp.y };
   for (let i = 0; i < N; i++) {
     const r = splitResult.pairs[i].rightChordSide;
     const l = splitResult.pairs[i].leftChordSide;
-    const ro = r.origin(); // B in rightFace frame
-    const rt = r.target(); // A in rightFace frame
-    const lo = l.origin(); // A in leftFace frame
-    const lt = l.target(); // B in leftFace frame
-
-    // T_RtoS: pick whichever chord endpoint is finite to anchor the
-    // translation. For N=1 (ideal-ideal chord), use the chord anchors:
-    // strip bottom anchor (0, 0) maps from right's chord anchor.
-    let oR: Point;
-    if (ro.kind === 'finite') {
-      const stripB = bJunction(i, 'bot');
-      oR = { x: (stripB as { x: number; y: number }).x - ro.x, y: (stripB as { x: number; y: number }).y - ro.y };
-    } else if (rt.kind === 'finite') {
-      const stripA = aJunction(i, 'bot');
-      oR = { x: (stripA as { x: number; y: number }).x - rt.x, y: (stripA as { x: number; y: number }).y - rt.y };
-    } else {
-      const rAnchor = r.anchor!;
-      // Strip's bottom chord anchor (in strip frame) is (0, 0).
-      oR = { x: -rAnchor.x, y: -rAnchor.y };
-    }
-
-    let oL: Point;
-    if (lo.kind === 'finite') {
-      const stripA = aJunction(i, 'top');
-      oL = { x: (stripA as { x: number; y: number }).x - lo.x, y: (stripA as { x: number; y: number }).y - lo.y };
-    } else if (lt.kind === 'finite') {
-      const stripB = bJunction(i, 'top');
-      oL = { x: (stripB as { x: number; y: number }).x - lt.x, y: (stripB as { x: number; y: number }).y - lt.y };
-    } else {
-      const lAnchor = l.anchor!;
-      // Strip's top chord anchor is height · perp.
-      oL = { x: height * perp.x - lAnchor.x, y: height * perp.y - lAnchor.y };
-    }
-
-    const T_RtoS = M.fromTranslate(oR.x, oR.y);
-    const T_StoR = M.invert(T_RtoS);
-    const T_LtoS = M.fromTranslate(oL.x, oL.y);
-    const T_StoL = M.invert(T_LtoS);
-
-    setTwin(r, bottomSides[i], T_RtoS, T_StoR);
-    setTwin(l, topSides[i], T_LtoS, T_StoL);
+    // Right chord r is B → A in rightFace frame; bottom strip side is
+    // A → B in strip frame.
+    stitchAndTranslate(r, bottomSides[i], bJunction(i, 'bot'), aJunction(i, 'bot'), bottomAnchor);
+    // Left chord l is A → B in leftFace frame; top strip side is
+    // B → A in strip frame.
+    stitchAndTranslate(l, topSides[i], aJunction(i, 'top'), bJunction(i, 'top'), topAnchor);
   }
 
-  attachFace(atlas, stripFace);
+  // Re-derive Link transforms from the new strip-routed chain. The cuts'
+  // `splitFaceAtVertices` recomputes already, but its chain went through
+  // the temporary kept↔fresh chord stitch we just removed; the strip
+  // re-wires those stitches with `height·perp` baked in, so any Link
+  // whose chain BFS goes through the cut chord is now stale by one strip
+  // thickness. See {@link recomputeLinkTransformsFromStitchChain}.
+  recomputeLinkTransformsFromStitchChain(atlas);
 
   return { stripFace, bottomSides, topSides };
 }
@@ -3351,9 +3402,10 @@ export function insertStrip(
  */
 export function resizeStrip(
   stripResult: InsertStripResult,
-  splitResult: SplitAtlasAlongLineResult,
+  splitResult: SplitAlongLineResult,
   oldHeight: number,
   newHeight: number,
+  atlas?: Atlas,
 ): void {
   if (!(newHeight > 0)) {
     throw new Error('resizeStrip: newHeight must be positive');
@@ -3471,5 +3523,10 @@ export function resizeStrip(
     const T_StoL = M.invert(T_LtoS);
     setTwin(l, t, T_LtoS, T_StoL);
   }
+
+  // Re-derive Link transforms — the top-row stitches just shifted by
+  // Δ·perp, so any Link whose chain BFS crosses one is now stale by
+  // exactly that amount. See {@link recomputeLinkTransformsFromStitchChain}.
+  if (atlas) recomputeLinkTransformsFromStitchChain(atlas);
 }
 
