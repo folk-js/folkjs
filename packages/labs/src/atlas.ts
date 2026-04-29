@@ -249,21 +249,70 @@ export class Side {
 export class Stitch {
   a: Side;
   b: Side;
-  /** Transform mapping `a.face` frame → `b.face` frame. */
-  transformAtoB: M.Matrix2D;
-  /** Transform mapping `b.face` frame → `a.face` frame (= `inv(transformAtoB)`). */
-  transformBtoA: M.Matrix2D;
+  /**
+   * Atlas back-reference. Set by {@link setTwin} (the only place
+   * `Stitch` instances are constructed); used by {@link setTransforms}
+   * and {@link unstitch} to mark Link transforms dirty without callers
+   * having to thread `atlas` through.
+   */
+  readonly atlas: Atlas;
+  /**
+   * Transform `a.face` → `b.face` and its inverse. Held privately so the
+   * only mutation path is {@link setTransforms}, which routes through
+   * `atlas.markLinksDirty()`. See {@link recomputeLinkTransformsFromStitchChain}
+   * for why every transform mutation has to invalidate cached Link composites.
+   */
+  #transformAtoB: M.Matrix2D;
+  #transformBtoA: M.Matrix2D;
 
-  constructor(a: Side, b: Side, transformAtoB: M.Matrix2D, transformBtoA: M.Matrix2D) {
+  constructor(
+    atlas: Atlas,
+    a: Side,
+    b: Side,
+    transformAtoB: M.Matrix2D,
+    transformBtoA: M.Matrix2D,
+  ) {
+    this.atlas = atlas;
     this.a = a;
     this.b = b;
-    this.transformAtoB = transformAtoB;
-    this.transformBtoA = transformBtoA;
+    this.#transformAtoB = transformAtoB;
+    this.#transformBtoA = transformBtoA;
+  }
+
+  /** Transform mapping `a.face` frame → `b.face` frame. */
+  get transformAtoB(): M.Matrix2DReadonly {
+    return this.#transformAtoB;
+  }
+
+  /** Transform mapping `b.face` frame → `a.face` frame (= `inv(transformAtoB)`). */
+  get transformBtoA(): M.Matrix2DReadonly {
+    return this.#transformBtoA;
   }
 
   /** Transform mapping `a.face` frame → `b.face` frame. */
   get transform(): M.Matrix2DReadonly {
-    return this.transformAtoB;
+    return this.#transformAtoB;
+  }
+
+  /**
+   * Replace this stitch's transforms in place and notify the atlas that
+   * cached Link composites need re-derivation.
+   *
+   * This is the *only* mutation entry point for stitch transforms. The
+   * `transformAtoB` / `transformBtoA` getters are read-only on purpose:
+   * any mutation that bypasses this method would leave Link transforms
+   * stale (the bug class that motivated this design — see
+   * {@link recomputeLinkTransformsFromStitchChain}'s docstring).
+   *
+   * If many stitches will be mutated in a single logical step (e.g. the
+   * conjugation loop in {@link splitFaceAtVertices}, the strip wiring
+   * loop in {@link insertStrip}), wrap the work in {@link Atlas.mutate}
+   * so the dirty marks coalesce into a single recompute at the end.
+   */
+  setTransforms(transformAtoB: M.Matrix2D, transformBtoA: M.Matrix2D): void {
+    this.#transformAtoB = transformAtoB;
+    this.#transformBtoA = transformBtoA;
+    this.atlas.markLinksDirty();
   }
 
   /** Given one of the stitch's endpoints, return the other. */
@@ -275,8 +324,8 @@ export class Stitch {
 
   /** Transform mapping `self.face` frame → the other endpoint's frame. */
   transformFrom(self: Side): M.Matrix2DReadonly {
-    if (self === this.a) return this.transformAtoB;
-    if (self === this.b) return this.transformBtoA;
+    if (self === this.a) return this.#transformAtoB;
+    if (self === this.b) return this.#transformBtoA;
     throw new Error('Stitch.transformFrom: argument is not an endpoint of this stitch');
   }
 }
@@ -331,11 +380,38 @@ export class Link {
   from: Face;
   to: Face;
   transform: M.Matrix2D;
+  /**
+   * If true, the substrate auto-recomputes `transform` from the
+   * stitch-chain BFS composite `from → to` after every mutation that
+   * could shift the chain (see {@link recomputeLinkTransformsFromStitchChain}).
+   * Set automatically by {@link link} based on whether the caller-supplied
+   * `transform` matches the chain composite at link-creation time:
+   *
+   *  - **`true` when `transform === chainComposite(from, to)`**: the link
+   *    is a *cached chain composite* (e.g. cylinder/wrap links — the
+   *    pattern that originally bit us by going stale after cuts). The
+   *    substrate keeps it in sync automatically.
+   *  - **`false` otherwise** (transforms supplied independently of the
+   *    chain, including the closed-surface case where BFS returns `null`,
+   *    recursive zoom self-links, and "place B inside A here regardless
+   *    of the underlying stitches" manual placements). The substrate
+   *    treats `transform` as opaque and never overwrites it.
+   *
+   * Callers can flip this after creation if their use case requires it,
+   * but the auto-detection covers every current use site.
+   */
+  tracksStitchChain: boolean;
 
-  constructor(from: Face, to: Face, transform: M.Matrix2D) {
+  constructor(
+    from: Face,
+    to: Face,
+    transform: M.Matrix2D,
+    tracksStitchChain: boolean,
+  ) {
     this.from = from;
     this.to = to;
     this.transform = transform;
+    this.tracksStitchChain = tracksStitchChain;
   }
 }
 
@@ -640,8 +716,73 @@ export class Atlas {
   links: Set<Link> = new Set();
   root: Face;
 
+  /**
+   * Reentrant batching depth for {@link mutate}. While positive,
+   * {@link markLinksDirty} only sets {@link #linksDirty} instead of
+   * recomputing eagerly; the outermost {@link mutate} call commits the
+   * accumulated dirty mark with one Link recompute pass.
+   */
+  #mutationDepth = 0;
+  #linksDirty = false;
+
   constructor(root: Face) {
     this.root = root;
+  }
+
+  /**
+   * Notify the atlas that some stitch transform changed and that cached
+   * {@link Link} composites need to be re-derived from the post-mutation
+   * stitch chain. Called automatically by {@link Stitch.setTransforms},
+   * {@link setTwin}, and {@link unstitch} — *every* substrate operation
+   * that touches a stitch's reciprocal binding routes through here, so
+   * forgetting to invalidate is structurally impossible.
+   *
+   * Behaviour depends on whether the call is inside a {@link mutate}
+   * batch:
+   *  - **Outside** a batch (`#mutationDepth === 0`): runs the recompute
+   *    immediately. The caller can rely on Link transforms being current
+   *    before any subsequent read.
+   *  - **Inside** a batch (`#mutationDepth > 0`): just sets
+   *    {@link #linksDirty}. The outermost {@link mutate} call commits
+   *    the dirty mark with one recompute pass, regardless of how many
+   *    stitch mutations the batch performed.
+   */
+  markLinksDirty(): void {
+    if (this.#mutationDepth > 0) {
+      this.#linksDirty = true;
+      return;
+    }
+    recomputeLinkTransformsFromStitchChain(this);
+  }
+
+  /**
+   * Run `fn` as a single logical atlas mutation, batching dirty marks
+   * from any stitch operations inside so the substrate only re-derives
+   * Link transforms once at the end. Nesting is supported (only the
+   * outermost call commits) — this lets a high-level macro like
+   * {@link splitAlongLine} wrap an entire chain-cut without each
+   * inner {@link splitFaceAtVertices} triggering its own recompute.
+   *
+   * Why this is the substrate's mutation discipline: every macro that
+   * touches stitches must wrap its work in `mutate`, both for
+   * efficiency (one BFS instead of N) and to make the "cache must be
+   * invalidated after structural mutation" contract impossible to
+   * silently violate. Direct stitch transform writes are blocked by
+   * {@link Stitch} private fields; the only paths that reach the atlas
+   * are {@link Stitch.setTransforms}, {@link setTwin}, and
+   * {@link unstitch}, all of which fire {@link markLinksDirty}.
+   */
+  mutate<T>(fn: () => T): T {
+    this.#mutationDepth++;
+    try {
+      return fn();
+    } finally {
+      this.#mutationDepth--;
+      if (this.#mutationDepth === 0 && this.#linksDirty) {
+        this.#linksDirty = false;
+        recomputeLinkTransformsFromStitchChain(this);
+      }
+    }
   }
 
   /**
@@ -966,6 +1107,12 @@ export function createInitialAtlas(
     allSides.push(he0, he1, he2);
   }
 
+  // Construct the atlas first so we can pass it to setTwin (which needs
+  // it for the Stitch back-reference and links-dirty notification).
+  const atlas = new Atlas(faces[0]);
+  atlas.sides = allSides;
+  atlas.faces = faces;
+
   // Stitch the half-axes shared between consecutive wedges (identity
   // transforms — wedges all share the same origin and CCW frame).
   // Wedge i's "B → O" side (sides[2]) stitches to wedge (i+1)%n's "O → A"
@@ -973,15 +1120,12 @@ export function createInitialAtlas(
   for (let i = 0; i < n; i++) {
     const me = faces[i];
     const next = faces[(i + 1) % n];
-    setTwin(me.sides[2], next.sides[0], M.fromValues(), M.fromValues());
+    setTwin(atlas, me.sides[2], next.sides[0], M.fromValues(), M.fromValues());
   }
 
   // The ideal-ideal half-edges within each face (he[1]) lie at infinity and
   // have no twin — already null by default.
 
-  const atlas = new Atlas(faces[0]);
-  atlas.sides = allSides;
-  atlas.faces = faces;
   return atlas;
 }
 
@@ -1126,13 +1270,15 @@ export function stitch(
       `stitch: transformAtoB·heA.origin = (${imgOrigin.x.toFixed(6)}, ${imgOrigin.y.toFixed(6)}) does not match heB.target = (${heB.next.a.x.toFixed(6)}, ${heB.next.a.y.toFixed(6)})`,
     );
   }
-  return setTwin(heA, heB, transformAtoB, transformBtoA);
+  return setTwin(atlas, heA, heB, transformAtoB, transformBtoA);
 }
 
 /**
  * Symmetric inverse of {@link stitch}: clear the reciprocal binding and
  * dispose of the {@link Stitch} object. Both endpoints' `.stitch` is
- * reset to `null`; the Stitch becomes unreferenced and gc'd.
+ * reset to `null`; the Stitch becomes unreferenced and gc'd. Marks the
+ * stitch's atlas links-dirty so any cached Link composite that walked
+ * through this stitch is re-derived before the next read.
  *
  * The atlas-level stitch view ({@link Atlas.stitches}) is derived from
  * the sides' back-references, so there is no separate de-registration.
@@ -1140,6 +1286,7 @@ export function stitch(
 export function unstitch(s: Stitch): void {
   if (s.a.stitch === s) s.a.stitch = null;
   if (s.b.stitch === s) s.b.stitch = null;
+  s.atlas.markLinksDirty();
 }
 
 /**
@@ -1169,7 +1316,23 @@ export function link(
 ): Link {
   if (!atlas.faces.includes(from)) throw new Error('link: from face not in atlas');
   if (!atlas.faces.includes(to)) throw new Error('link: to face not in atlas');
-  const l = new Link(from, to, transform);
+  // Auto-detect "this link is a cached chain composite" by comparing the
+  // caller-supplied transform to the BFS chain composite at link-creation
+  // time. Wrap-on (folk-atlas's `wrapRegionAxis`) sets `transform` to
+  // `inv(outer→region stitch)`, which equals the chain composite by
+  // Stitch reciprocity, so it gets `tracksStitchChain = true` and the
+  // substrate keeps it in sync with subsequent stitch mutations. Manual
+  // placements with arbitrary transforms (and self-links / closed-surface
+  // links where chain is null) get `tracksStitchChain = false` and are
+  // never auto-overwritten. See {@link Link} for the broader rationale.
+  let tracksStitchChain = false;
+  if (from !== to) {
+    const chain = bfsCompositeViaStitchesOnly(atlas, from, to);
+    if (chain !== null && M.equals(transform, chain)) {
+      tracksStitchChain = true;
+    }
+  }
+  const l = new Link(from, to, transform, tracksStitchChain);
   atlas.links.add(l);
   return l;
 }
@@ -1231,53 +1394,61 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
   }
   if (R === 1) return;
 
-  for (const he of face.allSides()) {
-    if (he.a.kind === 'finite') {
-      he.a.x = R * he.a.x;
-      he.a.y = R * he.a.y;
+  atlas.mutate(() => {
+    for (const he of face.allSides()) {
+      if (he.a.kind === 'finite') {
+        he.a.x = R * he.a.x;
+        he.a.y = R * he.a.y;
+      }
     }
-  }
 
-  const S = M.fromValues(R, 0, 0, R, 0, 0);
-  const Sinv = M.fromValues(1 / R, 0, 0, 1 / R, 0, 0);
-  // Conjugate every {@link Stitch} transform that touches `face`. Stitch is
-  // the source of truth for cross-side bindings: each Stitch holds both
-  // directions explicitly (`transformAtoB` and `transformBtoA`), so we
-  // rewrite both whenever the corresponding endpoint's face is the one
-  // being rescaled.
-  for (const s of atlas.stitches) {
-    const aIsFace = s.a.face === face;
-    const bIsFace = s.b.face === face;
-    if (!aIsFace && !bIsFace) continue;
-    // transformAtoB: a-frame → b-frame. Rescaling `a`'s frame means stored
-    // a-frame coords are R× bigger → right-multiply by Sinv. Rescaling
-    // `b`'s frame means b-frame outputs need to be R× bigger → left-
-    // multiply by S.
-    let TAB = s.transformAtoB;
-    if (aIsFace) TAB = M.multiply(TAB, Sinv);
-    if (bIsFace) TAB = M.multiply(S, TAB);
-    s.transformAtoB = TAB;
-    // transformBtoA is the symmetric inverse, with the role of `a` and `b`
-    // swapped: rescaling `b`'s frame → right-multiply by Sinv; rescaling
-    // `a`'s frame → left-multiply by S.
-    let TBA = s.transformBtoA;
-    if (bIsFace) TBA = M.multiply(TBA, Sinv);
-    if (aIsFace) TBA = M.multiply(S, TBA);
-    s.transformBtoA = TBA;
-  }
-  // Same conjugation for {@link Link} transforms touching `face`. A link's
-  // transform maps `to` frame → `from` frame; if the rescaled face is one
-  // of the endpoints, we must rewrite the transform so the on-screen
-  // placement of the link's child stays invariant under the rescale.
-  for (const link of atlas.links) {
-    const fromIsFace = link.from === face;
-    const toIsFace = link.to === face;
-    if (!fromIsFace && !toIsFace) continue;
-    let T = link.transform;
-    if (toIsFace) T = M.multiply(T, Sinv);
-    if (fromIsFace) T = M.multiply(S, T);
-    link.transform = T;
-  }
+    const S = M.fromValues(R, 0, 0, R, 0, 0);
+    const Sinv = M.fromValues(1 / R, 0, 0, 1 / R, 0, 0);
+    // Conjugate every {@link Stitch} transform that touches `face`. Stitch is
+    // the source of truth for cross-side bindings: each Stitch holds both
+    // directions explicitly (`transformAtoB` and `transformBtoA`), so we
+    // rewrite both whenever the corresponding endpoint's face is the one
+    // being rescaled.
+    for (const s of atlas.stitches) {
+      const aIsFace = s.a.face === face;
+      const bIsFace = s.b.face === face;
+      if (!aIsFace && !bIsFace) continue;
+      // transformAtoB: a-frame → b-frame. Rescaling `a`'s frame means stored
+      // a-frame coords are R× bigger → right-multiply by Sinv. Rescaling
+      // `b`'s frame means b-frame outputs need to be R× bigger → left-
+      // multiply by S.
+      let TAB = s.transformAtoB;
+      if (aIsFace) TAB = M.multiply(TAB, Sinv);
+      if (bIsFace) TAB = M.multiply(S, TAB);
+      // transformBtoA is the symmetric inverse, with the role of `a` and `b`
+      // swapped: rescaling `b`'s frame → right-multiply by Sinv; rescaling
+      // `a`'s frame → left-multiply by S.
+      let TBA = s.transformBtoA;
+      if (bIsFace) TBA = M.multiply(TBA, Sinv);
+      if (aIsFace) TBA = M.multiply(S, TBA);
+      s.setTransforms(TAB, TBA);
+    }
+    // Same conjugation for {@link Link} transforms touching `face`. A link's
+    // transform maps `to` frame → `from` frame; if the rescaled face is one
+    // of the endpoints, we must rewrite the transform so the on-screen
+    // placement of the link's child stays invariant under the rescale.
+    //
+    // This runs *after* the stitch loop so that the implicit
+    // `recomputeLinkTransformsFromStitchChain` (fired by `mutate`'s
+    // commit) sees the post-rescale stitch state, then we overwrite for
+    // closed-surface targets where BFS finds no chain. For
+    // stitch-reachable targets the recompute already produced the same
+    // S·old value; the overwrite is benign.
+    for (const link of atlas.links) {
+      const fromIsFace = link.from === face;
+      const toIsFace = link.to === face;
+      if (!fromIsFace && !toIsFace) continue;
+      let T = link.transform;
+      if (toIsFace) T = M.multiply(T, Sinv);
+      if (fromIsFace) T = M.multiply(S, T);
+      link.transform = T;
+    }
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -1574,6 +1745,44 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     if (!allFaceSet.has(link.to)) {
       errs.push('link.to not in atlas.faces');
     }
+
+    // For chain-tracked links: link.transform is a cached chain
+    // composite (cylinder-style wraps); it MUST equal the BFS chain
+    // composite, otherwise the renderer disagrees with itself depending
+    // on which BFS path it picks (link path vs stitch path) and the
+    // wrapped region drifts.
+    //
+    // This is a cache-invalidation invariant — every stitch-mutating
+    // operation routes through {@link Atlas.markLinksDirty} so tracked
+    // links are re-derived before the next read. Validating here in
+    // `validateAtlas` makes a missed invalidation site fail loudly the
+    // next time *any* test re-validates that atlas, instead of shipping
+    // as a visual drift discovered by a user under multi-step interactive
+    // input.
+    //
+    // Non-tracked links (manual placements, self-links, closed-surface
+    // targets) skip this check — their transforms are caller-owned. See
+    // {@link Link.tracksStitchChain} for the discrimination.
+    if (
+      link.tracksStitchChain &&
+      allFaceSet.has(link.from) &&
+      allFaceSet.has(link.to)
+    ) {
+      const chain = bfsCompositeViaStitchesOnly(atlas, link.from, link.to);
+      if (chain !== null && !M.equals(link.transform, chain)) {
+        const fIdx = atlas.faces.indexOf(link.from);
+        const tIdx = atlas.faces.indexOf(link.to);
+        errs.push(
+          `link transform stale vs stitch chain (F${fIdx} → F${tIdx}): ` +
+            `stored=[${link.transform.a.toFixed(4)}, ${link.transform.b.toFixed(4)}, ` +
+            `${link.transform.c.toFixed(4)}, ${link.transform.d.toFixed(4)}, ` +
+            `${link.transform.e.toFixed(4)}, ${link.transform.f.toFixed(4)}], ` +
+            `chain=[${chain.a.toFixed(4)}, ${chain.b.toFixed(4)}, ` +
+            `${chain.c.toFixed(4)}, ${chain.d.toFixed(4)}, ` +
+            `${chain.e.toFixed(4)}, ${chain.f.toFixed(4)}]`,
+        );
+      }
+    }
   }
 
   // ---- reachability from root ----
@@ -1834,8 +2043,9 @@ export function subdivideSide(
     //   s_B (F: newP → target)  ↔  tw_A (G: twin.origin = target' → newP')
     const T_fwd = M.fromValues(T.a, T.b, T.c, T.d, T.e, T.f);
     const T_rev = M.invert(T_fwd);
-    setTwin(s_A, tw_B, T_fwd, M.fromValues(T_rev.a, T_rev.b, T_rev.c, T_rev.d, T_rev.e, T_rev.f));
+    setTwin(atlas, s_A, tw_B, T_fwd, M.fromValues(T_rev.a, T_rev.b, T_rev.c, T_rev.d, T_rev.e, T_rev.f));
     setTwin(
+      atlas,
       s_B,
       tw_A,
       M.fromValues(T_fwd.a, T_fwd.b, T_fwd.c, T_fwd.d, T_fwd.e, T_fwd.f),
@@ -2067,7 +2277,7 @@ export function splitFaceAtVertices(
   // the other way. Linear part stays identity (pure translation).
   const T_faceToFresh = M.fromTranslate(-freshOffset.x, -freshOffset.y);
   const T_freshToFace = M.fromTranslate(freshOffset.x, freshOffset.y);
-  setTwin(faceChordSide, freshChordSide, T_faceToFresh, T_freshToFace);
+  setTwin(atlas, faceChordSide, freshChordSide, T_faceToFresh, T_freshToFace);
 
   // Re-anchor arc1's HEs in place: they're moving from face's frame into
   // fresh's frame (translated by -freshOffset). Finite origins shift,
@@ -2127,6 +2337,9 @@ export function splitFaceAtVertices(
     // Iterate Stitches (the source of truth); for each, rewrite both
     // transformAtoB and transformBtoA when an endpoint is in arc1Set.
     // Skip the freshly-installed chord stitch — already correct.
+    // `setTransforms` is the only Stitch transform mutation entry point;
+    // it routes through `atlas.markLinksDirty()` which is batched by the
+    // outer `atlas.mutate(...)` wrapper around this whole function.
     for (const s of atlas.stitches) {
       if (s.a === faceChordSide || s.b === faceChordSide) continue;
       const aInArc1 = arc1Set.has(s.a);
@@ -2135,17 +2348,12 @@ export function splitFaceAtVertices(
       let TAB = s.transformAtoB;
       if (aInArc1) TAB = M.multiply(TAB, posOff);
       if (bInArc1) TAB = M.multiply(negOff, TAB);
-      s.transformAtoB = TAB;
       let TBA = s.transformBtoA;
       if (bInArc1) TBA = M.multiply(TBA, posOff);
       if (aInArc1) TBA = M.multiply(negOff, TBA);
-      s.transformBtoA = TBA;
+      s.setTransforms(TAB, TBA);
     }
   }
-
-  // Re-derive Link transforms from the current stitch chain. See
-  // {@link recomputeLinkTransformsFromStitchChain} for why this is needed.
-  recomputeLinkTransformsFromStitchChain(atlas);
 
   // Register the new face and its two new chord HEs with the atlas.
   // The arc1 HEs that moved to `fresh` are already in `atlas.sides` —
@@ -2293,6 +2501,7 @@ function rewireFaceCycle(face: Face) {
  *  - Neither has a Stitch: allocate a fresh Stitch.
  */
 function setTwin(
+  atlas: Atlas,
   a: Side,
   b: Side,
   transformAB: M.Matrix2D,
@@ -2301,13 +2510,12 @@ function setTwin(
   if (a.stitch !== null && a.stitch === b.stitch) {
     const s = a.stitch;
     // Same-pair update: keep Stitch identity, refresh transforms (handle
-    // either orientation of (a, b) versus (s.a, s.b)).
+    // either orientation of (a, b) versus (s.a, s.b)). `setTransforms`
+    // calls `atlas.markLinksDirty()` for us.
     if (s.a === a) {
-      s.transformAtoB = transformAB;
-      s.transformBtoA = transformBA;
+      s.setTransforms(transformAB, transformBA);
     } else {
-      s.transformAtoB = transformBA;
-      s.transformBtoA = transformAB;
+      s.setTransforms(transformBA, transformAB);
     }
     return s;
   }
@@ -2321,9 +2529,12 @@ function setTwin(
     s.a.stitch = null;
     s.b.stitch = null;
   }
-  const fresh = new Stitch(a, b, transformAB, transformBA);
+  const fresh = new Stitch(atlas, a, b, transformAB, transformBA);
   a.stitch = fresh;
   b.stitch = fresh;
+  // New stitch: chain reachability changed, so any existing Link whose
+  // BFS path now picks this stitch needs re-derivation.
+  atlas.markLinksDirty();
   return fresh;
 }
 
@@ -2397,7 +2608,10 @@ function bfsCompositeViaStitchesOnly(
  */
 function recomputeLinkTransformsFromStitchChain(atlas: Atlas): void {
   for (const link of atlas.links) {
-    if (link.from === link.to) continue;
+    // Only chain-tracked links get auto-updated. Non-tracked links
+    // (manual placements, self-links, closed-surface targets) hold their
+    // caller-supplied transform verbatim — see {@link Link.tracksStitchChain}.
+    if (!link.tracksStitchChain) continue;
     const composite = bfsCompositeViaStitchesOnly(atlas, link.from, link.to);
     if (composite) {
       link.transform = composite;
@@ -3072,8 +3286,10 @@ export function splitAlongLine(
     if (!forwardExit) throw new Error('splitAlongLine: no forward exit from host');
     const backwardExit = findExit(host, seam, dNeg, null);
     if (!backwardExit) throw new Error('splitAlongLine: no backward exit from host');
-    const r = splitFaceAlongChord(atlas, host, backwardExit, forwardExit, seam);
-    return { pairs: [toPair(r)] };
+    return atlas.mutate(() => {
+      const r = splitFaceAlongChord(atlas, host, backwardExit, forwardExit, seam);
+      return { pairs: [toPair(r)] };
+    });
   }
 
   // Propagating path: walk the line, refuse on wrapped chains, split
@@ -3110,14 +3326,15 @@ export function splitAlongLine(
     if (!c.entry) throw new Error('splitAlongLine: missing entry for crossing');
   }
 
-  const pairs: ChainSplitPair[] = [];
-  for (const c of captured) {
-    const entryHit = refreshHit(c.face, c.entry!);
-    const exitHit = refreshHit(c.face, c.exit);
-    pairs.push(toPair(splitFaceAlongChord(atlas, c.face, entryHit, exitHit, c.anchor)));
-  }
-
-  return { pairs };
+  return atlas.mutate(() => {
+    const pairs: ChainSplitPair[] = [];
+    for (const c of captured) {
+      const entryHit = refreshHit(c.face, c.entry!);
+      const exitHit = refreshHit(c.face, c.exit);
+      pairs.push(toPair(splitFaceAlongChord(atlas, c.face, entryHit, exitHit, c.anchor)));
+    }
+    return { pairs };
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -3304,64 +3521,62 @@ export function insertStrip(
         ])
       : undefined;
 
-  const stripFace = createFace(atlas, stripJ, { anchors });
+  return atlas.mutate(() => {
+    const stripFace = createFace(atlas, stripJ, { anchors });
 
-  // stripFace.sides[i] follows stripJ[i]: bottom sides at indices 0..N-1,
-  // top sides at indices N..2N-1 in reverse (T[N-1] first).
-  const bottomSides: Side[] = stripFace.sides.slice(0, N);
-  const topSides: Side[] = new Array(N);
-  for (let i = 0; i < N; i++) topSides[i] = stripFace.sides[2 * N - 1 - i];
+    // stripFace.sides[i] follows stripJ[i]: bottom sides at indices 0..N-1,
+    // top sides at indices N..2N-1 in reverse (T[N-1] first).
+    const bottomSides: Side[] = stripFace.sides.slice(0, N);
+    const topSides: Side[] = new Array(N);
+    for (let i = 0; i < N; i++) topSides[i] = stripFace.sides[2 * N - 1 - i];
 
-  // ---- Wire chord twin pairs to strip's bottom/top half-edges ----
-  // T_CtoS is a pure translation from the chord's face frame to the strip
-  // frame. Anchor the translation to whichever chord endpoint is finite
-  // (or the chord anchor for N=1 ideal-ideal chords). The caller passes
-  // the strip-frame junctions matching chord.origin / chord.target — the
-  // mapping is direction-dependent (right chord goes B→A, left goes A→B).
-  const stitchAndTranslate = (
-    chord: Side,
-    stripSide: Side,
-    stripForOrigin: Junction,
-    stripForTarget: Junction,
-    stripAnchor: Point,
-  ): void => {
-    const co = chord.origin();
-    const ct = chord.target();
-    let off: Point;
-    if (co.kind === 'finite') {
-      off = { x: (stripForOrigin as Point).x - co.x, y: (stripForOrigin as Point).y - co.y };
-    } else if (ct.kind === 'finite') {
-      off = { x: (stripForTarget as Point).x - ct.x, y: (stripForTarget as Point).y - ct.y };
-    } else {
-      const a = chord.anchor!;
-      off = { x: stripAnchor.x - a.x, y: stripAnchor.y - a.y };
+    // ---- Wire chord twin pairs to strip's bottom/top half-edges ----
+    // T_CtoS is a pure translation from the chord's face frame to the strip
+    // frame. Anchor the translation to whichever chord endpoint is finite
+    // (or the chord anchor for N=1 ideal-ideal chords). The caller passes
+    // the strip-frame junctions matching chord.origin / chord.target — the
+    // mapping is direction-dependent (right chord goes B→A, left goes A→B).
+    // `setTwin` calls `atlas.markLinksDirty()` per call; this outer mutate
+    // batches them into a single Link recompute at commit, which captures
+    // the full strip-routed chain (replacing the cut's temporary
+    // kept↔fresh chord stitch with the strip's `height·perp` indirection).
+    const stitchAndTranslate = (
+      chord: Side,
+      stripSide: Side,
+      stripForOrigin: Junction,
+      stripForTarget: Junction,
+      stripAnchor: Point,
+    ): void => {
+      const co = chord.origin();
+      const ct = chord.target();
+      let off: Point;
+      if (co.kind === 'finite') {
+        off = { x: (stripForOrigin as Point).x - co.x, y: (stripForOrigin as Point).y - co.y };
+      } else if (ct.kind === 'finite') {
+        off = { x: (stripForTarget as Point).x - ct.x, y: (stripForTarget as Point).y - ct.y };
+      } else {
+        const a = chord.anchor!;
+        off = { x: stripAnchor.x - a.x, y: stripAnchor.y - a.y };
+      }
+      const T_CtoS = M.fromTranslate(off.x, off.y);
+      setTwin(atlas, chord, stripSide, T_CtoS, M.invert(T_CtoS));
+    };
+
+    const bottomAnchor: Point = { x: 0, y: 0 };
+    const topAnchor: Point = { x: height * perp.x, y: height * perp.y };
+    for (let i = 0; i < N; i++) {
+      const r = splitResult.pairs[i].rightChordSide;
+      const l = splitResult.pairs[i].leftChordSide;
+      // Right chord r is B → A in rightFace frame; bottom strip side is
+      // A → B in strip frame.
+      stitchAndTranslate(r, bottomSides[i], bJunction(i, 'bot'), aJunction(i, 'bot'), bottomAnchor);
+      // Left chord l is A → B in leftFace frame; top strip side is
+      // B → A in strip frame.
+      stitchAndTranslate(l, topSides[i], aJunction(i, 'top'), bJunction(i, 'top'), topAnchor);
     }
-    const T_CtoS = M.fromTranslate(off.x, off.y);
-    setTwin(chord, stripSide, T_CtoS, M.invert(T_CtoS));
-  };
 
-  const bottomAnchor: Point = { x: 0, y: 0 };
-  const topAnchor: Point = { x: height * perp.x, y: height * perp.y };
-  for (let i = 0; i < N; i++) {
-    const r = splitResult.pairs[i].rightChordSide;
-    const l = splitResult.pairs[i].leftChordSide;
-    // Right chord r is B → A in rightFace frame; bottom strip side is
-    // A → B in strip frame.
-    stitchAndTranslate(r, bottomSides[i], bJunction(i, 'bot'), aJunction(i, 'bot'), bottomAnchor);
-    // Left chord l is A → B in leftFace frame; top strip side is
-    // B → A in strip frame.
-    stitchAndTranslate(l, topSides[i], aJunction(i, 'top'), bJunction(i, 'top'), topAnchor);
-  }
-
-  // Re-derive Link transforms from the new strip-routed chain. The cuts'
-  // `splitFaceAtVertices` recomputes already, but its chain went through
-  // the temporary kept↔fresh chord stitch we just removed; the strip
-  // re-wires those stitches with `height·perp` baked in, so any Link
-  // whose chain BFS goes through the cut chord is now stale by one strip
-  // thickness. See {@link recomputeLinkTransformsFromStitchChain}.
-  recomputeLinkTransformsFromStitchChain(atlas);
-
-  return { stripFace, bottomSides, topSides };
+    return { stripFace, bottomSides, topSides };
+  });
 }
 
 /**
@@ -3401,11 +3616,11 @@ export function insertStrip(
  * per-step transform matrices.
  */
 export function resizeStrip(
+  atlas: Atlas,
   stripResult: InsertStripResult,
   splitResult: SplitAlongLineResult,
   oldHeight: number,
   newHeight: number,
-  atlas?: Atlas,
 ): void {
   if (!(newHeight > 0)) {
     throw new Error('resizeStrip: newHeight must be positive');
@@ -3487,46 +3702,45 @@ export function resizeStrip(
   const dpx = delta * perp.x;
   const dpy = delta * perp.y;
 
-  // ---- Shift the strip's "top" boundary by Δ · perp ----
-  // For finite top HEs we just bump the origin. For ideal-ideal chord top
-  // HEs (the N=1 digon case, or any future case where insertStrip put a
-  // chord at the top) we bump the chord anchor instead — the ideal
-  // direction is translation-invariant, but the line through R² shifts
-  // perpendicularly by exactly Δ · perp.
-  for (let i = 0; i < N; i++) {
-    const t = stripResult.topSides[i];
-    if (t.a.kind === 'finite') {
-      t.a.x += dpx;
-      t.a.y += dpy;
-    } else if (t.kind === 'chord') {
-      const a = t.anchor!;
-      t.anchor = { x: a.x + dpx, y: a.y + dpy };
+  atlas.mutate(() => {
+    // ---- Shift the strip's "top" boundary by Δ · perp ----
+    // For finite top HEs we just bump the origin. For ideal-ideal chord
+    // top HEs (the N=1 digon case, or any future case where insertStrip
+    // put a chord at the top) we bump the chord anchor instead — the
+    // ideal direction is translation-invariant, but the line through R²
+    // shifts perpendicularly by exactly Δ · perp.
+    for (let i = 0; i < N; i++) {
+      const t = stripResult.topSides[i];
+      if (t.a.kind === 'finite') {
+        t.a.x += dpx;
+        t.a.y += dpy;
+      } else if (t.kind === 'chord') {
+        const a = t.anchor!;
+        t.anchor = { x: a.x + dpx, y: a.y + dpy };
+      }
     }
-  }
 
-  // ---- Update left-chord twin transforms ----
-  // Translation-only invariant: T_LtoS gains exactly Δ·perp on its
-  // translation part. The linear part is identity (translation), so we
-  // build the new matrix by adding to .e/.f and inverting for the back-edge.
-  for (let i = 0; i < N; i++) {
-    const l = splitResult.pairs[i].leftChordSide;
-    const t = stripResult.topSides[i];
-    const oldT = l.transform;
-    const T_LtoS = M.fromValues(
-      oldT.a,
-      oldT.b,
-      oldT.c,
-      oldT.d,
-      oldT.e + dpx,
-      oldT.f + dpy,
-    );
-    const T_StoL = M.invert(T_LtoS);
-    setTwin(l, t, T_LtoS, T_StoL);
-  }
-
-  // Re-derive Link transforms — the top-row stitches just shifted by
-  // Δ·perp, so any Link whose chain BFS crosses one is now stale by
-  // exactly that amount. See {@link recomputeLinkTransformsFromStitchChain}.
-  if (atlas) recomputeLinkTransformsFromStitchChain(atlas);
+    // ---- Update left-chord twin transforms ----
+    // Translation-only invariant: T_LtoS gains exactly Δ·perp on its
+    // translation part. The linear part is identity (translation), so we
+    // build the new matrix by adding to .e/.f and inverting for the
+    // back-edge. `setTwin` calls `atlas.markLinksDirty()` per call; the
+    // outer `mutate(...)` coalesces those into one Link recompute.
+    for (let i = 0; i < N; i++) {
+      const l = splitResult.pairs[i].leftChordSide;
+      const t = stripResult.topSides[i];
+      const oldT = l.transform;
+      const T_LtoS = M.fromValues(
+        oldT.a,
+        oldT.b,
+        oldT.c,
+        oldT.d,
+        oldT.e + dpx,
+        oldT.f + dpy,
+      );
+      const T_StoL = M.invert(T_LtoS);
+      setTwin(atlas, l, t, T_LtoS, T_StoL);
+    }
+  });
 }
 

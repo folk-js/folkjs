@@ -298,6 +298,67 @@ The post-cleanup audit flagged the surgery surface as suspicious: `subdivideSide
 
 Landed: **A** → **C** → **B** → **E Phase 1** → **E Phase 2** → **E Phase 3** → **cleanup pass** → **macro surface collapse** → **`createFace` primitive**.
 
+### Cache-invalidation chokepoint: stitch mutations now route through one path ✅ landed
+
+The Link-staleness bug had a textbook root cause: `Link.transform` is cached derived state in a substrate that elsewhere preaches "never persist composites." The cache had no automatic invalidation, no compile-time enforcement, and no validation check, so a missed mutation site shipped as a visual drift the user only saw under multi-step interactive input. This chunk closes those gaps.
+
+**1. Compile-time chokepoint on stitch transform mutation.**
+
+`Stitch.transformAtoB` and `Stitch.transformBtoA` are now `#`-private fields exposed via getters. The only mutation entry point is `Stitch.setTransforms(ab, ba)`, which routes through `atlas.markLinksDirty()` automatically. `Stitch` carries an `atlas` back-reference set at construction time so callers don't need to thread `atlas` through every call site.
+
+Direct writes to `s.transformAtoB = X` are now a TypeScript error AND a runtime error (`Cannot set property transformAtoB of #<Stitch> which has only a getter`). The chokepoint is structurally enforced — a future refactor cannot accidentally bypass it.
+
+`setTwin` (the only other place stitches are constructed/rewired) gained an `atlas` parameter and calls `markLinksDirty()` on every fresh Stitch and same-pair re-twin. `unstitch` does the same on tear-down. Together these cover every path by which a stitch's reciprocal binding can change shape.
+
+**2. Batched mutation API: `Atlas.mutate(fn)`.**
+
+```ts
+atlas.mutate(() => {
+  // many setTwin / Stitch.setTransforms / splitFaceAtVertices / etc.
+});
+// → exactly one Link recompute fires here, regardless of how many
+//   stitch mutations happened inside.
+```
+
+`mutate` increments a depth counter on entry and runs the deferred recompute in a `finally` block when depth returns to zero. Nesting is supported (only the outermost commits), so high-level macros wrap freely without worrying about inner macros doing their own batching. Calls to `markLinksDirty` outside any `mutate` recompute eagerly — correct but slow, fine for one-off mutations.
+
+Top-level macros (`splitAlongLine`, `insertStrip`, `resizeStrip`, `rescaleFaceFrame`) now wrap their bodies in `atlas.mutate(() => …)` and the explicit `recomputeLinkTransformsFromStitchChain(atlas)` calls that the previous fix sprinkled around are gone — invalidation is the substrate's responsibility now, not the macro's. `splitFaceAtVertices`'s conjugation loop calls `s.setTransforms(...)` per stitch; the outer `splitAlongLine.mutate(...)` coalesces all conjugations across an N-face cut chain plus the strip's 2N stitch wirings into one recompute pass.
+
+**3. Per-link tracking opt-in, auto-detected at link creation.**
+
+`Link` gained a `tracksStitchChain: boolean` flag. The recompute (and the `validateAtlas` check below) only touches `tracksStitchChain` links; everything else holds its caller-supplied transform verbatim.
+
+The flag is auto-set by `link()` based on whether the caller-supplied transform matches the BFS chain composite at link-creation time:
+
+| use case                     | chain reachable?  | transform matches chain? | `tracksStitchChain` |
+| ---------------------------- | ----------------- | ------------------------ | ------------------- |
+| cylinder-style wrap          | yes               | yes (= cached chain)     | **true**            |
+| recursive zoom self-link     | yes (`from===to`) | almost never             | false               |
+| closed-surface (torus) wrap  | no                | n/a                      | false               |
+| manual placement             | maybe             | usually no               | false               |
+
+So `wrapRegionAxis` in `folk-atlas.ts` (which sets `link.transform = inv(outer→region stitch) = chain composite`) gets auto-tracked links without any source change, while `link(atlas, a, b, M.fromTranslate(10, 0))` (a deliberate-offset placement between stitch-connected faces, used in tests) gets a non-tracked link that survives subsequent mutations untouched.
+
+**4. Validation: `validateAtlas` now checks tracked-link consistency.**
+
+```ts
+// Inside the per-link block of validateAtlas:
+if (link.tracksStitchChain && allFaceSet.has(link.from) && allFaceSet.has(link.to)) {
+  const chain = bfsCompositeViaStitchesOnly(atlas, link.from, link.to);
+  if (chain !== null && !M.equals(link.transform, chain)) {
+    errs.push(`link transform stale vs stitch chain (F${...} → F${...}): stored=… chain=…`);
+  }
+}
+```
+
+The class of bug we hit becomes a test-suite failure the *next time any test re-validates the atlas after the bad mutation*, instead of shipping as a visual drift discovered during interactive multi-cut. Combined with the chokepoint above, "introducing this bug class" requires:
+1. Adding a non-`Stitch.setTransforms` path to mutate stitches (compile error in TypeScript, runtime error in JS — actively impossible)
+2. Then writing a test that doesn't call `validateAtlas` after the mutation.
+
+That's a much narrower failure surface than "remember to call `recomputeLinkTransformsFromStitchChain` at every site that touches stitch transforms."
+
+**Net delta:** atlas.ts diff is roughly +180 / −90 (Stitch private fields + Atlas.mutate + Link.tracksStitchChain + validateAtlas check, against the deletion of three explicit `recomputeLinkTransformsFromStitchChain` calls); folk-atlas.ts unchanged except for one `resizeStrip` call site that now passes `this.#atlas` as the first argument. 221 substrate tests pass; the cylinder-h multi-cut behaviour the user originally reported still works.
+
 ### Bug fix: Link transforms now re-derive from the stitch chain after cuts ✅ landed
 
 The `links` commit (`e644523`, `E Phase 1`) replaced the asymmetric edge-twin wrap pattern with `Stitch` (cylinder loop) + `Link` (host-side placement). For a cylinder region this installs **two** Links — one from each side neighbour — and the wrap-on logic chooses both transforms so that, in the pre-cut topology, walking from any root via either link reaches the region at the same world position. Composite consistency is encoded by the equation

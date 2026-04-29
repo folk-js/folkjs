@@ -2094,7 +2094,7 @@ export class FolkAtlas extends ReactiveElement {
     const newHeight = Math.max(FolkAtlas.#COMMIT_EPS, Math.abs(gizmo.delta));
     if (newHeight === c.height) return;
     try {
-      resizeStrip(c.strip, c.split, c.height, newHeight, this.#atlas);
+      resizeStrip(this.#atlas, c.strip, c.split, c.height, newHeight);
     } catch (err) {
       console.warn('[folk-atlas] line cut resize failed:', err);
       return;

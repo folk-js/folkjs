@@ -451,11 +451,9 @@ describe('validateAtlas', () => {
     // (not the legacy per-side transform) so both directions stay consistent.
     for (const s of atlas.stitches) {
       if (s.a.face === f) {
-        s.transformAtoB = M.fromTranslate(-dx, -dy);
-        s.transformBtoA = M.fromTranslate(dx, dy);
+        s.setTransforms(M.fromTranslate(-dx, -dy), M.fromTranslate(dx, dy));
       } else if (s.b.face === f) {
-        s.transformAtoB = M.fromTranslate(dx, dy);
-        s.transformBtoA = M.fromTranslate(-dx, -dy);
+        s.setTransforms(M.fromTranslate(dx, dy), M.fromTranslate(-dx, -dy));
       }
     }
     assert.doesNotThrow(() => validateAtlas(atlas));
@@ -474,7 +472,7 @@ describe('validateAtlas', () => {
     const he = atlas.sides.find((h) => h.twin)!;
     // Tamper with the underlying Stitch's transformAtoB to violate junction
     // correspondence; validateAtlas should catch it.
-    he.stitch!.transformAtoB = M.fromTranslate(10, 0);
+    he.stitch!.setTransforms(M.fromTranslate(10, 0), he.stitch!.transformBtoA);
     assert.throws(() => validateAtlas(atlas), /endpoint/);
   });
 
@@ -511,8 +509,7 @@ describe('validateAtlas', () => {
     const atlas = createInitialAtlas();
     const he = atlas.sides.find((h) => h.twin)!;
     const refl = M.fromValues(1, 0, 0, -1, 0, 0);
-    he.stitch!.transformAtoB = refl;
-    he.stitch!.transformBtoA = refl;
+    he.stitch!.setTransforms(refl, refl);
     assert.doesNotThrow(() => validateAtlas(atlas));
   });
 });
@@ -545,11 +542,9 @@ describe('Atlas.computeComposites', () => {
     // invariant fails, but `computeComposites` only reads the transform.
     const s = heInner.stitch!;
     if (s.a === heInner) {
-      s.transformAtoB = M.fromTranslate(10, 0);
-      s.transformBtoA = M.fromTranslate(-10, 0);
+      s.setTransforms(M.fromTranslate(10, 0), M.fromTranslate(-10, 0));
     } else {
-      s.transformAtoB = M.fromTranslate(-10, 0);
-      s.transformBtoA = M.fromTranslate(10, 0);
+      s.setTransforms(M.fromTranslate(-10, 0), M.fromTranslate(10, 0));
     }
 
     const composites = atlas.computeComposites();
@@ -1033,7 +1028,7 @@ describe('Link', () => {
     const atlas1 = createInitialAtlas();
     const atlas2 = createInitialAtlas();
     // Smuggle a Link whose `to` lives in a different atlas.
-    const stale = new Link(atlas1.faces[0], atlas2.faces[0], M.fromValues());
+    const stale = new Link(atlas1.faces[0], atlas2.faces[0], M.fromValues(), false);
     atlas1.links.add(stale);
     assert.throws(() => validateAtlas(atlas1), /link\.to not in atlas/);
   });
@@ -1587,11 +1582,9 @@ describe('Atlas.switchRoot', () => {
     const newRoot = heInner.twin!.face;
     const s = heInner.stitch!;
     if (s.a === heInner) {
-      s.transformAtoB = M.fromTranslate(7, -3);
-      s.transformBtoA = M.fromTranslate(-7, 3);
+      s.setTransforms(M.fromTranslate(7, -3), M.fromTranslate(-7, 3));
     } else {
-      s.transformAtoB = M.fromTranslate(-7, 3);
-      s.transformBtoA = M.fromTranslate(7, -3);
+      s.setTransforms(M.fromTranslate(-7, 3), M.fromTranslate(7, -3));
     }
 
     const compositesOld = atlas.computeComposites();
@@ -1640,11 +1633,9 @@ describe('Atlas.switchRoot', () => {
     const otherFace = heInner.twin!.face;
     const s = heInner.stitch!;
     if (s.a === heInner) {
-      s.transformAtoB = M.fromTranslate(7, -3);
-      s.transformBtoA = M.fromTranslate(-7, 3);
+      s.setTransforms(M.fromTranslate(7, -3), M.fromTranslate(-7, 3));
     } else {
-      s.transformAtoB = M.fromTranslate(-7, 3);
-      s.transformBtoA = M.fromTranslate(7, -3);
+      s.setTransforms(M.fromTranslate(-7, 3), M.fromTranslate(7, -3));
     }
 
     const C1 = atlas.switchRoot(otherFace);
@@ -3575,15 +3566,15 @@ describe('resizeStrip', () => {
   };
 
   it('rejects non-positive newHeight', () => {
-    const { stripResult, splitResult } = setupStrip();
-    assert.throws(() => resizeStrip(stripResult, splitResult, 0.5, 0), /must be positive/);
-    assert.throws(() => resizeStrip(stripResult, splitResult, 0.5, -1), /must be positive/);
+    const { atlas, stripResult, splitResult } = setupStrip();
+    assert.throws(() => resizeStrip(atlas, stripResult, splitResult, 0.5, 0), /must be positive/);
+    assert.throws(() => resizeStrip(atlas, stripResult, splitResult, 0.5, -1), /must be positive/);
   });
 
   it('rejects mismatched chain lengths', () => {
-    const { stripResult, splitResult } = setupStrip();
+    const { atlas, stripResult, splitResult } = setupStrip();
     const trimmed = { pairs: [splitResult.pairs[0]] };
-    assert.throws(() => resizeStrip(stripResult, trimmed, 0.5, 0.6), /chain length mismatch/);
+    assert.throws(() => resizeStrip(atlas, stripResult, trimmed, 0.5, 0.6), /chain length mismatch/);
   });
 
   it('no-op when oldHeight equals newHeight', () => {
@@ -3593,7 +3584,7 @@ describe('resizeStrip', () => {
       e: p.leftChordSide.transform.e,
       f: p.leftChordSide.transform.f,
     }));
-    resizeStrip(stripResult, splitResult, 0.5, 0.5);
+    resizeStrip(atlas, stripResult, splitResult, 0.5, 0.5);
     for (let i = 0; i < stripResult.topSides.length; i++) {
       assert.equal(stripResult.topSides[i].a.x, topBefore[i].x);
       assert.equal(stripResult.topSides[i].a.y, topBefore[i].y);
@@ -3606,14 +3597,14 @@ describe('resizeStrip', () => {
   });
 
   it('shifts finite topHE origins by Δ·perp', () => {
-    const { stripResult, splitResult, perp } = setupStrip(0.5);
+    const { atlas, stripResult, splitResult, perp } = setupStrip(0.5);
     const topBefore = stripResult.topSides.map((h) => ({
       kind: h.a.kind,
       x: h.a.x,
       y: h.a.y,
     }));
     const newH = 1.25;
-    resizeStrip(stripResult, splitResult, 0.5, newH);
+    resizeStrip(atlas, stripResult, splitResult, 0.5, newH);
     const delta = newH - 0.5;
     for (let i = 0; i < stripResult.topSides.length; i++) {
       const t = stripResult.topSides[i];
@@ -3635,13 +3626,13 @@ describe('resizeStrip', () => {
   });
 
   it('does NOT touch bottomSides or right-chord twin transforms', () => {
-    const { stripResult, splitResult } = setupStrip(0.5);
+    const { atlas, stripResult, splitResult } = setupStrip(0.5);
     const botBefore = stripResult.bottomSides.map((h) => ({ x: h.a.x, y: h.a.y }));
     const rightTransBefore = splitResult.pairs.map((p) => ({
       e: p.rightChordSide.transform.e,
       f: p.rightChordSide.transform.f,
     }));
-    resizeStrip(stripResult, splitResult, 0.5, 1.25);
+    resizeStrip(atlas, stripResult, splitResult, 0.5, 1.25);
     for (let i = 0; i < stripResult.bottomSides.length; i++) {
       assert.equal(stripResult.bottomSides[i].a.x, botBefore[i].x);
       assert.equal(stripResult.bottomSides[i].a.y, botBefore[i].y);
@@ -3654,17 +3645,17 @@ describe('resizeStrip', () => {
 
   it('atlas remains valid after resize', () => {
     const { atlas, stripResult, splitResult } = setupStrip(0.5);
-    resizeStrip(stripResult, splitResult, 0.5, 1.25);
+    resizeStrip(atlas, stripResult, splitResult, 0.5, 1.25);
     assert.doesNotThrow(() => validateAtlas(atlas));
-    resizeStrip(stripResult, splitResult, 1.25, 0.1);
+    resizeStrip(atlas, stripResult, splitResult, 1.25, 0.1);
     assert.doesNotThrow(() => validateAtlas(atlas));
-    resizeStrip(stripResult, splitResult, 0.1, 3.0);
+    resizeStrip(atlas, stripResult, splitResult, 0.1, 3.0);
     assert.doesNotThrow(() => validateAtlas(atlas));
   });
 
   it('twin-image equation T · h.next.origin = h.twin.origin holds for left chords post-resize', () => {
-    const { stripResult, splitResult } = setupStrip(0.5);
-    resizeStrip(stripResult, splitResult, 0.5, 1.7);
+    const { atlas, stripResult, splitResult } = setupStrip(0.5);
+    resizeStrip(atlas, stripResult, splitResult, 0.5, 1.7);
     for (let i = 0; i < splitResult.pairs.length; i++) {
       const l = splitResult.pairs[i].leftChordSide;
       const twin = l.twin!;
@@ -3682,14 +3673,14 @@ describe('resizeStrip', () => {
   });
 
   it("round-trip h → h' → h restores topHE origins and left-chord transforms", () => {
-    const { stripResult, splitResult } = setupStrip(0.5);
+    const { atlas, stripResult, splitResult } = setupStrip(0.5);
     const topSnap = stripResult.topSides.map((h) => ({ x: h.a.x, y: h.a.y }));
     const leftSnap = splitResult.pairs.map((p) => ({
       e: p.leftChordSide.transform.e,
       f: p.leftChordSide.transform.f,
     }));
-    resizeStrip(stripResult, splitResult, 0.5, 1.7);
-    resizeStrip(stripResult, splitResult, 1.7, 0.5);
+    resizeStrip(atlas, stripResult, splitResult, 0.5, 1.7);
+    resizeStrip(atlas, stripResult, splitResult, 1.7, 0.5);
     for (let i = 0; i < stripResult.topSides.length; i++) {
       assert.ok(Math.abs(stripResult.topSides[i].a.x - topSnap[i].x) < 1e-9);
       assert.ok(Math.abs(stripResult.topSides[i].a.y - topSnap[i].y) < 1e-9);
@@ -3721,7 +3712,7 @@ describe('resizeStrip', () => {
     const topAnchorBefore = { x: top0.anchor!.x, y: top0.anchor!.y };
     const botAnchorBefore = { x: bot0.anchor!.x, y: bot0.anchor!.y };
 
-    resizeStrip(stripResult, splitResult, 0.5, 2.0);
+    resizeStrip(atlas, stripResult, splitResult, 0.5, 2.0);
     validateAtlas(atlas);
 
     // Bottom anchor must be unchanged; top anchor must have shifted by
@@ -3734,7 +3725,7 @@ describe('resizeStrip', () => {
       `top anchor x shifted unexpectedly: ${top0.anchor!.x} vs ${topAnchorBefore.x}`,
     );
     // Round-trip restores the original.
-    resizeStrip(stripResult, splitResult, 2.0, 0.5);
+    resizeStrip(atlas, stripResult, splitResult, 2.0, 0.5);
     validateAtlas(atlas);
     assert.ok(Math.abs(top0.anchor!.x - topAnchorBefore.x) < 1e-9);
     assert.ok(Math.abs(top0.anchor!.y - topAnchorBefore.y) < 1e-9);
