@@ -13,7 +13,6 @@ import {
   insertStrip,
   Link,
   link,
-  linkEdgeToTwin,
   rescaleFaceFrame,
   resizeStrip,
   isPolygonCCW,
@@ -22,10 +21,7 @@ import {
   stitch,
   translationToWrap,
   unlink,
-  unlinkEdgeFromTwin,
   unstitch,
-  untwinEdges,
-  wrapEdges,
   type Junction,
   pointOnSideAtU,
   splitAtlasAlongLine,
@@ -516,7 +512,7 @@ describe('validateAtlas', () => {
     // checks per-link junction correspondence.
     const { atlas, right, left, w } = makeSquareFace();
     // Symmetrically wrap right ↔ left first.
-    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+    stitch(atlas, right, left, M.fromTranslate(-w, 0));
     // Now break the symmetry: re-aim left at itself somewhere — actually,
     // simulate the asymmetric region wrap by leaving left.twin = right but
     // pointing right.twin elsewhere is hard without another edge, so just
@@ -531,36 +527,19 @@ describe('validateAtlas', () => {
     assert.throws(() => validateAtlas(atlas), /direction length|T·a|endpoint/);
   });
 
-  it('throws when a twin transform has shear (non-similarity)', () => {
-    // The seed atlas's twins all live along the cardinal axes between
-    // (0,0) and (0,0). A shear of the form [1, 0, c, 1, 0, 0] still
-    // satisfies junction correspondence for those particular edges
-    // (both endpoints sit on the axis, so the off-axis shear doesn't
-    // displace them) but violates the similarity invariant.
-    const atlas = createInitialAtlas();
-    const he = atlas.sides.find((h) => h.twin)!;
-    he.transform = M.fromValues(1, 0, 0.5, 1, 0, 0);
-    assert.throws(() => validateAtlas(atlas), /rotation\/shear|non-uniform/);
-  });
-
-  it('throws when a twin transform is a reflection (det < 0)', () => {
-    // A reflection across the x-axis fixes both endpoints of an edge
-    // that lies on that axis (the seed atlas's twins do), so junction
-    // correspondence holds — but it has det = -1 and a ≠ d, so the
-    // similarity invariant rejects it.
+  it('accepts a non-similarity twin transform (post chunk E Phase 3)', () => {
+    // The substrate no longer enforces a similarity-only constraint on
+    // stitch transforms — Klein-bottle, RP², and Dehn-twisted-torus
+    // topologies need rotation/reflection. Per-face model spaces will
+    // (when introduced) take over the job of constraining transforms by
+    // source/target model. Here we verify validateAtlas no longer rejects
+    // a transform whose linear part is a reflection on a seed-atlas edge
+    // pair (junction correspondence still holds because the edge sits on
+    // the axis of reflection).
     const atlas = createInitialAtlas();
     const he = atlas.sides.find((h) => h.twin)!;
     he.transform = M.fromValues(1, 0, 0, -1, 0, 0);
-    assert.throws(() => validateAtlas(atlas), /non-uniform|non-positive/);
-  });
-
-  it('accepts a uniform-scale similarity twin transform', () => {
-    // Build a 1D-degenerate but otherwise-valid scenario: take a seed
-    // twin and scale by 1.0 (identity) — should pass. Scaling by, say,
-    // 2.0 would not satisfy junction correspondence on this seed, so
-    // we just confirm the *shape* of the check accepts any uniform s.
-    // Real scaled twins are tested via the operation that builds them.
-    const atlas = createInitialAtlas();
+    he.twin!.transform = M.fromValues(1, 0, 0, -1, 0, 0);
     assert.doesNotThrow(() => validateAtlas(atlas));
   });
 });
@@ -772,7 +751,7 @@ describe('Atlas.computeImages', () => {
 });
 
 // ---------------------------------------------------------------------------
-// wrapEdges + translationToWrap
+// stitch + translationToWrap
 // ---------------------------------------------------------------------------
 
 /**
@@ -815,11 +794,11 @@ describe('translationToWrap', () => {
   });
 });
 
-describe('wrapEdges', () => {
+describe('stitch', () => {
   it('twins the half-edges with the supplied transform and its inverse', () => {
     const { atlas, right, left, w } = makeSquareFace();
     const T = M.fromTranslate(-w, 0);
-    wrapEdges(atlas, right, left, T);
+    stitch(atlas, right, left, T);
 
     assert.equal(right.twin, left);
     assert.equal(left.twin, right);
@@ -831,13 +810,13 @@ describe('wrapEdges', () => {
     // The atlas is no longer simply-connected, but per-twin transform and
     // junction invariants must still hold.
     const { atlas, right, left, w } = makeSquareFace();
-    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+    stitch(atlas, right, left, M.fromTranslate(-w, 0));
     validateAtlas(atlas);
   });
 
   it('produces multiple geometric images of the same face via computeImages', () => {
     const { atlas, right, left, w, face } = makeSquareFace();
-    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+    stitch(atlas, right, left, M.fromTranslate(-w, 0));
 
     const images = atlas.computeImages({ maxDepth: 3, maxImagesPerFace: 32 });
     // depth 0 root + 1 each direction at depth 1 + 1 each at depth 2 + 1 each at depth 3
@@ -852,7 +831,7 @@ describe('wrapEdges', () => {
     const atlas = createInitialAtlas();
     const heInner = [...atlas.root.sidesCCW()].find((he) => he.twin)!;
     const otherHe = [...atlas.faces[2].sidesCCW()].find((he) => he.twin === null)!;
-    assert.throws(() => wrapEdges(atlas, heInner, otherHe, M.fromValues()));
+    assert.throws(() => stitch(atlas, heInner, otherHe, M.fromValues()));
   });
 
   it('throws on at-infinity (ideal-ideal) half-edges', () => {
@@ -861,32 +840,32 @@ describe('wrapEdges', () => {
     const ideal = wedge.sides[1]; // at-infinity arc
     const { atlas: a2, right } = makeSquareFace();
     // Even before twin checks, the ideal-ideal guard should fire.
-    assert.throws(() => wrapEdges(atlas, ideal, right, M.fromValues()));
+    assert.throws(() => stitch(atlas, ideal, right, M.fromValues()));
     void a2;
   });
 
   it('throws on geometry mismatch with the supplied transform', () => {
     const { atlas, right, left } = makeSquareFace();
     // Wrong translation amount.
-    assert.throws(() => wrapEdges(atlas, right, left, M.fromTranslate(-2, 0)));
+    assert.throws(() => stitch(atlas, right, left, M.fromTranslate(-2, 0)));
   });
 
   it('throws when half-edges are not in the atlas', () => {
     const { right } = makeSquareFace();
     const { atlas: other, left } = makeSquareFace();
-    assert.throws(() => wrapEdges(other, right, left, M.fromTranslate(-1, 0)));
+    assert.throws(() => stitch(other, right, left, M.fromTranslate(-1, 0)));
   });
 
   it('throws on self-twin', () => {
     const { atlas, right } = makeSquareFace();
-    assert.throws(() => wrapEdges(atlas, right, right, M.fromValues()));
+    assert.throws(() => stitch(atlas, right, right, M.fromValues()));
   });
 
-  it('translationToWrap composes correctly with wrapEdges (cylinder seed)', () => {
+  it('translationToWrap composes correctly with stitch (cylinder seed)', () => {
     // Chain the helper into the primitive — the canonical "make me a
     // horizontal cylinder" call.
     const { atlas, right, left, face } = makeSquareFace(3, 2);
-    wrapEdges(atlas, right, left, translationToWrap(right, left));
+    stitch(atlas, right, left, translationToWrap(right, left));
     validateAtlas(atlas);
     const images = atlas.computeImages({ maxDepth: 2 });
     assert.ok(images.length > 1);
@@ -894,36 +873,6 @@ describe('wrapEdges', () => {
   });
 });
 
-describe('untwinEdges', () => {
-  it('clears both halves of a twin pair and resets transforms', () => {
-    const { atlas, right, left, w } = makeSquareFace();
-    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
-    untwinEdges(right);
-    assert.equal(right.twin, null);
-    assert.equal(left.twin, null);
-    assert.ok(M.equals(right.transform, M.fromValues()));
-    assert.ok(M.equals(left.transform, M.fromValues()));
-  });
-
-  it('is a no-op when the half-edge has no twin', () => {
-    const { right } = makeSquareFace();
-    assert.equal(right.twin, null);
-    untwinEdges(right);
-    assert.equal(right.twin, null);
-  });
-
-  it('round-trips with wrapEdges: untwin then re-wrap restores the cycle', () => {
-    const { atlas, right, left, w, face } = makeSquareFace();
-    const T = M.fromTranslate(-w, 0);
-    wrapEdges(atlas, right, left, T);
-    untwinEdges(right);
-    wrapEdges(atlas, right, left, T);
-    validateAtlas(atlas);
-    const images = atlas.computeImages({ maxDepth: 2 });
-    for (const img of images) assert.equal(img.face, face);
-    assert.ok(images.length > 1);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Stitch / stitch / unstitch / Atlas.stitches (chunk C)
@@ -1021,30 +970,6 @@ describe('Stitch', () => {
     assert.equal(atlas.stitches.size, 0);
   });
 
-  it('asymmetric linkEdgeToTwin pairs do NOT allocate a Stitch', () => {
-    // The region-wrap toggle in folk-atlas.ts uses two `linkEdgeToTwin` calls
-    // to install an asymmetric pair (outer faces still point INTO the region
-    // while the inside loops to itself). Such pairs are intentionally Stitch-
-    // free in the chunk-C transitional model.
-    const { atlas, right, left, w } = makeSquareFace();
-    linkEdgeToTwin(atlas, right, left, M.fromTranslate(-w, 0));
-    assert.equal(right.stitch, null);
-    assert.equal(left.stitch, null);
-    assert.equal(atlas.stitches.size, 0);
-  });
-
-  it('unlinkEdgeFromTwin clears any associated Stitch (asymmetric break invalidates reciprocity)', () => {
-    const { atlas, right, left, w } = makeSquareFace();
-    const s = stitch(atlas, right, left, M.fromTranslate(-w, 0));
-    assert.equal(atlas.stitches.size, 1);
-    unlinkEdgeFromTwin(right);
-    // The Stitch's reciprocity contract is broken: clear back-refs on both.
-    assert.equal(right.stitch, null);
-    assert.equal(left.stitch, null);
-    assert.equal(atlas.stitches.size, 0);
-    void s;
-  });
-
   it('validateAtlas catches a tampered .stitch back-reference', () => {
     const { atlas, right, left, w } = makeSquareFace();
     stitch(atlas, right, left, M.fromTranslate(-w, 0));
@@ -1054,14 +979,14 @@ describe('Stitch', () => {
     assert.throws(() => validateAtlas(atlas), /stitch back-references/);
   });
 
-  it('wrapEdges and untwinEdges still work as legacy aliases (no Stitch leakage on round-trip)', () => {
+  it('stitch / unstitch round-trips cleanly (no Stitch leakage)', () => {
     const { atlas, right, left, w } = makeSquareFace();
     const T = M.fromTranslate(-w, 0);
-    wrapEdges(atlas, right, left, T);
-    assert.equal(atlas.stitches.size, 1, 'wrapEdges allocates a Stitch');
-    untwinEdges(right);
-    assert.equal(atlas.stitches.size, 0, 'untwinEdges releases the Stitch');
-    wrapEdges(atlas, right, left, T);
+    const s1 = stitch(atlas, right, left, T);
+    assert.equal(atlas.stitches.size, 1, 'stitch allocates a Stitch');
+    unstitch(s1);
+    assert.equal(atlas.stitches.size, 0, 'unstitch releases the Stitch');
+    stitch(atlas, right, left, T);
     assert.equal(atlas.stitches.size, 1, 'round-trip restores exactly one Stitch');
     validateAtlas(atlas);
   });
@@ -1362,7 +1287,7 @@ describe('rescaleFaceFrame', () => {
     const atlas = new Atlas(L.face);
     atlas.faces = [L.face, R.face];
     atlas.sides = [L.bottom, L.right, L.top, L.left, R.bottom, R.right, R.top, R.left];
-    wrapEdges(atlas, L.right, R.left, M.fromTranslate(-1, 0));
+    stitch(atlas, L.right, R.left, M.fromTranslate(-1, 0));
     return { atlas, L, R };
   }
 
@@ -1412,7 +1337,7 @@ describe('rescaleFaceFrame', () => {
     // left → right, leaving right.twin alone for clarity).
     const sq = makeSquareFace();
     const T = M.fromTranslate(-1, 0);
-    wrapEdges(sq.atlas, sq.right, sq.left, T);
+    stitch(sq.atlas, sq.right, sq.left, T);
     rescaleFaceFrame(sq.atlas, sq.face, 2);
     // The wrap should still be a pure translation (linear part = 1) and
     // the translation magnitude should have doubled.
@@ -1497,156 +1422,16 @@ describe('rescaleFaceFrame', () => {
   });
 });
 
-describe('linkEdgeToTwin (asymmetric primitive)', () => {
-  it('points he.twin at target without touching target.twin', () => {
-    const { atlas, right, left, w } = makeSquareFace();
-    const T = M.fromTranslate(-w, 0);
-    linkEdgeToTwin(atlas, right, left, T);
-    assert.equal(right.twin, left);
-    assert.ok(M.equals(right.transform, T));
-    // target's twin remains null — this is the defining property.
-    assert.equal(left.twin, null);
-    assert.ok(M.equals(left.transform, M.fromValues()));
-  });
-
-  it('throws when the source half-edge is already twinned', () => {
-    const { atlas, right, left, w } = makeSquareFace();
-    linkEdgeToTwin(atlas, right, left, M.fromTranslate(-w, 0));
-    assert.throws(() => linkEdgeToTwin(atlas, right, left, M.fromTranslate(-w, 0)));
-  });
-
-  it('throws on geometry mismatch', () => {
-    const { atlas, right, left } = makeSquareFace();
-    assert.throws(() => linkEdgeToTwin(atlas, right, left, M.fromTranslate(-2, 0)));
-  });
-});
-
-describe('unlinkEdgeFromTwin (asymmetric inverse)', () => {
-  it('clears only the source pointer, not the partners', () => {
-    const { atlas, right, left, w } = makeSquareFace();
-    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
-    // After symmetric wrap: right.twin = left, left.twin = right.
-    unlinkEdgeFromTwin(right);
-    assert.equal(right.twin, null);
-    assert.ok(M.equals(right.transform, M.fromValues()));
-    // Partner is now stranded — its twin still points at right.
-    assert.equal(left.twin, right);
-  });
-});
-
-describe('asymmetric wrap semantics (region-style)', () => {
-  // Build a 3-cell horizontal strip where the middle cell is "wrapped":
-  // the middle's left and right edges are re-aimed at each other (so from
-  // inside, the middle face cylinders onto itself), but the outer cells'
-  // adjacent edges still point INTO the middle (entry from outside still
-  // works). Verifies the three-property contract of the asymmetric model:
-  //   1. validateAtlas accepts the topology.
-  //   2. computeImages from outside sees one canonical middle image.
-  //   3. computeImages rooted on the middle sees an unbounded repeat
-  //      (capped by maxImagesPerFace).
-  function buildAsymmetricWrappedStrip(maxRepeats = 5) {
-    // Build three side-by-side unit squares: L | M | R.
-    // Coordinates in each face's local frame: anchor at bottom-left,
-    // CCW order bottom → right → top → left.
-    const mkSquare = (): {
-      anchor: Side;
-      bottom: Side;
-      right: Side;
-      top: Side;
-      left: Side;
-      face: Face;
-    } => {
-      const bottom = new Side('finite', 0, 0);
-      const right = new Side('finite', 1, 0);
-      const top = new Side('finite', 1, 1);
-      const left = new Side('finite', 0, 1);
-      const face = new Face([bottom, right, top, left]);
-      return { anchor: bottom, bottom, right, top, left, face };
-    };
-    const L = mkSquare();
-    const M_ = mkSquare();
-    const R = mkSquare();
-    const atlas = new Atlas(M_.face);
-    atlas.faces = [L.face, M_.face, R.face];
-    atlas.sides = [
-      L.bottom, L.right, L.top, L.left,
-      M_.bottom, M_.right, M_.top, M_.left,
-      R.bottom, R.right, R.top, R.left,
-    ];
-
-    // Symmetric splits-style links between L↔M, M↔R, with translation
-    // by (-1, 0) when going right→left across M's right edge, etc.
-    // Convention: he.transform : he.face local → he.twin.face local
-    // L.right and M.left are physically the same vertical line at x=1
-    // in L's frame and x=0 in M's frame. So L.right.transform =
-    // translate(-1, 0); M.left.transform = translate(+1, 0).
-    wrapEdges(atlas, L.right, M_.left, M.fromTranslate(-1, 0));
-    wrapEdges(atlas, M_.right, R.left, M.fromTranslate(-1, 0));
-
-    // Now make M asymmetrically wrapped: M.left → M.right and
-    // M.right → M.left, BUT keep L.right.twin = M.left and
-    // R.left.twin = M.right untouched, so outside still enters in.
-    unlinkEdgeFromTwin(M_.left);
-    unlinkEdgeFromTwin(M_.right);
-    linkEdgeToTwin(atlas, M_.left, M_.right, M.fromTranslate(1, 0));
-    linkEdgeToTwin(atlas, M_.right, M_.left, M.fromTranslate(-1, 0));
-
-    return { atlas, L: L.face, M: M_.face, R: R.face, maxRepeats };
-  }
-
-  it('validateAtlas accepts the asymmetric topology', () => {
-    const { atlas } = buildAsymmetricWrappedStrip();
-    assert.doesNotThrow(() => validateAtlas(atlas));
-  });
-
-  it('rooted on the middle, M tiles infinitely (capped) along the wrap axis', () => {
-    const { atlas, M: middle } = buildAsymmetricWrappedStrip();
-    atlas.root = middle;
-    // The cap is what stops the BFS from running away.
-    const images = atlas.computeImages({ maxDepth: 32, maxImagesPerFace: 6 });
-    const middleImages = images.filter((i) => i.face === middle);
-    assert.ok(middleImages.length >= 2, 'middle should have multiple images');
-    // The middle images sit at integer x offsets (its width is 1).
-    const xs = new Set(middleImages.map((i) => Math.round(i.composite.e)));
-    assert.ok(xs.size >= 2);
-    assert.ok(xs.has(0));
-  });
-
-  it('rooted on outside L, the middle is reachable (one canonical image)', () => {
-    const { atlas, L, M: middle } = buildAsymmetricWrappedStrip();
-    atlas.root = L;
-    // From outside the wrap looks normal: M's self-loops are suppressed,
-    // and the asymmetric image cap (1 per non-root face) keeps M from
-    // appearing as a ghost stack even if multiple BFS walks reached it.
-    const images = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 16 });
-    const middleImages = images.filter((i) => i.face === middle);
-    assert.equal(middleImages.length, 1, 'middle must appear exactly once from outside');
-  });
-
-  it('rooted inside the wrap, outside (non-wrapped) faces appear at most once each', () => {
-    // The bug we are guarding against: a wrap-tile of the root fans out to
-    // an outside neighbour at *its own* shifted composite, producing ghost
-    // copies of every outside face. Asymmetric image cap pins non-root
-    // faces at one image regardless of how many wrap tiles try to enqueue
-    // them.
-    const { atlas, L, M: middle, R } = buildAsymmetricWrappedStrip();
-    atlas.root = middle;
-    const images = atlas.computeImages({ maxDepth: 32, maxImagesPerFace: 6 });
-    const lImages = images.filter((i) => i.face === L);
-    const rImages = images.filter((i) => i.face === R);
-    // L is reachable from M via M.left (untouched outside-incoming twin
-    // points the other direction; only M.right.twin = M.left now). So L
-    // is unreachable from M in this exact construction, but if it were
-    // reachable, it must still appear ≤ 1.
-    assert.ok(lImages.length <= 1, 'L appears at most once');
-    assert.ok(rImages.length <= 1, 'R appears at most once');
-  });
-
-  // The "torus" case: wrap M's top<->bottom in addition to its left<->right.
-  // From inside M (root === middle), the BFS should produce a 2D grid of M
-  // tiles and absolutely no outside faces, even though L's right edge and
-  // R's left edge still reciprocate-point into M (asymmetric).
-  function buildDoublyWrappedSingleFace() {
+describe('closed-surface wrap (torus / Klein-style topologies via Stitch only)', () => {
+  // A face whose every pair of opposite sides is reciprocally stitched is a
+  // closed surface — the substrate-correct expression of what used to be
+  // "doubly asymmetric wrap." With Stitch reciprocity, only 2 stitches are
+  // needed (one per axis) to express a torus on a single face. The closed
+  // surface has no free boundary edges, so the only way to enter from a
+  // host face is via a {@link Link} — exercised in the Stitch describe
+  // block's "substrate wrap pattern" test and in `wrapRegionAxis` post
+  // chunk E Phase 2.
+  function buildTorusFace() {
     const bottom = new Side('finite', 0, 0);
     const right = new Side('finite', 1, 0);
     const top = new Side('finite', 1, 1);
@@ -1655,28 +1440,30 @@ describe('asymmetric wrap semantics (region-style)', () => {
     const atlas = new Atlas(f);
     atlas.faces = [f];
     atlas.sides = [bottom, right, top, left];
-    // Wrap horizontally and vertically — both as in-face self-twins.
-    linkEdgeToTwin(atlas, right, left, M.fromTranslate(-1, 0));
-    linkEdgeToTwin(atlas, left, right, M.fromTranslate(1, 0));
-    linkEdgeToTwin(atlas, top, bottom, M.fromTranslate(0, -1));
-    linkEdgeToTwin(atlas, bottom, top, M.fromTranslate(0, 1));
+    // Two reciprocal stitches make this a torus: a self-stitch on each axis.
+    stitch(atlas, right, left, M.fromTranslate(-1, 0));
+    stitch(atlas, top, bottom, M.fromTranslate(0, -1));
     return { atlas, face: f };
   }
 
-  it('doubly wrapped (torus) face: every reachable image is the wrapped face itself', () => {
-    const { atlas, face } = buildDoublyWrappedSingleFace();
+  it('validateAtlas accepts the closed-torus topology', () => {
+    const { atlas } = buildTorusFace();
+    assert.doesNotThrow(() => validateAtlas(atlas));
+  });
+
+  it('every reachable image is the wrapped face itself (no outside faces leak)', () => {
+    const { atlas, face } = buildTorusFace();
     const images = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 64 });
     for (const img of images) {
-      assert.equal(img.face, face, 'no outside faces leak into a closed torus root');
+      assert.equal(img.face, face, 'closed torus has no outside neighbours to leak to');
     }
     assert.ok(images.length > 1, 'torus root should tile, not just appear once');
   });
 
-  it('doubly wrapped face: tiles cover a 2D grid of integer offsets', () => {
-    const { atlas } = buildDoublyWrappedSingleFace();
+  it('tiles cover a 2D grid of integer offsets', () => {
+    const { atlas } = buildTorusFace();
     const images = atlas.computeImages({ maxDepth: 6, maxImagesPerFace: 64 });
     const cells = new Set(images.map((i) => `${Math.round(i.composite.e)},${Math.round(i.composite.f)}`));
-    // Should include both pure-x and pure-y neighbours plus a diagonal.
     assert.ok(cells.has('0,0'));
     assert.ok(cells.has('1,0') || cells.has('-1,0'), 'has horizontal tile');
     assert.ok(cells.has('0,1') || cells.has('0,-1'), 'has vertical tile');
@@ -1684,49 +1471,12 @@ describe('asymmetric wrap semantics (region-style)', () => {
     assert.ok(diag, 'has at least one diagonal tile');
   });
 
-  // Mirror the live-region scenario: wrap a single face inside a tessellated
-  // atlas, then look at the BFS images from inside. Outside faces should
-  // appear as canonical-only (no ghost copies per wrap tile).
-  function buildHorizontallyWrappedRegionInStrip() {
-    // L | M | R, with M asymmetrically wrapped on left/right (cylinder).
-    const built = buildAsymmetricWrappedStrip();
-    return built;
-  }
-
-  it('horizontally wrapped region viewed from inside: outside faces are canonical-only', () => {
-    const { atlas, L, M: middle, R } = buildHorizontallyWrappedRegionInStrip();
-    atlas.root = middle;
-    const images = atlas.computeImages({ maxDepth: 16, maxImagesPerFace: 6 });
-
-    // Middle should tile.
-    const mImages = images.filter((i) => i.face === middle);
-    assert.ok(mImages.length >= 2, 'middle must tile from inside');
-
-    // L is reachable from M only via L.right.twin = M.left, but M.left
-    // points back at M.right (asymmetric). So L isn't reachable from M
-    // — that's fine. The crucial guarantee is: if reachable, ≤ 1 image.
-    const lImages = images.filter((i) => i.face === L);
-    const rImages = images.filter((i) => i.face === R);
-    assert.ok(lImages.length <= 1);
-    assert.ok(rImages.length <= 1);
-  });
-
-  it('splitAtlasAlongLine refuses to cut through a wrapped (asymmetric) edge', () => {
-    const { atlas, M: middle } = buildAsymmetricWrappedStrip();
-    // A horizontal line through M's interior would exit via M.right
-    // (which is now asymmetrically twinned to M.left) — must throw.
-    assert.throws(
-      () => splitAtlasAlongLine(atlas, middle, { x: 0.5, y: 0.5 }, { x: 1, y: 0 }),
-      /wrapped \(asymmetric\) edge/,
-    );
-  });
-
   it('shouldExpand bounds wrap tiling: torus produces only the visible window', () => {
     // The renderer relies on shouldExpand to stop BFS once tiles march off
     // the visible viewport. Here we mock that with a "keep tiles whose
     // composite translation lies inside the unit disc of radius 3" predicate
     // — at the unit-square wrap that's at most a 7x7 grid of tiles.
-    const { atlas } = buildDoublyWrappedSingleFace();
+    const { atlas } = buildTorusFace();
     let expansions = 0;
     const images = atlas.computeImages({
       maxDepth: 256,
@@ -1753,7 +1503,7 @@ describe('asymmetric wrap semantics (region-style)', () => {
     // Edge case: even when the predicate immediately bails on the root, we
     // must still report the root itself — the renderer needs at least one
     // image to draw the current view.
-    const { atlas } = buildDoublyWrappedSingleFace();
+    const { atlas } = buildTorusFace();
     const images = atlas.computeImages({
       maxDepth: 8,
       maxImagesPerFace: 16,
@@ -2544,7 +2294,7 @@ describe('splitFaceAtVertices', () => {
     // (separate from the new chord twin), so the tiling cylinder still
     // composes (per-face BFS cap aside).
     const { atlas, face, right, left, top, bottom, w, h } = makeSquareFace(4, 2);
-    wrapEdges(atlas, right, left, M.fromTranslate(-w, 0));
+    stitch(atlas, right, left, M.fromTranslate(-w, 0));
     validateAtlas(atlas);
 
     subdivideSide(atlas, bottom, { x: w / 2, y: 0 });
@@ -2565,101 +2315,66 @@ describe('splitFaceAtVertices', () => {
     assert.equal(bWrap!.twin, aWrap);
   });
 
-  it('preserves an asymmetric wrap when splitting an outer neighbour', () => {
-    // Build a 3-face strip [Wleft, C, Wright] joined by left/right edges,
-    // then asymmetrically wrap C's right edge to its own left edge (the
-    // canonical region-wrap setup: outer neighbours still point INTO C,
-    // but C's own left/right point at each other to make the wrap).
-    //
-    // Pre-fix bug: splitting Wleft (an outer neighbour of C) re-wired the
-    // half-edge in Wleft that was twinned to C's left, calling the
-    // symmetric `setTwin`. That clobbered C.left.twin (which was C.right
-    // for the wrap), breaking the wrap topology entirely. After the fix,
-    // splitting Wleft only updates Wleft's side of the binding and leaves
-    // C.left.twin pointing at C.right.
+  it('preserves a Link + cylinder-Stitch wrap when splitting a host face', () => {
+    // Substrate-correct version of "wrap survives a split on an outer
+    // neighbour": a closed cylinder face C has a self-stitch (the cylinder
+    // loop) and is placed inside a host face L via a Link. Splitting L
+    // must leave the Link target and the cylinder Stitch intact.
     const w = 2;
     const h = 1;
+    // Closed cylinder face C: self-stitched left ↔ right.
     const cBL = new Side('finite', 0, 0);
     const cBR = new Side('finite', w, 0);
     const cTR = new Side('finite', w, h);
     const cTL = new Side('finite', 0, h);
     const C = new Face([cBL, cBR, cTR, cTL]);
-    const cRight = cBR;
-    const cLeft = cTL;
-
+    // Host face L (large enough to contain a placed-in C).
     const lBL = new Side('finite', -w, 0);
-    const lBR = new Side('finite', 0, 0);
-    const lTR = new Side('finite', 0, h);
+    const lBR = new Side('finite', w, 0);
+    const lTR = new Side('finite', w, h);
     const lTL = new Side('finite', -w, h);
-    const Wleft = new Face([lBL, lBR, lTR, lTL]);
-    const wleftRight = lBR;
-
-    const rBL = new Side('finite', w, 0);
-    const rBR = new Side('finite', 2 * w, 0);
-    const rTR = new Side('finite', 2 * w, h);
-    const rTL = new Side('finite', w, h);
-    const Wright = new Face([rBL, rBR, rTR, rTL]);
-    const wrightLeft = rTL;
+    const L = new Face([lBL, lBR, lTR, lTL]);
 
     const atlas = new Atlas(C);
-    atlas.faces = [Wleft, C, Wright];
-    atlas.sides = [
-      lBL,
-      lBR,
-      lTR,
-      lTL,
-      cBL,
-      cBR,
-      cTR,
-      cTL,
-      rBL,
-      rBR,
-      rTR,
-      rTL,
-    ];
-
-    // First link Wleft.right ↔ C.left, Wright.left ↔ C.right (the natural
-    // outside topology), then asymmetrically install the wrap by re-aiming
-    // C.right ↔ C.left while leaving Wleft/Wright pointing INTO C.
-    wrapEdges(atlas, wleftRight, cLeft, M.fromValues());
-    wrapEdges(atlas, wrightLeft, cRight, M.fromValues());
-    unlinkEdgeFromTwin(cRight);
-    unlinkEdgeFromTwin(cLeft);
-    const T = M.fromTranslate(-w, 0);
-    linkEdgeToTwin(atlas, cRight, cLeft, T);
-    linkEdgeToTwin(atlas, cLeft, cRight, M.invert(T));
+    atlas.faces = [L, C];
+    atlas.sides = [lBL, lBR, lTR, lTL, cBL, cBR, cTR, cTL];
+    // Cylinder loop on C: cBR (right edge, going (w,0)→(w,h)) stitched to
+    // cTL (left edge, going (0,h)→(0,0)). Junction correspondence requires
+    // T(cBR.target=(w,h)) = cTL.origin=(0,h) AND T(cBR.origin=(w,0)) =
+    // cTL.target=(0,0), both satisfied by translate(-w, 0).
+    const cylinder = stitch(atlas, cBR, cTL, M.fromTranslate(-w, 0));
+    // Place C inside L at (0, 0) — Link convention is `to → from`, so the
+    // transform maps C-frame → L-frame.
+    const linkLtoC = link(atlas, L, C, M.fromValues());
     validateAtlas(atlas);
 
-    // Pre-split: from inside C, the wrap repeats produce many tiles.
+    // Pre-split: from inside C, the cylinder Stitch tiles.
     atlas.switchRoot(C);
     const preImages = atlas.computeImages({ maxDepth: 3, maxImagesPerFace: 16 });
     const preTiles = preImages.filter((img) => img.face === C).length;
-    assert.ok(preTiles >= 5, `expected ≥5 wrap tiles pre-split, got ${preTiles}`);
+    assert.ok(preTiles >= 3, `expected ≥3 cylinder tiles pre-split, got ${preTiles}`);
 
-    // Capture the wrap pointers — these MUST survive the outer split.
-    const cLeftTwinBefore = cLeft.twin;
-    const cRightTwinBefore = cRight.twin;
-    assert.equal(cLeftTwinBefore, cRight, 'pre-split: C.left.twin === C.right (wrap)');
-    assert.equal(cRightTwinBefore, cLeft, 'pre-split: C.right.twin === C.left (wrap)');
-
-    // Subdivide Wleft's top and bottom and split it down the middle.
-    subdivideSide(atlas, lBL, { x: -w / 2, y: 0 });
-    subdivideSide(atlas, lTR, { x: -w / 2, y: h });
-    const split = splitFaceAtVertices(atlas, Wleft, 1, 4);
+    // Subdivide L's top and bottom and split L down the middle.
+    subdivideSide(atlas, lBL, { x: 0, y: 0 });
+    subdivideSide(atlas, lTR, { x: 0, y: h });
+    const split = splitFaceAtVertices(atlas, L, 1, 4);
     validateAtlas(atlas);
 
-    // Wrap pointers on C must be untouched.
-    assert.equal(cLeft.twin, cRight, 'post-split: C.left.twin still === C.right');
-    assert.equal(cRight.twin, cLeft, 'post-split: C.right.twin still === C.left');
+    // The cylinder Stitch on C is untouched.
+    assert.equal(cBR.stitch, cylinder, 'cylinder Stitch survives outer split');
+    assert.equal(cTL.stitch, cylinder);
+    assert.equal(cBR.twin, cTL);
+    assert.equal(cTL.twin, cBR);
+    // The Link still references the original L (identity-preserving split).
+    assert.ok(atlas.links.has(linkLtoC));
+    assert.equal(linkLtoC.from, L);
+    assert.equal(linkLtoC.to, C);
 
-    // And re-rooting at C still produces multiple wrap tiles.
+    // From inside C, the cylinder still tiles.
     atlas.switchRoot(C);
     const postImages = atlas.computeImages({ maxDepth: 3, maxImagesPerFace: 16 });
     const postTiles = postImages.filter((img) => img.face === C).length;
-    assert.ok(
-      postTiles >= 5,
-      `expected ≥5 wrap tiles after outer split, got ${postTiles}`,
-    );
+    assert.ok(postTiles >= 3, `expected ≥3 cylinder tiles after outer split, got ${postTiles}`);
     void split;
   });
 });

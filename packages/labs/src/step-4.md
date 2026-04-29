@@ -212,23 +212,41 @@ Originally framed as "additive, unlocks recursive zoom." Re-scoped post-A/C/B as
 
 **Walker compatibility (no extra work needed):** `screenToFaceLocal` and shape drag already iterate `computeImages`, which after Phase 1 includes Link-placed images. So a pointer over a Link-placed copy of the wrapped region correctly resolves to the region face; shape drags into / out of a wrapped region work without renderer changes. The original concern about "walking off a free edge into a Link's child" turned out to be a non-issue for our pointer-pick path because we already do polygon-in-polygon containment checks against every BFS image, not edge-following.
 
-#### Phase 3 — retire the asymmetric machinery (cleanup)
+#### Phase 3 — retire the asymmetric machinery ✅ landed
 
-**Change:** delete `linkEdgeToTwin`, `unlinkEdgeFromTwin`, `wrapEdges`, `untwinEdges` (the latter two have been deprecated aliases since chunk C). Remove `Side.twin` and `Side.transform` from the data model — `Side.stitch.transformFrom(self)` becomes the only navigation. Drop the asymmetric-twin commentary block from `atlas.ts`'s module header. Drop `validateAtlas`'s bidirectional-reachability special case (no longer needed when reciprocity is structural; reachability through stitches is automatic) and the similarity-only check (Klein bottle, RP², Dehn twist all become legal — substrate.md's `(R², similarity)` model is enforced *if at all* via per-face model space, not via a global validator).
+**Change:** delete the named asymmetric primitives, drop the validator's similarity-only and bidirectional-reachability blocks, migrate the test corpus.
 
-**Depends on:** Phase 2 (the only consumer of the asymmetric primitives).
+**What landed:**
+- `linkEdgeToTwin` deleted. Its precondition / junction-correspondence checks are inlined into `stitch`, which now stands alone (no longer routes through two `linkEdgeToTwin` calls + a `setTwin` promotion).
+- `unlinkEdgeFromTwin` deleted (its only role was breaking asymmetric twins; with no asymmetric model there's nothing to break).
+- `wrapEdges` and `untwinEdges` deleted (deprecated aliases since chunk C).
+- `validateAtlas`'s **similarity-only** edge-transform block deleted (~25 lines). Klein-bottle, RP², Dehn-twisted torus, and arbitrary affine stitch transforms are now legal at the substrate level. Per-face model spaces (substrate.md's `(R², similarity)`, `(H², Möbius)`, etc.) will, when introduced, take over the job of constraining transforms by model.
+- `validateAtlas`'s **bidirectional-incoming-twin reachability** special case deleted (~25 lines). Twin reciprocity is structural now (Stitch invariants enforce it), so the forward-only twin walk reaches every stitch-connected face. Link reachability remains bidirectional (an isolated face only connected via incoming Link is reachable).
+- The `atlas.ts` module-header commentary on "Twins are NOT required to be reciprocal" / "Similarity-only edge transforms" replaced with the new substrate description (Stitch is structural, Link handles asymmetric cross-face structure, transforms are unconstrained at this layer).
+- Test corpus migrated:
+  - `describe('untwinEdges', …)` block deleted (no behaviour to test).
+  - Asymmetric-only tests inside the `Stitch` block deleted; the legacy-alias round-trip test rewritten to use `stitch` / `unstitch` directly.
+  - `describe('linkEdgeToTwin (asymmetric primitive)', …)` deleted.
+  - `describe('unlinkEdgeFromTwin (asymmetric inverse)', …)` deleted.
+  - `describe('asymmetric wrap semantics (region-style)', …)` rewritten as `describe('closed-surface wrap (torus / Klein-style topologies via Stitch only)', …)` — the doubly-wrapped torus is built with two reciprocal stitches instead of four `linkEdgeToTwin` calls; the strip-style asymmetric tests are gone (their behaviour is covered by the substrate wrap test in the `Stitch` block plus chunk E Phase 2's substrate composition).
+  - The `splitFaceAtVertices preserves an asymmetric wrap` test rewritten as "preserves a Link + cylinder-Stitch wrap when splitting a host face" — same scenario, expressed via the substrate primitives.
+  - Two `validateAtlas` similarity-rejection tests replaced with one acceptance test confirming non-similarity transforms now pass.
 
-**Deletes:**
-- ~80 lines for `linkEdgeToTwin` / `unlinkEdgeFromTwin` / `wrapEdges` / `untwinEdges` and their docstrings
-- ~50 lines of asymmetric-twin invariant comments in the `atlas.ts` module header
-- ~50 lines of bidirectional-reachability + similarity-only blocks in `validateAtlas`
-- The `Side.twin` / `Side.transform` removal cascades through every call site that uses them, replacing with `side.stitch.transformFrom(side)` — net reduction since navigation through Stitch is more terse and the per-edge transform field becomes redundant data
+**`Side.twin` / `Side.transform` retained** as the storage backing `Stitch`'s transform getter and the BFS step in `computeImages`. Removing those fields entirely (replacing every read with `side.stitch.transformFrom(side)`) is a follow-up cleanup with no substrate consequences — the asymmetric model is already gone in spirit; what remains is just internal storage.
 
-**Unlocks:** Klein bottle, RP², Dehn-twisted torus, general transforms in stitches. The asymmetric-twin trap is eliminated by construction (Stitch is reciprocal-only, Link is the only directional binding, no third axis).
+**Net delta:** −426 lines combined (Phases 2 + 3 since the previous commit) across `atlas.ts` and tests, of which Phase 3 contributes roughly −300 (the deletions above). 216 tests pass (was 232 before Phase 3 — net −14 after pruning the asymmetric-only describe blocks). TypeScript build clean.
 
-### Chunk F — drop the similarity-only constraint and the named twin primitives
+**Unlocked:**
+- Klein bottle: `stitch(face, opposite_edges, T_with_reflection_in_linear_part)` now passes validation.
+- RP², Dehn-twisted torus: same story.
+- Recursive zoom: already worked in Phase 1; still works here.
+- Embedded closed regions (cylinders / tori inside hosts): expressed via `stitch` (cylinder loop) + `link` (host placement), per the chunk E Phase 2 wrap rewrite.
 
-Folded into chunk E Phase 3 above. The original chunk F was carved out as a separate step before we recognised Link was the underlying substrate gap; with Link in place, F is not separate work, it's just things that fall out of Phase 3.
+The asymmetric-twin trap is eliminated by construction. `Stitch` is reciprocal-only (a class invariant); `Link` is the only directional binding; there is no third "asymmetric edge twin" axis at the substrate level.
+
+### Chunk F — folded into Phase 3
+
+The original chunk F (drop similarity-only + delete the named twin primitives) was carved out as a separate step before we recognised Link was the underlying substrate gap. With Link in place, those weren't separate work — they were things that fell out of Phase 3 once the asymmetric model became unreachable.
 
 ## Status / current ordering
 

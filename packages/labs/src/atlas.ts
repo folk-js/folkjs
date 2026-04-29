@@ -59,28 +59,28 @@ export {
 // k ≥ 3 ideal directions covering S¹ is a valid all-ideal face — the empty
 // scene as one face rather than k wedges meeting at a sentinel origin.
 //
-// **Edge transforms.** Each non-null `h.twin` link is a *one-way* pointer:
-// "exiting through `h` lands you in `h.twin.face`, with frame change
-// `h.transform : h.face local → h.twin.face local`". The geometric
-// junction-correspondence invariant is local to each link:
+// **Edge transforms.** Each non-null `h.twin` link is paired by construction
+// — every twin pair is reciprocal (`h.twin.twin === h`) because the only way
+// to install a twin pair is via {@link stitch} or the internal split /
+// subdivision primitives, all of which allocate a {@link Stitch} that owns
+// both endpoints. The per-side `h.transform` stores the change of frame
+// from `h.face` to `h.twin.face`; `h.twin.transform` is its inverse.
+//
+// `Stitch.transformFrom(h)` is the substrate-level accessor for "the
+// transform out of h's face frame." `h.twin` and `h.transform` are kept as
+// the storage backing it (and the BFS step in {@link Atlas.computeImages}).
+//
+// The geometric junction-correspondence invariant is local to each
+// stitched pair:
 //   - `h.transform · h.next.origin = h.twin.origin`
 //   - `h.transform · h.origin     = h.twin.next.origin`
-// For ideal junctions only the linear part of the transform applies (and the
-// result is renormalized to unit length).
+// For ideal junctions only the linear part of the transform applies (and
+// the result is renormalized to unit length).
 //
-// **Twins are NOT required to be reciprocal.** It can be the case that
-// `h.twin.twin !== h` (and equivalently, `h.transform · h.twin.transform`
-// is not identity). This is what enables wrapped/looping topologies: a
-// region's "top" and "bottom" edges can twin to *each other* (creating an
-// internal cycle that produces the cylinder repetition), while outside
-// faces' adjacent edges still point INTO the region (one-way), so shapes
-// can cross into the wrap from outside but never back out through the
-// wrapped axis.
-//
-// Reciprocal twin pairs (the common case from face splits) still satisfy
-// `h.twin.twin === h` and `h.transform · h.twin.transform = identity` —
-// but those are *consequences* of how a particular operation built them,
-// not enforced invariants of the data model.
+// **Cross-face structure that isn't symmetric** — e.g. embedding a closed
+// or wrapped region inside a host, where there's no two-way edge-level
+// reciprocity — goes through {@link Link} at the face level, not through
+// edge twins. See {@link Link} for the broader picture.
 //
 // **At-infinity half-edges.** A half-edge with both `origin` and `target`
 // ideal is the boundary between two ideal directions — a piece of the line
@@ -91,15 +91,13 @@ export {
 // returned by this module is face-relative. The choice of `atlas.root` is a
 // rendering convention only.
 //
-// **Similarity-only edge transforms.** By model invariant, every twin
-// transform is a *similarity with rotation = 0*: a uniform positive
-// scale composed with a translation, of the form
-//   `[[s, 0], [0, s], (tx, ty)]`  with  s > 0.
-// No rotation, no reflection (det > 0), no shear, no non-uniform scale.
-// `validateAtlas` enforces this in development; production skips the
-// check. Existing operations (line cut, region cut, wrap) all produce
-// pure translations (s = 1); the scale degree of freedom is reserved
-// for nesting / infinite-zoom regions.
+// **No similarity-only constraint on transforms.** Stitch transforms may be
+// arbitrary affine maps (rotation, reflection, non-uniform scale, shear all
+// legal). Klein-bottle, RP², and Dehn-twisted-torus topologies are
+// expressible directly via `stitch` with the appropriate transform. Per-face
+// model spaces (substrate.md's `(R², similarity)`, `(H², Möbius)`, etc.)
+// will, when introduced, constrain transforms based on the source/target
+// model — that's where transform-shape rules naturally live.
 
 // The `Junction` value type and the oriented-projective-plane primitives that
 // operate on it now live in `./atlas/geometry/`. They are re-exported at the
@@ -177,16 +175,16 @@ export class Side {
   transform: M.Matrix2D = M.fromValues();
 
   /**
-   * Reciprocal-binding back-reference. When this half-edge is part of a
-   * symmetric twin pair (`this.twin.twin === this` and the transforms are
-   * mutually inverse), both `this.stitch` and `this.twin.stitch` reference
-   * the same {@link Stitch} object. When the binding is asymmetric (e.g.
-   * region-wrap toggles installed via {@link linkEdgeToTwin}) or when this
-   * half-edge has no twin, `stitch` is `null`.
+   * Reciprocal-binding back-reference. Every twin pair in the atlas is
+   * reciprocal-by-construction (the only way to install a twin pair is
+   * via {@link stitch} or the internal split/subdivision primitives,
+   * both of which allocate a {@link Stitch}); both `this.stitch` and
+   * `this.twin.stitch` reference the same `Stitch` object whenever this
+   * side has a twin. When this side has no twin, `stitch` is `null`.
    *
-   * Chunk C: this is a parallel view onto the existing twin/transform
-   * fields. Chunk B will make `Side.stitch` the source of truth and remove
-   * the redundant pointer/transform pair.
+   * Side.twin / Side.transform are kept for now as the storage backing
+   * Stitch's transform getter and the BFS step in {@link Atlas.computeImages}.
+   * A future refactor may collapse them into Stitch-only navigation.
    */
   stitch: Stitch | null = null;
 
@@ -285,20 +283,17 @@ export type HalfEdge = Side;
  * its inverse on `b.transform`); `Stitch.transform` is a getter that reads
  * from `a` so there is no synchronization burden between Stitch and HE state.
  *
- * Stitches are allocated automatically by the symmetric primitives — chord
- * pairs from {@link splitFaceAtVertices}, subdivided pairs from
- * {@link subdivideSide}, strip-to-chord pairs from {@link insertStrip},
- * and explicit calls to {@link stitch} or {@link wrapEdges}. Asymmetric
- * one-way bindings established via {@link linkEdgeToTwin} do NOT allocate
- * a Stitch — `.stitch` stays `null` on both endpoints.
+ * Stitches are allocated by the only symmetric edge-binding primitive,
+ * {@link stitch}, and by the internal split / subdivision primitives that
+ * produce reciprocal pairs (chord pairs from {@link splitFaceAtVertices},
+ * subdivided pairs from {@link subdivideSide}, strip-to-chord pairs from
+ * {@link insertStrip}). There is no asymmetric edge-twin counterpart in the
+ * substrate — closed/wrapped regions placed inside a host go through
+ * {@link link} at the face level instead.
  *
  * The set of all stitches in an atlas is derived on demand via the
  * {@link Atlas.stitches} getter; it is not persisted state, so there is no
  * separate atlas-level bookkeeping to keep in sync.
- *
- * After chunk B (when `Side` replaces `Side`), `Stitch` becomes the
- * source of truth for cross-face navigation; the redundant twin/transform
- * pair on the HE will be removed.
  */
 export class Stitch {
   a: Side;
@@ -701,10 +696,6 @@ export class Atlas {
    * fit on a screen this is cheap (one pass over `sides` with a Set
    * de-dup). Callers that need to iterate stitches many times in a frame
    * should cache the result.
-   *
-   * Asymmetric twin pairs (those bound via {@link linkEdgeToTwin} without a
-   * matching reciprocal call, e.g. region-wrap toggles) do not appear here —
-   * they have no Stitch by design.
    */
   get stitches(): Set<Stitch> {
     const set = new Set<Stitch>();
@@ -876,9 +867,9 @@ export class Atlas {
         // hidden so the region looks like a normal face.
         if (twin.face === img.face && img.face !== this.root) continue;
         // Stepping across `he` into the neighbour: the neighbour's frame
-        // expressed in the current frame is `inv(he.transform)`. We use
-        // `inv(he.transform)` (not `he.twin.transform`) because asymmetric
-        // twins — used for wrapping — make those two not equal in general.
+        // expressed in the current frame is `inv(he.transform)`.
+        // (Equivalently: `he.twin.transform` — they're inverses by Stitch's
+        // structural reciprocity, so either is correct.)
         queue.push({
           face: twin.face,
           composite: M.multiply(img.composite, M.invert(he.transform)),
@@ -1077,11 +1068,11 @@ export function createAllIdealAtlas(
 }
 
 // ----------------------------------------------------------------------------
-// wrapEdges — twin two boundary half-edges with a chosen transform
+// stitch / unstitch — symmetric edge-binding primitives
 // ----------------------------------------------------------------------------
 
 /**
- * Compute the translation that twins `heA` to `heB` under the standard
+ * Compute the translation that stitches `heA` to `heB` under the standard
  * convention `T · heA.next.origin = heB.origin` and `T · heA.origin =
  * heB.next.origin`.
  *
@@ -1090,7 +1081,7 @@ export function createAllIdealAtlas(
  * left and right sides of a strip, or two opposite edges of a parallelogram.
  *
  * Throws if the geometry is incompatible with a pure translation, or if
- * either half-edge has an ideal endpoint.
+ * either side has an ideal endpoint.
  */
 export function translationToWrap(heA: Side, heB: Side, eps = 1e-6): M.Matrix2D {
   if (heA.originKind !== 'finite' || heA.next.originKind !== 'finite') {
@@ -1117,105 +1108,27 @@ export function translationToWrap(heA: Side, heB: Side, eps = 1e-6): M.Matrix2D 
 }
 
 /**
- * One-way primitive: point `he.twin` at `target`, with frame-change
- * `he.transform = transform`. This does NOT touch `target.twin` —
- * the link is asymmetric.
- *
- * This is the building block for both reciprocal and asymmetric topologies.
- * For the symmetric case (face splits), call it twice with mutually inverse
- * transforms; for asymmetric cycles (wrapped regions), it is called per
- * direction independently.
- *
- * Pre-conditions:
- *  - both half-edges live in `atlas`
- *  - `he !== target`
- *  - `he` is currently untwinned
- *  - both are finite-finite
- *  - `transform` satisfies the junction-correspondence equations
- *      transform · he.next.origin ≈ target.origin
- *      transform · he.origin       ≈ target.next.origin
- *
- * Effect: sets `he.twin = target` and `he.transform = transform`.
- */
-export function linkEdgeToTwin(
-  atlas: Atlas,
-  he: Side,
-  target: Side,
-  transform: M.Matrix2D,
-  eps = 1e-6,
-): void {
-  if (he === target) throw new Error('linkEdgeToTwin: cannot twin a half-edge to itself');
-  if (!atlas.sides.includes(he) || !atlas.sides.includes(target)) {
-    throw new Error('linkEdgeToTwin: half-edges must belong to atlas');
-  }
-  if (he.twin !== null) throw new Error('linkEdgeToTwin: he must currently be untwinned');
-  if (he.isAtInfinity || target.isAtInfinity) {
-    throw new Error('linkEdgeToTwin: cannot twin at-infinity half-edges');
-  }
-  if (he.originKind !== 'finite' || he.next.originKind !== 'finite') {
-    throw new Error('linkEdgeToTwin: he must have two finite endpoints');
-  }
-  if (target.originKind !== 'finite' || target.next.originKind !== 'finite') {
-    throw new Error('linkEdgeToTwin: target must have two finite endpoints');
-  }
-  const aTarget = M.applyToPoint(transform, { x: he.next.ox, y: he.next.oy });
-  const aOrigin = M.applyToPoint(transform, { x: he.ox, y: he.oy });
-  if (Math.abs(aTarget.x - target.ox) > eps || Math.abs(aTarget.y - target.oy) > eps) {
-    throw new Error(
-      `linkEdgeToTwin: transform·he.target = (${aTarget.x.toFixed(6)}, ${aTarget.y.toFixed(6)}) does not match target.origin = (${target.ox.toFixed(6)}, ${target.oy.toFixed(6)})`,
-    );
-  }
-  if (Math.abs(aOrigin.x - target.next.ox) > eps || Math.abs(aOrigin.y - target.next.oy) > eps) {
-    throw new Error(
-      `linkEdgeToTwin: transform·he.origin = (${aOrigin.x.toFixed(6)}, ${aOrigin.y.toFixed(6)}) does not match target.target = (${target.next.ox.toFixed(6)}, ${target.next.oy.toFixed(6)})`,
-    );
-  }
-  he.twin = target;
-  he.transform = transform;
-}
-
-/**
- * One-way unlink primitive: clear `he`'s outbound twin pointer. Does NOT
- * touch the partner's twin pointer (the partner may still point at `he`,
- * which is allowed under the asymmetric model).
- *
- * If the pair was reciprocal-with-{@link Stitch}, this asymmetric break
- * invalidates the Stitch's structural-reciprocity invariant — so we clear
- * the `.stitch` back-reference on BOTH endpoints (the partner's `.stitch`
- * also becomes stale). The atlas-level Stitch view ({@link Atlas.stitches})
- * is derived, so no separate de-registration is needed.
- *
- * No-op when `he.twin === null`.
- */
-export function unlinkEdgeFromTwin(he: Side): void {
-  if (!he.twin) return;
-  if (he.stitch !== null) {
-    const s = he.stitch;
-    s.a.stitch = null;
-    s.b.stitch = null;
-  }
-  he.twin = null;
-  he.transform = M.fromValues();
-}
-
-/**
- * Reciprocally bind two half-edges with a transform, returning the resulting
- * {@link Stitch} handle. This is the substrate's symmetric binding primitive.
+ * Reciprocally bind two sides with a transform, returning the resulting
+ * {@link Stitch} handle. This is the substrate's only edge-level binding
+ * primitive — there is no asymmetric-edge counterpart. (Asymmetric cross-
+ * face structures — closed/wrapped regions placed inside a host — go
+ * through {@link link} instead, at the face level.)
  *
  * `Stitch.a` is `heA`, `Stitch.b` is `heB`, and `Stitch.transform` is the
  * `a → b` change of frame. Both endpoints get a back-reference to the same
- * `Stitch` via `.stitch`, so reciprocity is structurally guaranteed (the
- * asymmetric-twin trap is impossible to express here).
- *
- * For asymmetric one-way bindings — used today by region-wrap toggling
- * where the outside neighbour still points INTO the wrapped region while
- * the inside loops to itself — use {@link linkEdgeToTwin} directly.
+ * `Stitch` via `.stitch`, so reciprocity is structurally guaranteed.
  *
  * Pre-conditions:
- *  - both half-edges live in `atlas`
- *  - both have `twin === null`
- *  - both are finite-finite
+ *  - both sides live in `atlas`
+ *  - `heA !== heB`
+ *  - both are currently untwinned (and unstitched — a side cannot belong
+ *    to two stitches)
+ *  - both have two finite endpoints (no ideal-arc / chord stitches at the
+ *    public API; chord twin pairs are installed internally by the split
+ *    primitives)
  *  - `transformAtoB` satisfies the junction-correspondence equations
+ *      transformAtoB · heA.next.origin ≈ heB.origin
+ *      transformAtoB · heA.origin       ≈ heB.next.origin
  *
  * Effect:
  *  - allocates a new {@link Stitch} `s`; `s.a = heA`, `s.b = heB`
@@ -1230,16 +1143,37 @@ export function stitch(
   transformAtoB: M.Matrix2D,
   eps = 1e-6,
 ): Stitch {
-  if (heB.twin !== null) {
-    throw new Error('stitch: heB must currently be untwinned (use linkEdgeToTwin for asymmetric links)');
+  if (heA === heB) throw new Error('stitch: cannot stitch a side to itself');
+  if (!atlas.sides.includes(heA) || !atlas.sides.includes(heB)) {
+    throw new Error('stitch: sides must belong to atlas');
   }
-  linkEdgeToTwin(atlas, heA, heB, transformAtoB, eps);
-  linkEdgeToTwin(atlas, heB, heA, M.invert(transformAtoB), eps);
-  // Both pointers are now in place but neither has a Stitch (linkEdgeToTwin
-  // is asymmetric and intentionally doesn't allocate one). Promote the pair
-  // to a real Stitch via setTwin, which detects an existing reciprocal pair
-  // and just attaches a fresh Stitch back-reference.
-  return setTwin(heA, heB, heA.transform, heB.transform);
+  if (heA.twin !== null || heB.twin !== null) {
+    throw new Error('stitch: both sides must currently be untwinned');
+  }
+  if (heA.isAtInfinity || heB.isAtInfinity) {
+    throw new Error('stitch: cannot stitch at-infinity arcs');
+  }
+  if (heA.originKind !== 'finite' || heA.next.originKind !== 'finite') {
+    throw new Error('stitch: heA must have two finite endpoints');
+  }
+  if (heB.originKind !== 'finite' || heB.next.originKind !== 'finite') {
+    throw new Error('stitch: heB must have two finite endpoints');
+  }
+  const transformBtoA = M.invert(transformAtoB);
+  // Junction-correspondence: T_AB maps heA's endpoints to heB's endpoints.
+  const imgTarget = M.applyToPoint(transformAtoB, { x: heA.next.ox, y: heA.next.oy });
+  const imgOrigin = M.applyToPoint(transformAtoB, { x: heA.ox, y: heA.oy });
+  if (Math.abs(imgTarget.x - heB.ox) > eps || Math.abs(imgTarget.y - heB.oy) > eps) {
+    throw new Error(
+      `stitch: transformAtoB·heA.target = (${imgTarget.x.toFixed(6)}, ${imgTarget.y.toFixed(6)}) does not match heB.origin = (${heB.ox.toFixed(6)}, ${heB.oy.toFixed(6)})`,
+    );
+  }
+  if (Math.abs(imgOrigin.x - heB.next.ox) > eps || Math.abs(imgOrigin.y - heB.next.oy) > eps) {
+    throw new Error(
+      `stitch: transformAtoB·heA.origin = (${imgOrigin.x.toFixed(6)}, ${imgOrigin.y.toFixed(6)}) does not match heB.target = (${heB.next.ox.toFixed(6)}, ${heB.next.oy.toFixed(6)})`,
+    );
+  }
+  return setTwin(heA, heB, transformAtoB, transformBtoA);
 }
 
 /**
@@ -1301,36 +1235,6 @@ export function link(
  */
 export function unlink(atlas: Atlas, l: Link): void {
   atlas.links.delete(l);
-}
-
-/**
- * @deprecated Use {@link stitch}. This is a thin wrapper that ignores the
- * returned `Stitch` handle, kept for source compatibility during the
- * chunk-C transition.
- */
-export function wrapEdges(
-  atlas: Atlas,
-  heA: Side,
-  heB: Side,
-  transformAtoB: M.Matrix2D,
-  eps = 1e-6,
-): void {
-  stitch(atlas, heA, heB, transformAtoB, eps);
-}
-
-/**
- * @deprecated Use {@link unstitch} when you have the {@link Stitch} handle
- * (the common case). This legacy form clears both sides of a reciprocal
- * twin pair given just one of its half-edges.
- *
- * No-op when `he.twin === null`. When `he`'s partner is not reciprocal
- * (`he.twin.twin !== he`), only `he`'s pointer is cleared.
- */
-export function untwinEdges(he: Side): void {
-  const partner = he.twin;
-  if (!partner) return;
-  unlinkEdgeFromTwin(he);
-  if (partner.twin === he) unlinkEdgeFromTwin(partner);
 }
 
 /**
@@ -1648,44 +1552,24 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     }
   }
 
-  // ---- per-half-edge checks (twin transform consistency) ----
+  // ---- per-side checks (twin transform consistency) ----
+  // Junction-correspondence is enforced for every twinned side. The
+  // similarity-only constraint (translation + uniform scale only) that
+  // used to live here was dropped along with the asymmetric edge-twin
+  // model — Klein-bottle, RP², and Dehn-twisted-torus topologies all
+  // need rotation/reflection in stitch transforms. Per-face model spaces
+  // (substrate.md's `(R², similarity)` etc.) will, when introduced, take
+  // over the job of constraining transforms based on source/target model.
   for (const h of atlas.sides) {
-    if (!allFaceSet.has(h.face)) errs.push('halfEdge.face not in atlas');
-
+    if (!allFaceSet.has(h.face)) errs.push('side.face not in atlas');
     if (h.twin) {
-      if (!allSidesSet.has(h.twin)) errs.push('halfEdge.twin not in atlas');
-
-      // Junction correspondence (one-way; symmetric inverse-pair is NOT
-      // required — see module header on asymmetric twins):
-      //   T · h.next.origin = h.twin.origin
-      //   T · h.origin      = h.twin.next.origin
+      if (!allSidesSet.has(h.twin)) errs.push('side.twin not in atlas');
       const T = h.transform;
       if (!junctionImageMatches(T, h.target(), h.twin.origin(), eps * 100)) {
         errs.push("twin endpoint b' does not match T·b");
       }
       if (!junctionImageMatches(T, h.origin(), h.twin.target(), eps * 100)) {
         errs.push("twin endpoint a' does not match T·a");
-      }
-
-      // Similarity-only edge transforms: T must be of the form
-      //   [[s, 0], [0, s], (tx, ty)]  with s > 0.
-      // No rotation, no reflection (det > 0), no shear, no non-uniform
-      // scale. Tolerance matches the junction check above.
-      const simEps = eps * 100;
-      if (Math.abs(T.b) > simEps || Math.abs(T.c) > simEps) {
-        errs.push(
-          `twin transform has rotation/shear (b=${T.b}, c=${T.c}), expected similarity`,
-        );
-      }
-      if (Math.abs(T.a - T.d) > simEps) {
-        errs.push(
-          `twin transform has non-uniform scale (a=${T.a}, d=${T.d}), expected uniform`,
-        );
-      }
-      if (T.a <= simEps) {
-        errs.push(
-          `twin transform has non-positive scale (a=${T.a}), expected s > 0`,
-        );
       }
     }
   }
@@ -1737,28 +1621,14 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
   }
 
   // ---- reachability from root ----
-  // A face is reachable if it can be visited by following:
-  //   - twin pointers in either direction (forward via `he.twin`, backward
-  //     via the incoming-pointer index — symmetric twins make these
-  //     equivalent, asymmetric wraps don't)
-  //   - links in either direction (outgoing via `link.from === f`, incoming
-  //     via `link.to === f`)
-  // Either kind of binding propagates reachability — an isolated face that
-  // is the target of a link from the root chain is considered reachable.
-  const incoming = new Map<Face, Side[]>();
-  for (const h of atlas.sides) {
-    if (h.twin) {
-      const list = incoming.get(h.twin.face);
-      if (list) list.push(h);
-      else incoming.set(h.twin.face, [h]);
-    }
-  }
-  const linksByFrom = new Map<Face, Link[]>();
+  // Twin reciprocity is structural now (see Stitch invariants above), so
+  // the forward-only twin walk reaches every stitch-connected face. Links
+  // are still walked in both directions: an isolated face that is the
+  // target of a Link from the root chain is reachable, and a face whose
+  // only out-binding is a Link can be reached by walking back from the
+  // child.
   const linksByTo = new Map<Face, Link[]>();
   for (const link of atlas.links) {
-    const fromList = linksByFrom.get(link.from);
-    if (fromList) fromList.push(link);
-    else linksByFrom.set(link.from, [link]);
     const toList = linksByTo.get(link.to);
     if (toList) toList.push(link);
     else linksByTo.set(link.to, [link]);
@@ -1774,22 +1644,11 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
         queue.push(he.twin.face);
       }
     }
-    const incomingSides = incoming.get(f);
-    if (incomingSides) {
-      for (const ih of incomingSides) {
-        if (!reachable.has(ih.face)) {
-          reachable.add(ih.face);
-          queue.push(ih.face);
-        }
-      }
-    }
-    const outLinks = linksByFrom.get(f);
-    if (outLinks) {
-      for (const l of outLinks) {
-        if (!reachable.has(l.to)) {
-          reachable.add(l.to);
-          queue.push(l.to);
-        }
+    for (const link of atlas.links) {
+      if (link.from !== f) continue;
+      if (!reachable.has(link.to)) {
+        reachable.add(link.to);
+        queue.push(link.to);
       }
     }
     const inLinks = linksByTo.get(f);
