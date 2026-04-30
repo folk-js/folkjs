@@ -110,11 +110,7 @@ describe('Face', () => {
 
   it('accepts faces whose sides[0] is not at (0, 0) — anchor convention is relaxed', () => {
     const f = new Face([finite(1, 1), finite(10, 0), finite(0, 10)]);
-    assert.deepEqual(f.junctions(), [
-      HomPoint.finite(1, 1),
-      HomPoint.finite(10, 0),
-      HomPoint.finite(0, 10),
-    ]);
+    assert.deepEqual(f.junctions(), [HomPoint.finite(1, 1), HomPoint.finite(10, 0), HomPoint.finite(0, 10)]);
   });
 
   it('accepts an all-ideal face (no finite vertex anywhere)', () => {
@@ -134,11 +130,7 @@ describe('Face', () => {
       assert.equal(f.sides[i].face, f);
       assert.equal(f.sides[i].next, f.sides[(i + 1) % 3]);
     }
-    assert.deepEqual(f.junctions(), [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(10, 0),
-      HomPoint.finite(0, 10),
-    ]);
+    assert.deepEqual(f.junctions(), [HomPoint.finite(0, 0), HomPoint.finite(10, 0), HomPoint.finite(0, 10)]);
   });
 
   it('detects points inside an all-finite CCW triangle', () => {
@@ -450,9 +442,11 @@ describe('validateAtlas', () => {
     // (not the legacy per-side transform) so both directions stay consistent.
     for (const s of atlas.stitches) {
       if (s.a.face === f) {
-        s.setTransforms(M.fromTranslate(-dx, -dy), M.fromTranslate(dx, dy));
+        s.transformAtoB = M.fromTranslate(-dx, -dy);
+        s.transformBtoA = M.fromTranslate(dx, dy);
       } else if (s.b.face === f) {
-        s.setTransforms(M.fromTranslate(dx, dy), M.fromTranslate(-dx, -dy));
+        s.transformAtoB = M.fromTranslate(dx, dy);
+        s.transformBtoA = M.fromTranslate(-dx, -dy);
       }
     }
     assert.doesNotThrow(() => validateAtlas(atlas));
@@ -471,7 +465,7 @@ describe('validateAtlas', () => {
     const he = atlas.sides.find((h) => h.twin)!;
     // Tamper with the underlying Stitch's transformAtoB to violate junction
     // correspondence; validateAtlas should catch it.
-    he.stitch!.setTransforms(M.fromTranslate(10, 0), he.stitch!.transformBtoA);
+    he.stitch!.transformAtoB = M.fromTranslate(10, 0);
     assert.throws(() => validateAtlas(atlas), /endpoint/);
   });
 
@@ -510,7 +504,8 @@ describe('validateAtlas', () => {
     const atlas = createInitialAtlas();
     const he = atlas.sides.find((h) => h.twin)!;
     const refl = M.fromValues(1, 0, 0, -1, 0, 0);
-    he.stitch!.setTransforms(refl, refl);
+    he.stitch!.transformAtoB = refl;
+    he.stitch!.transformBtoA = refl;
     assert.doesNotThrow(() => validateAtlas(atlas));
   });
 });
@@ -543,9 +538,11 @@ describe('Atlas.computeComposites', () => {
     // invariant fails, but `computeComposites` only reads the transform.
     const s = heInner.stitch!;
     if (s.a === heInner) {
-      s.setTransforms(M.fromTranslate(10, 0), M.fromTranslate(-10, 0));
+      s.transformAtoB = M.fromTranslate(10, 0);
+      s.transformBtoA = M.fromTranslate(-10, 0);
     } else {
-      s.setTransforms(M.fromTranslate(-10, 0), M.fromTranslate(10, 0));
+      s.transformAtoB = M.fromTranslate(-10, 0);
+      s.transformBtoA = M.fromTranslate(10, 0);
     }
 
     const composites = atlas.computeComposites();
@@ -1029,7 +1026,7 @@ describe('Link', () => {
     const atlas1 = createInitialAtlas();
     const atlas2 = createInitialAtlas();
     // Smuggle a Link whose `to` lives in a different atlas.
-    const stale = new Link(atlas1.faces[0], atlas2.faces[0], M.fromValues(), false);
+    const stale = new Link(atlas1.faces[0], atlas2.faces[0], M.fromValues());
     atlas1.links.add(stale);
     assert.throws(() => validateAtlas(atlas1), /link\.to not in atlas/);
   });
@@ -1038,7 +1035,11 @@ describe('Link', () => {
     // Make a face that has no twins to anything else, then add a Link
     // pointing at it from the root chain. validateAtlas should accept it.
     const atlas = createInitialAtlas();
-    const orphan = new Face([new Side(HomPoint.finite(100, 100)), new Side(HomPoint.finite(110, 100)), new Side(HomPoint.finite(105, 110))]);
+    const orphan = new Face([
+      new Side(HomPoint.finite(100, 100)),
+      new Side(HomPoint.finite(110, 100)),
+      new Side(HomPoint.finite(105, 110)),
+    ]);
     atlas.faces.push(orphan);
     for (const s of orphan.sides) atlas.sides.push(s);
     // Without a Link, validation should fail (face unreachable from root).
@@ -1058,7 +1059,11 @@ describe('Link', () => {
     // Add a Link from a → b. Should not deduplicate the existing image of b
     // (it's the same composite — already there via twin chain), but a fresh
     // configuration with a non-trivial transform produces a new image.
-    const fresh = new Face([new Side(HomPoint.finite(0, 0)), new Side(HomPoint.finite(1, 0)), new Side(HomPoint.finite(0, 1))]);
+    const fresh = new Face([
+      new Side(HomPoint.finite(0, 0)),
+      new Side(HomPoint.finite(1, 0)),
+      new Side(HomPoint.finite(0, 1)),
+    ]);
     atlas.faces.push(fresh);
     for (const s of fresh.sides) atlas.sides.push(s);
     link(atlas, a, fresh, M.fromTranslate(50, 50));
@@ -1270,7 +1275,8 @@ describe('Link', () => {
 
     // Snapshot R's composite rooted at NE (BEFORE the cut).
     atlas.root = ne;
-    const rBeforeAtNE = atlas.computeImages({ maxDepth: 8, maxImagesPerFace: 1 })
+    const rBeforeAtNE = atlas
+      .computeImages({ maxDepth: 8, maxImagesPerFace: 1 })
       .find((img) => img.face === R)!.composite;
     void rBeforeAtNE;
 
@@ -1323,7 +1329,6 @@ describe('Link', () => {
         `diff=(${reconstructedFromStrip.e - rAtKept.e}, ${reconstructedFromStrip.f - rAtKept.f})`,
     );
   });
-
 });
 
 describe('rescaleFaceFrame', () => {
@@ -1583,9 +1588,11 @@ describe('Atlas.switchRoot', () => {
     const newRoot = heInner.twin!.face;
     const s = heInner.stitch!;
     if (s.a === heInner) {
-      s.setTransforms(M.fromTranslate(7, -3), M.fromTranslate(-7, 3));
+      s.transformAtoB = M.fromTranslate(7, -3);
+      s.transformBtoA = M.fromTranslate(-7, 3);
     } else {
-      s.setTransforms(M.fromTranslate(-7, 3), M.fromTranslate(7, -3));
+      s.transformAtoB = M.fromTranslate(-7, 3);
+      s.transformBtoA = M.fromTranslate(7, -3);
     }
 
     const compositesOld = atlas.computeComposites();
@@ -1634,9 +1641,11 @@ describe('Atlas.switchRoot', () => {
     const otherFace = heInner.twin!.face;
     const s = heInner.stitch!;
     if (s.a === heInner) {
-      s.setTransforms(M.fromTranslate(7, -3), M.fromTranslate(-7, 3));
+      s.transformAtoB = M.fromTranslate(7, -3);
+      s.transformBtoA = M.fromTranslate(-7, 3);
     } else {
-      s.setTransforms(M.fromTranslate(-7, 3), M.fromTranslate(7, -3));
+      s.transformAtoB = M.fromTranslate(-7, 3);
+      s.transformBtoA = M.fromTranslate(7, -3);
     }
 
     const C1 = atlas.switchRoot(otherFace);
@@ -1760,19 +1769,11 @@ describe('createFace', () => {
     const atlas = createAllIdealAtlas();
     const facesBefore = atlas.faces.length;
     const sidesBefore = atlas.sides.length;
-    const face = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(1, 0),
-      HomPoint.finite(0, 1),
-    ]);
+    const face = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(1, 0), HomPoint.finite(0, 1)]);
     assert.equal(atlas.faces.length, facesBefore + 1);
     assert.equal(atlas.sides.length, sidesBefore + 3);
     assert.equal(face.sides.length, 3);
-    assert.deepEqual(face.junctions(), [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(1, 0),
-      HomPoint.finite(0, 1),
-    ]);
+    assert.deepEqual(face.junctions(), [HomPoint.finite(0, 0), HomPoint.finite(1, 0), HomPoint.finite(0, 1)]);
     // Cycle wired: prev/next consistent.
     for (let i = 0; i < 3; i++) {
       assert.equal(face.sides[i].next, face.sides[(i + 1) % 3]);
@@ -1783,19 +1784,12 @@ describe('createFace', () => {
 
   it('builds a digon face with anchors on both ideal-ideal chord sides', () => {
     const atlas = createAllIdealAtlas();
-    const face = createFace(
-      atlas,
-      [
-        HomPoint.idealDir(1, 0),
-        HomPoint.idealDir(-1, 0),
-      ],
-      {
-        anchors: new Map<number, { x: number; y: number }>([
-          [0, { x: 0, y: 0 }],
-          [1, { x: 0, y: 1 }],
-        ]),
-      },
-    );
+    const face = createFace(atlas, [HomPoint.idealDir(1, 0), HomPoint.idealDir(-1, 0)], {
+      anchors: new Map<number, { x: number; y: number }>([
+        [0, { x: 0, y: 0 }],
+        [1, { x: 0, y: 1 }],
+      ]),
+    });
     assert.equal(face.sides.length, 2);
     assert.deepEqual(face.sides[0].anchor, { x: 0, y: 0 });
     assert.deepEqual(face.sides[1].anchor, { x: 0, y: 1 });
@@ -1806,38 +1800,22 @@ describe('createFace', () => {
   it('passes through an explicit frame', () => {
     const atlas = createAllIdealAtlas();
     const frame = M.fromTranslate(7, -3);
-    const face = createFace(
-      atlas,
-      [
-        HomPoint.finite(0, 0),
-        HomPoint.finite(1, 0),
-        HomPoint.finite(0, 1),
-      ],
-      { frame },
-    );
+    const face = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(1, 0), HomPoint.finite(0, 1)], { frame });
     assert.ok(M.equals(face.frame, M.fromTranslate(7, -3)));
   });
 
   it('rejects fewer than 2 sides', () => {
     const atlas = createAllIdealAtlas();
-    assert.throws(
-      () => createFace(atlas, [HomPoint.finite(0, 0)]),
-      /need at least 2 sides/,
-    );
+    assert.throws(() => createFace(atlas, [HomPoint.finite(0, 0)]), /need at least 2 sides/);
   });
 
   it('rejects out-of-range anchor index', () => {
     const atlas = createAllIdealAtlas();
     assert.throws(
       () =>
-        createFace(
-          atlas,
-          [
-            HomPoint.idealDir(1, 0),
-            HomPoint.idealDir(-1, 0),
-          ],
-          { anchors: new Map([[5, { x: 0, y: 0 }]]) },
-        ),
+        createFace(atlas, [HomPoint.idealDir(1, 0), HomPoint.idealDir(-1, 0)], {
+          anchors: new Map([[5, { x: 0, y: 0 }]]),
+        }),
       /anchor index 5 out of range/,
     );
   });
@@ -1852,11 +1830,7 @@ describe('deleteFace', () => {
     const atlas = createAllIdealAtlas();
     const facesBefore = atlas.faces.length;
     const sidesBefore = atlas.sides.length;
-    const face = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(1, 0),
-      HomPoint.finite(0, 1),
-    ]);
+    const face = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(1, 0), HomPoint.finite(0, 1)]);
     assert.equal(atlas.faces.length, facesBefore + 1);
     assert.equal(atlas.sides.length, sidesBefore + 3);
     deleteFace(atlas, face);
@@ -1866,11 +1840,7 @@ describe('deleteFace', () => {
 
   it('removes every side of a deleted face from atlas.sides', () => {
     const atlas = createAllIdealAtlas();
-    const face = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(2, 0),
-      HomPoint.finite(1, 1),
-    ]);
+    const face = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(2, 0), HomPoint.finite(1, 1)]);
     const sidesOfFace = [...face.sides];
     deleteFace(atlas, face);
     for (const s of sidesOfFace) {
@@ -1924,16 +1894,8 @@ describe('deleteFace', () => {
 
   it('refuses to delete a face that is the source of a Link', () => {
     const atlas = createAllIdealAtlas();
-    const a = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(1, 0),
-      HomPoint.finite(0, 1),
-    ]);
-    const b = createFace(atlas, [
-      HomPoint.finite(5, 5),
-      HomPoint.finite(6, 5),
-      HomPoint.finite(5, 6),
-    ]);
+    const a = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(1, 0), HomPoint.finite(0, 1)]);
+    const b = createFace(atlas, [HomPoint.finite(5, 5), HomPoint.finite(6, 5), HomPoint.finite(5, 6)]);
     link(atlas, a, b, M.fromTranslate(10, 10));
     assert.throws(() => deleteFace(atlas, a), /source or target of a Link/);
     assert.throws(() => deleteFace(atlas, b), /source or target of a Link/);
@@ -1941,11 +1903,7 @@ describe('deleteFace', () => {
 
   it('refuses to delete a face with assigned shapes', () => {
     const atlas = createAllIdealAtlas();
-    const face = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(1, 0),
-      HomPoint.finite(0, 1),
-    ]);
+    const face = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(1, 0), HomPoint.finite(0, 1)]);
     // Use a phantom Element-shaped object — Face.shapes is `Set<Element>`,
     // and we don't need a real DOM element to exercise the precondition.
     face.shapes.add({} as Element);
@@ -1960,16 +1918,8 @@ describe('deleteFace', () => {
     // b.sides[0] is (2,0)→(0,0), and id maps each endpoint to the other
     // face's matching endpoint.
     const atlas = createAllIdealAtlas();
-    const a = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(2, 0),
-      HomPoint.finite(1, 2),
-    ]);
-    const b = createFace(atlas, [
-      HomPoint.finite(2, 0),
-      HomPoint.finite(0, 0),
-      HomPoint.finite(1, -2),
-    ]);
+    const a = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(2, 0), HomPoint.finite(1, 2)]);
+    const b = createFace(atlas, [HomPoint.finite(2, 0), HomPoint.finite(0, 0), HomPoint.finite(1, -2)]);
     const s = stitch(atlas, a.sides[0], b.sides[0], M.fromValues());
     assert.throws(() => deleteFace(atlas, b), /unstitch them before deleting/);
     unstitch(s);
@@ -2280,16 +2230,8 @@ describe('joinSidesAtVertex', () => {
     // Build two stitched triangles sharing a segment edge, subdivide it,
     // then join. Both faces should return to their original shape.
     const atlas = createAllIdealAtlas();
-    const a = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(4, 0),
-      HomPoint.finite(2, 3),
-    ]);
-    const b = createFace(atlas, [
-      HomPoint.finite(4, 0),
-      HomPoint.finite(0, 0),
-      HomPoint.finite(2, -3),
-    ]);
+    const a = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(4, 0), HomPoint.finite(2, 3)]);
+    const b = createFace(atlas, [HomPoint.finite(4, 0), HomPoint.finite(0, 0), HomPoint.finite(2, -3)]);
     stitch(atlas, a.sides[0], b.sides[0], M.fromValues());
     const aSidesBefore = a.sides.length;
     const bSidesBefore = b.sides.length;
@@ -2377,87 +2319,49 @@ describe('joinSidesAtVertex', () => {
     // Take a valid subdivision pair, then mutate the middle vertex off
     // the original line. Join should detect the deviation.
     const atlas = createAllIdealAtlas();
-    const tri = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(4, 0),
-      HomPoint.finite(2, 3),
-    ]);
+    const tri = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(4, 0), HomPoint.finite(2, 3)]);
     const r = subdivideSide(atlas, tri.sides[0], { x: 2, y: 0 });
     // Knock the middle vertex off the line by replacing its origin with
     // a point above the original (HomPoint is immutable; reassign `.a`).
     r.faceHalves[1].a = HomPoint.finite(r.faceHalves[1].a.x, 0.5);
-    assert.throws(
-      () => joinSidesAtVertex(atlas, r.faceHalves[0]),
-      /not collinear|not on segment/,
-    );
+    assert.throws(() => joinSidesAtVertex(atlas, r.faceHalves[0]), /not collinear|not on segment/);
   });
 
   it('refuses asymmetric stitch pair (only one of the two is stitched)', () => {
     const atlas = createAllIdealAtlas();
-    const a = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(4, 0),
-      HomPoint.finite(2, 3),
-    ]);
-    const b = createFace(atlas, [
-      HomPoint.finite(4, 0),
-      HomPoint.finite(0, 0),
-      HomPoint.finite(2, -3),
-    ]);
+    const a = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(4, 0), HomPoint.finite(2, 3)]);
+    const b = createFace(atlas, [HomPoint.finite(4, 0), HomPoint.finite(0, 0), HomPoint.finite(2, -3)]);
     stitch(atlas, a.sides[0], b.sides[0], M.fromValues());
     const r = subdivideSide(atlas, a.sides[0], { x: 2, y: 0 });
     // Manually unstitch one of the two sub-pairs, leaving an asymmetric
     // configuration that joinSidesAtVertex should refuse.
     unstitch(r.faceHalves[1].stitch!);
-    assert.throws(
-      () => joinSidesAtVertex(atlas, r.faceHalves[0]),
-      /side is stitched but side.next is not/,
-    );
+    assert.throws(() => joinSidesAtVertex(atlas, r.faceHalves[0]), /side is stitched but side.next is not/);
   });
 
   it('refuses when face has fewer than 3 sides', () => {
     const atlas = createAllIdealAtlas();
-    const digon = createFace(
-      atlas,
-      [
-        HomPoint.idealDir(1, 0),
-        HomPoint.idealDir(-1, 0),
-      ],
-      {
-        anchors: new Map<number, { x: number; y: number }>([
-          [0, { x: 0, y: 0 }],
-          [1, { x: 0, y: 1 }],
-        ]),
-      },
-    );
-    assert.throws(
-      () => joinSidesAtVertex(atlas, digon.sides[0]),
-      /fewer than 3 sides/,
-    );
+    const digon = createFace(atlas, [HomPoint.idealDir(1, 0), HomPoint.idealDir(-1, 0)], {
+      anchors: new Map<number, { x: number; y: number }>([
+        [0, { x: 0, y: 0 }],
+        [1, { x: 0, y: 1 }],
+      ]),
+    });
+    assert.throws(() => joinSidesAtVertex(atlas, digon.sides[0]), /fewer than 3 sides/);
   });
 
   it('refuses when paired stitch transforms have diverged', () => {
     // Subdivide a stitched edge, then conjugate one of the two sub-stitches
     // so the pair no longer agrees on the transform.
     const atlas = createAllIdealAtlas();
-    const a = createFace(atlas, [
-      HomPoint.finite(0, 0),
-      HomPoint.finite(4, 0),
-      HomPoint.finite(2, 3),
-    ]);
-    const b = createFace(atlas, [
-      HomPoint.finite(4, 0),
-      HomPoint.finite(0, 0),
-      HomPoint.finite(2, -3),
-    ]);
+    const a = createFace(atlas, [HomPoint.finite(0, 0), HomPoint.finite(4, 0), HomPoint.finite(2, 3)]);
+    const b = createFace(atlas, [HomPoint.finite(4, 0), HomPoint.finite(0, 0), HomPoint.finite(2, -3)]);
     stitch(atlas, a.sides[0], b.sides[0], M.fromValues());
     const r = subdivideSide(atlas, a.sides[0], { x: 2, y: 0 });
     // Force-divergence: re-set just one sub-stitch's transforms.
-    r.faceHalves[1].stitch!.setTransforms(M.fromTranslate(0.1, 0), M.fromTranslate(-0.1, 0));
-    assert.throws(
-      () => joinSidesAtVertex(atlas, r.faceHalves[0]),
-      /transforms diverged/,
-    );
+    r.faceHalves[1].stitch!.transformAtoB = M.fromTranslate(0.1, 0);
+    r.faceHalves[1].stitch!.transformBtoA = M.fromTranslate(-0.1, 0);
+    assert.throws(() => joinSidesAtVertex(atlas, r.faceHalves[0]), /transforms diverged/);
   });
 });
 
@@ -3156,8 +3060,12 @@ describe('mergeFaces', () => {
       before.set(
         s,
         M.fromValues(
-          s.transformAtoB.a, s.transformAtoB.b, s.transformAtoB.c,
-          s.transformAtoB.d, s.transformAtoB.e, s.transformAtoB.f,
+          s.transformAtoB.a,
+          s.transformAtoB.b,
+          s.transformAtoB.c,
+          s.transformAtoB.d,
+          s.transformAtoB.e,
+          s.transformAtoB.f,
         ),
       );
     }
@@ -3182,21 +3090,16 @@ describe('mergeFaces', () => {
     const split = splitFaceAtVertices(atlas, quad, 0, 2);
     // Forge a non-translation chord stitch transform (rotation).
     const refl = M.fromValues(0, 1, -1, 0, 0, 0);
-    split.faceChordSide.stitch!.setTransforms(refl, M.invert(refl));
-    assert.throws(
-      () => mergeFaces(atlas, split.faceChordSide),
-      /pure translation/,
-    );
+    split.faceChordSide.stitch!.transformAtoB = refl;
+    split.faceChordSide.stitch!.transformBtoA = M.invert(refl);
+    assert.throws(() => mergeFaces(atlas, split.faceChordSide), /pure translation/);
   });
 
   it('refuses to merge when fresh face has shapes', () => {
     const { atlas, quad } = buildQuadAtlas();
     const split = splitFaceAtVertices(atlas, quad, 0, 2);
     split.fresh.shapes.add({} as Element);
-    assert.throws(
-      () => mergeFaces(atlas, split.faceChordSide),
-      /has 1 shape\(s\) assigned/,
-    );
+    assert.throws(() => mergeFaces(atlas, split.faceChordSide), /has 1 shape\(s\) assigned/);
   });
 
   it('refuses to merge when fresh face is the source/target of a Link', () => {
@@ -3204,10 +3107,7 @@ describe('mergeFaces', () => {
     const split = splitFaceAtVertices(atlas, quad, 0, 2);
     const other = atlas.faces.find((f) => f !== quad && f !== split.fresh)!;
     link(atlas, other, split.fresh, M.fromValues());
-    assert.throws(
-      () => mergeFaces(atlas, split.faceChordSide),
-      /source or target of a Link/,
-    );
+    assert.throws(() => mergeFaces(atlas, split.faceChordSide), /source or target of a Link/);
   });
 
   it('caller picks the survivor by which chord side is passed', () => {
@@ -3267,48 +3167,46 @@ describe('inverse round-trip (forcing function)', () => {
     split: ReturnType<typeof splitAlongLine>,
     strip: ReturnType<typeof insertStrip>,
   ): void => {
-    atlas.mutate(() => {
-      // Step 1: replace strip-routed stitches with direct chord stitches.
-      // The original splitFaceAtVertices stitched kept↔fresh chord with a
-      // pure translation T = translate(-freshOffset). insertStrip discarded
-      // that stitch and routed kept↔strip↔fresh through new stitches that
-      // bake in `height·perp` of perpendicular displacement; we recover
-      // the original chord transform directly from the surviving chord
-      // sides' coordinates (which insertStrip never touched).
-      //
-      // For chord-chord pairs: T = translate(freshChord.anchor - keptChord.anchor).
-      // For finite-endpoint pairs: T = translate(freshChord.origin - keptChord.target).
-      // (keptChord goes B→A in kept-frame; freshChord goes A→B in fresh-frame —
-      //  splitFaceAtVertices's chord-side construction.)
-      for (let i = 0; i < split.pairs.length; i++) {
-        const pair = split.pairs[i];
-        const kept = pair.rightChordSide;
-        const fresh = pair.leftChordSide;
-        let T_keptToFresh: M.Matrix2D;
-        if (kept.kind === 'chord' && fresh.kind === 'chord') {
-          const offX = fresh.anchor!.x - kept.anchor!.x;
-          const offY = fresh.anchor!.y - kept.anchor!.y;
-          T_keptToFresh = M.fromTranslate(offX, offY);
-        } else {
-          const keptTarget = kept.next.origin();
-          const freshOrigin = fresh.origin();
-          if (keptTarget.kind !== 'finite' || freshOrigin.kind !== 'finite') {
-            throw new Error('undoSplitAndStrip: cannot recover chord transform from non-finite endpoints');
-          }
-          T_keptToFresh = M.fromTranslate(freshOrigin.x - keptTarget.x, freshOrigin.y - keptTarget.y);
+    // Step 1: replace strip-routed stitches with direct chord stitches.
+    // The original splitFaceAtVertices stitched kept↔fresh chord with a
+    // pure translation T = translate(-freshOffset). insertStrip discarded
+    // that stitch and routed kept↔strip↔fresh through new stitches that
+    // bake in `height·perp` of perpendicular displacement; we recover
+    // the original chord transform directly from the surviving chord
+    // sides' coordinates (which insertStrip never touched).
+    //
+    // For chord-chord pairs: T = translate(freshChord.anchor - keptChord.anchor).
+    // For finite-endpoint pairs: T = translate(freshChord.origin - keptChord.target).
+    // (keptChord goes B→A in kept-frame; freshChord goes A→B in fresh-frame —
+    //  splitFaceAtVertices's chord-side construction.)
+    for (let i = 0; i < split.pairs.length; i++) {
+      const pair = split.pairs[i];
+      const kept = pair.rightChordSide;
+      const fresh = pair.leftChordSide;
+      let T_keptToFresh: M.Matrix2D;
+      if (kept.kind === 'chord' && fresh.kind === 'chord') {
+        const offX = fresh.anchor!.x - kept.anchor!.x;
+        const offY = fresh.anchor!.y - kept.anchor!.y;
+        T_keptToFresh = M.fromTranslate(offX, offY);
+      } else {
+        const keptTarget = kept.next.origin();
+        const freshOrigin = fresh.origin();
+        if (keptTarget.kind !== 'finite' || freshOrigin.kind !== 'finite') {
+          throw new Error('undoSplitAndStrip: cannot recover chord transform from non-finite endpoints');
         }
-        unstitch(kept.stitch!);
-        unstitch(fresh.stitch!);
-        stitch(atlas, kept, fresh, T_keptToFresh);
+        T_keptToFresh = M.fromTranslate(freshOrigin.x - keptTarget.x, freshOrigin.y - keptTarget.y);
       }
-      // Step 2: strip's sides are all unstitched now → deleteFace works.
-      deleteFace(atlas, strip.stripFace);
-      // Step 3: merge each chain pair (in reverse, though independent —
-      // each merge is local to one face pair).
-      for (let i = split.pairs.length - 1; i >= 0; i--) {
-        mergeFaces(atlas, split.pairs[i].rightChordSide);
-      }
-    });
+      unstitch(kept.stitch!);
+      unstitch(fresh.stitch!);
+      stitch(atlas, kept, fresh, T_keptToFresh);
+    }
+    // Step 2: strip's sides are all unstitched now → deleteFace works.
+    deleteFace(atlas, strip.stripFace);
+    // Step 3: merge each chain pair (in reverse, though independent —
+    // each merge is local to one face pair).
+    for (let i = split.pairs.length - 1; i >= 0; i--) {
+      mergeFaces(atlas, split.pairs[i].rightChordSide);
+    }
   };
 
   it('all-ideal seed: split + insertStrip + undo returns to the starting atlas', () => {
@@ -3684,20 +3582,29 @@ describe('splitAlongLine (face-bounded)', () => {
     const atlas = createInitialAtlas();
     const ne = atlas.locate({ x: 1, y: 0.5 })!;
     // Origin (0, 0) is a vertex of NE, not interior.
-    assert.throws(() => splitAlongLine(atlas, ne, { x: 0, y: 0 }, { x: 1, y: 0 }, { propagate: false }), /seam is not strictly interior/);
+    assert.throws(
+      () => splitAlongLine(atlas, ne, { x: 0, y: 0 }, { x: 1, y: 0 }, { propagate: false }),
+      /seam is not strictly interior/,
+    );
   });
 
   it('throws on zero-length direction', () => {
     const atlas = createInitialAtlas();
     const ne = atlas.locate({ x: 1, y: 0.5 })!;
-    assert.throws(() => splitAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 0, y: 0 }, { propagate: false }), /zero-length direction/);
+    assert.throws(
+      () => splitAlongLine(atlas, ne, { x: 1, y: 0.5 }, { x: 0, y: 0 }, { propagate: false }),
+      /zero-length direction/,
+    );
   });
 
   it('throws when host is not in the atlas', () => {
     const atlas = createInitialAtlas();
     const a = createInitialAtlas();
     const stranger = a.faces[0];
-    assert.throws(() => splitAlongLine(atlas, stranger, { x: 1, y: 0.5 }, { x: 1, y: 0 }, { propagate: false }), /host not in atlas/);
+    assert.throws(
+      () => splitAlongLine(atlas, stranger, { x: 1, y: 0.5 }, { x: 1, y: 0 }, { propagate: false }),
+      /host not in atlas/,
+    );
   });
 
   it('cuts an all-ideal seed face into two half-planes (line-through-the-empty-canvas)', () => {
@@ -3720,7 +3627,9 @@ describe('splitAlongLine (face-bounded)', () => {
     // Containment: a point above the cut belongs to one sub-face, below
     // belongs to the other, and points on the cut belong to both
     // (boundary points pass `polygonContains`).
-    const top = result.pairs[0].rightFace.contains({ x: 0, y: 1 }) ? result.pairs[0].rightFace : result.pairs[0].leftFace;
+    const top = result.pairs[0].rightFace.contains({ x: 0, y: 1 })
+      ? result.pairs[0].rightFace
+      : result.pairs[0].leftFace;
     const bot = top === result.pairs[0].rightFace ? result.pairs[0].leftFace : result.pairs[0].rightFace;
     assert.ok(top.contains({ x: 5, y: 5 }));
     assert.ok(!top.contains({ x: 5, y: -5 }));
@@ -3909,9 +3818,7 @@ describe('insertStrip', () => {
     // frame; the cycle order around `stripFace.sides` is irrelevant.
     const { atlas, splitResult } = setupChain();
     const result = insertStrip(atlas, splitResult, 0.5);
-    const origin = result.stripFace
-      .junctions()
-      .find((j) => j.kind === 'finite' && j.x === 0 && j.y === 0);
+    const origin = result.stripFace.junctions().find((j) => j.kind === 'finite' && j.x === 0 && j.y === 0);
     assert.ok(origin, 'expected a finite vertex at (0, 0) in strip frame');
   });
 
@@ -4204,12 +4111,7 @@ describe('insertStrip', () => {
 
     // Second cut, perpendicular to the first, hosted by the strip.
     const host2 = atlas.locate({ x: 0, y: 0.25 })!;
-    const splitResult2 = splitAlongLine(
-      atlas,
-      host2,
-      { x: 0, y: 0.25 },
-      { x: 1 / Math.sqrt(2), y: -1 / Math.sqrt(2) },
-    );
+    const splitResult2 = splitAlongLine(atlas, host2, { x: 0, y: 0.25 }, { x: 1 / Math.sqrt(2), y: -1 / Math.sqrt(2) });
     insertStrip(atlas, splitResult2, 0.1);
 
     assert.doesNotThrow(() => validateAtlas(atlas));
@@ -4522,7 +4424,11 @@ describe('addInnerLoop', () => {
 
   it('rejects a face that does not belong to the atlas', () => {
     const { atlas } = wideQuadrantAtlas();
-    const stranger = new Face([new Side(HomPoint.finite(0, 0)), new Side(HomPoint.finite(1, 0)), new Side(HomPoint.finite(0, 1))]);
+    const stranger = new Face([
+      new Side(HomPoint.finite(0, 0)),
+      new Side(HomPoint.finite(1, 0)),
+      new Side(HomPoint.finite(0, 1)),
+    ]);
     assert.throws(
       () =>
         addInnerLoop(atlas, stranger, [
