@@ -3,15 +3,17 @@ import type { Point } from '@folkjs/geometry/Vector2';
 import {
   applyLinearToDirection,
   cross,
+  HomLine,
+  HomPoint,
   isPolygonCCW,
   isPolygonCW,
-  type Junction,
   leftOfDirectedEdge,
   leftOfDirectedEdgeStrict,
   parameterOnSegment,
   polygonContains,
   polygonContainsStrict,
   sameIdealDirection,
+  signedTurn,
 } from './atlas/geometry/index.ts';
 
 // Re-export the geometry primitives so existing consumers of `./atlas.ts`
@@ -20,14 +22,16 @@ import {
 export {
   applyLinearToDirection,
   cross,
+  HomLine,
+  HomPoint,
   isPolygonCCW,
   isPolygonCW,
-  type Junction,
   leftOfDirectedEdge,
   leftOfDirectedEdgeStrict,
   polygonContains,
   polygonContainsStrict,
   sameIdealDirection,
+  signedTurn,
 };
 
 // ============================================================================
@@ -136,8 +140,8 @@ const IDENTITY_TRANSFORM: M.Matrix2DReadonly = Object.freeze(M.fromValues());
  * parallel line shares the same antipodal endpoints); hence `anchor`.
  */
 export class Side {
-  /** Origin junction in face-local coordinates. */
-  a: Junction;
+  /** Origin point in face-local homogeneous coordinates. */
+  a: HomPoint;
   /** Next side CCW around `face`. */
   next!: Side;
   /** Previous side CCW around `face` (i.e. the side `s` with `s.next === this`). */
@@ -148,6 +152,10 @@ export class Side {
    * Any one finite point on the chord line, in face-local coordinates.
    * Only set on chord sides (both endpoints ideal AND stitched). For all
    * other sides this is `null`. See class docstring.
+   *
+   * Future refactor (`step-6.md` Stage 4): replace with `line: HomLine`,
+   * making the line first-class on every side and dissolving `anchor`
+   * entirely. Today still patch-shaped.
    */
   anchor: Point | null = null;
   /**
@@ -173,23 +181,17 @@ export class Side {
     return this.stitch ? this.stitch.transformFrom(this) : IDENTITY_TRANSFORM;
   }
 
-  constructor(kind: 'finite' | 'ideal', x: number, y: number) {
-    if (kind === 'ideal') {
-      const len = Math.hypot(x, y);
-      if (len === 0) throw new Error('ideal side direction must be non-zero');
-      this.a = { kind: 'ideal', x: x / len, y: y / len };
-    } else {
-      this.a = { kind: 'finite', x, y };
-    }
+  constructor(a: HomPoint) {
+    this.a = a;
   }
 
-  /** This side's starting junction. Equivalent to `this.a`. */
-  origin(): Junction {
+  /** This side's starting point. Equivalent to `this.a`. */
+  origin(): HomPoint {
     return this.a;
   }
 
-  /** This side's target junction (= origin of `next`). */
-  target(): Junction {
+  /** This side's target point (= origin of `next`). */
+  target(): HomPoint {
     return this.next.a;
   }
 
@@ -208,12 +210,15 @@ export class Side {
    *   - `'arc'`     — both endpoints ideal AND `anchor === null`. A piece
    *                   of S¹ on the boundary of an unbounded face.
    *
-   * Use this in switch statements / dispatch tables.
+   * Computed from the endpoints' `w` components and the `anchor` field.
+   * Substrate operations branch on this only at chord-vs-arc disambiguation
+   * sites; finite-vs-ideal cases are handled uniformly via homogeneous
+   * expressions.
    */
   get kind(): 'segment' | 'ray' | 'antiRay' | 'chord' | 'arc' {
-    if (this.a.kind === 'finite' && this.next.a.kind === 'finite') return 'segment';
-    if (this.a.kind === 'finite' && this.next.a.kind === 'ideal') return 'ray';
-    if (this.a.kind === 'ideal' && this.next.a.kind === 'finite') return 'antiRay';
+    if (this.a.isFinite && this.next.a.isFinite) return 'segment';
+    if (this.a.isFinite && this.next.a.isIdeal) return 'ray';
+    if (this.a.isIdeal && this.next.a.isFinite) return 'antiRay';
     return this.anchor === null ? 'arc' : 'chord';
   }
 }
@@ -265,13 +270,7 @@ export class Stitch {
   #transformAtoB: M.Matrix2D;
   #transformBtoA: M.Matrix2D;
 
-  constructor(
-    atlas: Atlas,
-    a: Side,
-    b: Side,
-    transformAtoB: M.Matrix2D,
-    transformBtoA: M.Matrix2D,
-  ) {
+  constructor(atlas: Atlas, a: Side, b: Side, transformAtoB: M.Matrix2D, transformBtoA: M.Matrix2D) {
     this.atlas = atlas;
     this.a = a;
     this.b = b;
@@ -402,12 +401,7 @@ export class Link {
    */
   tracksStitchChain: boolean;
 
-  constructor(
-    from: Face,
-    to: Face,
-    transform: M.Matrix2D,
-    tracksStitchChain: boolean,
-  ) {
+  constructor(from: Face, to: Face, transform: M.Matrix2D, tracksStitchChain: boolean) {
     this.from = from;
     this.to = to;
     this.transform = transform;
@@ -524,8 +518,8 @@ export class Face {
     this.frame = frame;
   }
 
-  /** This face's k outer-loop junctions (origins of its outer half-edges) in CCW order. */
-  junctions(): Junction[] {
+  /** This face's k outer-loop vertex points (origins of its outer half-edges) in CCW order. */
+  junctions(): HomPoint[] {
     return this.sides.map((h) => h.origin());
   }
 
@@ -567,7 +561,8 @@ export class Face {
    * an explicit cross-product test against the chord line for each chord HE.
    */
   contains(p: Point): boolean {
-    if (!polygonContains(this.junctions(), p)) return false;
+    const hp = HomPoint.finite(p.x, p.y);
+    if (!polygonContains(this.junctions(), hp)) return false;
     for (const he of this.sides) {
       if (he.kind !== 'chord') continue;
       const a = he.origin();
@@ -580,7 +575,7 @@ export class Face {
     }
     for (const loop of this.innerLoops) {
       const verts = loop.map((h) => h.origin()).reverse();
-      if (polygonContainsStrict(verts, p)) return false;
+      if (polygonContainsStrict(verts, hp)) return false;
     }
     return true;
   }
@@ -1099,9 +1094,9 @@ export function createInitialAtlas(
   for (let i = 0; i < n; i++) {
     const [ax, ay] = idealDirections[i];
     const [bx, by] = idealDirections[(i + 1) % n];
-    const he0 = new Side('finite', 0, 0); // O → A
-    const he1 = new Side('ideal', ax, ay); // A → B (at infinity)
-    const he2 = new Side('ideal', bx, by); // B → O
+    const he0 = new Side(HomPoint.finite(0, 0)); // O → A
+    const he1 = new Side(HomPoint.idealDir(ax, ay)); // A → B (at infinity)
+    const he2 = new Side(HomPoint.idealDir(bx, by)); // B → O
     const f = new Face([he0, he1, he2]);
     faces.push(f);
     allSides.push(he0, he1, he2);
@@ -1151,7 +1146,7 @@ export function createAllIdealAtlas(
 ): Atlas {
   const n = idealDirections.length;
   if (n < 3) throw new Error('createAllIdealAtlas needs at least 3 ideal directions');
-  const hes = idealDirections.map(([x, y]) => new Side('ideal', x, y));
+  const hes = idealDirections.map(([x, y]) => new Side(HomPoint.idealDir(x, y)));
   const face = new Face(hes);
   const atlas = new Atlas(face);
   // Critical: `atlas.sides` must NOT alias `face.sides`. The Face
@@ -1233,13 +1228,7 @@ export function translationToWrap(heA: Side, heB: Side, eps = 1e-6): M.Matrix2D 
  *  - `heA.transform = transformAtoB`; `heB.transform = inv(transformAtoB)`
  *  - `heA.stitch = heB.stitch = s`
  */
-export function stitch(
-  atlas: Atlas,
-  heA: Side,
-  heB: Side,
-  transformAtoB: M.Matrix2D,
-  eps = 1e-6,
-): Stitch {
+export function stitch(atlas: Atlas, heA: Side, heB: Side, transformAtoB: M.Matrix2D, eps = 1e-6): Stitch {
   if (heA === heB) throw new Error('stitch: cannot stitch a side to itself');
   if (!atlas.sides.includes(heA) || !atlas.sides.includes(heB)) {
     throw new Error('stitch: sides must belong to atlas');
@@ -1330,12 +1319,7 @@ export function unstitch(s: Stitch): void {
  * many incoming or outgoing links. A self-link (`from === to`) is the
  * substrate-level expression of recursive zoom.
  */
-export function link(
-  atlas: Atlas,
-  from: Face,
-  to: Face,
-  transform: M.Matrix2D,
-): Link {
+export function link(atlas: Atlas, from: Face, to: Face, transform: M.Matrix2D): Link {
   if (!atlas.faces.includes(from)) throw new Error('link: from face not in atlas');
   if (!atlas.faces.includes(to)) throw new Error('link: to face not in atlas');
   // Auto-detect "this link is a cached chain composite" by comparing the
@@ -1418,9 +1402,8 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
 
   atlas.mutate(() => {
     for (const he of face.allSides()) {
-      if (he.a.kind === 'finite') {
-        he.a.x = R * he.a.x;
-        he.a.y = R * he.a.y;
+      if (he.a.isFinite) {
+        he.a = HomPoint.finite(R * he.a.x, R * he.a.y);
       }
     }
 
@@ -1493,11 +1476,7 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
  * `vertices`. The face's `innerLoops` array is appended to with the same
  * array, and every new half-edge is added to `atlas.sides`.
  */
-export function addInnerLoop(
-  atlas: Atlas,
-  face: Face,
-  vertices: ReadonlyArray<Point>,
-): Side[] {
+export function addInnerLoop(atlas: Atlas, face: Face, vertices: ReadonlyArray<Point>): Side[] {
   if (!atlas.faces.includes(face)) {
     throw new Error('addInnerLoop: face must belong to atlas');
   }
@@ -1505,7 +1484,7 @@ export function addInnerLoop(
     throw new Error(`addInnerLoop: need at least 3 vertices, got ${vertices.length}`);
   }
 
-  const loop: Side[] = vertices.map((v) => new Side('finite', v.x, v.y));
+  const loop: Side[] = vertices.map((v) => new Side(HomPoint.finite(v.x, v.y)));
   const m = loop.length;
   for (let i = 0; i < m; i++) {
     const he = loop[i];
@@ -1516,17 +1495,13 @@ export function addInnerLoop(
   }
 
   if (!isPolygonCW(loop.map((h) => h.origin()))) {
-    throw new Error(
-      'addInnerLoop: vertices must be in CW order (a hole is wound opposite to the outer face)',
-    );
+    throw new Error('addInnerLoop: vertices must be in CW order (a hole is wound opposite to the outer face)');
   }
 
   const outer = face.junctions();
   for (let i = 0; i < m; i++) {
-    if (!polygonContains(outer, vertices[i])) {
-      throw new Error(
-        `addInnerLoop: vertex (${vertices[i].x}, ${vertices[i].y}) lies outside the outer loop`,
-      );
+    if (!polygonContains(outer, HomPoint.finite(vertices[i].x, vertices[i].y))) {
+      throw new Error(`addInnerLoop: vertex (${vertices[i].x}, ${vertices[i].y}) lies outside the outer loop`);
     }
   }
 
@@ -1687,14 +1662,12 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
         // the outer loop.
         for (let i = 0; i < m; i++) {
           const v = verts[i];
-          if (v.kind !== 'finite') {
+          if (v.isIdeal) {
             errs.push(`face innerLoops[${li}][${i}] is ideal; inner loops must be finite`);
             continue;
           }
-          if (!polygonContains(f.junctions(), { x: v.x, y: v.y })) {
-            errs.push(
-              `face innerLoops[${li}][${i}] at (${v.x}, ${v.y}) lies outside the outer loop`,
-            );
+          if (!polygonContains(f.junctions(), v)) {
+            errs.push(`face innerLoops[${li}][${i}] at (${v.x}, ${v.y}) lies outside the outer loop`);
           }
         }
       } catch (e) {
@@ -1785,11 +1758,7 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     // Non-tracked links (manual placements, self-links, closed-surface
     // targets) skip this check — their transforms are caller-owned. See
     // {@link Link.tracksStitchChain} for the discrimination.
-    if (
-      link.tracksStitchChain &&
-      allFaceSet.has(link.from) &&
-      allFaceSet.has(link.to)
-    ) {
+    if (link.tracksStitchChain && allFaceSet.has(link.from) && allFaceSet.has(link.to)) {
       const chain = bfsCompositeViaStitchesOnly(atlas, link.from, link.to);
       if (chain !== null && !M.equals(link.transform, chain)) {
         const fIdx = atlas.faces.indexOf(link.from);
@@ -1857,22 +1826,20 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
   }
 }
 
-function junctionImageMatches(
-  T: M.Matrix2DReadonly,
-  src: Junction,
-  dst: Junction,
-  eps: number,
-): boolean {
-  if (src.kind !== dst.kind) return false;
-  if (src.kind === 'finite') {
-    const p = M.applyToPoint(T, { x: src.x, y: src.y });
-    return Math.abs(p.x - dst.x) < eps && Math.abs(p.y - dst.y) < eps;
-  }
-  // Ideal: linear part only, then renormalize for unit-length comparison.
-  const d = applyLinearToDirection(T, { x: src.x, y: src.y });
-  const len = Math.hypot(d.x, d.y);
-  if (len < eps) return false;
-  return Math.abs(d.x / len - dst.x) < eps && Math.abs(d.y / len - dst.y) < eps;
+/**
+ * Whether the affine `T` maps `src` (a homogeneous point in some face's
+ * frame) to `dst` (in the partner face's frame), within tolerance.
+ *
+ * Single-line homogeneous test: `T·src = dst` up to projective scale.
+ * `HomPoint.applyAffine` handles the finite vs ideal distinction
+ * uniformly — translations drop out for ideal points (w=0), persist for
+ * finite points (w=1). The previous kind-dispatched implementation had
+ * separate branches for finite-finite vs ideal-ideal mismatches; the
+ * homogeneous version makes mismatched kinds fail the `equals` check
+ * naturally (different `w` components).
+ */
+function junctionImageMatches(T: M.Matrix2DReadonly, src: HomPoint, dst: HomPoint, eps: number): boolean {
+  return src.applyAffine(T).equals(dst, eps);
 }
 
 // ----------------------------------------------------------------------------
@@ -1965,17 +1932,13 @@ export interface SubdivideSideResult {
  * Mutates the existing `Face` objects in place — face identity is preserved,
  * shapes assigned to either face stay assigned.
  */
-export function subdivideSide(
-  atlas: Atlas,
-  side: Side,
-  at: Point,
-): SubdivideSideResult {
+export function subdivideSide(atlas: Atlas, side: Side, at: Point): SubdivideSideResult {
   if (!atlas.sides.includes(side)) {
     throw new Error('subdivideSide: side not in atlas');
   }
 
-  // ---- validate `at` and compute the inserted-junction descriptor ----
-  let newOrigin: Junction;
+  // ---- validate `at` and compute the inserted-point descriptor ----
+  let newOrigin: HomPoint;
   if (side.kind === 'arc') {
     const len = Math.hypot(at.x, at.y);
     if (len < 1e-9) throw new Error('subdivideSide: arc subdivision direction has zero length');
@@ -1987,11 +1950,9 @@ export function subdivideSide(
     const aCrossDir = cross(a.x, a.y, dir.x, dir.y);
     const dirCrossB = cross(dir.x, dir.y, b.x, b.y);
     if (aCrossDir <= eps || dirCrossB <= eps) {
-      throw new Error(
-        'subdivideSide: ideal direction is not strictly inside the arc (a×d, d×b must both be > 0)',
-      );
+      throw new Error('subdivideSide: ideal direction is not strictly inside the arc (a×d, d×b must both be > 0)');
     }
-    newOrigin = { kind: 'ideal', x: dir.x, y: dir.y };
+    newOrigin = HomPoint.idealDir(dir.x, dir.y);
   } else {
     // Validate `at` lies strictly between the two endpoints, with
     // collinearity tolerance. Range depends on side kind:
@@ -2010,9 +1971,7 @@ export function subdivideSide(
       const uMin = 1e-9;
       const uMaxEnd = isFF ? 1 - 1e-9 : Infinity;
       if (u <= uMin || u >= uMaxEnd) {
-        throw new Error(
-          `subdivideSide: point not strictly between endpoints (u = ${u}, isFF = ${isFF})`,
-        );
+        throw new Error(`subdivideSide: point not strictly between endpoints (u = ${u}, isFF = ${isFF})`);
       }
     }
     const projected = pointOnSideAtU(side, u);
@@ -2021,14 +1980,14 @@ export function subdivideSide(
     if (dx * dx + dy * dy > 1e-12) {
       throw new Error('subdivideSide: point is not on the edge');
     }
-    newOrigin = { kind: 'finite', x: at.x, y: at.y };
+    newOrigin = HomPoint.finite(at.x, at.y);
   }
 
   // ---- F side ----
   const F = side.face;
   const origin = side.origin();
-  const s_A = new Side(origin.kind, origin.x, origin.y); // origin → newVertex
-  const s_B = new Side(newOrigin.kind, newOrigin.x, newOrigin.y); // newVertex → target
+  const s_A = new Side(origin); // origin → newVertex
+  const s_B = new Side(newOrigin); // newVertex → target
   s_A.face = F;
   s_B.face = F;
 
@@ -2048,8 +2007,8 @@ export function subdivideSide(
     const tOrigin = twin.origin();
     const pointInG = M.applyToPoint(T, at);
 
-    const tw_A = new Side(tOrigin.kind, tOrigin.x, tOrigin.y);
-    const tw_B = new Side('finite', pointInG.x, pointInG.y);
+    const tw_A = new Side(tOrigin);
+    const tw_B = new Side(HomPoint.finite(pointInG.x, pointInG.y));
     tw_A.face = G;
     tw_B.face = G;
 
@@ -2136,15 +2095,11 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
     throw new Error('joinSidesAtVertex: side has no successor (k=1 face)');
   }
   if (next.face !== side.face) {
-    throw new Error(
-      'joinSidesAtVertex: side and side.next live in different faces (cannot join)',
-    );
+    throw new Error('joinSidesAtVertex: side and side.next live in different faces (cannot join)');
   }
   const F = side.face;
   if (F.sides.length < 3) {
-    throw new Error(
-      'joinSidesAtVertex: face has fewer than 3 sides; joining would produce a degenerate result',
-    );
+    throw new Error('joinSidesAtVertex: face has fewer than 3 sides; joining would produce a degenerate result');
   }
 
   // ---- Capture stitch references before any mutation ----
@@ -2164,14 +2119,10 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
     tw_B = stitchA.other(side);
     tw_A = stitchB.other(next);
     if (tw_A.face !== tw_B.face) {
-      throw new Error(
-        'joinSidesAtVertex: paired stitches go to different partner faces',
-      );
+      throw new Error('joinSidesAtVertex: paired stitches go to different partner faces');
     }
     if (tw_B.prev !== tw_A) {
-      throw new Error(
-        'joinSidesAtVertex: twin sides are not consecutive in the partner face (not subdivision-shaped)',
-      );
+      throw new Error('joinSidesAtVertex: twin sides are not consecutive in the partner face (not subdivision-shaped)');
     }
     if (!M.equals(side.transform, next.transform)) {
       throw new Error(
@@ -2184,71 +2135,75 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
   }
 
   // ---- Validate collinearity and build the joined side ----
+  //
+  // Collinearity is one homogeneous test: `signedTurn(a, v, b) ≈ 0`.
+  // (Exception: all-ideal triples have signedTurn ≡ 0 by the determinant's
+  // all-w=0 row → a separate angular sweep check on S¹ handles that case.)
+  //
+  // Betweenness still needs a small dispatch on which endpoints are ideal
+  // because the parametric range differs:
+  //   - both finite: t ∈ (0, 1)
+  //   - one finite, one ideal: t ∈ (0, ∞) — v is on the half-line, on the
+  //     finite-endpoint side of the ideal direction.
+  //   - both ideal antipodal: any finite v is "between" them along the chord.
   const a = side.origin();
   const v = next.origin();
   const b = next.next.origin();
   const eps = 1e-9;
-  const joined = new Side(a.kind, a.x, a.y);
+  const joined = new Side(a);
 
-  if (a.kind === 'finite' && v.kind === 'finite' && b.kind === 'finite') {
-    // segment + segment → segment
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const lenSq = dx * dx + dy * dy;
-    if (lenSq < eps) {
-      throw new Error('joinSidesAtVertex: degenerate join (a == b)');
-    }
-    const t = ((v.x - a.x) * dx + (v.y - a.y) * dy) / lenSq;
-    if (t <= eps || t >= 1 - eps) {
-      throw new Error('joinSidesAtVertex: middle vertex is at or past an endpoint');
-    }
-    const projX = a.x + t * dx;
-    const projY = a.y + t * dy;
-    if ((projX - v.x) ** 2 + (projY - v.y) ** 2 > eps * eps) {
-      throw new Error('joinSidesAtVertex: middle vertex is not on segment a→b');
-    }
-  } else if (a.kind === 'finite' && v.kind === 'finite' && b.kind === 'ideal') {
-    // segment + ray → ray; v on ray from a in direction b
-    const dx = v.x - a.x;
-    const dy = v.y - a.y;
-    const len = Math.hypot(dx, dy);
-    if (len < eps) {
-      throw new Error('joinSidesAtVertex: middle coincides with a');
-    }
-    if (Math.abs(dx / len - b.x) > eps || Math.abs(dy / len - b.y) > eps) {
-      throw new Error('joinSidesAtVertex: middle not on ray a→ideal(b)');
-    }
-  } else if (a.kind === 'ideal' && v.kind === 'finite' && b.kind === 'finite') {
-    // antiRay + segment → antiRay; walking from b toward ideal a passes through v
-    const dx = b.x - v.x;
-    const dy = b.y - v.y;
-    const len = Math.hypot(dx, dy);
-    if (len < eps) {
-      throw new Error('joinSidesAtVertex: middle coincides with b');
-    }
-    if (Math.abs(dx / len - a.x) > eps || Math.abs(dy / len - a.y) > eps) {
-      throw new Error('joinSidesAtVertex: middle not on antiRay ideal(a)→b');
-    }
-  } else if (a.kind === 'ideal' && v.kind === 'ideal' && b.kind === 'ideal') {
-    // arc + arc → arc; middle ideal must lie strictly inside CCW arc a→b
+  if (a.isIdeal && v.isIdeal && b.isIdeal) {
+    // arc + arc → arc. v must lie strictly inside the CCW arc a→b on S¹.
     const aCrossV = cross(a.x, a.y, v.x, v.y);
     const vCrossB = cross(v.x, v.y, b.x, b.y);
     if (aCrossV <= eps || vCrossB <= eps) {
       throw new Error('joinSidesAtVertex: middle ideal not strictly inside arc a→b');
     }
-  } else if (a.kind === 'ideal' && v.kind === 'finite' && b.kind === 'ideal') {
-    // antiRay + ray → chord; ideal endpoints must be antipodal, and the
-    // joined side becomes a chord anchored at the eliminated finite vertex.
-    if (Math.abs(a.x + b.x) > eps || Math.abs(a.y + b.y) > eps) {
+  } else {
+    // Collinearity: one expression covers all (finite/ideal) combos.
+    if (Math.abs(signedTurn(a, v, b)) > eps) {
+      throw new Error('joinSidesAtVertex: a, v, b are not collinear');
+    }
+    if (a.isFinite && v.isFinite && b.isFinite) {
+      // Standard segment betweenness: project v onto segment ab.
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq < eps) throw new Error('joinSidesAtVertex: degenerate join (a == b)');
+      const t = ((v.x - a.x) * dx + (v.y - a.y) * dy) / lenSq;
+      if (t <= eps || t >= 1 - eps) {
+        throw new Error('joinSidesAtVertex: middle vertex is at or past an endpoint');
+      }
+    } else if (a.isFinite && v.isFinite && b.isIdeal) {
+      // segment + ray. v must be strictly forward of a along ideal direction b.
+      const dx = v.x - a.x;
+      const dy = v.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < eps) throw new Error('joinSidesAtVertex: middle coincides with a');
+      if (Math.abs(dx / len - b.x) > eps || Math.abs(dy / len - b.y) > eps) {
+        throw new Error('joinSidesAtVertex: middle not on ray a→ideal(b)');
+      }
+    } else if (a.isIdeal && v.isFinite && b.isFinite) {
+      // antiRay + segment.
+      const dx = b.x - v.x;
+      const dy = b.y - v.y;
+      const len = Math.hypot(dx, dy);
+      if (len < eps) throw new Error('joinSidesAtVertex: middle coincides with b');
+      if (Math.abs(dx / len - a.x) > eps || Math.abs(dy / len - a.y) > eps) {
+        throw new Error('joinSidesAtVertex: middle not on antiRay ideal(a)→b');
+      }
+    } else if (a.isIdeal && v.isFinite && b.isIdeal) {
+      // antiRay + ray → chord. ideal endpoints must be antipodal; the
+      // joined side becomes a chord anchored at the eliminated finite vertex.
+      if (Math.abs(a.x + b.x) > eps || Math.abs(a.y + b.y) > eps) {
+        throw new Error('joinSidesAtVertex: ideal endpoints are not antipodal — cannot reform chord');
+      }
+      joined.anchor = { x: v.x, y: v.y };
+    } else {
       throw new Error(
-        'joinSidesAtVertex: ideal endpoints are not antipodal — cannot reform chord',
+        `joinSidesAtVertex: unsupported endpoint-kind combination (a=${a.kind}, v=${v.kind}, b=${b.kind})`,
       );
     }
-    joined.anchor = { x: v.x, y: v.y };
-  } else {
-    throw new Error(
-      `joinSidesAtVertex: unsupported endpoint-kind combination (a=${a.kind}, v=${v.kind}, b=${b.kind})`,
-    );
   }
 
   // ---- Build the joined twin (if stitched) ----
@@ -2257,7 +2212,7 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
     // tw_A ends at the partner-face vertex; tw_B starts there. The joined
     // twin spans tw_A.origin → tw_B.next.origin in G's frame.
     const tA_origin = tw_A.origin();
-    twinJoined = new Side(tA_origin.kind, tA_origin.x, tA_origin.y);
+    twinJoined = new Side(tA_origin);
     if (joined.anchor !== null) {
       // Chord case: project the F-frame anchor through the stitch transform
       // to recover G's anchor for the same line.
@@ -2310,10 +2265,10 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
  * sub-polygon has near-zero area (e.g. a single finite vertex flanked by
  * ideals), and to `(0, 0)` when there are no finite vertices at all.
  */
-function centroidOfFinite(verts: Junction[]): Point {
+function centroidOfFinite(verts: HomPoint[]): Point {
   const fin: Point[] = [];
   for (const j of verts) {
-    if (j.kind === 'finite') fin.push({ x: j.x, y: j.y });
+    if (j.isFinite) fin.push({ x: j.x, y: j.y });
   }
   if (fin.length === 0) return { x: 0, y: 0 };
   if (fin.length === 1) return fin[0];
@@ -2417,9 +2372,7 @@ export function splitFaceAtVertices(
       );
     }
     if (Math.abs(jA.x + jB.x) > eps || Math.abs(jA.y + jB.y) > eps) {
-      throw new Error(
-        'splitFaceAtVertices: ideal-ideal chord endpoints must be antipodal on S¹',
-      );
+      throw new Error('splitFaceAtVertices: ideal-ideal chord endpoints must be antipodal on S¹');
     }
   }
   // Adjacency check.
@@ -2439,17 +2392,14 @@ export function splitFaceAtVertices(
   const dist = Math.min(dAbs, k - dAbs);
   if (dist < 2) {
     if (!chordIsIdealIdeal) {
-      throw new Error(
-        'splitFaceAtVertices: chord endpoints are adjacent (would coincide with an edge)',
-      );
+      throw new Error('splitFaceAtVertices: chord endpoints are adjacent (would coincide with an edge)');
     }
     const dirX = jB.x - jA.x;
     const dirY = jB.y - jA.y;
     for (let i = 0; i < k; i++) {
       const he = face.sides[i];
       const ni = (i + 1) % k;
-      const isBetween =
-        (i === vIdxA && ni === vIdxB) || (i === vIdxB && ni === vIdxA);
+      const isBetween = (i === vIdxA && ni === vIdxB) || (i === vIdxB && ni === vIdxA);
       if (!isBetween) continue;
       if (he.kind !== 'chord') {
         throw new Error(
@@ -2499,11 +2449,12 @@ export function splitFaceAtVertices(
   // vIdxB back to vIdxA (origin at vIdxB's position in face's UNCHANGED
   // frame). freshChordSide closes fresh's loop from vIdxA back to vIdxB
   // (origin at vIdxA's position, translated into fresh's re-anchored frame
-  // when finite).
-  const faceChordSide = new Side(jB.kind, jB.x, jB.y);
-  const freshChordOX = jA.kind === 'finite' ? jA.x - freshOffset.x : jA.x;
-  const freshChordOY = jA.kind === 'finite' ? jA.y - freshOffset.y : jA.y;
-  const freshChordSide = new Side(jA.kind, freshChordOX, freshChordOY);
+  // when finite — ideal directions are translation-invariant).
+  const faceChordSide = new Side(jB);
+  const freshChordOrigin = jA.isFinite
+    ? HomPoint.finite(jA.x - freshOffset.x, jA.y - freshOffset.y)
+    : jA;
+  const freshChordSide = new Side(freshChordOrigin);
 
   // Chord anchors for the ideal-ideal case. The parent-frame `anchor`
   // pinpoints which parallel real line the chord represents; in `face`'s
@@ -2525,12 +2476,13 @@ export function splitFaceAtVertices(
   setTwin(atlas, faceChordSide, freshChordSide, T_faceToFresh, T_freshToFace);
 
   // Re-anchor arc1's HEs in place: they're moving from face's frame into
-  // fresh's frame (translated by -freshOffset). Finite origins shift,
-  // ideal origins are translation-invariant, chord anchors shift.
+  // fresh's frame (translated by -freshOffset). Finite origins shift via
+  // a fresh allocation (HomPoint is immutable); ideal origins are
+  // translation-invariant; chord anchors shift in place (anchor is a
+  // mutable Cartesian Point field).
   for (const he of arc1Sides) {
-    if (he.a.kind === 'finite') {
-      he.a.x -= freshOffset.x;
-      he.a.y -= freshOffset.y;
+    if (he.a.isFinite) {
+      he.a = HomPoint.finite(he.a.x - freshOffset.x, he.a.y - freshOffset.y);
     }
     if (he.anchor !== null) {
       he.anchor = {
@@ -2543,8 +2495,7 @@ export function splitFaceAtVertices(
   // Allocate `fresh` from the moved arc1 HEs plus the new closing chord.
   // Face's constructor wires .face / .next / .prev on every HE in the
   // passed list, including reassigning .face on the moved HEs to `fresh`.
-  const cloneMat = (m: M.Matrix2DReadonly): M.Matrix2D =>
-    M.fromValues(m.a, m.b, m.c, m.d, m.e, m.f);
+  const cloneMat = (m: M.Matrix2DReadonly): M.Matrix2D => M.fromValues(m.a, m.b, m.c, m.d, m.e, m.f);
   const fresh = new Face([...arc1Sides, freshChordSide], [], cloneMat(face.frame));
 
   // Reset `face`'s outer loop to the kept arc plus the new closing chord,
@@ -2679,16 +2630,10 @@ export function splitFaceAlongChord(
     }
     const arcStart = hit.he.origin();
     const arcEnd = hit.he.next.origin();
-    if (
-      Math.abs(arcStart.x - hit.idealDir.x) < eps &&
-      Math.abs(arcStart.y - hit.idealDir.y) < eps
-    ) {
+    if (Math.abs(arcStart.x - hit.idealDir.x) < eps && Math.abs(arcStart.y - hit.idealDir.y) < eps) {
       return hit.he;
     }
-    if (
-      Math.abs(arcEnd.x - hit.idealDir.x) < eps &&
-      Math.abs(arcEnd.y - hit.idealDir.y) < eps
-    ) {
+    if (Math.abs(arcEnd.x - hit.idealDir.x) < eps && Math.abs(arcEnd.y - hit.idealDir.y) < eps) {
       return hit.he.next;
     }
     const r = subdivideSide(atlas, hit.he, hit.idealDir);
@@ -2773,23 +2718,17 @@ export function mergeFaces(atlas: Atlas, sharedChordSide: Side): { face: Face } 
   const kept = sharedChordSide.face;
   const fresh = partnerSide.face;
   if (kept === fresh) {
-    throw new Error(
-      'mergeFaces: chord stitch is a self-loop on one face (this is a wrap, not a split)',
-    );
+    throw new Error('mergeFaces: chord stitch is a self-loop on one face (this is a wrap, not a split)');
   }
   if (fresh === atlas.root) {
     throw new Error('mergeFaces: fresh face is the atlas root; merge would orphan it');
   }
   if (fresh.shapes.size > 0) {
-    throw new Error(
-      `mergeFaces: fresh face has ${fresh.shapes.size} shape(s) assigned; migrate them before merging`,
-    );
+    throw new Error(`mergeFaces: fresh face has ${fresh.shapes.size} shape(s) assigned; migrate them before merging`);
   }
   for (const link of atlas.links) {
     if (link.from === fresh || link.to === fresh) {
-      throw new Error(
-        'mergeFaces: fresh face is a source or target of a Link; unlink before merging',
-      );
+      throw new Error('mergeFaces: fresh face is a source or target of a Link; unlink before merging');
     }
   }
 
@@ -2800,12 +2739,7 @@ export function mergeFaces(atlas: Atlas, sharedChordSide: Side): { face: Face } 
   // result and we refuse explicitly.
   const T = chordStitch.transformFrom(sharedChordSide);
   const eps = 1e-9;
-  if (
-    Math.abs(T.a - 1) > eps ||
-    Math.abs(T.d - 1) > eps ||
-    Math.abs(T.b) > eps ||
-    Math.abs(T.c) > eps
-  ) {
+  if (Math.abs(T.a - 1) > eps || Math.abs(T.d - 1) > eps || Math.abs(T.b) > eps || Math.abs(T.c) > eps) {
     throw new Error('mergeFaces: chord stitch must be a pure translation');
   }
   // T_keptToFresh = translate(-freshOffset)  ⟹  freshOffset = -(T.e, T.f).
@@ -2840,9 +2774,8 @@ export function mergeFaces(atlas: Atlas, sharedChordSide: Side): { face: Face } 
     // 2 + 3. Shift fresh-side finite vertices and chord anchors back into
     //        kept's frame.
     for (const s of arc1Set) {
-      if (s.a.kind === 'finite') {
-        s.a.x += freshOffset.x;
-        s.a.y += freshOffset.y;
+      if (s.a.isFinite) {
+        s.a = HomPoint.finite(s.a.x + freshOffset.x, s.a.y + freshOffset.y);
       }
       if (s.anchor !== null) {
         s.anchor = { x: s.anchor.x + freshOffset.x, y: s.anchor.y + freshOffset.y };
@@ -2883,9 +2816,7 @@ export function mergeFaces(atlas: Atlas, sharedChordSide: Side): { face: Face } 
     fresh.innerLoops = [];
 
     // 7. Remove the chord sides from atlas.sides.
-    atlas.sides = atlas.sides.filter(
-      (s) => s !== sharedChordSide && s !== partnerSide,
-    );
+    atlas.sides = atlas.sides.filter((s) => s !== sharedChordSide && s !== partnerSide);
 
     // 8. Empty fresh.sides so deleteFace's allSides() loop has nothing to
     //    re-iterate (the arc1 sides have been re-parented to kept).
@@ -2928,13 +2859,7 @@ function rewireFaceCycle(face: Face) {
  *    stale Stitch's endpoints, then allocate a fresh Stitch.
  *  - Neither has a Stitch: allocate a fresh Stitch.
  */
-function setTwin(
-  atlas: Atlas,
-  a: Side,
-  b: Side,
-  transformAB: M.Matrix2D,
-  transformBA: M.Matrix2D,
-): Stitch {
+function setTwin(atlas: Atlas, a: Side, b: Side, transformAB: M.Matrix2D, transformBA: M.Matrix2D): Stitch {
   if (a.stitch !== null && a.stitch === b.stitch) {
     const s = a.stitch;
     // Same-pair update: keep Stitch identity, refresh transforms (handle
@@ -2976,11 +2901,7 @@ function attachFace(atlas: Atlas, face: Face) {
  * Returns the composite mapping `target`-frame → `from`-frame, or `null`
  * if `target` is unreachable from `from` via stitches.
  */
-function bfsCompositeViaStitchesOnly(
-  atlas: Atlas,
-  from: Face,
-  target: Face,
-): M.Matrix2D | null {
+function bfsCompositeViaStitchesOnly(atlas: Atlas, from: Face, target: Face): M.Matrix2D | null {
   const out = new Map<Face, M.Matrix2D>();
   out.set(from, M.fromValues());
   if (from === target) return out.get(from)!;
@@ -3048,18 +2969,18 @@ function recomputeLinkTransformsFromStitchChain(atlas: Atlas): void {
 }
 
 /**
- * Build a fresh face from a CCW polygon of {@link Junction}s and register
+ * Build a fresh face from a CCW polygon of {@link HomPoint}s and register
  * it with `atlas`. Returns the new {@link Face}; its `sides` array follows
- * the input junction order, so callers can index `face.sides[i]` to find
- * the side whose origin is `junctions[i]` for subsequent stitching.
+ * the input point order, so callers can index `face.sides[i]` to find
+ * the side whose origin is `points[i]` for subsequent stitching.
  *
  * The new sides are unstitched and unlinked — caller wires whatever
  * topology they need afterwards.
  *
  * `options.anchors` provides per-side line-pinning anchors for ideal-ideal
  * chord sides (a finite point on the chord line, in face-local
- * coordinates). Map keys are side indices into `junctions`. Required for
- * any side whose origin AND target (= next junction) are both ideal and
+ * coordinates). Map keys are side indices into `points`. Required for
+ * any side whose origin AND target (= next point) are both ideal and
  * antipodal, ignored otherwise — matching the {@link Side.anchor}
  * convention. See the {@link Side} class doc for why ideal-ideal chords
  * need an anchor.
@@ -3070,16 +2991,16 @@ function recomputeLinkTransformsFromStitchChain(atlas: Atlas): void {
  */
 export function createFace(
   atlas: Atlas,
-  junctions: ReadonlyArray<Junction>,
+  points: ReadonlyArray<HomPoint>,
   options?: {
     anchors?: ReadonlyMap<number, Point>;
     frame?: M.Matrix2D;
   },
 ): Face {
-  if (junctions.length < 2) {
-    throw new Error(`createFace: need at least 2 sides, got ${junctions.length}`);
+  if (points.length < 2) {
+    throw new Error(`createFace: need at least 2 sides, got ${points.length}`);
   }
-  const sides: Side[] = junctions.map((j) => new Side(j.kind, j.x, j.y));
+  const sides: Side[] = points.map((p) => new Side(p));
   if (options?.anchors) {
     for (const [i, p] of options.anchors) {
       if (i < 0 || i >= sides.length) {
@@ -3135,22 +3056,16 @@ export function deleteFace(atlas: Atlas, face: Face): void {
   }
   for (const s of face.allSides()) {
     if (s.stitch !== null) {
-      throw new Error(
-        'deleteFace: face has stitched sides; unstitch them before deleting',
-      );
+      throw new Error('deleteFace: face has stitched sides; unstitch them before deleting');
     }
   }
   for (const link of atlas.links) {
     if (link.from === face || link.to === face) {
-      throw new Error(
-        'deleteFace: face is a source or target of a Link; unlink before deleting',
-      );
+      throw new Error('deleteFace: face is a source or target of a Link; unlink before deleting');
     }
   }
   if (face.shapes.size > 0) {
-    throw new Error(
-      `deleteFace: face has ${face.shapes.size} shape(s) assigned; migrate them before deleting`,
-    );
+    throw new Error(`deleteFace: face has ${face.shapes.size} shape(s) assigned; migrate them before deleting`);
   }
 
   // Free of bindings. Drop sides and the face from the atlas registries.
@@ -3242,13 +3157,7 @@ const WALK_EPS = 1e-9;
  *      origin matches `idealDir` — this lets the existing materialise() in
  *      splitFaceAlongChord short-circuit cleanly without arc subdivision.
  */
-function findExit(
-  face: Face,
-  p: Point,
-  d: Point,
-  excludeSide: Side | null,
-  eps = WALK_EPS,
-): BoundaryHit | null {
+function findExit(face: Face, p: Point, d: Point, excludeSide: Side | null, eps = WALK_EPS): BoundaryHit | null {
   let best: { he: Side; s: number; u: number } | null = null;
   let arcExit: Side | null = null;
 
@@ -3262,10 +3171,7 @@ function findExit(
       // line still exits through that ideal vertex; a strictly-inside check
       // wrongly rejects axis-aligned directions in cardinal seed wedges
       // (e.g. d=(1,0) inside the +x/+y wedge whose arc spans (1,0)→(0,1)).
-      if (
-        cross(a.x, a.y, d.x, d.y) >= -eps &&
-        cross(d.x, d.y, b.x, b.y) >= -eps
-      ) {
+      if (cross(a.x, a.y, d.x, d.y) >= -eps && cross(d.x, d.y, b.x, b.y) >= -eps) {
         arcExit = he;
       }
       continue;
@@ -3332,9 +3238,7 @@ function findExit(
  * by `|dir|²` (which equals 1 in the unit cases — so a single uniform
  * formula `((p − start) · dir) / |dir|²` works for every kind).
  */
-function rayParam(
-  side: Side,
-): { start: Point; dir: Point; uMin: number; uMax: number } | null {
+function rayParam(side: Side): { start: Point; dir: Point; uMin: number; uMax: number } | null {
   const o = side.origin();
   const t = side.target();
   switch (side.kind) {
@@ -3377,12 +3281,7 @@ function rayParam(
  * (`s > eps`, `u` within the side's parameter range). At-infinity arcs
  * are handled separately by the caller (returns `null` here).
  */
-function intersectLineWithSide(
-  p: Point,
-  d: Point,
-  side: Side,
-  eps: number,
-): { s: number; u: number } | null {
+function intersectLineWithSide(p: Point, d: Point, side: Side, eps: number): { s: number; u: number } | null {
   const r = rayParam(side);
   if (!r) return null;
   const det = r.dir.x * d.y - r.dir.y * d.x;
@@ -3436,12 +3335,8 @@ export function uOfPointOnSide(side: Side, p: Point): number {
  * — typically at-infinity arcs. Throws if a degenerate exit is found, e.g.
  * the line passes exactly through an existing vertex; callers should perturb.
  */
-export function walkLine(
-  host: Face,
-  seam: Point,
-  direction: Point,
-): FaceCrossing[] {
-  if (!polygonContainsStrict(host.junctions(), seam)) {
+export function walkLine(host: Face, seam: Point, direction: Point): FaceCrossing[] {
+  if (!polygonContainsStrict(host.junctions(), HomPoint.finite(seam.x, seam.y))) {
     throw new Error('walkLine: seam is not strictly interior to host');
   }
   const len = Math.hypot(direction.x, direction.y);
@@ -3486,11 +3381,7 @@ export function walkLine(
  * a boundary (at-infinity arc or no-twin edge). Each returned crossing has
  * `entry` non-null (it's the boundary the line entered through).
  */
-function walkLineDirection(
-  startFace: Face,
-  startExit: BoundaryHit,
-  startDirection: Point,
-): FaceCrossing[] {
+function walkLineDirection(startFace: Face, startExit: BoundaryHit, startDirection: Point): FaceCrossing[] {
   const out: FaceCrossing[] = [];
   let prevExit = startExit;
   let prevDirection = startDirection;
@@ -3598,9 +3489,7 @@ export interface SplitAlongLineOptions {
  * Captured geometry of a {@link BoundaryHit} for re-resolution after
  * intervening atlas mutations may have invalidated `hit.he`.
  */
-type CapturedHit =
-  | { kind: 'finite'; point: Point }
-  | { kind: 'ideal'; idealDir: Point };
+type CapturedHit = { kind: 'finite'; point: Point } | { kind: 'ideal'; idealDir: Point };
 
 function captureHit(hit: BoundaryHit): CapturedHit {
   if (hit.kind === 'finite') {
@@ -3681,16 +3570,11 @@ function findSideForIdealDir(face: Face, idealDir: Point): Side {
     if (he.kind !== 'arc') continue;
     const a = he.origin();
     const b = he.next.origin();
-    if (
-      cross(a.x, a.y, idealDir.x, idealDir.y) >= -eps &&
-      cross(idealDir.x, idealDir.y, b.x, b.y) >= -eps
-    ) {
+    if (cross(a.x, a.y, idealDir.x, idealDir.y) >= -eps && cross(idealDir.x, idealDir.y, b.x, b.y) >= -eps) {
       return he;
     }
   }
-  throw new Error(
-    `findSideForIdealDir: no at-infinity arc contains direction (${idealDir.x}, ${idealDir.y})`,
-  );
+  throw new Error(`findSideForIdealDir: no at-infinity arc contains direction (${idealDir.x}, ${idealDir.y})`);
 }
 
 /**
@@ -3757,7 +3641,7 @@ export function splitAlongLine(
   if (!atlas.faces.includes(host)) {
     throw new Error('splitAlongLine: host not in atlas');
   }
-  if (!polygonContainsStrict(host.junctions(), seam)) {
+  if (!polygonContainsStrict(host.junctions(), HomPoint.finite(seam.x, seam.y))) {
     throw new Error('splitAlongLine: seam is not strictly interior to host');
   }
   const len = Math.hypot(direction.x, direction.y);
@@ -3891,11 +3775,7 @@ export interface InsertStripResult {
  * matches automatically because translation preserves direction. Same for
  * `left ↔ strip` on the top side.
  */
-export function insertStrip(
-  atlas: Atlas,
-  splitResult: SplitAlongLineResult,
-  height: number,
-): InsertStripResult {
+export function insertStrip(atlas: Atlas, splitResult: SplitAlongLineResult, height: number): InsertStripResult {
   const N = splitResult.pairs.length;
   if (N < 1) {
     throw new Error('insertStrip: chain must contain at least one face crossing');
@@ -3967,9 +3847,7 @@ export function insertStrip(
     const ro = r.origin();
     const rt = r.target();
     if (ro.kind !== 'finite' || rt.kind !== 'finite') {
-      throw new Error(
-        `insertStrip: middle chain step ${i - 1} has non-finite chord (chain shape unexpected)`,
-      );
+      throw new Error(`insertStrip: middle chain step ${i - 1} has non-finite chord (chain shape unexpected)`);
     }
     const chordLen = Math.hypot(ro.x - rt.x, ro.y - rt.y);
     cPositions[i] = {
@@ -3978,36 +3856,36 @@ export function insertStrip(
     };
   }
 
-  // ---- Per-chain-step junction at A or B side, on bot or top of strip ----
+  // ---- Per-chain-step vertex point at A or B side, on bot or top of strip ----
   // A is the −d-end vertex of step i; B is the +d-end vertex. For the
   // first/last step these are ideal (the line direction itself); for
   // interior steps they're the spoke-crossing finite vertices c[i] / c[i+1].
-  const aJunction = (i: number, perpSide: 'bot' | 'top'): Junction => {
-    if (i === 0) return { kind: 'ideal', x: -d!.x, y: -d!.y };
+  const aJunction = (i: number, perpSide: 'bot' | 'top'): HomPoint => {
+    if (i === 0) return HomPoint.idealDir(-d!.x, -d!.y);
     const p = cPositions[i];
     const dy = perpSide === 'top' ? height * perp.y : 0;
     const dx = perpSide === 'top' ? height * perp.x : 0;
-    return { kind: 'finite', x: p.x + dx, y: p.y + dy };
+    return HomPoint.finite(p.x + dx, p.y + dy);
   };
-  const bJunction = (i: number, perpSide: 'bot' | 'top'): Junction => {
-    if (i === N - 1) return { kind: 'ideal', x: d!.x, y: d!.y };
+  const bJunction = (i: number, perpSide: 'bot' | 'top'): HomPoint => {
+    if (i === N - 1) return HomPoint.idealDir(d!.x, d!.y);
     const p = cPositions[i + 1];
     const dy = perpSide === 'top' ? height * perp.y : 0;
     const dx = perpSide === 'top' ? height * perp.x : 0;
-    return { kind: 'finite', x: p.x + dx, y: p.y + dy };
+    return HomPoint.finite(p.x + dx, p.y + dy);
   };
 
   // ---- Strip face vertices in CCW order ----
   // Bottom edges go +d (B[0] → … → B[N-1]); top edges go −d (T[N-1] → … → T[0]).
   // CCW: [B[0], B[1], …, B[N-1], T[N-1], T[N-2], …, T[0]]. For N=1 this
   // is [B[0], T[0]] — a 2-HE digon between two parallel chord lines.
-  const bottomJ: Junction[] = [];
-  const topJ: Junction[] = [];
+  const bottomJ: HomPoint[] = [];
+  const topJ: HomPoint[] = [];
   for (let i = 0; i < N; i++) {
     bottomJ.push(aJunction(i, 'bot'));
     topJ.push(bJunction(i, 'top'));
   }
-  const stripJ: Junction[] = [...bottomJ, ...topJ.slice().reverse()];
+  const stripJ: HomPoint[] = [...bottomJ, ...topJ.slice().reverse()];
 
   // For N=1 (digon strip) both sides are ideal-ideal chords; pin them so
   // the slab has bottom at (0, 0) and top at height·perp. Index 0 is
@@ -4042,17 +3920,17 @@ export function insertStrip(
     const stitchAndTranslate = (
       chord: Side,
       stripSide: Side,
-      stripForOrigin: Junction,
-      stripForTarget: Junction,
+      stripForOrigin: HomPoint,
+      stripForTarget: HomPoint,
       stripAnchor: Point,
     ): void => {
       const co = chord.origin();
       const ct = chord.target();
       let off: Point;
-      if (co.kind === 'finite') {
-        off = { x: (stripForOrigin as Point).x - co.x, y: (stripForOrigin as Point).y - co.y };
-      } else if (ct.kind === 'finite') {
-        off = { x: (stripForTarget as Point).x - ct.x, y: (stripForTarget as Point).y - ct.y };
+      if (co.isFinite) {
+        off = { x: stripForOrigin.x - co.x, y: stripForOrigin.y - co.y };
+      } else if (ct.isFinite) {
+        off = { x: stripForTarget.x - ct.x, y: stripForTarget.y - ct.y };
       } else {
         const a = chord.anchor!;
         off = { x: stripAnchor.x - a.x, y: stripAnchor.y - a.y };
@@ -4126,9 +4004,7 @@ export function resizeStrip(
   }
   const N = stripResult.bottomSides.length;
   if (N !== splitResult.pairs.length) {
-    throw new Error(
-      `resizeStrip: chain length mismatch (strip ${N} vs split ${splitResult.pairs.length})`,
-    );
+    throw new Error(`resizeStrip: chain length mismatch (strip ${N} vs split ${splitResult.pairs.length})`);
   }
   if (N < 1) {
     throw new Error('resizeStrip: invalid strip (chain length < 1)');
@@ -4210,9 +4086,8 @@ export function resizeStrip(
     // shifts perpendicularly by exactly Δ · perp.
     for (let i = 0; i < N; i++) {
       const t = stripResult.topSides[i];
-      if (t.a.kind === 'finite') {
-        t.a.x += dpx;
-        t.a.y += dpy;
+      if (t.a.isFinite) {
+        t.a = HomPoint.finite(t.a.x + dpx, t.a.y + dpy);
       } else if (t.kind === 'chord') {
         const a = t.anchor!;
         t.anchor = { x: a.x + dpx, y: a.y + dpy };
@@ -4229,17 +4104,9 @@ export function resizeStrip(
       const l = splitResult.pairs[i].leftChordSide;
       const t = stripResult.topSides[i];
       const oldT = l.transform;
-      const T_LtoS = M.fromValues(
-        oldT.a,
-        oldT.b,
-        oldT.c,
-        oldT.d,
-        oldT.e + dpx,
-        oldT.f + dpy,
-      );
+      const T_LtoS = M.fromValues(oldT.a, oldT.b, oldT.c, oldT.d, oldT.e + dpx, oldT.f + dpy);
       const T_StoL = M.invert(T_LtoS);
       setTwin(atlas, l, t, T_LtoS, T_StoL);
     }
   });
 }
-

@@ -4,29 +4,31 @@
 //
 // A self-contained library for the oriented projective plane (R² ∪ S¹ with
 // antipodes-distinct). Knows nothing about atlases, faces, edges, stitches,
-// or links — only points, junctions, lines, and convex polygons whose
-// vertices may be at infinity.
+// or links — only points, lines, and convex polygons whose vertices may be
+// at infinity.
 //
-// This is the geometric foundation that every model space plugs into. See
-// `substrate.md` for the broader picture.
+// `HomPoint` and `HomLine` (in `projective.ts`) are the substrate's two
+// geometric types. All operations work uniformly on finite and ideal
+// inputs; there is no kind-discriminator dispatch in the geometry layer.
+//
+// See `step-6.md` and `substrate.md` for the broader design.
 
 export { cross, applyLinearToDirection } from './point.ts';
 
 export {
-  type Junction,
-  sameIdealDirection,
-  junctionInTranslatedFrame,
-} from './junction.ts';
+  HomPoint,
+  HomLine,
+  signedTurn,
+  lerpHom,
+} from './projective.ts';
 
 export {
   leftOfDirectedEdge,
   leftOfDirectedEdgeStrict,
-  parameterOnSegment,
-} from './line.ts';
-
-export {
   polygonContains,
   polygonContainsStrict,
+  sameIdealDirection,
   isPolygonCCW,
   isPolygonCW,
-} from './polygon.ts';
+  parameterOnSegment,
+} from './predicates.ts';
