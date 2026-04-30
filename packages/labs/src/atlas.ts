@@ -1250,25 +1250,47 @@ export function stitch(
   if (heA.kind === 'arc' || heB.kind === 'arc') {
     throw new Error('stitch: cannot stitch at-infinity arcs');
   }
-  if (heA.a.kind !== 'finite' || heA.next.a.kind !== 'finite') {
-    throw new Error('stitch: heA must have two finite endpoints');
+  // Reject mixed kinds (one chord and one non-chord) — geometric alignment
+  // would require the chord's line-at-infinity behaviour to mesh with a
+  // bounded segment, which has no consistent transform.
+  if ((heA.kind === 'chord') !== (heB.kind === 'chord')) {
+    throw new Error('stitch: cannot stitch a chord to a non-chord side');
   }
-  if (heB.a.kind !== 'finite' || heB.next.a.kind !== 'finite') {
-    throw new Error('stitch: heB must have two finite endpoints');
+  // Chord-chord pairs need anchors on both sides and must be a pure
+  // translation (linear part = identity), since chord lines only map to
+  // chord lines under translations of R².
+  if (heA.kind === 'chord') {
+    if (heA.anchor === null || heB.anchor === null) {
+      throw new Error('stitch: chord sides must have anchors set');
+    }
+    if (
+      Math.abs(transformAtoB.a - 1) > eps ||
+      Math.abs(transformAtoB.d - 1) > eps ||
+      Math.abs(transformAtoB.b) > eps ||
+      Math.abs(transformAtoB.c) > eps
+    ) {
+      throw new Error('stitch: chord-chord stitches must be pure translations');
+    }
   }
   const transformBtoA = M.invert(transformAtoB);
   // Junction-correspondence: T_AB maps heA's endpoints to heB's endpoints.
-  const imgTarget = M.applyToPoint(transformAtoB, { x: heA.next.a.x, y: heA.next.a.y });
-  const imgOrigin = M.applyToPoint(transformAtoB, { x: heA.a.x, y: heA.a.y });
-  if (Math.abs(imgTarget.x - heB.a.x) > eps || Math.abs(imgTarget.y - heB.a.y) > eps) {
-    throw new Error(
-      `stitch: transformAtoB·heA.target = (${imgTarget.x.toFixed(6)}, ${imgTarget.y.toFixed(6)}) does not match heB.origin = (${heB.a.x.toFixed(6)}, ${heB.a.y.toFixed(6)})`,
-    );
+  // `junctionImageMatches` handles both finite (point-equality) and ideal
+  // (direction-equality after linear-part-only transform) cases.
+  if (!junctionImageMatches(transformAtoB, heA.next.origin(), heB.origin(), eps)) {
+    throw new Error('stitch: transformAtoB·heA.target does not match heB.origin');
   }
-  if (Math.abs(imgOrigin.x - heB.next.a.x) > eps || Math.abs(imgOrigin.y - heB.next.a.y) > eps) {
-    throw new Error(
-      `stitch: transformAtoB·heA.origin = (${imgOrigin.x.toFixed(6)}, ${imgOrigin.y.toFixed(6)}) does not match heB.target = (${heB.next.a.x.toFixed(6)}, ${heB.next.a.y.toFixed(6)})`,
-    );
+  if (!junctionImageMatches(transformAtoB, heA.origin(), heB.next.origin(), eps)) {
+    throw new Error('stitch: transformAtoB·heA.origin does not match heB.target');
+  }
+  // Chord anchor consistency: the transform must map heA's chord line
+  // (anchored at heA.anchor) to heB's chord line (anchored at heB.anchor).
+  if (heA.kind === 'chord' && heA.anchor !== null && heB.anchor !== null) {
+    const imgAnchor = M.applyToPoint(transformAtoB, heA.anchor);
+    if (Math.abs(imgAnchor.x - heB.anchor.x) > eps || Math.abs(imgAnchor.y - heB.anchor.y) > eps) {
+      throw new Error(
+        `stitch: transformAtoB·heA.anchor = (${imgAnchor.x.toFixed(6)}, ${imgAnchor.y.toFixed(6)}) does not match heB.anchor = (${heB.anchor.x.toFixed(6)}, ${heB.anchor.y.toFixed(6)})`,
+      );
+    }
   }
   return setTwin(atlas, heA, heB, transformAtoB, transformBtoA);
 }
@@ -2058,6 +2080,229 @@ export function subdivideSide(
 }
 
 /**
+ * Strict inverse of {@link subdivideSide}. Eliminate the vertex at
+ * `side.next.origin` by fusing `side` and `side.next` into a single side
+ * spanning `side.origin → side.next.next.origin`.
+ *
+ * If `side` is stitched, the partner pair (`side.twin`, `side.next.twin`)
+ * is symmetrically joined in the partner face; reciprocity is preserved.
+ *
+ * **API rationale.** The argument is the side *ending* at the vertex
+ * being eliminated, so `side.next` is the side *starting* there. This
+ * matches `subdivideSide`'s `faceHalves[0]`: the natural round-trip is
+ * `joinSidesAtVertex(atlas, subdivideSide(atlas, e, p).faceHalves[0])`.
+ *
+ * **Preconditions** (each violation throws a clearly-named error):
+ *  - `side ∈ atlas.sides`
+ *  - `side.next.face === side.face` (consecutive in the same loop)
+ *  - `face.sides.length >= 3` (joining a digon would produce a 1-edge face)
+ *  - **Collinearity**: the kind combination of `(side.origin, side.next.origin,
+ *    side.next.next.origin)` must be a recognised subdivision-pair shape, AND
+ *    the eliminated middle vertex must lie on the line through the two
+ *    survivors. Recognised shapes:
+ *      - `(finite, finite, finite)`: middle on segment between survivors
+ *      - `(finite, finite, ideal)`: middle on the ray from `a` toward ideal `b`
+ *      - `(ideal, finite, finite)`: middle on the antiRay from finite `b` toward ideal `a`
+ *      - `(ideal, ideal, ideal)`: middle ideal direction strictly inside arc `a→b` (CCW sweep)
+ *      - `(ideal, finite, ideal)` with antipodal ideals: chord — joined side becomes a chord with anchor at the eliminated finite vertex
+ *  - **If stitched**:
+ *      - `side.next.stitch !== null` (subdivisions stitch both halves; an
+ *        asymmetric pair signals a non-subdivision origin and is refused)
+ *      - The partner pair is consecutive in the partner face: `side.twin.prev === side.next.twin`
+ *      - The two paired stitches still hold the same transform
+ *        (`subdivideSide` installed identical `T_fwd`s; later mutations
+ *        could have desynced them, in which case the join is geometrically invalid)
+ *
+ * **Effect:**
+ *  - Replaces `[side, side.next]` in the face's outer loop with one new
+ *    `joined` side spanning the surviving endpoints
+ *  - For chord joins, sets the joined side's `anchor` to the eliminated
+ *    finite vertex (the chord line passes through it by construction)
+ *  - Removes `side` and `side.next` from `atlas.sides`; adds `joined`
+ *  - If stitched: symmetrically replaces the partner pair in the partner
+ *    face, removes them from `atlas.sides`, and re-stitches `joined` ↔
+ *    `joinedTwin` with the recovered transform
+ *
+ * **Identity preservation:** the face's identity is preserved (mutated
+ * in place); the `joined` side is a fresh `Side` object (not one of the
+ * eliminated ones).
+ */
+export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
+  if (!atlas.sides.includes(side)) {
+    throw new Error('joinSidesAtVertex: side not in atlas');
+  }
+  const next = side.next;
+  if (next === side) {
+    throw new Error('joinSidesAtVertex: side has no successor (k=1 face)');
+  }
+  if (next.face !== side.face) {
+    throw new Error(
+      'joinSidesAtVertex: side and side.next live in different faces (cannot join)',
+    );
+  }
+  const F = side.face;
+  if (F.sides.length < 3) {
+    throw new Error(
+      'joinSidesAtVertex: face has fewer than 3 sides; joining would produce a degenerate result',
+    );
+  }
+
+  // ---- Capture stitch references before any mutation ----
+  const stitchA = side.stitch;
+  const stitchB = next.stitch;
+  let tw_A: Side | null = null;
+  let tw_B: Side | null = null;
+  let G: Face | null = null;
+  let recoveredTransform: M.Matrix2D | null = null;
+
+  if (stitchA !== null) {
+    if (stitchB === null) {
+      throw new Error(
+        'joinSidesAtVertex: side is stitched but side.next is not (asymmetric pair, not subdivision-shaped)',
+      );
+    }
+    tw_B = stitchA.other(side);
+    tw_A = stitchB.other(next);
+    if (tw_A.face !== tw_B.face) {
+      throw new Error(
+        'joinSidesAtVertex: paired stitches go to different partner faces',
+      );
+    }
+    if (tw_B.prev !== tw_A) {
+      throw new Error(
+        'joinSidesAtVertex: twin sides are not consecutive in the partner face (not subdivision-shaped)',
+      );
+    }
+    if (!M.equals(side.transform, next.transform)) {
+      throw new Error(
+        'joinSidesAtVertex: paired stitch transforms diverged after some intervening mutation; cannot join geometrically',
+      );
+    }
+    G = tw_B.face;
+    const T = side.transform;
+    recoveredTransform = M.fromValues(T.a, T.b, T.c, T.d, T.e, T.f);
+  }
+
+  // ---- Validate collinearity and build the joined side ----
+  const a = side.origin();
+  const v = next.origin();
+  const b = next.next.origin();
+  const eps = 1e-9;
+  const joined = new Side(a.kind, a.x, a.y);
+
+  if (a.kind === 'finite' && v.kind === 'finite' && b.kind === 'finite') {
+    // segment + segment → segment
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq < eps) {
+      throw new Error('joinSidesAtVertex: degenerate join (a == b)');
+    }
+    const t = ((v.x - a.x) * dx + (v.y - a.y) * dy) / lenSq;
+    if (t <= eps || t >= 1 - eps) {
+      throw new Error('joinSidesAtVertex: middle vertex is at or past an endpoint');
+    }
+    const projX = a.x + t * dx;
+    const projY = a.y + t * dy;
+    if ((projX - v.x) ** 2 + (projY - v.y) ** 2 > eps * eps) {
+      throw new Error('joinSidesAtVertex: middle vertex is not on segment a→b');
+    }
+  } else if (a.kind === 'finite' && v.kind === 'finite' && b.kind === 'ideal') {
+    // segment + ray → ray; v on ray from a in direction b
+    const dx = v.x - a.x;
+    const dy = v.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < eps) {
+      throw new Error('joinSidesAtVertex: middle coincides with a');
+    }
+    if (Math.abs(dx / len - b.x) > eps || Math.abs(dy / len - b.y) > eps) {
+      throw new Error('joinSidesAtVertex: middle not on ray a→ideal(b)');
+    }
+  } else if (a.kind === 'ideal' && v.kind === 'finite' && b.kind === 'finite') {
+    // antiRay + segment → antiRay; walking from b toward ideal a passes through v
+    const dx = b.x - v.x;
+    const dy = b.y - v.y;
+    const len = Math.hypot(dx, dy);
+    if (len < eps) {
+      throw new Error('joinSidesAtVertex: middle coincides with b');
+    }
+    if (Math.abs(dx / len - a.x) > eps || Math.abs(dy / len - a.y) > eps) {
+      throw new Error('joinSidesAtVertex: middle not on antiRay ideal(a)→b');
+    }
+  } else if (a.kind === 'ideal' && v.kind === 'ideal' && b.kind === 'ideal') {
+    // arc + arc → arc; middle ideal must lie strictly inside CCW arc a→b
+    const aCrossV = cross(a.x, a.y, v.x, v.y);
+    const vCrossB = cross(v.x, v.y, b.x, b.y);
+    if (aCrossV <= eps || vCrossB <= eps) {
+      throw new Error('joinSidesAtVertex: middle ideal not strictly inside arc a→b');
+    }
+  } else if (a.kind === 'ideal' && v.kind === 'finite' && b.kind === 'ideal') {
+    // antiRay + ray → chord; ideal endpoints must be antipodal, and the
+    // joined side becomes a chord anchored at the eliminated finite vertex.
+    if (Math.abs(a.x + b.x) > eps || Math.abs(a.y + b.y) > eps) {
+      throw new Error(
+        'joinSidesAtVertex: ideal endpoints are not antipodal — cannot reform chord',
+      );
+    }
+    joined.anchor = { x: v.x, y: v.y };
+  } else {
+    throw new Error(
+      `joinSidesAtVertex: unsupported endpoint-kind combination (a=${a.kind}, v=${v.kind}, b=${b.kind})`,
+    );
+  }
+
+  // ---- Build the joined twin (if stitched) ----
+  let twinJoined: Side | null = null;
+  if (tw_A !== null && tw_B !== null) {
+    // tw_A ends at the partner-face vertex; tw_B starts there. The joined
+    // twin spans tw_A.origin → tw_B.next.origin in G's frame.
+    const tA_origin = tw_A.origin();
+    twinJoined = new Side(tA_origin.kind, tA_origin.x, tA_origin.y);
+    if (joined.anchor !== null) {
+      // Chord case: project the F-frame anchor through the stitch transform
+      // to recover G's anchor for the same line.
+      const anchorInG = M.applyToPoint(recoveredTransform!, joined.anchor);
+      twinJoined.anchor = { x: anchorInG.x, y: anchorInG.y };
+    }
+  }
+
+  // ---- Atomic mutation ----
+  atlas.mutate(() => {
+    if (stitchA !== null) unstitch(stitchA);
+    if (stitchB !== null) unstitch(stitchB);
+
+    // Splice F's outer loop: replace [side, next] with [joined].
+    const fIdx = F.sides.indexOf(side);
+    F.sides.splice(fIdx, 2, joined);
+    joined.face = F;
+    rewireFaceCycle(F);
+
+    const sideIdx = atlas.sides.indexOf(side);
+    atlas.sides.splice(sideIdx, 1);
+    const nextIdx = atlas.sides.indexOf(next);
+    atlas.sides.splice(nextIdx, 1);
+    atlas.sides.push(joined);
+
+    if (twinJoined !== null && tw_A !== null && tw_B !== null && G !== null) {
+      const gIdx = G.sides.indexOf(tw_A);
+      G.sides.splice(gIdx, 2, twinJoined);
+      twinJoined.face = G;
+      rewireFaceCycle(G);
+
+      const taIdx = atlas.sides.indexOf(tw_A);
+      atlas.sides.splice(taIdx, 1);
+      const tbIdx = atlas.sides.indexOf(tw_B);
+      atlas.sides.splice(tbIdx, 1);
+      atlas.sides.push(twinJoined);
+
+      const T_fwd = recoveredTransform!;
+      const T_rev = M.invert(T_fwd);
+      setTwin(atlas, joined, twinJoined, T_fwd, T_rev);
+    }
+  });
+}
+
+/**
  * Area-weighted centroid of the finite vertices of a (possibly mixed) ring
  * of junctions. Ideal vertices are translation-invariant and contribute
  * nothing to the position of the face in R²; we ignore them and centroid
@@ -2468,6 +2713,189 @@ export function splitFaceAlongChord(
   return splitFaceAtVertices(atlas, face, entryIdx, exitIdx, anchor);
 }
 
+/**
+ * Strict inverse of {@link splitFaceAtVertices}. Fuses two faces sharing
+ * a chord stitch into a single face along that chord. The face owning
+ * `sharedChordSide` is **kept** (its identity preserved); the partner
+ * face is **deleted**.
+ *
+ * **API rationale.** The argument is a chord side; its `.face` is the
+ * survivor. The natural round-trip:
+ * `mergeFaces(atlas, splitFaceAtVertices(atlas, f, vA, vB).faceChordSide).face === f`.
+ * Pass the *other* chord side instead (`freshChordSide`) to keep the
+ * fresh half and delete the original.
+ *
+ * **Preconditions** (each violation throws a clearly-named error):
+ *  - `sharedChordSide ∈ atlas.sides` and `sharedChordSide.stitch !== null`
+ *  - The chord stitch's two endpoints are in *different* faces
+ *    (refuse self-stitched chords — those are wrap loops, not splits)
+ *  - The chord stitch's `transformAtoB` is a **pure translation**
+ *    (linear part = identity). Klein-bottle / rotated chord stitches are
+ *    not flattenable to a single face; they're refused with a clear error.
+ *  - The fresh face is not the source or target of any {@link Link}
+ *    (caller migrates first; strict-inverse contract)
+ *  - The fresh face's `shapes` set is empty (caller migrates first)
+ *  - The fresh face is not the atlas root
+ *
+ * **Effect** (atomic, inside `atlas.mutate`):
+ *  1. Recover `freshOffset` from the chord stitch transform.
+ *  2. Unstitch the chord pair.
+ *  3. Shift every fresh-side finite vertex by `+freshOffset` (un-do
+ *     `splitFaceAtVertices`'s re-anchoring); shift every fresh-side
+ *     chord anchor by `+freshOffset`.
+ *  4. Un-conjugate every stitch with an endpoint in fresh's sides
+ *     (outer + inner loops minus the chord side) by `-freshOffset` —
+ *     mirrors `splitFaceAtVertices`'s `+freshOffset` conjugation.
+ *  5. Splice fresh's outer loop (minus its chord side, in CCW order
+ *     starting at `freshChordSide.next`) into kept's outer loop in
+ *     place of `sharedChordSide`. Re-parent the moved sides to kept.
+ *  6. Migrate `fresh.innerLoops` (already coordinate-shifted in step 3)
+ *     into `kept.innerLoops`; re-parent their sides to kept.
+ *  7. Remove both chord sides from `atlas.sides`.
+ *  8. Empty `fresh.sides` / `fresh.innerLoops`, then `deleteFace(atlas, fresh)`.
+ *
+ * **Identity preservation:** `kept` keeps its identity (its `.frame`,
+ * `.shapes`, and outer-loop side references for the kept arc are
+ * unchanged); the fresh face is deleted.
+ *
+ * Returns `{ face: kept }` for caller convenience (mirrors
+ * `splitFaceAtVertices`'s return shape).
+ */
+export function mergeFaces(atlas: Atlas, sharedChordSide: Side): { face: Face } {
+  if (!atlas.sides.includes(sharedChordSide)) {
+    throw new Error('mergeFaces: sharedChordSide not in atlas');
+  }
+  const chordStitch = sharedChordSide.stitch;
+  if (chordStitch === null) {
+    throw new Error('mergeFaces: sharedChordSide is not stitched');
+  }
+  const partnerSide = chordStitch.other(sharedChordSide);
+  const kept = sharedChordSide.face;
+  const fresh = partnerSide.face;
+  if (kept === fresh) {
+    throw new Error(
+      'mergeFaces: chord stitch is a self-loop on one face (this is a wrap, not a split)',
+    );
+  }
+  if (fresh === atlas.root) {
+    throw new Error('mergeFaces: fresh face is the atlas root; merge would orphan it');
+  }
+  if (fresh.shapes.size > 0) {
+    throw new Error(
+      `mergeFaces: fresh face has ${fresh.shapes.size} shape(s) assigned; migrate them before merging`,
+    );
+  }
+  for (const link of atlas.links) {
+    if (link.from === fresh || link.to === fresh) {
+      throw new Error(
+        'mergeFaces: fresh face is a source or target of a Link; unlink before merging',
+      );
+    }
+  }
+
+  // Pure-translation check on the chord stitch transform. The merge
+  // un-does `splitFaceAtVertices`'s pure-translation re-anchoring; if
+  // the chord stitch has been replaced (e.g. by a Klein-bottle wrap)
+  // with a non-translation transform, there's no valid single-face
+  // result and we refuse explicitly.
+  const T = chordStitch.transformFrom(sharedChordSide);
+  const eps = 1e-9;
+  if (
+    Math.abs(T.a - 1) > eps ||
+    Math.abs(T.d - 1) > eps ||
+    Math.abs(T.b) > eps ||
+    Math.abs(T.c) > eps
+  ) {
+    throw new Error('mergeFaces: chord stitch must be a pure translation');
+  }
+  // T_keptToFresh = translate(-freshOffset)  ⟹  freshOffset = -(T.e, T.f).
+  const freshOffset: Point = { x: -T.e, y: -T.f };
+
+  // Recover fresh's "kept-frame" sides (everything except the chord we're
+  // about to delete). These are the sides that need coordinate-shifting
+  // and stitch un-conjugation. Capture references *before* mutation.
+  const freshChordIdx = fresh.sides.indexOf(partnerSide);
+  if (freshChordIdx < 0) {
+    throw new Error('mergeFaces: chord stitch endpoint not on fresh face outer loop');
+  }
+  const freshOuterLen = fresh.sides.length;
+  const arc1Sides: Side[] = [];
+  // CCW order starting just after the chord side: this is the order in
+  // which the splice into kept's outer loop should appear.
+  for (let i = 1; i < freshOuterLen; i++) {
+    arc1Sides.push(fresh.sides[(freshChordIdx + i) % freshOuterLen]);
+  }
+  // arc1 set for stitch un-conjugation: outer arc1 + every inner-loop side.
+  const arc1Set = new Set<Side>(arc1Sides);
+  for (const loop of fresh.innerLoops) {
+    for (const s of loop) arc1Set.add(s);
+  }
+
+  atlas.mutate(() => {
+    // 1. Drop the chord stitch first so the chord sides become free; this
+    //    lets the subsequent splices and the final deleteFace proceed
+    //    against the strict-inverse precondition (no stitched sides).
+    unstitch(chordStitch);
+
+    // 2 + 3. Shift fresh-side finite vertices and chord anchors back into
+    //        kept's frame.
+    for (const s of arc1Set) {
+      if (s.a.kind === 'finite') {
+        s.a.x += freshOffset.x;
+        s.a.y += freshOffset.y;
+      }
+      if (s.anchor !== null) {
+        s.anchor = { x: s.anchor.x + freshOffset.x, y: s.anchor.y + freshOffset.y };
+      }
+    }
+
+    // 4. Un-conjugate stitches whose endpoints are in arc1Set. Mirrors
+    //    `splitFaceAtVertices`'s conjugation but with negOff/posOff swapped
+    //    so the net effect is identity.
+    if (freshOffset.x !== 0 || freshOffset.y !== 0) {
+      const negOff = M.fromTranslate(-freshOffset.x, -freshOffset.y);
+      const posOff = M.fromTranslate(freshOffset.x, freshOffset.y);
+      for (const s of atlas.stitches) {
+        const aInArc1 = arc1Set.has(s.a);
+        const bInArc1 = arc1Set.has(s.b);
+        if (!aInArc1 && !bInArc1) continue;
+        let TAB = s.transformAtoB;
+        if (aInArc1) TAB = M.multiply(TAB, negOff);
+        if (bInArc1) TAB = M.multiply(posOff, TAB);
+        let TBA = s.transformBtoA;
+        if (bInArc1) TBA = M.multiply(TBA, negOff);
+        if (aInArc1) TBA = M.multiply(posOff, TBA);
+        s.setTransforms(TAB, TBA);
+      }
+    }
+
+    // 5. Splice arc1Sides into kept's outer loop in place of sharedChordSide.
+    const keptChordIdx = kept.sides.indexOf(sharedChordSide);
+    kept.sides.splice(keptChordIdx, 1, ...arc1Sides);
+    for (const s of arc1Sides) s.face = kept;
+    rewireFaceCycle(kept);
+
+    // 6. Migrate fresh.innerLoops to kept.
+    for (const loop of fresh.innerLoops) {
+      for (const s of loop) s.face = kept;
+      kept.innerLoops.push(loop);
+    }
+    fresh.innerLoops = [];
+
+    // 7. Remove the chord sides from atlas.sides.
+    atlas.sides = atlas.sides.filter(
+      (s) => s !== sharedChordSide && s !== partnerSide,
+    );
+
+    // 8. Empty fresh.sides so deleteFace's allSides() loop has nothing to
+    //    re-iterate (the arc1 sides have been re-parented to kept).
+    fresh.sides = [];
+    deleteFace(atlas, fresh);
+  });
+
+  return { face: kept };
+}
+
 // ----------------------------------------------------------------------------
 // Internal helpers for atlas mutation
 // ----------------------------------------------------------------------------
@@ -2663,6 +3091,77 @@ export function createFace(
   const face = new Face(sides, [], options?.frame);
   attachFace(atlas, face);
   return face;
+}
+
+/**
+ * Strict inverse of {@link createFace}. Removes `face` from the atlas
+ * and de-registers all of its sides (outer loop + every inner loop).
+ *
+ * Strict-inverse contract: `face` must be in the same shape `createFace`
+ * produces — fully unbound. The caller is responsible for `unstitch`-ing
+ * any stitched sides, `unlink`-ing any incident Links, and migrating any
+ * shapes off the face *before* calling `deleteFace`. Forced-delete-with-
+ * cleanup is a macro layered on top, not a substrate primitive.
+ *
+ * **Preconditions** (each violation throws a clearly-named error):
+ *  - `face` is in `atlas.faces`
+ *  - `face !== atlas.root`
+ *  - Every side of `face` (outer + every inner loop) has `stitch === null`
+ *  - `face` is not the source or target of any {@link Link}
+ *  - `face.shapes.size === 0`
+ *
+ * **Effect:**
+ *  - Removes `face` from `atlas.faces`
+ *  - Removes every side of `face` from `atlas.sides`
+ *
+ * **Does not:**
+ *  - Touch any other face's state (no stitches to invalidate per
+ *    precondition; no chain-composite recompute needed since no Stitch
+ *    transforms changed)
+ *  - Modify `face`'s side objects (they remain reachable through the
+ *    returned-but-unrooted face if the caller kept a reference; this is
+ *    the symmetric equivalent of `createFace` returning the new face)
+ *
+ * Symmetric round-trip: `createFace(atlas, j) → deleteFace(atlas, f)`
+ * leaves `atlas.faces` and `atlas.sides` structurally identical to their
+ * pre-call state.
+ */
+export function deleteFace(atlas: Atlas, face: Face): void {
+  if (!atlas.faces.includes(face)) {
+    throw new Error('deleteFace: face not in atlas');
+  }
+  if (face === atlas.root) {
+    throw new Error('deleteFace: cannot delete the atlas root');
+  }
+  for (const s of face.allSides()) {
+    if (s.stitch !== null) {
+      throw new Error(
+        'deleteFace: face has stitched sides; unstitch them before deleting',
+      );
+    }
+  }
+  for (const link of atlas.links) {
+    if (link.from === face || link.to === face) {
+      throw new Error(
+        'deleteFace: face is a source or target of a Link; unlink before deleting',
+      );
+    }
+  }
+  if (face.shapes.size > 0) {
+    throw new Error(
+      `deleteFace: face has ${face.shapes.size} shape(s) assigned; migrate them before deleting`,
+    );
+  }
+
+  // Free of bindings. Drop sides and the face from the atlas registries.
+  // Use a Set for O(1) `has` against the face's side roster (could include
+  // 30+ sides for a region with inner loops); a linear filter is then one
+  // pass over `atlas.sides` instead of N filters.
+  const toRemove = new Set<Side>();
+  for (const s of face.allSides()) toRemove.add(s);
+  atlas.sides = atlas.sides.filter((s) => !toRemove.has(s));
+  const fIdx = atlas.faces.indexOf(face);
+  atlas.faces.splice(fIdx, 1);
 }
 
 // ----------------------------------------------------------------------------
