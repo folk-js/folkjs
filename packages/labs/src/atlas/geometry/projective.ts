@@ -165,6 +165,28 @@ export class HomPoint {
       Math.abs(this.w - other.w) < eps
     );
   }
+
+  /**
+   * Whether this and `other` are antipodal ideal directions: both at
+   * infinity (`w = 0`) and pointing in opposite unit directions.
+   *
+   * In oriented projective geometry, antipodal ideals are distinct
+   * points but they're the two "limit directions" of a single real line
+   * through R² — which is why chord sides need this test (and why a chord
+   * can't be derived from its endpoints alone, since `crossPP` of an
+   * antipodal pair returns the zero vector).
+   *
+   * Returns false if either point is finite, or if both ideal but not
+   * antipodal within `eps`.
+   */
+  isAntipodalTo(other: HomPoint, eps = EPS): boolean {
+    return (
+      this.isIdeal &&
+      other.isIdeal &&
+      Math.abs(this.x + other.x) < eps &&
+      Math.abs(this.y + other.y) < eps
+    );
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -221,12 +243,15 @@ export class HomLine {
     if (len < EPS) {
       throw new Error('HomLine.withDirection: zero-length direction');
     }
-    // Line through finite point P with direction D has normal perp(D);
-    // line equation: -D.y * x + D.x * y + (D.y * P.x - D.x * P.y) * w = 0.
+    // Choose the orientation so {@link tangent} (which equals `(-b, a)`)
+    // points along `dir`, matching {@link through}'s convention where
+    // `through(P, Q).tangent` points along `P - Q`. With tangent = `dir`
+    // we need `b = -dir.x` and `a = dir.y`; the constant follows from
+    // requiring the line to pass through the anchor.
     return HomLine.fromHomogeneous(
-      -dir.y / len,
-      dir.x / len,
-      (dir.y * through.x - dir.x * through.y) / len,
+      dir.y / len,
+      -dir.x / len,
+      (dir.x * through.y - dir.y * through.x) / len,
     );
   }
 
@@ -319,6 +344,75 @@ export class HomLine {
   get perpFromOrigin(): number {
     if (this.isAtInfinity) return Infinity;
     return -this.c;
+  }
+
+  /**
+   * Unit tangent vector along the line, oriented so that walking in this
+   * direction has the line's "positive normal" `(a, b)` on the left
+   * (90° CCW rotation: `tangent = (-b, a)`).
+   *
+   * Throws for the line at infinity (which has no Cartesian tangent).
+   *
+   * Concretely: `HomLine.through(P, Q).tangent` for two distinct points
+   * `P`, `Q` points in the direction `Q → P`'s 90°-CCW-of-perpendicular,
+   * which for finite endpoints reduces to the unit vector `(P - Q) / |P - Q|`.
+   */
+  get tangent(): Point {
+    if (this.isAtInfinity) {
+      throw new Error('HomLine.tangent: line at infinity has no Cartesian tangent');
+    }
+    return { x: -this.b, y: this.a };
+  }
+
+  /**
+   * Signed parameter of `p` along this line's tangent direction, with
+   * `parameterOf(footOfPerpFromOrigin) === 0`. Increasing parameter
+   * moves in the {@link tangent} direction.
+   *
+   * For a finite point `p` strictly on the line: a finite scalar.
+   * For an ideal point `p`: `±Infinity` whose sign matches the
+   * projection of `p`'s direction onto the line tangent — the natural
+   * extension of "where on the line does this point sit" to points at
+   * infinity. (Returns `NaN` if the ideal direction is perpendicular to
+   * the line, which only happens for points NOT on the line.)
+   *
+   * Does not check that `p` actually lies on the line; callers that
+   * care should test with {@link evalAt} first.
+   *
+   * Throws for the line at infinity (which has no parametric metric in
+   * R²; arcs use angular sweep on S¹ instead).
+   */
+  parameterOf(p: HomPoint): number {
+    if (this.isAtInfinity) {
+      throw new Error('HomLine.parameterOf: line at infinity is not parameterizable in R²');
+    }
+    // For tangent (-b, a) and finite p (w=1):
+    //   (p - footOfPerp) · tangent = a*p.y - b*p.x   (the perp component cancels)
+    // For ideal p (w=0):
+    //   the projection of p's direction on tangent is a*p.y - b*p.x;
+    //   sign tells which infinity, magnitude is meaningless for "position on line."
+    const proj = this.a * p.y - this.b * p.x;
+    if (p.isFinite) return proj;
+    if (proj > EPS) return Infinity;
+    if (proj < -EPS) return -Infinity;
+    return NaN;
+  }
+
+  /**
+   * Point on the line at parameter `t`: foot-of-perpendicular-from-origin
+   * shifted by `t` in the {@link tangent} direction.
+   *
+   * Inverse of {@link parameterOf} (for finite parameters returning
+   * finite points). Throws for the line at infinity.
+   */
+  pointAtParameter(t: number): HomPoint {
+    if (this.isAtInfinity) {
+      throw new Error('HomLine.pointAtParameter: line at infinity is not parameterizable in R²');
+    }
+    // foot = -c * (a, b); tangent = (-b, a).
+    const fx = -this.a * this.c;
+    const fy = -this.b * this.c;
+    return HomPoint.finite(fx - t * this.b, fy + t * this.a);
   }
 
   /**

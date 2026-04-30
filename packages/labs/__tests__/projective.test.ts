@@ -157,17 +157,21 @@ describe('HomLine', () => {
   });
 
   it('withDirection() builds the chord through a finite point in a direction', () => {
-    // Line through (0, 0) in direction (1, 0) — the x-axis.
+    // Line through (0, 0) in direction (1, 0) — the x-axis. With the
+    // tangent-matches-input convention, normal is the 90° CW rotation
+    // of `dir`, i.e. `(0, -1)` for input `(1, 0)`.
     const l = HomLine.withDirection(HomPoint.finite(0, 0), { x: 1, y: 0 });
     approx(l.a, 0, 'a');
-    approx(l.b, 1, 'b');
+    approx(l.b, -1, 'b');
     approx(l.c, 0, 'c');
+    approx(l.tangent.x, 1, 'tangent x matches input dir');
+    approx(l.tangent.y, 0, 'tangent y matches input dir');
 
     // Line through (0, 5) in direction (1, 0) — the line y = 5.
     const l5 = HomLine.withDirection(HomPoint.finite(0, 5), { x: 1, y: 0 });
     approx(l5.a, 0, 'a');
-    approx(l5.b, 1, 'b');
-    approx(l5.c, -5, 'c');
+    approx(l5.b, -1, 'b');
+    approx(l5.c, 5, 'c');
   });
 
   it('atInfinity() is canonical (0, 0, 1)', () => {
@@ -232,6 +236,42 @@ describe('HomLine', () => {
     // Line y = 5: normal is (0, 1), c = -5; perpFromOrigin = -c = 5.
     const l = HomLine.through(HomPoint.finite(0, 5), HomPoint.finite(1, 5));
     approx(l.perpFromOrigin, 5, 'perp from origin to y=5');
+  });
+
+  it('tangent points along Q→P direction for through(P, Q)', () => {
+    const xAxisRight = HomLine.through(HomPoint.finite(1, 0), HomPoint.finite(0, 0));
+    approx(xAxisRight.tangent.x, 1, 'tangent x');
+    approx(xAxisRight.tangent.y, 0, 'tangent y');
+  });
+
+  it('parameterOf gives signed distance along tangent for finite points', () => {
+    // x-axis through (1,0)→(0,0); tangent points +x. parameterOf((5,0)) = 5.
+    const xAxis = HomLine.through(HomPoint.finite(1, 0), HomPoint.finite(0, 0));
+    approx(xAxis.parameterOf(HomPoint.finite(0, 0)), 0, 'origin → 0');
+    approx(xAxis.parameterOf(HomPoint.finite(5, 0)), 5, '(5,0) → 5');
+    approx(xAxis.parameterOf(HomPoint.finite(-3, 0)), -3, '(-3,0) → -3');
+  });
+
+  it('parameterOf returns ±Infinity for ideal points (sign = direction along tangent)', () => {
+    const xAxis = HomLine.through(HomPoint.finite(1, 0), HomPoint.finite(0, 0));
+    assert.equal(xAxis.parameterOf(HomPoint.idealDir(1, 0)), Infinity, '+x ideal → +∞');
+    assert.equal(xAxis.parameterOf(HomPoint.idealDir(-1, 0)), -Infinity, '-x ideal → -∞');
+  });
+
+  it('pointAtParameter is the inverse of parameterOf for finite points on the line', () => {
+    const l = HomLine.through(HomPoint.finite(0, 5), HomPoint.finite(3, 5));
+    for (const t of [-2, 0, 1, 7.3]) {
+      const p = l.pointAtParameter(t);
+      approx(l.parameterOf(p), t, `pointAtParameter(${t}) round-trip`);
+      approx(l.evalAt(p), 0, `pointAtParameter(${t}) lies on line`);
+    }
+  });
+
+  it('tangent and parameterOf throw for the line at infinity', () => {
+    const linf = HomLine.atInfinity();
+    assert.throws(() => linf.tangent, /line at infinity/);
+    assert.throws(() => linf.parameterOf(HomPoint.finite(0, 0)), /line at infinity/);
+    assert.throws(() => linf.pointAtParameter(0), /line at infinity/);
   });
 });
 

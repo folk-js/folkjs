@@ -1,7 +1,6 @@
 import * as M from '@folkjs/geometry/Matrix2D';
 import type { Point } from '@folkjs/geometry/Vector2';
 import {
-  applyLinearToDirection,
   cross,
   HomLine,
   HomPoint,
@@ -20,7 +19,6 @@ import {
 // continue to work unchanged. New code should import directly from
 // `./atlas/geometry/index.ts`.
 export {
-  applyLinearToDirection,
   cross,
   HomLine,
   HomPoint,
@@ -196,6 +194,39 @@ export class Side {
   }
 
   /**
+   * The projective line this side lies on, in face-local coordinates.
+   *
+   * Derived on demand from the endpoints (and `anchor` for the chord
+   * case where two antipodal ideal endpoints don't determine a unique
+   * line — `anchor` supplies a finite point on the chord line). Same
+   * three cases recur:
+   *
+   *  - one or both endpoints finite, OR both ideal but non-antipodal:
+   *    `HomLine.through(origin, target)` — endpoints determine the line.
+   *  - both endpoints ideal antipodal AND `anchor !== null`: chord;
+   *    line passes through the anchor finite point in the origin's
+   *    ideal direction.
+   *  - both endpoints ideal antipodal AND `anchor === null`: arc on the
+   *    line at infinity.
+   *
+   * Substrate operations that need the side's line geometry (parameter
+   * of a point along the side, line tangent direction, line-on-line
+   * intersections) call `side.line` uniformly — there is no kind switch
+   * at the operation layer.
+   */
+  get line(): HomLine {
+    if (this.a.isIdeal && this.next.a.isIdeal && this.anchor !== null) {
+      // Chord case: ideal endpoints don't pin down which parallel line;
+      // the anchor finite point + origin's ideal direction does.
+      return HomLine.withDirection(
+        HomPoint.finite(this.anchor.x, this.anchor.y),
+        { x: this.a.x, y: this.a.y },
+      );
+    }
+    return HomLine.through(this.a, this.next.a);
+  }
+
+  /**
    * Single-discriminator classification of this side's geometric kind:
    *
    *   - `'segment'` — both endpoints finite. Straight line segment in R².
@@ -210,10 +241,11 @@ export class Side {
    *   - `'arc'`     — both endpoints ideal AND `anchor === null`. A piece
    *                   of S¹ on the boundary of an unbounded face.
    *
-   * Computed from the endpoints' `w` components and the `anchor` field.
-   * Substrate operations branch on this only at chord-vs-arc disambiguation
-   * sites; finite-vs-ideal cases are handled uniformly via homogeneous
-   * expressions.
+   * Used for diagnostic messages and for the few sites where chord-vs-arc
+   * disambiguation is genuinely needed (e.g. arc subdivision uses an
+   * angular sweep rather than a parametric position). Most operations
+   * use {@link line} directly and branch on its `isAtInfinity` property
+   * rather than dispatching on `kind`.
    */
   get kind(): 'segment' | 'ray' | 'antiRay' | 'chord' | 'arc' {
     if (this.a.isFinite && this.next.a.isFinite) return 'segment';
@@ -1176,10 +1208,10 @@ export function createAllIdealAtlas(
  * either side has an ideal endpoint.
  */
 export function translationToWrap(heA: Side, heB: Side, eps = 1e-6): M.Matrix2D {
-  if (heA.a.kind !== 'finite' || heA.next.a.kind !== 'finite') {
+  if (!heA.a.isFinite || !heA.next.a.isFinite) {
     throw new Error('translationToWrap: heA must have two finite endpoints');
   }
-  if (heB.a.kind !== 'finite' || heB.next.a.kind !== 'finite') {
+  if (!heB.a.isFinite || !heB.next.a.isFinite) {
     throw new Error('translationToWrap: heB must have two finite endpoints');
   }
   // T(p) = p + t; from T·heA.next.origin = heB.origin we get
@@ -1401,14 +1433,15 @@ export function rescaleFaceFrame(atlas: Atlas, face: Face, R: number): void {
   if (R === 1) return;
 
   atlas.mutate(() => {
-    for (const he of face.allSides()) {
-      if (he.a.isFinite) {
-        he.a = HomPoint.finite(R * he.a.x, R * he.a.y);
-      }
-    }
-
     const S = M.fromValues(R, 0, 0, R, 0, 0);
     const Sinv = M.fromValues(1 / R, 0, 0, 1 / R, 0, 0);
+    // `applyAffine` scales finite vertex positions by R; ideal directions
+    // get `(R*dx, R*dy, 0)` which `HomPoint.fromHomogeneous` re-normalises
+    // to unit length — i.e., ideal directions are scale-invariant under
+    // pure scale, so this is correctly a no-op for them.
+    for (const he of face.allSides()) {
+      he.a = he.a.applyAffine(S);
+    }
     // Conjugate every {@link Stitch} transform that touches `face`. Stitch is
     // the source of truth for cross-side bindings: each Stitch holds both
     // directions explicitly (`transformAtoB` and `transformBtoA`), so we
@@ -1557,7 +1590,7 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
 
     // Ideal direction unit length.
     for (const he of f.sides) {
-      if (he.a.kind === 'ideal') {
+      if (he.a.isIdeal) {
         const len = Math.hypot(he.a.x, he.a.y);
         if (Math.abs(len - 1) > eps) {
           errs.push(`ideal half-edge direction length ${len}, expected 1`);
@@ -1582,14 +1615,12 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     //     directions must be antipodal (the two limit directions of a real
     //     line in R²).
     for (const he of f.sides) {
-      if (he.a.kind !== 'ideal' || he.next.a.kind !== 'ideal') continue;
+      if (!he.a.isIdeal || !he.next.a.isIdeal) continue;
       if (he.anchor === null) {
         if (he.twin !== null) errs.push('at-infinity arc half-edge has non-null twin');
       } else {
         if (he.twin === null) errs.push('chord half-edge has null twin');
-        const o = he.origin();
-        const t = he.target();
-        if (Math.abs(o.x + t.x) > eps * 100 || Math.abs(o.y + t.y) > eps * 100) {
+        if (!he.origin().isAntipodalTo(he.target(), eps * 100)) {
           errs.push('chord half-edge endpoints are not antipodal on S¹');
         }
       }
@@ -1938,49 +1969,46 @@ export function subdivideSide(atlas: Atlas, side: Side, at: Point): SubdivideSid
   }
 
   // ---- validate `at` and compute the inserted-point descriptor ----
+  //
+  // Two cases dispatched on whether the side lies on a finite line in R²
+  // or on the line at infinity (arc). The line at infinity has no metric
+  // parameterisation in R², so arcs use angular sweep on S¹ separately.
+  // For every finite-line case (segment / ray / antiRay / chord), the
+  // logic is uniform: lift `at` to a HomPoint, check it's on the line,
+  // check its parameter is strictly between the endpoints' parameters
+  // along the line's tangent direction. Endpoints at infinity have
+  // ±Infinity parameters by `HomLine.parameterOf`'s convention, so the
+  // betweenness comparison absorbs ray / antiRay / chord parametric
+  // ranges without per-kind dispatch.
+  const eps = 1e-9;
   let newOrigin: HomPoint;
-  if (side.kind === 'arc') {
+  const sideLine = side.line;
+  if (sideLine.isAtInfinity) {
+    // Arc: `at` is a unit ideal direction strictly inside the CCW angular sweep.
     const len = Math.hypot(at.x, at.y);
-    if (len < 1e-9) throw new Error('subdivideSide: arc subdivision direction has zero length');
+    if (len < eps) throw new Error('subdivideSide: arc subdivision direction has zero length');
     const dir = { x: at.x / len, y: at.y / len };
     const a = side.origin();
     const b = side.next.origin();
-    // CCW sweep a → b; `dir` must lie strictly between them angularly.
-    const eps = 1e-9;
-    const aCrossDir = cross(a.x, a.y, dir.x, dir.y);
-    const dirCrossB = cross(dir.x, dir.y, b.x, b.y);
-    if (aCrossDir <= eps || dirCrossB <= eps) {
+    if (cross(a.x, a.y, dir.x, dir.y) <= eps || cross(dir.x, dir.y, b.x, b.y) <= eps) {
       throw new Error('subdivideSide: ideal direction is not strictly inside the arc (a×d, d×b must both be > 0)');
     }
     newOrigin = HomPoint.idealDir(dir.x, dir.y);
   } else {
-    // Validate `at` lies strictly between the two endpoints, with
-    // collinearity tolerance. Range depends on side kind:
-    //   - segment:     u ∈ (0, 1)
-    //   - ray/antiRay: u ∈ (0, ∞)
-    //   - chord:       u ∈ (-∞, ∞) — both endpoints are at infinity in
-    //                  opposite directions, so any finite u corresponds to a
-    //                  finite point strictly between them.
-    const u = uOfPointOnSide(side, at);
-    const isFF = side.kind === 'segment';
-    const isChord = side.kind === 'chord';
-    if (!Number.isFinite(u)) {
-      throw new Error(`subdivideSide: u is not finite (u = ${u})`);
-    }
-    if (!isChord) {
-      const uMin = 1e-9;
-      const uMaxEnd = isFF ? 1 - 1e-9 : Infinity;
-      if (u <= uMin || u >= uMaxEnd) {
-        throw new Error(`subdivideSide: point not strictly between endpoints (u = ${u}, isFF = ${isFF})`);
-      }
-    }
-    const projected = pointOnSideAtU(side, u);
-    const dx = projected.x - at.x;
-    const dy = projected.y - at.y;
-    if (dx * dx + dy * dy > 1e-12) {
+    const atP = HomPoint.finite(at.x, at.y);
+    if (Math.abs(sideLine.evalAt(atP)) > eps) {
       throw new Error('subdivideSide: point is not on the edge');
     }
-    newOrigin = HomPoint.finite(at.x, at.y);
+    const pa = sideLine.parameterOf(side.origin());
+    const pb = sideLine.parameterOf(side.next.origin());
+    const pp = sideLine.parameterOf(atP);
+    const between = (pa < pp && pp < pb) || (pa > pp && pp > pb);
+    if (!between) {
+      throw new Error(
+        `subdivideSide: point not strictly between endpoints (param=${pp}, range=[${pa}, ${pb}])`,
+      );
+    }
+    newOrigin = atP;
   }
 
   // ---- F side ----
@@ -2136,16 +2164,22 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
 
   // ---- Validate collinearity and build the joined side ----
   //
-  // Collinearity is one homogeneous test: `signedTurn(a, v, b) ≈ 0`.
-  // (Exception: all-ideal triples have signedTurn ≡ 0 by the determinant's
-  // all-w=0 row → a separate angular sweep check on S¹ handles that case.)
+  // Two genuine geometric cases (both compact, no per-endpoint-kind dispatch):
   //
-  // Betweenness still needs a small dispatch on which endpoints are ideal
-  // because the parametric range differs:
-  //   - both finite: t ∈ (0, 1)
-  //   - one finite, one ideal: t ∈ (0, ∞) — v is on the half-line, on the
-  //     finite-endpoint side of the ideal direction.
-  //   - both ideal antipodal: any finite v is "between" them along the chord.
+  //  1. **All-ideal triple (arc + arc → arc).** All three points lie on
+  //     the line at infinity; betweenness is angular sweep on S¹, not
+  //     parametric distance. (signedTurn is structurally zero for
+  //     all-w=0 rows so it can't witness collinearity here.)
+  //
+  //  2. **Otherwise.** signedTurn(a, v, b) tests collinearity uniformly.
+  //     Then the line through a and b (or, for the antipodal-ideal case,
+  //     through v in a's direction) gives a parametric line; v's parameter
+  //     must strictly lie between a's and b's parameters. Ideal endpoints
+  //     have parameter ±Infinity (sign = direction along tangent), so the
+  //     comparison `pa < pv < pb || pa > pv > pb` works uniformly across
+  //     finite-finite, finite-ideal, ideal-finite, and antipodal-ideal cases.
+  //     The antipodal-ideal-finite-middle case additionally re-forms a
+  //     chord (sets `joined.anchor = v`).
   const a = side.origin();
   const v = next.origin();
   const b = next.next.origin();
@@ -2153,56 +2187,36 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
   const joined = new Side(a);
 
   if (a.isIdeal && v.isIdeal && b.isIdeal) {
-    // arc + arc → arc. v must lie strictly inside the CCW arc a→b on S¹.
     const aCrossV = cross(a.x, a.y, v.x, v.y);
     const vCrossB = cross(v.x, v.y, b.x, b.y);
     if (aCrossV <= eps || vCrossB <= eps) {
       throw new Error('joinSidesAtVertex: middle ideal not strictly inside arc a→b');
     }
   } else {
-    // Collinearity: one expression covers all (finite/ideal) combos.
     if (Math.abs(signedTurn(a, v, b)) > eps) {
       throw new Error('joinSidesAtVertex: a, v, b are not collinear');
     }
-    if (a.isFinite && v.isFinite && b.isFinite) {
-      // Standard segment betweenness: project v onto segment ab.
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const lenSq = dx * dx + dy * dy;
-      if (lenSq < eps) throw new Error('joinSidesAtVertex: degenerate join (a == b)');
-      const t = ((v.x - a.x) * dx + (v.y - a.y) * dy) / lenSq;
-      if (t <= eps || t >= 1 - eps) {
-        throw new Error('joinSidesAtVertex: middle vertex is at or past an endpoint');
-      }
-    } else if (a.isFinite && v.isFinite && b.isIdeal) {
-      // segment + ray. v must be strictly forward of a along ideal direction b.
-      const dx = v.x - a.x;
-      const dy = v.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len < eps) throw new Error('joinSidesAtVertex: middle coincides with a');
-      if (Math.abs(dx / len - b.x) > eps || Math.abs(dy / len - b.y) > eps) {
-        throw new Error('joinSidesAtVertex: middle not on ray a→ideal(b)');
-      }
-    } else if (a.isIdeal && v.isFinite && b.isFinite) {
-      // antiRay + segment.
-      const dx = b.x - v.x;
-      const dy = b.y - v.y;
-      const len = Math.hypot(dx, dy);
-      if (len < eps) throw new Error('joinSidesAtVertex: middle coincides with b');
-      if (Math.abs(dx / len - a.x) > eps || Math.abs(dy / len - a.y) > eps) {
-        throw new Error('joinSidesAtVertex: middle not on antiRay ideal(a)→b');
-      }
-    } else if (a.isIdeal && v.isFinite && b.isIdeal) {
-      // antiRay + ray → chord. ideal endpoints must be antipodal; the
-      // joined side becomes a chord anchored at the eliminated finite vertex.
-      if (Math.abs(a.x + b.x) > eps || Math.abs(a.y + b.y) > eps) {
+    // Build the joined-side's line. For the antipodal-ideal case (a, b
+    // both ideal antipodal, v finite) the endpoints alone don't determine
+    // the line — derive it from v + a's direction. Otherwise the line is
+    // fixed by the two endpoints.
+    let line: HomLine;
+    if (a.isIdeal && b.isIdeal) {
+      if (!a.isAntipodalTo(b, eps)) {
         throw new Error('joinSidesAtVertex: ideal endpoints are not antipodal — cannot reform chord');
       }
+      line = HomLine.withDirection(v, { x: a.x, y: a.y });
+      // Joined side becomes a chord anchored at the eliminated finite vertex.
       joined.anchor = { x: v.x, y: v.y };
     } else {
-      throw new Error(
-        `joinSidesAtVertex: unsupported endpoint-kind combination (a=${a.kind}, v=${v.kind}, b=${b.kind})`,
-      );
+      line = HomLine.through(a, b);
+    }
+    const pa = line.parameterOf(a);
+    const pv = line.parameterOf(v);
+    const pb = line.parameterOf(b);
+    const between = (pa < pv && pv < pb) || (pa > pv && pv > pb);
+    if (!between) {
+      throw new Error('joinSidesAtVertex: middle vertex is not strictly between a and b');
     }
   }
 
@@ -2364,14 +2378,14 @@ export function splitFaceAtVertices(
   const jA = origJ[vIdxA];
   const jB = origJ[vIdxB];
   let chordIsIdealIdeal = false;
-  if (jA.kind === 'ideal' && jB.kind === 'ideal') {
+  if (jA.isIdeal && jB.isIdeal) {
     chordIsIdealIdeal = true;
     if (!anchor) {
       throw new Error(
         'splitFaceAtVertices: ideal-ideal chord requires a finite anchor (the chord line is otherwise underdetermined)',
       );
     }
-    if (Math.abs(jA.x + jB.x) > eps || Math.abs(jA.y + jB.y) > eps) {
+    if (!jA.isAntipodalTo(jB, eps)) {
       throw new Error('splitFaceAtVertices: ideal-ideal chord endpoints must be antipodal on S¹');
     }
   }
@@ -2448,13 +2462,14 @@ export function splitFaceAtVertices(
   // Build the new chord half-edges. faceChordSide closes face's loop from
   // vIdxB back to vIdxA (origin at vIdxB's position in face's UNCHANGED
   // frame). freshChordSide closes fresh's loop from vIdxA back to vIdxB
-  // (origin at vIdxA's position, translated into fresh's re-anchored frame
-  // when finite — ideal directions are translation-invariant).
+  // (origin at vIdxA's position, translated into fresh's re-anchored frame).
+  // `applyAffine` handles finite + ideal uniformly: translations apply to
+  // finite points and drop out for ideal directions (w = 0 zeroes the
+  // translation column).
+  const T_faceToFresh = M.fromTranslate(-freshOffset.x, -freshOffset.y);
+  const T_freshToFace = M.fromTranslate(freshOffset.x, freshOffset.y);
   const faceChordSide = new Side(jB);
-  const freshChordOrigin = jA.isFinite
-    ? HomPoint.finite(jA.x - freshOffset.x, jA.y - freshOffset.y)
-    : jA;
-  const freshChordSide = new Side(freshChordOrigin);
+  const freshChordSide = new Side(jA.applyAffine(T_faceToFresh));
 
   // Chord anchors for the ideal-ideal case. The parent-frame `anchor`
   // pinpoints which parallel real line the chord represents; in `face`'s
@@ -2471,19 +2486,14 @@ export function splitFaceAtVertices(
   // Twin the chord HEs. face → fresh translates by -freshOffset (fresh's
   // origin sits at +freshOffset in face's frame), and the inverse goes
   // the other way. Linear part stays identity (pure translation).
-  const T_faceToFresh = M.fromTranslate(-freshOffset.x, -freshOffset.y);
-  const T_freshToFace = M.fromTranslate(freshOffset.x, freshOffset.y);
   setTwin(atlas, faceChordSide, freshChordSide, T_faceToFresh, T_freshToFace);
 
   // Re-anchor arc1's HEs in place: they're moving from face's frame into
-  // fresh's frame (translated by -freshOffset). Finite origins shift via
-  // a fresh allocation (HomPoint is immutable); ideal origins are
-  // translation-invariant; chord anchors shift in place (anchor is a
-  // mutable Cartesian Point field).
+  // fresh's frame (translated by -freshOffset). `applyAffine` handles
+  // finite shifts and ideal-direction invariance uniformly — no kind
+  // dispatch. Chord anchors are mutable Cartesian Points and shift in place.
   for (const he of arc1Sides) {
-    if (he.a.isFinite) {
-      he.a = HomPoint.finite(he.a.x - freshOffset.x, he.a.y - freshOffset.y);
-    }
+    he.a = he.a.applyAffine(T_faceToFresh);
     if (he.anchor !== null) {
       he.anchor = {
         x: he.anchor.x - freshOffset.x,
@@ -2609,34 +2619,23 @@ export function splitFaceAlongChord(
    * chord-endpoint vertex. Subdivides the hit's host edge in place if the
    * vertex doesn't already exist there.
    *
-   * Endpoint-coincidence short-circuits depend on the edge kind:
-   *   - finite-finite: `u = 0` is the origin vertex, `u = 1` is the target
-   *     vertex.
-   *   - finite-ideal / ideal-finite: `u = 0` is the finite endpoint;
-   *     the ideal endpoint sits at `u → ∞` (can't land "at" it).
-   *   - chord (ideal-ideal twinned): both endpoints are at infinity in
-   *     opposite directions, so any finite `u` is interior. There is no
-   *     short-circuit — we always subdivide.
+   * Uniform across hit kinds: lift the hit's location into a `HomPoint`,
+   * then short-circuit if the side's origin or target already equals that
+   * point — otherwise subdivide. The previous five-case kind switch
+   * (finite-finite / non-FF / chord / arc-origin / arc-target) collapses
+   * because `HomPoint.equals` natively distinguishes finite-vs-ideal and
+   * the chord case (ideal endpoints, finite hit) never short-circuits
+   * since ideal endpoints can't equal a finite query point.
    */
   const materialise = (hit: BoundaryHit): Side => {
-    if (hit.kind === 'finite') {
-      const u = hit.u;
-      const isChord = hit.he.kind === 'chord';
-      if (!isChord && u <= eps) return hit.he;
-      const isFF = hit.he.a.kind === 'finite' && hit.he.next.a.kind === 'finite';
-      if (isFF && u >= 1 - eps) return hit.he.next;
-      const r = subdivideSide(atlas, hit.he, hit.point);
-      return r.faceHalves[1];
-    }
-    const arcStart = hit.he.origin();
-    const arcEnd = hit.he.next.origin();
-    if (Math.abs(arcStart.x - hit.idealDir.x) < eps && Math.abs(arcStart.y - hit.idealDir.y) < eps) {
-      return hit.he;
-    }
-    if (Math.abs(arcEnd.x - hit.idealDir.x) < eps && Math.abs(arcEnd.y - hit.idealDir.y) < eps) {
-      return hit.he.next;
-    }
-    const r = subdivideSide(atlas, hit.he, hit.idealDir);
+    const hitPoint =
+      hit.kind === 'finite'
+        ? HomPoint.finite(hit.point.x, hit.point.y)
+        : HomPoint.idealDir(hit.idealDir.x, hit.idealDir.y);
+    if (hit.he.origin().equals(hitPoint, eps)) return hit.he;
+    if (hit.he.target().equals(hitPoint, eps)) return hit.he.next;
+    const at = hit.kind === 'finite' ? hit.point : hit.idealDir;
+    const r = subdivideSide(atlas, hit.he, at);
     return r.faceHalves[1];
   };
 
@@ -2771,12 +2770,11 @@ export function mergeFaces(atlas: Atlas, sharedChordSide: Side): { face: Face } 
     //    against the strict-inverse precondition (no stitched sides).
     unstitch(chordStitch);
 
-    // 2 + 3. Shift fresh-side finite vertices and chord anchors back into
-    //        kept's frame.
+    // 2 + 3. Shift fresh-side points and chord anchors back into kept's frame.
+    // `applyAffine` is uniform: translates finite, no-ops on ideal directions.
+    const T_unshift = M.fromTranslate(freshOffset.x, freshOffset.y);
     for (const s of arc1Set) {
-      if (s.a.isFinite) {
-        s.a = HomPoint.finite(s.a.x + freshOffset.x, s.a.y + freshOffset.y);
-      }
+      s.a = s.a.applyAffine(T_unshift);
       if (s.anchor !== null) {
         s.anchor = { x: s.anchor.x + freshOffset.x, y: s.anchor.y + freshOffset.y };
       }
@@ -3201,7 +3199,7 @@ function findExit(face: Face, p: Point, d: Point, excludeSide: Side | null, eps 
   const cornerEps = 1e-6;
   for (const he of face.sidesCCW()) {
     if (he === excludeSide) continue;
-    if (he.a.kind !== 'ideal') continue;
+    if (!he.a.isIdeal) continue;
     if (he.kind === 'arc') continue;
     if (he.prev.kind === 'arc') continue;
     const dx = d.x - he.a.x;
@@ -3396,9 +3394,11 @@ function walkLineDirection(startFace: Face, startExit: BoundaryHit, startDirecti
     const twin = prevExit.he.twin;
     const T = prevExit.he.transform;
     const entryPointInTwin = M.applyToPoint(T, prevExit.point);
-    const dirInTwin = applyLinearToDirection(T, prevDirection);
-    const lenT = Math.hypot(dirInTwin.x, dirInTwin.y);
-    const dirInTwinUnit = { x: dirInTwin.x / lenT, y: dirInTwin.y / lenT };
+    // `applyAffine` on an ideal point applies only the linear part (the
+    // translation column zeros out against w=0) and re-normalises the
+    // result to unit length — exactly what we used to do via the
+    // dedicated `applyLinearToDirection` + `Math.hypot` divide combo.
+    const dirInTwinUnit = HomPoint.idealDir(prevDirection.x, prevDirection.y).applyAffine(T).dir();
     const uOnTwin = uOfPointOnSide(twin, entryPointInTwin);
     const entryHit: BoundaryHit = {
       kind: 'finite',
@@ -3508,7 +3508,7 @@ function findSideForFinitePoint(face: Face, p: Point): { he: Side; u: number } {
   const eps = 1e-7;
   // Prefer side whose ORIGIN matches p (existing vertex coincidence).
   for (const side of face.sides) {
-    if (side.a.kind !== 'finite') continue;
+    if (!side.a.isFinite) continue;
     if (Math.abs(side.a.x - p.x) < eps && Math.abs(side.a.y - p.y) < eps) {
       return { he: side, u: 0 };
     }
@@ -3558,7 +3558,7 @@ function findSideForIdealDir(face: Face, idealDir: Point): Side {
   // of the ideal corner (corner exit). materialise() short-circuits in
   // both cases since the chord endpoint already coincides with origin().
   for (const he of face.sides) {
-    if (he.a.kind !== 'ideal') continue;
+    if (!he.a.isIdeal) continue;
     if (Math.abs(he.a.x - idealDir.x) >= eps) continue;
     if (Math.abs(he.a.y - idealDir.y) >= eps) continue;
     return he;
@@ -3791,7 +3791,7 @@ export function insertStrip(atlas: Atlas, splitResult: SplitAlongLineResult, hei
   // yet — reject explicitly so callers get a clear signal.
   if (N === 1) {
     const r = splitResult.pairs[0].rightChordSide;
-    if (r.origin().kind !== 'ideal' || r.target().kind !== 'ideal') {
+    if (!r.origin().isIdeal || !r.target().isIdeal) {
       throw new Error(
         'insertStrip: single-face chain with finite chord endpoints is not yet supported (only ideal-ideal chords produce a valid digon strip)',
       );
@@ -3800,37 +3800,13 @@ export function insertStrip(atlas: Atlas, splitResult: SplitAlongLineResult, hei
 
   // ---- Determine line direction d in any face's frame ----
   // Translation-only twins → d is the same across all faces and the strip.
-  // rightChordSide goes B → A (i.e., in -d direction). For an ideal-ideal
-  // chord (N=1 case), origin is the +d ideal vertex (B) by the convention
-  // in splitFaceAtVertices: the right sub-face's chord goes B → A.
-  let d: Point | null = null;
-  for (const pair of splitResult.pairs) {
-    const r = pair.rightChordSide;
-    const ro = r.origin();
-    const rt = r.target();
-    if (ro.kind === 'finite' && rt.kind === 'finite') {
-      const dx = ro.x - rt.x;
-      const dy = ro.y - rt.y;
-      const len = Math.hypot(dx, dy);
-      d = { x: dx / len, y: dy / len };
-      break;
-    }
-    if (ro.kind === 'ideal' && rt.kind === 'finite') {
-      d = { x: -ro.x, y: -ro.y };
-      break;
-    }
-    if (ro.kind === 'finite' && rt.kind === 'ideal') {
-      d = { x: -rt.x, y: -rt.y };
-      break;
-    }
-    if (ro.kind === 'ideal' && rt.kind === 'ideal') {
-      d = { x: ro.x, y: ro.y };
-      break;
-    }
-  }
-  if (!d) {
+  // rightChordSide goes B → A in -d direction; the chord's `line` exposes
+  // a unit `tangent` oriented from target (A) to origin (B), which is +d.
+  // Uniform across all endpoint-kind combinations — no per-case dispatch.
+  if (splitResult.pairs.length === 0) {
     throw new Error('insertStrip: could not determine line direction');
   }
+  const d = splitResult.pairs[0].rightChordSide.line.tangent;
   const perp = { x: -d.y, y: d.x };
 
   // ---- Strip-frame positions of finite chord vertices c[1..N-1] ----
@@ -3846,7 +3822,7 @@ export function insertStrip(atlas: Atlas, splitResult: SplitAlongLineResult, hei
     const r = splitResult.pairs[i - 1].rightChordSide;
     const ro = r.origin();
     const rt = r.target();
-    if (ro.kind !== 'finite' || rt.kind !== 'finite') {
+    if (!ro.isFinite || !rt.isFinite) {
       throw new Error(`insertStrip: middle chain step ${i - 1} has non-finite chord (chain shape unexpected)`);
     }
     const chordLen = Math.hypot(ro.x - rt.x, ro.y - rt.y);
@@ -4028,7 +4004,7 @@ export function resizeStrip(
       throw new Error('resizeStrip: N=1 strip must have chord sides on bottom and top');
     }
     const o = t.origin();
-    if (o.kind !== 'ideal') {
+    if (!o.isIdeal) {
       throw new Error('resizeStrip: N=1 chord origin must be ideal');
     }
     // `insertStrip` builds the digon strip so that `topSides[0].origin` is
@@ -4040,14 +4016,14 @@ export function resizeStrip(
     d = { x: o.x, y: o.y };
   } else {
     const b1 = stripResult.bottomSides[1].origin();
-    if (b1.kind !== 'finite') {
+    if (!b1.isFinite) {
       throw new Error('resizeStrip: bottomSides[1] expected to be finite');
     }
     let dxRaw = 0;
     let dyRaw = 0;
     if (N >= 3) {
       const b2 = stripResult.bottomSides[2].origin();
-      if (b2.kind === 'finite') {
+      if (b2.isFinite) {
         dxRaw = b2.x - b1.x;
         dyRaw = b2.y - b1.y;
       }
@@ -4055,7 +4031,7 @@ export function resizeStrip(
     if (dxRaw === 0 && dyRaw === 0) {
       // N == 2 fallback (or unexpected ideal middle origin): derive perp first.
       const t0 = stripResult.topSides[0].origin();
-      if (t0.kind !== 'finite') {
+      if (!t0.isFinite) {
         throw new Error('resizeStrip: cannot recover line direction from strip');
       }
       const px = t0.x - b1.x;
@@ -4084,13 +4060,16 @@ export function resizeStrip(
     // put a chord at the top) we bump the chord anchor instead — the
     // ideal direction is translation-invariant, but the line through R²
     // shifts perpendicularly by exactly Δ · perp.
+    // `applyAffine` shifts finite origins and is a no-op on ideal
+    // directions; the chord-anchor shift is a separate concern (the
+    // anchored real line through R² moves perpendicularly even when the
+    // ideal endpoints don't).
+    const T_topShift = M.fromTranslate(dpx, dpy);
     for (let i = 0; i < N; i++) {
       const t = stripResult.topSides[i];
-      if (t.a.isFinite) {
-        t.a = HomPoint.finite(t.a.x + dpx, t.a.y + dpy);
-      } else if (t.kind === 'chord') {
-        const a = t.anchor!;
-        t.anchor = { x: a.x + dpx, y: a.y + dpy };
+      t.a = t.a.applyAffine(T_topShift);
+      if (t.anchor !== null) {
+        t.anchor = { x: t.anchor.x + dpx, y: t.anchor.y + dpy };
       }
     }
 

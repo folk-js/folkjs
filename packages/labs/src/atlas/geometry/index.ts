@@ -13,7 +13,7 @@
 //
 // See `step-6.md` and `substrate.md` for the broader design.
 
-export { cross, applyLinearToDirection } from './point.ts';
+export { cross } from './point.ts';
 
 export {
   HomPoint,
