@@ -115,47 +115,48 @@ const IDENTITY_TRANSFORM: M.Matrix2DReadonly = Object.freeze(M.fromValues());
 // ----------------------------------------------------------------------------
 
 /**
- * A boundary segment of one face's loop. `a` is the origin junction in
- * face-local coordinates; `b` (= `next.a`) is derived from container
- * iteration. Two sides form a twin pair across a shared face seam, bound
- * by a {@link Stitch} which owns the cross-face transform; `twin` and
- * `transform` on `Side` are kept as the storage backing Stitch (they
- * mirror `Stitch.a/b/transformAtoB` for the duration of the binding).
+ * A boundary segment of one face's loop, carrying:
  *
- * **Chord-vs-arc disambiguation for ideal-ideal sides.** A side whose
- * origin and target are both ideal can be one of two geometrically
- * distinct things:
+ *  - **`a`**: the origin junction in face-local homogeneous coordinates.
+ *    The end junction is `next.a`, derived from the cycle.
+ *  - **`line`**: the projective line this side lies on, in face-local
+ *    coordinates. First-class — every side has one. For non-chord
+ *    sides (segment / ray / antiRay / arc) the line is determined by
+ *    the endpoints; the {@link Face} constructor (and
+ *    {@link rewireFaceCycle}) sets it via `HomLine.through(a, next.a)`.
+ *    For chord sides (ideal-ideal antipodal endpoints) the endpoints
+ *    don't determine a unique line — any parallel line shares the same
+ *    antipodal limit directions — so the caller must set `line`
+ *    explicitly via `HomLine.withDirection(anchor, idealDir)` *before*
+ *    the side is wired into a Face cycle.
+ *  - **`stitch`**: optional reciprocal-binding back-reference. Every
+ *    stitched side references the same {@link Stitch} object as its
+ *    partner; reciprocity is structural.
  *
- *   - An **at-infinity arc** on S¹: the boundary of an unbounded face
- *     along a piece of the line at infinity. The endpoints span an
- *     angular wedge CCW on S¹. `twin === null` and `anchor === null`.
- *   - A **chord** through R²: a real straight line whose two limit
- *     directions on S¹ are antipodal (`a` and `next.a` are negatives of
- *     each other). `twin !== null` and `anchor` stores any one finite
- *     point on the line, in face-local coordinates.
- *
- * Two ideal directions don't pin down a chord by themselves (any
- * parallel line shares the same antipodal endpoints); hence `anchor`.
+ * Substrate operations that need the side's line geometry (line-line
+ * intersections, parameter of a point, half-plane tests) read
+ * `side.line` uniformly — there is no kind switch at the operation
+ * layer. The {@link kind} discriminator is a derived label kept for
+ * diagnostic messages and for the small number of sites that genuinely
+ * differ (arc subdivision uses angular sweep on S¹, not line parameter).
  */
 export class Side {
   /** Origin point in face-local homogeneous coordinates. */
   a: HomPoint;
+  /**
+   * The projective line this side lies on, in face-local coordinates.
+   * Set by the {@link Face} constructor / {@link rewireFaceCycle} from
+   * the endpoints, OR pre-set by the caller for chord sides (where
+   * endpoints alone don't determine a unique line). Definitely
+   * assigned after the Side is wired into a Face cycle.
+   */
+  line!: HomLine;
   /** Next side CCW around `face`. */
   next!: Side;
   /** Previous side CCW around `face` (i.e. the side `s` with `s.next === this`). */
   prev!: Side;
   /** Owning face. */
   face!: Face;
-  /**
-   * Any one finite point on the chord line, in face-local coordinates.
-   * Only set on chord sides (both endpoints ideal AND stitched). For all
-   * other sides this is `null`. See class docstring.
-   *
-   * Future refactor (`step-6.md` Stage 4): replace with `line: HomLine`,
-   * making the line first-class on every side and dissolving `anchor`
-   * entirely. Today still patch-shaped.
-   */
-  anchor: Point | null = null;
   /**
    * Reciprocal-binding back-reference. Every stitched side references the
    * same {@link Stitch} object as its partner; reciprocity is structural.
@@ -179,8 +180,17 @@ export class Side {
     return this.stitch ? this.stitch.transformFrom(this) : IDENTITY_TRANSFORM;
   }
 
-  constructor(a: HomPoint) {
+  /**
+   * Construct a new Side. `a` is the origin junction. `line` is
+   * optional — for non-chord sides, leave it undefined and the Face
+   * constructor (or {@link rewireFaceCycle}) will derive it from the
+   * endpoints. For chord sides (ideal-ideal antipodal), `line` is
+   * required and the caller must supply
+   * `HomLine.withDirection(anchorPoint, idealDirection)`.
+   */
+  constructor(a: HomPoint, line?: HomLine) {
     this.a = a;
+    if (line !== undefined) this.line = line;
   }
 
   /** This side's starting point. Equivalent to `this.a`. */
@@ -194,39 +204,6 @@ export class Side {
   }
 
   /**
-   * The projective line this side lies on, in face-local coordinates.
-   *
-   * Derived on demand from the endpoints (and `anchor` for the chord
-   * case where two antipodal ideal endpoints don't determine a unique
-   * line — `anchor` supplies a finite point on the chord line). Same
-   * three cases recur:
-   *
-   *  - one or both endpoints finite, OR both ideal but non-antipodal:
-   *    `HomLine.through(origin, target)` — endpoints determine the line.
-   *  - both endpoints ideal antipodal AND `anchor !== null`: chord;
-   *    line passes through the anchor finite point in the origin's
-   *    ideal direction.
-   *  - both endpoints ideal antipodal AND `anchor === null`: arc on the
-   *    line at infinity.
-   *
-   * Substrate operations that need the side's line geometry (parameter
-   * of a point along the side, line tangent direction, line-on-line
-   * intersections) call `side.line` uniformly — there is no kind switch
-   * at the operation layer.
-   */
-  get line(): HomLine {
-    if (this.a.isIdeal && this.next.a.isIdeal && this.anchor !== null) {
-      // Chord case: ideal endpoints don't pin down which parallel line;
-      // the anchor finite point + origin's ideal direction does.
-      return HomLine.withDirection(
-        HomPoint.finite(this.anchor.x, this.anchor.y),
-        { x: this.a.x, y: this.a.y },
-      );
-    }
-    return HomLine.through(this.a, this.next.a);
-  }
-
-  /**
    * Single-discriminator classification of this side's geometric kind:
    *
    *   - `'segment'` — both endpoints finite. Straight line segment in R².
@@ -234,24 +211,18 @@ export class Side {
    *                   in the target's direction.
    *   - `'antiRay'` — origin ideal, target finite. Half-line ending at the
    *                   target, coming from the origin's direction.
-   *   - `'chord'`   — both endpoints ideal AND `anchor !== null`. A real
-   *                   line through R² whose two limit directions are
-   *                   antipodal; `anchor` pins the line's perpendicular
-   *                   offset.
-   *   - `'arc'`     — both endpoints ideal AND `anchor === null`. A piece
-   *                   of S¹ on the boundary of an unbounded face.
-   *
-   * Used for diagnostic messages and for the few sites where chord-vs-arc
-   * disambiguation is genuinely needed (e.g. arc subdivision uses an
-   * angular sweep rather than a parametric position). Most operations
-   * use {@link line} directly and branch on its `isAtInfinity` property
-   * rather than dispatching on `kind`.
+   *   - `'chord'`   — both endpoints ideal antipodal, `line` is a finite
+   *                   real line through R² whose two limit directions
+   *                   are the side's endpoints.
+   *   - `'arc'`     — both endpoints ideal, `line` is the line at
+   *                   infinity (a piece of S¹ on an unbounded face's
+   *                   boundary).
    */
   get kind(): 'segment' | 'ray' | 'antiRay' | 'chord' | 'arc' {
     if (this.a.isFinite && this.next.a.isFinite) return 'segment';
     if (this.a.isFinite && this.next.a.isIdeal) return 'ray';
     if (this.a.isIdeal && this.next.a.isFinite) return 'antiRay';
-    return this.anchor === null ? 'arc' : 'chord';
+    return this.line.isAtInfinity ? 'arc' : 'chord';
   }
 }
 
@@ -367,12 +338,43 @@ export class Stitch {
 export class Link {
   from: Face;
   to: Face;
+  /**
+   * The link's transform — interpreted differently based on
+   * {@link derived}:
+   *
+   *  - `derived === false` (literal placement): the value used directly
+   *    as `to`-frame → `from`-frame. The substrate never overwrites it
+   *    on its own (only {@link rebaseSubgraph} touches it, when an
+   *    incident face is rebased — same rule as for stitches).
+   *  - `derived === true` (chain-derived placement): the value is a
+   *    *fallback* used when the live BFS-via-stitches chain from
+   *    `from` to `to` returns no path (e.g. fully closed-surface
+   *    targets). When the chain DOES exist, {@link linkComposite}
+   *    reads through to the live chain composite and ignores this
+   *    field for placement.
+   */
   transform: M.Matrix2D;
+  /**
+   * If `true`, {@link linkComposite} reads this link's effective
+   * transform from the live BFS-via-stitches chain `from → to`, falling
+   * back to {@link transform} only when the chain doesn't exist. This
+   * is the cylinder-wrap pattern: the link's placement is "wherever
+   * the underlying stitches put the child," derived freshly on every
+   * read so it stays consistent with parametric stitch mutations
+   * (`insertStrip`, `resizeStrip`, ...) without any cache machinery.
+   *
+   * If `false`, the link is a literal placement — caller-owned, never
+   * derived. Use for self-links (recursive zoom), closed-surface targets
+   * with no stitch chain, or any "place B inside A *here* regardless
+   * of what stitches do" scenario.
+   */
+  derived: boolean;
 
-  constructor(from: Face, to: Face, transform: M.Matrix2D) {
+  constructor(from: Face, to: Face, transform: M.Matrix2D, derived = false) {
     this.from = from;
     this.to = to;
     this.transform = transform;
+    this.derived = derived;
   }
 }
 
@@ -464,6 +466,17 @@ export class Face {
       he.prev = this.sides[(i - 1 + k) % k];
       he.face = this;
     }
+    // Initialize `line` on every side that doesn't already have one.
+    // For non-chord sides (segment, ray, antiRay, arc — all the cases where
+    // endpoints determine a unique line), `HomLine.through(a, next.a)` works.
+    // Chord sides (ideal-ideal antipodal endpoints) have `line` pre-set by
+    // the caller via `HomLine.withDirection(...)` BEFORE this constructor
+    // runs, since their lines are caller-supplied data.
+    for (const he of this.sides) {
+      if ((he as { line: HomLine | undefined }).line === undefined) {
+        he.line = HomLine.through(he.a, he.next.a);
+      }
+    }
 
     // Same defensive rationale as the outer loop: store our own copy of
     // each inner-loop array so external mutation of the caller's array
@@ -479,6 +492,11 @@ export class Face {
         he.next = loop[(i + 1) % m];
         he.prev = loop[(i - 1 + m) % m];
         he.face = this;
+      }
+      for (const he of loop) {
+        if ((he as { line: HomLine | undefined }).line === undefined) {
+          he.line = HomLine.through(he.a, he.next.a);
+        }
       }
     }
 
@@ -532,13 +550,10 @@ export class Face {
     if (!polygonContains(this.junctions(), hp)) return false;
     for (const he of this.sides) {
       if (he.kind !== 'chord') continue;
-      const a = he.origin();
-      const b = he.target();
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const ax = he.anchor!;
-      const c = dx * (p.y - ax.y) - dy * (p.x - ax.x);
-      if (c < 0) return false;
+      // Half-plane test against the chord's line, which `polygonContains`
+      // can't see (it treats every ideal-ideal edge as unconstrained).
+      // Sign convention matches `polygonContains`'s `signedTurn` direction.
+      if (he.line.evalAt(hp) < 0) return false;
     }
     for (const loop of this.innerLoops) {
       const verts = loop.map((h) => h.origin()).reverse();
@@ -749,10 +764,13 @@ export class Atlas {
         }
       }
       // Forward Link expansion. Same one-way semantic as computeImages.
+      // {@link linkComposite} reads through to the live stitch chain for
+      // derived placements, so wraps stay consistent under cuts/resizes
+      // without any cached transform to invalidate.
       for (const link of this.links) {
         if (link.from !== f) continue;
         if (out.has(link.to)) continue;
-        out.set(link.to, M.multiply(mf, link.transform));
+        out.set(link.to, M.multiply(mf, linkComposite(this, link)));
         queue.push(link.to);
       }
     }
@@ -885,9 +903,9 @@ export class Atlas {
       // Outgoing {@link Link} expansion. Same cap / self-loop semantics
       // as twin-based wraps: a self-link (link.from === link.to) only
       // tiles when the linked face is the BFS root, matching today's
-      // wrap-region behaviour. The link's transform maps
-      // `link.to`-local coordinates into `link.from`-local coordinates,
-      // so the child's composite is `parent.composite · link.transform`.
+      // wrap-region behaviour. {@link linkComposite} reads through to
+      // the live stitch chain for derived placements, so wraps stay
+      // consistent under parametric stitch mutations.
       for (const link of this.links) {
         if (link.from !== img.face) continue;
         if ((counts.get(link.to) ?? 0) >= capOf(link.to)) {
@@ -897,7 +915,7 @@ export class Atlas {
         if (link.to === img.face && img.face !== this.root) continue;
         queue.push({
           face: link.to,
-          composite: M.multiply(img.composite, link.transform),
+          composite: M.multiply(img.composite, linkComposite(this, link)),
           depth: img.depth + 1,
         });
       }
@@ -1158,13 +1176,10 @@ export function stitch(atlas: Atlas, heA: Side, heB: Side, transformAtoB: M.Matr
   if ((heA.kind === 'chord') !== (heB.kind === 'chord')) {
     throw new Error('stitch: cannot stitch a chord to a non-chord side');
   }
-  // Chord-chord pairs need anchors on both sides and must be a pure
-  // translation (linear part = identity), since chord lines only map to
-  // chord lines under translations of R².
+  // Chord-chord pairs must be a pure translation (linear part =
+  // identity), since chord lines only map to chord lines under
+  // translations of R².
   if (heA.kind === 'chord') {
-    if (heA.anchor === null || heB.anchor === null) {
-      throw new Error('stitch: chord sides must have anchors set');
-    }
     if (
       Math.abs(transformAtoB.a - 1) > eps ||
       Math.abs(transformAtoB.d - 1) > eps ||
@@ -1184,14 +1199,19 @@ export function stitch(atlas: Atlas, heA: Side, heB: Side, transformAtoB: M.Matr
   if (!junctionImageMatches(transformAtoB, heA.origin(), heB.next.origin(), eps)) {
     throw new Error('stitch: transformAtoB·heA.origin does not match heB.target');
   }
-  // Chord anchor consistency: the transform must map heA's chord line
-  // (anchored at heA.anchor) to heB's chord line (anchored at heB.anchor).
-  if (heA.kind === 'chord' && heA.anchor !== null && heB.anchor !== null) {
-    const imgAnchor = M.applyToPoint(transformAtoB, heA.anchor);
-    if (Math.abs(imgAnchor.x - heB.anchor.x) > eps || Math.abs(imgAnchor.y - heB.anchor.y) > eps) {
-      throw new Error(
-        `stitch: transformAtoB·heA.anchor = (${imgAnchor.x.toFixed(6)}, ${imgAnchor.y.toFixed(6)}) does not match heB.anchor = (${heB.anchor.x.toFixed(6)}, ${heB.anchor.y.toFixed(6)})`,
-      );
+  // Chord-line consistency: the transform must map heA's chord line to
+  // heB's chord line. Compared as un-oriented lines (the two sides
+  // traverse the line in opposite directions, so their HomLines have
+  // opposite tangents — same physical line).
+  if (heA.kind === 'chord') {
+    const imgLine = heA.line.applyAffine(transformAtoB);
+    const sameOrient = imgLine.equals(heB.line, eps);
+    const flipOrient =
+      Math.abs(imgLine.a + heB.line.a) < eps &&
+      Math.abs(imgLine.b + heB.line.b) < eps &&
+      Math.abs(imgLine.c + heB.line.c) < eps;
+    if (!sameOrient && !flipOrient) {
+      throw new Error('stitch: transformAtoB does not map heA.line to heB.line');
     }
   }
   return setTwin(heA, heB, transformAtoB, transformBtoA);
@@ -1218,25 +1238,57 @@ export function unstitch(s: Stitch): void {
  * structures, hypertext-style multigraphs, and embedded closed/wrapped
  * regions — see {@link Link} for the broader picture.
  *
- * Pre-conditions:
- *  - both faces live in `atlas`
+ * `derived = false` (default) is a **literal placement**: the substrate
+ * stores `transform` and renders with it. Used for self-links
+ * (recursive zoom), closed-surface targets, and any "place B inside A
+ * *here*" manual placement.
  *
- * Effect:
- *  - allocates a new `Link l = { from, to, transform }`
- *  - adds `l` to `atlas.links`
+ * `derived = true` is a **chain-derived placement**: the link's
+ * effective transform is read live from the BFS-via-stitches chain
+ * `from → to`, with `transform` used as a fallback when no chain
+ * exists. Used for cylinder/torus wraps where the link's placement
+ * should track the underlying stitches under cuts and resizes — no
+ * cache to invalidate, no eager recompute, the value is just always
+ * derived from the live topology.
  *
  * Multiplicity is unrestricted: the same `(from, to)` pair may be linked
- * multiple times with different transforms (rare but legal — e.g. tiling
- * a child at several positions inside one parent), and any face may have
- * many incoming or outgoing links. A self-link (`from === to`) is the
- * substrate-level expression of recursive zoom.
+ * multiple times. A self-link (`from === to`) is the substrate-level
+ * expression of recursive zoom (must be `derived = false`; chain
+ * doesn't apply).
  */
-export function link(atlas: Atlas, from: Face, to: Face, transform: M.Matrix2D): Link {
+export function link(
+  atlas: Atlas,
+  from: Face,
+  to: Face,
+  transform: M.Matrix2D,
+  derived = false,
+): Link {
   if (!atlas.faces.includes(from)) throw new Error('link: from face not in atlas');
   if (!atlas.faces.includes(to)) throw new Error('link: to face not in atlas');
-  const l = new Link(from, to, transform);
+  const l = new Link(from, to, transform, derived);
   atlas.links.add(l);
   return l;
+}
+
+/**
+ * The effective transform for a {@link Link}: `to`-frame → `from`-frame.
+ *
+ *  - For a literal placement (`link.derived === false`), returns
+ *    `link.transform` verbatim.
+ *  - For a chain-derived placement (`link.derived === true`), walks
+ *    BFS via stitches from `link.from` to `link.to` and returns the
+ *    chain composite. Falls back to `link.transform` when the chain
+ *    doesn't exist (closed-surface targets unreachable via stitches).
+ *
+ * This is the substrate's read-time mechanism that replaces the old
+ * eager `recomputeLinkTransformsFromStitchChain` cache invalidation —
+ * derived links self-update on every read because the value is *always*
+ * computed from live state, never stored.
+ */
+export function linkComposite(atlas: Atlas, l: Link): M.Matrix2DReadonly {
+  if (!l.derived || l.from === l.to) return l.transform;
+  const chain = bfsCompositeViaStitchesOnly(atlas, l.from, l.to);
+  return chain !== null ? chain : l.transform;
 }
 
 /**
@@ -1249,54 +1301,6 @@ export function unlink(atlas: Atlas, l: Link): void {
 // ----------------------------------------------------------------------------
 // Sub-graph rebase — the substrate's single transform-maintenance rule
 // ----------------------------------------------------------------------------
-
-/**
- * Walk every face reachable from `seedSide.twin?.face` through stitches,
- * **excluding any walk that would re-cross `seedSide`** (or its twin) — i.e.
- * the connected component of the atlas on the *other side* of the seam
- * `seedSide` defines, treating that one seam as a wall.
- *
- * Used by sub-graph rebases that need "everything beyond this boundary."
- * For a strip thickness drag: walk from each top-row stitch to recover
- * the entire "above" sub-graph; rebase that sub-graph by `Δ·perp`.
- *
- * Returns an empty set if `seedSide` is free (no twin to start the walk
- * across) or if it's stitched but its partner's face is in `excludeFaces`.
- *
- * Stops naturally at:
- *  - free sides (no twin → boundary of the sub-graph)
- *  - sides whose twin's face is `seedSide.face` (would walk back through the
- *    seam) — handled implicitly by the visited set
- *  - any side in `excludeSides` (additional walls; e.g. a strip's
- *    bottom-row sides act as walls when computing the "above" set so the
- *    walk doesn't loop back around through the strip's other side)
- */
-export function bfsAcrossEdge(
-  seedSide: Side,
-  excludeSides: ReadonlySet<Side> = new Set(),
-): Set<Face> {
-  const out = new Set<Face>();
-  const twin = seedSide.twin;
-  if (!twin) return out;
-  if (excludeSides.has(seedSide) || excludeSides.has(twin)) return out;
-
-  const startFace = twin.face;
-  out.add(startFace);
-  const queue: Face[] = [startFace];
-  while (queue.length > 0) {
-    const f = queue.shift()!;
-    for (const he of f.allSides()) {
-      if (excludeSides.has(he)) continue;
-      const t = he.twin;
-      if (!t) continue;
-      if (excludeSides.has(t)) continue;
-      if (out.has(t.face)) continue;
-      out.add(t.face);
-      queue.push(t.face);
-    }
-  }
-  return out;
-}
 
 /**
  * Rebase the local frame of every face in `faces` by `delta`, conjugating
@@ -1342,14 +1346,13 @@ export function rebaseSubgraph(atlas: Atlas, faces: ReadonlySet<Face>, delta: M.
   const Dinv: M.Matrix2D = M.fromValues(deltaInv.a, deltaInv.b, deltaInv.c, deltaInv.d, deltaInv.e, deltaInv.f);
 
   // 1. Shift every stored coord on every side of every face in `faces`.
-  // `applyAffine` is uniform: translates finite, no-ops on ideal directions.
+  // `applyAffine` on a HomPoint is uniform (translates finite, no-ops on
+  // ideal directions); same on a HomLine (the inverse-transpose handles
+  // both finite lines and the line at infinity uniformly).
   for (const face of faces) {
     for (const he of face.allSides()) {
       he.a = he.a.applyAffine(D);
-      if (he.anchor !== null) {
-        const p = M.applyToPoint(D, he.anchor);
-        he.anchor = { x: p.x, y: p.y };
-      }
+      he.line = he.line.applyAffine(D);
     }
   }
 
@@ -1558,13 +1561,13 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
     // Boundary half-edge invariants for ideal-ideal HEs:
     //   - An at-infinity arc (`anchor === null`) has null twin: the
     //     line at infinity is not crossed by twin links.
-    //   - A chord (`anchor !== null`) MUST have a non-null twin (the
-    //     chord HE on the other sub-face), and its origin/target ideal
-    //     directions must be antipodal (the two limit directions of a real
-    //     line in R²).
+    //   - A chord (line is a finite real line in R²) MUST have a non-null
+    //     twin (the chord HE on the other sub-face), and its origin/target
+    //     ideal directions must be antipodal (the two limit directions of a
+    //     real line in R²).
     for (const he of f.sides) {
       if (!he.a.isIdeal || !he.next.a.isIdeal) continue;
-      if (he.anchor === null) {
+      if (he.line.isAtInfinity) {
         if (he.twin !== null) errs.push('at-infinity arc half-edge has non-null twin');
       } else {
         if (he.twin === null) errs.push('chord half-edge has null twin');
@@ -1585,20 +1588,16 @@ export function validateAtlas(atlas: Atlas, eps = 1e-9): void {
       if (h0.kind !== 'chord' || h1.kind !== 'chord') {
         errs.push('digon face: both half-edges must be chord HEs');
       } else {
-        const a0 = h0.anchor!;
-        const a1 = h1.anchor!;
-        const o0 = h0.origin();
-        const t0 = h0.target();
-        const dirX = t0.x - o0.x;
-        const dirY = t0.y - o0.y;
-        const dx = a1.x - a0.x;
-        const dy = a1.y - a0.y;
-        // Cross of h0's direction with (a1 - a0). Positive ⇒ a1 is on
-        // the left of h0 (CCW interior side). Zero ⇒ degenerate slab.
-        const cross = dirX * dy - dirY * dx;
-        if (Math.abs(cross) <= eps) {
-          errs.push('digon face: chord anchors are collinear (degenerate slab)');
-        } else if (cross < 0) {
+        // The two chord lines must be DISTINCT parallel lines (their `c`
+        // coefficients differ) and the second chord's line must lie on
+        // the LEFT of the first chord's directed line (interior side
+        // under CCW traversal). Sample a point on h1's line and test
+        // its half-plane against h0.
+        const probe = h1.line.pointAtParameter(0);
+        const e = h0.line.evalAt(probe);
+        if (Math.abs(e) <= eps) {
+          errs.push('digon face: chord lines are coincident (degenerate slab)');
+        } else if (e < 0) {
           errs.push('digon face: chord half-edges wound CW (inverted slab)');
         }
       }
@@ -2088,7 +2087,8 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
   const v = next.origin();
   const b = next.next.origin();
   const eps = 1e-9;
-  const joined = new Side(a);
+
+  let joinedLine: HomLine | undefined;
 
   if (a.isIdeal && v.isIdeal && b.isIdeal) {
     const aCrossV = cross(a.x, a.y, v.x, v.y);
@@ -2096,6 +2096,8 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
     if (aCrossV <= eps || vCrossB <= eps) {
       throw new Error('joinSidesAtVertex: middle ideal not strictly inside arc a→b');
     }
+    // Joined arc shares the line at infinity with both halves.
+    joinedLine = HomLine.atInfinity();
   } else {
     if (Math.abs(signedTurn(a, v, b)) > eps) {
       throw new Error('joinSidesAtVertex: a, v, b are not collinear');
@@ -2104,39 +2106,39 @@ export function joinSidesAtVertex(atlas: Atlas, side: Side): void {
     // both ideal antipodal, v finite) the endpoints alone don't determine
     // the line — derive it from v + a's direction. Otherwise the line is
     // fixed by the two endpoints.
-    let line: HomLine;
     if (a.isIdeal && b.isIdeal) {
       if (!a.isAntipodalTo(b, eps)) {
         throw new Error('joinSidesAtVertex: ideal endpoints are not antipodal — cannot reform chord');
       }
-      line = HomLine.withDirection(v, { x: a.x, y: a.y });
-      // Joined side becomes a chord anchored at the eliminated finite vertex.
-      joined.anchor = { x: v.x, y: v.y };
+      joinedLine = HomLine.withDirection(v, { x: a.x, y: a.y });
     } else {
-      line = HomLine.through(a, b);
+      joinedLine = HomLine.through(a, b);
     }
-    const pa = line.parameterOf(a);
-    const pv = line.parameterOf(v);
-    const pb = line.parameterOf(b);
+    const pa = joinedLine.parameterOf(a);
+    const pv = joinedLine.parameterOf(v);
+    const pb = joinedLine.parameterOf(b);
     const between = (pa < pv && pv < pb) || (pa > pv && pv > pb);
     if (!between) {
       throw new Error('joinSidesAtVertex: middle vertex is not strictly between a and b');
     }
   }
 
+  const joined = new Side(a, joinedLine);
+
   // ---- Build the joined twin (if stitched) ----
   let twinJoined: Side | null = null;
   if (tw_A !== null && tw_B !== null) {
     // tw_A ends at the partner-face vertex; tw_B starts there. The joined
-    // twin spans tw_A.origin → tw_B.next.origin in G's frame.
+    // twin spans tw_A.origin → tw_B.next.origin in G's frame. For the
+    // chord case (joinedLine is a finite line), project the line through
+    // the stitch transform to recover G's line.
     const tA_origin = tw_A.origin();
-    twinJoined = new Side(tA_origin);
-    if (joined.anchor !== null) {
-      // Chord case: project the F-frame anchor through the stitch transform
-      // to recover G's anchor for the same line.
-      const anchorInG = M.applyToPoint(recoveredTransform!, joined.anchor);
-      twinJoined.anchor = { x: anchorInG.x, y: anchorInG.y };
+    const isChordJoin = a.isIdeal && b.isIdeal && !joinedLine.isAtInfinity;
+    let twinJoinedLine: HomLine | undefined;
+    if (isChordJoin) {
+      twinJoinedLine = joinedLine.applyAffine(recoveredTransform!);
     }
+    twinJoined = new Side(tA_origin, twinJoinedLine);
   }
 
   // ---- Atomic mutation ----
@@ -2310,8 +2312,7 @@ export function splitFaceAtVertices(
     if (!chordIsIdealIdeal) {
       throw new Error('splitFaceAtVertices: chord endpoints are adjacent (would coincide with an edge)');
     }
-    const dirX = jB.x - jA.x;
-    const dirY = jB.y - jA.y;
+    const newAnchorHom = HomPoint.finite(anchor!.x, anchor!.y);
     for (let i = 0; i < k; i++) {
       const he = face.sides[i];
       const ni = (i + 1) % k;
@@ -2322,11 +2323,9 @@ export function splitFaceAtVertices(
           'splitFaceAtVertices: adjacent side between ideal endpoints is not a chord (cannot produce a valid digon)',
         );
       }
-      const existing = he.anchor!;
-      const dx = anchor!.x - existing.x;
-      const dy = anchor!.y - existing.y;
-      const cr = dirX * dy - dirY * dx;
-      if (Math.abs(cr) <= eps) {
+      // Reject if the new chord's anchor lies ON the existing chord's line —
+      // the two lines would be coincident and the resulting "slab" is degenerate.
+      if (Math.abs(he.line.evalAt(newAnchorHom)) <= eps) {
         throw new Error(
           'splitFaceAtVertices: parallel-chord cut anchor lies on existing chord line (degenerate digon)',
         );
@@ -2365,12 +2364,20 @@ export function splitFaceAtVertices(
   // face's frame; the {@link rebaseSubgraph} call below shifts fresh's
   // frame by `-freshOffset` and uniformly conjugates every Stitch and
   // Link incident to fresh — including this new chord stitch.
-  const faceChordSide = new Side(jB);
-  const freshChordSide = new Side(jA);
+  // For ideal-ideal cuts, we pre-set `line` on the chord sides because
+  // their lines aren't determined by endpoints alone. The two chord
+  // sides traverse the same physical line in OPPOSITE directions, so
+  // they get oppositely-oriented `HomLine`s (tangent direction matches
+  // the side's *origin* per `HomLine.through`'s convention).
+  let lineFace: HomLine | undefined;
+  let lineFresh: HomLine | undefined;
   if (chordIsIdealIdeal) {
-    faceChordSide.anchor = { x: anchor!.x, y: anchor!.y };
-    freshChordSide.anchor = { x: anchor!.x, y: anchor!.y };
+    const finiteAnchor = HomPoint.finite(anchor!.x, anchor!.y);
+    lineFace = HomLine.withDirection(finiteAnchor, { x: jB.x, y: jB.y });
+    lineFresh = HomLine.withDirection(finiteAnchor, { x: jA.x, y: jA.y });
   }
+  const faceChordSide = new Side(jB, lineFace);
+  const freshChordSide = new Side(jA, lineFresh);
 
   // Install the chord stitch with identity transforms. After
   // `rebaseSubgraph` runs below, this stitch's transformAtoB becomes
@@ -2645,47 +2652,12 @@ export function mergeFaces(atlas: Atlas, sharedChordSide: Side): { face: Face } 
 // ----------------------------------------------------------------------------
 
 /**
- * Re-derive each Link's `transform` from a fresh BFS chain composite via
- * stitches (`from → to`). For each link with a stitch-reachable `to`, sets
- * `link.transform := composite_from(to)` so link path and stitch path agree
- * — the substrate's root-invariance contract.
- *
- * Called from primitives that perform **parametric stitch mutations** —
- * mutations that genuinely shift one part of the topology relative to
- * another, rather than just re-anchoring a face's frame:
- *
- *  - {@link insertStrip}: opens a `height·perp` gap between the two halves
- *    of a cut. Chain composites crossing the strip shift accordingly.
- *  - {@link resizeStrip}: changes a strip's thickness. Same shape.
- *
- * Frame-relocation primitives ({@link splitFaceAtVertices},
- * {@link mergeFaces}, {@link rescaleFaceFrame}) don't need this — they
- * route through {@link rebaseSubgraph}, which conjugates incident
- * Stitches AND Links uniformly so chain composites remain consistent.
- *
- * **Limitation, by design:** every Link with a stitch-reachable target
- * gets its transform overwritten with the chain composite. A future
- * "manual placement" Link between two stitch-connected faces (caller
- * deliberately supplies a transform that doesn't match the chain
- * composite) would be clobbered. None exist today; if they show up
- * we'll add an opt-out flag at that point.
- *
- * Self-links (`from === to`) and closed-surface targets (no stitch chain
- * from `from` to `to`, e.g. a fully-wrapped torus region) are left
- * untouched — there's no chain composite to derive from.
- */
-function recomputeChainLinks(atlas: Atlas): void {
-  for (const link of atlas.links) {
-    if (link.from === link.to) continue;
-    const composite = bfsCompositeViaStitchesOnly(atlas, link.from, link.to);
-    if (composite !== null) link.transform = composite;
-  }
-}
-
-/**
  * BFS from `from` to `target` via stitches only (no link traversal).
  * Returns the composite mapping `target`-frame → `from`-frame, or `null`
  * if `target` is unreachable from `from` via stitches.
+ *
+ * Used by {@link linkComposite} to read the live chain composite for
+ * `derived` link placements.
  */
 function bfsCompositeViaStitchesOnly(atlas: Atlas, from: Face, target: Face): M.Matrix2D | null {
   void atlas;
@@ -2719,6 +2691,13 @@ function rewireFaceCycle(face: Face) {
     he.face = face;
     he.next = face.sides[(i + 1) % k];
     he.prev = face.sides[(i - 1 + k) % k];
+  }
+  // Initialize `line` on any side missing one (non-chord cases).
+  // Chord sides have `line` pre-set by the caller before splice.
+  for (const he of face.sides) {
+    if ((he as { line: HomLine | undefined }).line === undefined) {
+      he.line = HomLine.through(he.a, he.next.a);
+    }
   }
 }
 
@@ -2803,15 +2782,27 @@ export function createFace(
   if (points.length < 2) {
     throw new Error(`createFace: need at least 2 sides, got ${points.length}`);
   }
-  const sides: Side[] = points.map((p) => new Side(p));
+  // Validate caller-supplied anchor indices.
   if (options?.anchors) {
-    for (const [i, p] of options.anchors) {
-      if (i < 0 || i >= sides.length) {
+    for (const i of options.anchors.keys()) {
+      if (i < 0 || i >= points.length) {
         throw new Error(`createFace: anchor index ${i} out of range`);
       }
-      sides[i].anchor = { x: p.x, y: p.y };
     }
   }
+  // For chord sides (ideal-ideal antipodal), pre-construct the line from
+  // the caller-supplied anchor + the side's origin direction. Non-chord
+  // sides leave `line` undefined; the Face constructor fills it in via
+  // `HomLine.through`.
+  const sides: Side[] = points.map((p, i) => {
+    const anchor = options?.anchors?.get(i);
+    if (anchor !== undefined) {
+      const finiteAnchor = HomPoint.finite(anchor.x, anchor.y);
+      const line = HomLine.withDirection(finiteAnchor, { x: p.x, y: p.y });
+      return new Side(p, line);
+    }
+    return new Side(p);
+  });
   const face = new Face(sides, [], options?.frame);
   attachFace(atlas, face);
   return face;
@@ -3066,13 +3057,19 @@ function rayParam(side: Side): { start: Point; dir: Point; uMin: number; uMax: n
         uMin: 0,
         uMax: Infinity,
       };
-    case 'chord':
+    case 'chord': {
+      // Chord's parameterisation is anchored at the line's foot of the
+      // perpendicular from the origin (= `line.pointAtParameter(0)`).
+      // Direction is the line's tangent (matches the side's origin
+      // direction by construction in `HomLine.withDirection`).
+      const foot = side.line.pointAtParameter(0);
       return {
-        start: side.anchor!,
+        start: { x: foot.x, y: foot.y },
         dir: { x: o.x, y: o.y },
         uMin: -Infinity,
         uMax: Infinity,
       };
+    }
     case 'arc':
       return null;
   }
@@ -3704,8 +3701,11 @@ export function insertStrip(atlas: Atlas, splitResult: SplitAlongLineResult, hei
     } else if (ct.isFinite) {
       off = { x: stripForTarget.x - ct.x, y: stripForTarget.y - ct.y };
     } else {
-      const a = chord.anchor!;
-      off = { x: stripAnchor.x - a.x, y: stripAnchor.y - a.y };
+      // Both endpoints ideal (chord side): pick a finite reference point
+      // on the chord's line — `pointAtParameter(0)` (= foot of perp from
+      // origin) — and translate it onto the strip's matching anchor row.
+      const refOnLine = chord.line.pointAtParameter(0);
+      off = { x: stripAnchor.x - refOnLine.x, y: stripAnchor.y - refOnLine.y };
     }
     const T_CtoS = M.fromTranslate(off.x, off.y);
     setTwin(chord, stripSide, T_CtoS, M.invert(T_CtoS));
@@ -3724,25 +3724,12 @@ export function insertStrip(atlas: Atlas, splitResult: SplitAlongLineResult, hei
     stitchAndTranslate(l, topSides[i], aJunction(i, 'top'), bJunction(i, 'top'), topAnchor);
   }
 
-  // ---- Re-derive chain-composite Link transforms ----
-  // Inserting a strip of thickness `height` opens a `height·perp` gap
-  // between the cut's two halves. Chain composites for any Link whose
-  // `from → to` walk crosses the strip shift accordingly; the link's
-  // stored transform must follow so BFS-via-link and BFS-via-stitches
-  // keep agreeing on every face's world position (root-invariance).
-  //
-  // Done via a global chain-composite walk for robustness: in
-  // cycle-containing topologies (cylinder / torus wraps) "above the
-  // strip" isn't a well-defined subgraph — the cylinder loop reaches
-  // both sides through itself — so a local conjugation rule based on
-  // BFS-across-edge sub-graph sets gives the wrong answer. The chain
-  // walk simply asks "what does a stitch-only walk from from to to
-  // give right now?" and trusts cycle closure to make all walks agree.
-  //
-  // See {@link recomputeChainLinks}'s docstring for the
-  // limitation around manual-placement links between stitch-connected
-  // faces.
-  recomputeChainLinks(atlas);
+  // No link-cache invalidation needed: derived links read their effective
+  // transform live from the BFS-via-stitches chain (see
+  // {@link linkComposite}). Inserting a strip changes the chain
+  // composites that derived links depend on, but since their transform
+  // is computed on read, the next render automatically picks up the new
+  // composite. Literal-placement links are caller-owned and unaffected.
 
   return { stripFace, bottomSides, topSides };
 }
@@ -3869,18 +3856,15 @@ export function resizeStrip(
   const dpy = delta * perp.y;
 
   // ---- Shift the strip's "top" boundary by Δ · perp ----
-  // For finite top HEs we just bump the origin. For ideal-ideal chord
-  // top HEs (the N=1 digon case, or any future case where insertStrip
-  // put a chord at the top) we bump the chord anchor instead — the
-  // ideal direction is translation-invariant, but the line through R²
-  // shifts perpendicularly by exactly Δ · perp.
+  // `applyAffine` shifts finite origins (no-op on ideal directions) and
+  // shifts finite-line `c` coefficients (no-op on the line at infinity),
+  // so a single uniform translation handles segment / chord / arc top
+  // sides without dispatch.
   const T_topShift = M.fromTranslate(dpx, dpy);
   for (let i = 0; i < N; i++) {
     const t = stripResult.topSides[i];
     t.a = t.a.applyAffine(T_topShift);
-    if (t.anchor !== null) {
-      t.anchor = { x: t.anchor.x + dpx, y: t.anchor.y + dpy };
-    }
+    t.line = t.line.applyAffine(T_topShift);
   }
 
   // ---- Update left-chord twin transforms ----
@@ -3895,10 +3879,7 @@ export function resizeStrip(
     setTwin(l, t, T_LtoS, T_StoL);
   }
 
-  // ---- Re-derive chain-composite Link transforms ----
-  // resizeStrip is a parametric stitch mutation: shifting the strip's top
-  // boundary by `Δ·perp` shifts the chain composite for any walk that
-  // crosses the strip. See {@link recomputeChainLinks} for the
-  // rationale and {@link insertStrip}'s matching call for context.
-  recomputeChainLinks(atlas);
+  // No link-cache invalidation needed: derived links self-update on
+  // every read via {@link linkComposite}'s live BFS chain walk. See
+  // {@link insertStrip}'s matching note for context.
 }

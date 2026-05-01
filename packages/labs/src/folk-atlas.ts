@@ -1445,8 +1445,14 @@ export class FolkAtlas extends ReactiveElement {
         unstitch(stitchA);
         unstitch(stitchB);
         cylinderStitch = stitch(this.#atlas, heA, heB, T);
-        linkA = link(this.#atlas, outerFaceA, face, linkATransform);
-        linkB = link(this.#atlas, outerFaceB, face, linkBTransform);
+        // `derived: true` — these links are *placement-from-the-stitch-chain*:
+        // they should track whatever the surrounding stitches say, so that
+        // cuts/strip resizes that shift chain composites are picked up
+        // automatically without any cache invalidation. The supplied
+        // transform is the fallback used when no chain exists (the
+        // cylinder→torus transition where the region becomes stitch-isolated).
+        linkA = link(this.#atlas, outerFaceA, face, linkATransform, true);
+        linkB = link(this.#atlas, outerFaceB, face, linkBTransform, true);
       } catch (err) {
         console.warn('[folk-atlas] wrapRegionAxis: wrap-on failed:', err);
         return;
@@ -2866,10 +2872,15 @@ function faceScreenPolygon(
     if (j.kind === 'finite') {
       return M.applyToPoint(screen, { x: j.x, y: j.y });
     }
-    if (he.anchor) {
+    // Ideal endpoint: project to a finite "horizon" point R units along
+    // the ideal direction. For chord sides, anchor the projection at the
+    // foot-of-perpendicular-from-origin on the chord line; for arcs,
+    // there's no anchor (line at infinity) and we anchor at origin.
+    if (he.kind === 'chord') {
+      const foot = he.line.pointAtParameter(0);
       return M.applyToPoint(screen, {
-        x: he.anchor.x + R * j.x,
-        y: he.anchor.y + R * j.y,
+        x: foot.x + R * j.x,
+        y: foot.y + R * j.y,
       });
     }
     return M.applyToPoint(screen, { x: R * j.x, y: R * j.y });

@@ -11,6 +11,7 @@ import {
   createInitialAtlas,
   deleteFace,
   Face,
+  HomLine,
   HomPoint,
   insertStrip,
   isPolygonCCW,
@@ -84,9 +85,7 @@ describe('Side', () => {
     let foundChord = false;
     for (const f of halves) {
       for (const s of f.sides) {
-        if (s.anchor !== null) {
-          assert.equal(s.kind, 'chord');
-          assert.equal(s.kind === 'chord', true);
+        if (s.kind === 'chord') {
           foundChord = true;
         }
       }
@@ -166,10 +165,14 @@ describe('Face', () => {
   it('admits a digon (k = 2) face whose two HEs are antipodal-ideal chords', () => {
     // Slab between y=0 and y=1, traversed CCW (interior is the open strip
     // between the two horizontal lines).
-    const bot = new Side(HomPoint.idealDir(-1, 0));
-    bot.anchor = { x: 0, y: 0 };
-    const top = new Side(HomPoint.idealDir(1, 0));
-    top.anchor = { x: 0, y: 1 };
+    const bot = new Side(
+      HomPoint.idealDir(-1, 0),
+      HomLine.withDirection(HomPoint.finite(0, 0), { x: -1, y: 0 }),
+    );
+    const top = new Side(
+      HomPoint.idealDir(1, 0),
+      HomLine.withDirection(HomPoint.finite(0, 1), { x: 1, y: 0 }),
+    );
     const f = new Face([bot, top]);
     assert.equal(f.sides.length, 2);
   });
@@ -1791,10 +1794,11 @@ describe('createFace', () => {
       ]),
     });
     assert.equal(face.sides.length, 2);
-    assert.deepEqual(face.sides[0].anchor, { x: 0, y: 0 });
-    assert.deepEqual(face.sides[1].anchor, { x: 0, y: 1 });
     assert.equal(face.sides[0].kind, 'chord');
     assert.equal(face.sides[1].kind, 'chord');
+    // The chord lines should pass through the supplied anchor points.
+    assert.ok(Math.abs(face.sides[0].line.evalAt(HomPoint.finite(0, 0))) < 1e-9);
+    assert.ok(Math.abs(face.sides[1].line.evalAt(HomPoint.finite(0, 1))) < 1e-9);
   });
 
   it('passes through an explicit frame', () => {
@@ -2544,7 +2548,7 @@ describe('splitFaceAtVertices', () => {
       assert.equal(o.kind, 'ideal');
       assert.equal(t.kind, 'ideal');
       assert.ok(Math.abs(o.x + t.x) < 1e-9 && Math.abs(o.y + t.y) < 1e-9);
-      assert.ok(chord.anchor !== null);
+      assert.equal(chord.kind, 'chord');
       assert.ok(chord.twin !== null);
     }
     // The two chord HEs are twin-paired and their transforms are pure
@@ -3185,9 +3189,13 @@ describe('inverse round-trip (forcing function)', () => {
       const fresh = pair.leftChordSide;
       let T_keptToFresh: M.Matrix2D;
       if (kept.kind === 'chord' && fresh.kind === 'chord') {
-        const offX = fresh.anchor!.x - kept.anchor!.x;
-        const offY = fresh.anchor!.y - kept.anchor!.y;
-        T_keptToFresh = M.fromTranslate(offX, offY);
+        // Recover the kept→fresh translation from the two chord lines'
+        // anchor points. `pointAtParameter(0)` gives a canonical finite
+        // point on each line (foot of perp from origin); the difference
+        // is the translation that maps one chord-frame to the other.
+        const keptRef = kept.line.pointAtParameter(0);
+        const freshRef = fresh.line.pointAtParameter(0);
+        T_keptToFresh = M.fromTranslate(freshRef.x - keptRef.x, freshRef.y - keptRef.y);
       } else {
         const keptTarget = kept.next.origin();
         const freshOrigin = fresh.origin();
@@ -4275,26 +4283,24 @@ describe('resizeStrip', () => {
     const top0 = stripResult.topSides[0];
     const bot0 = stripResult.bottomSides[0];
     assert.ok(top0.kind === 'chord' && bot0.kind === 'chord', 'digon strip has chord HEs on top + bottom');
-    const topAnchorBefore = { x: top0.anchor!.x, y: top0.anchor!.y };
-    const botAnchorBefore = { x: bot0.anchor!.x, y: bot0.anchor!.y };
+    // Capture the line `c` coefficients (perpendicular distance from origin)
+    // — that's how the chord lines move as the strip resizes.
+    const topCBefore = top0.line.c;
+    const botCBefore = bot0.line.c;
 
     resizeStrip(atlas, stripResult, splitResult, 0.5, 2.0);
     validateAtlas(atlas);
 
-    // Bottom anchor must be unchanged; top anchor must have shifted by
-    // (newH - oldH) · perp = 1.5 · (0, 1) = (0, 1.5) for a horizontal cut
-    // direction (perp = +y).
-    assert.equal(bot0.anchor!.x, botAnchorBefore.x, 'bottom anchor x unchanged');
-    assert.equal(bot0.anchor!.y, botAnchorBefore.y, 'bottom anchor y unchanged');
-    assert.ok(
-      Math.abs(top0.anchor!.x - topAnchorBefore.x) < 1e-9,
-      `top anchor x shifted unexpectedly: ${top0.anchor!.x} vs ${topAnchorBefore.x}`,
-    );
+    // Bottom line must be unchanged; top line must have shifted by
+    // (newH - oldH) · perp.
+    assert.ok(Math.abs(bot0.line.c - botCBefore) < 1e-9, 'bottom line unchanged');
+    assert.ok(Math.abs(top0.line.c - topCBefore) > 1e-9, 'top line shifted');
+
     // Round-trip restores the original.
     resizeStrip(atlas, stripResult, splitResult, 2.0, 0.5);
     validateAtlas(atlas);
-    assert.ok(Math.abs(top0.anchor!.x - topAnchorBefore.x) < 1e-9);
-    assert.ok(Math.abs(top0.anchor!.y - topAnchorBefore.y) < 1e-9);
+    assert.ok(Math.abs(top0.line.c - topCBefore) < 1e-9);
+    assert.ok(Math.abs(bot0.line.c - botCBefore) < 1e-9);
   });
 });
 
