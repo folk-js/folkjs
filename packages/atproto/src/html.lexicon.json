@@ -1,18 +1,87 @@
 {
   "lexicon": 1,
-  "id": "community.lexicon.html",
+  "id": "site.standard.hast",
+  "typelex": "https://playground.typelex.org/?v=file-output&vs=%7B%22type-graph%3Apath%22%3A%22%24.site.standard.hast%22%7D&c=aW1wb3J0ICJAdHlwZWxleC9lbWl0dGVyIjsKCm5hbWVzcGFjZSBzaXRlLnN0YW5kYXJkLmhhc3QgewogIC8qKiBSb290IG9mIHRoZSBIVE1MIGRvY3VtZW50IG9yIGZyYWfEDC4gKi8KICBAcmVjKCJ0aWQiKQogIG1vZGVsIE1haW7FTcUfcXVpcmVkIGNoaWxkcmVuOiAoRG9jVHlwZSB8IEVsZcVYfCBUZXjEB0NvbcQRKVtdOwogIH0K5wCSQW7mAIlEb2PkANUgbm9kZSAoaHR0cHM6Ly9kZXZlbG9wZXIubW96aWxsYS5vcmcvZW4tVVMvZG9jcy9HbG9zc2FyeS%2FHQCnmALzmAK7oAI570W5hdHRyaWJ1dN9r1mtByD0pIMxuyRfxASHkAZs6IHN0cmluZ%2BQA%2FcwcdmFsdc0d8QCsZecBSv8BGvAAr1dlYi9BUEkv5wGJ7QEZxxTxAKl0YWdO%2BwCs6QE2czrqAO7mAdD3AhD%2FAgbxAOx0xCb%2FAOn4AOnEYu0A5sVz8ADj%2FwFwTUwgY%2BYAo%2F8Ah%2FUAh8RAL0d1aWRlcy%2FnAOpz7QCTxxX%2FAJblAJZ9Cg%3D%3D&e=%40typelex%2Femitter&options=%7B%7D",
   "defs": {
     "main": {
       "type": "record",
-      "description": "HTML as JSON (HAST)",
+      "key": "tid",
       "record": {
         "type": "object",
-        "required": ["subject", "createdAt"],
         "properties": {
-          "subject": { "type": "string" },
-          "createdAt": { "type": "string", "format": "datetime" }
+          "children": {
+            "type": "array",
+            "items": {
+              "type": "union",
+              "refs": ["#docType", "#element", "#text", "#comment"]
+            }
+          }
+        },
+        "required": ["children"]
+      },
+      "description": "Root of the HTML document or fragment."
+    },
+    "docType": {
+      "type": "object",
+      "properties": {},
+      "description": "An HTML Doctype node (https://developer.mozilla.org/en-US/docs/Glossary/Doctype)"
+    },
+    "element": {
+      "type": "object",
+      "properties": {
+        "tagName": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "type": "ref",
+            "ref": "#attribute"
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "union",
+            "refs": ["#element", "#text", "#comment"]
+          }
         }
-      }
+      },
+      "description": "An HTML element node (https://developer.mozilla.org/en-US/docs/Web/API/Element)",
+      "required": ["tagName", "attributes", "children"]
+    },
+    "attribute": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "description": "An HTML attribute (https://developer.mozilla.org/en-US/docs/Glossary/Attribute)",
+      "required": ["name", "value"]
+    },
+    "text": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      },
+      "description": "An HTML text node (https://developer.mozilla.org/en-US/docs/Web/API/Text)",
+      "required": ["value"]
+    },
+    "comment": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      },
+      "description": "An HTML comment node (https://developer.mozilla.org/en-US/docs/Web/HTML/Guides/Comments)",
+      "required": ["value"]
     }
   }
 }

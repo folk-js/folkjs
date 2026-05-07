@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "lexicons": [
+    "garden.lexicon.rational-mastodon.html2"
+  ],
+  "resolutions": {
+    "garden.lexicon.rational-mastodon.html2": {
+      "uri": "at://did:plc:zcanytzlaumjwgaopolw6wes/com.atproto.lexicon.schema/garden.lexicon.rational-mastodon.html2",
+      "cid": "bafyreieotvre2tpvlwenqmeqhnvy2gvaobeh3r4n7jw74sskumapte44xu"
+    }
+  }
+}

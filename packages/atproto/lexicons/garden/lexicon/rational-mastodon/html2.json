@@ -1,0 +1,89 @@
+{
+  "id": "garden.lexicon.rational-mastodon.html2",
+  "defs": {
+    "main": {
+      "key": "tid",
+      "type": "record",
+      "record": {
+        "type": "object",
+        "required": ["children"],
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {
+              "refs": ["#docType", "#element", "#text", "#comment"],
+              "type": "union",
+              "closed": true
+            }
+          }
+        }
+      },
+      "description": "Root of the HTML document or fragment."
+    },
+    "text": {
+      "type": "object",
+      "required": ["value"],
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      },
+      "description": "An HTML text node (https://developer.mozilla.org/en-US/docs/Web/API/Text)"
+    },
+    "comment": {
+      "type": "object",
+      "required": ["value"],
+      "properties": {
+        "value": {
+          "type": "string"
+        }
+      },
+      "description": "An HTML comment node (https://developer.mozilla.org/en-US/docs/Web/HTML/Guides/Comments)"
+    },
+    "docType": {
+      "type": "object",
+      "properties": {},
+      "description": "An HTML Doctype node (https://developer.mozilla.org/en-US/docs/Glossary/Doctype)"
+    },
+    "element": {
+      "type": "object",
+      "required": ["tagName", "attributes", "children"],
+      "properties": {
+        "tagName": {
+          "type": "string"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "refs": ["#element", "#text", "#comment"],
+            "type": "union",
+            "closed": true
+          }
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "ref": "#attribute",
+            "type": "ref"
+          }
+        }
+      },
+      "description": "An HTML element node (https://developer.mozilla.org/en-US/docs/Web/API/Element)"
+    },
+    "attribute": {
+      "type": "object",
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "description": "An HTML attribute (https://developer.mozilla.org/en-US/docs/Glossary/Attribute)"
+    }
+  },
+  "$type": "com.atproto.lexicon.schema",
+  "lexicon": 1
+}

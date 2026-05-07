@@ -363,10 +363,10 @@ class KanbanCard extends ReactiveElement {
         border-radius: 6px;
         display: grid;
         grid-template-areas:
-          'name delete'
-          'slot slot';
-        grid-template-rows: auto auto;
-        grid-template-columns: 1fr auto;
+          'name'
+          'slot';
+        grid-template-rows: auto;
+        grid-template-columns: 1fr;
         gap: 0.25rem;
         cursor: move;
         padding: 1rem;
@@ -377,15 +377,18 @@ class KanbanCard extends ReactiveElement {
       }
 
       :host(:state(dragging)) {
-        opacity: 0.1;
+        opacity: 0.4;
       }
 
-      :host(:focus-visible) {
-        outline: 1px solid var(--bgColor-accent-emphasis);
+      :host(:focus-visible),
+      :host(:focus) {
+        outline: 1px auto var(--bgColor-accent-emphasis);
       }
 
-      input {
+      textarea {
         grid-area: name;
+        field-sizing: content;
+        resize: none;
       }
 
       button {
@@ -402,7 +405,7 @@ class KanbanCard extends ReactiveElement {
   @property({ type: String, reflect: true }) name = '';
 
   #internals = this.attachInternals();
-  #nameInput!: HTMLInputElement;
+  #nameInput!: HTMLTextAreaElement;
 
   #filtered = false;
   get filtered() {
@@ -421,15 +424,13 @@ class KanbanCard extends ReactiveElement {
     this.#internals.role = 'listitem';
 
     root.addEventListener('input', this);
-    root.addEventListener('click', this);
     this.addEventListener('keydown', this);
     this.addEventListener('dragstart', this);
     this.addEventListener('dragend', this);
     this.addEventListener('dragover', this);
 
     const { frag, name } = html(`
-      <input type="text" ref="name" on-input="UPDATE_CARD_NAME" />
-      <button on-click="DELETE_CARD">Delete</button>
+      <textarea ref="name" placeholder="Description" on-input="UPDATE_CARD_NAME"></textarea>
       <slot></slot>
     `);
 
@@ -512,10 +513,6 @@ class KanbanCard extends ReactiveElement {
     switch (intention) {
       case 'UPDATE_CARD_NAME': {
         this.name = this.#nameInput.value;
-        return;
-      }
-      case 'DELETE_CARD': {
-        this.remove();
         return;
       }
     }
