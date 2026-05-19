@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Semble Panes</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overscroll-behavior: none;
+        touch-action: none;
+        margin: 0;
+      }
+
+      sliding-pane {
+        height: 100%;
+      }
+
+      @property --pane-visibility {
+        syntax: '<number>';
+        inherits: true;
+        initial-value: 0;
+      }
+
+      article {
+        animation: paneVisibility;
+        animation-fill-mode: both;
+        animation-duration: auto;
+        animation-timing-function: linear;
+        animation-timeline: scroll(nearest inline);
+
+        /* f_start(i, n) = (1.8x / y) - 0.09x - 0.1 */
+        animation-range: calc(((1.8 * sibling-index() / sibling-count()) - (0.09 * sibling-index()) - 0.1) * 100%)
+          calc(((1.16 * (sibling-index() + 1) / sibling-count()) + (0.02 * sibling-index()) - 0.13) * 100%);
+      }
+
+      /* article > h2 {
+        transform-origin: top left;
+        rotate: calc(var(--pane-visibility, 0) * 90deg);
+      }
+
+      article > :not(h2) {
+        opacity: calc(1 - var(--pane-visibility, 0) - 0.1);
+      }*/
+
+      @keyframes paneVisibility {
+        from {
+          --pane-visibility: 0;
+        }
+
+        to {
+          --pane-visibility: 1;
+        }
+      }
+
+      article::after {
+        content: '';
+        display: block;
+        width: 1px;
+        height: 6px;
+        position: absolute;
+        top: 0%;
+        left: 40%;
+        translate: -50% 0%;
+        background: red;
+      }
+    </style>
+  </head>
+  <body>
+    <sliding-pane></sliding-pane>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

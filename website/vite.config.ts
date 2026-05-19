@@ -29,6 +29,7 @@ function getEntryPoints() {
     'frello',
     'atproto-canvas',
     'at-news',
+    'semble-panes',
   ].forEach((section) => {
     entries[section] = resolve(websiteDir, section, 'index.html');
   });

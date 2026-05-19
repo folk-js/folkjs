@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sliding Pane</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overscroll-behavior: none;
+        touch-action: none;
+        margin: 0;
+      }
+
+      sliding-pane {
+        height: 100%;
+      }
+
+      article > h2 {
+        transform-origin: top left;
+        /* start rotating at 90% visibility */
+        rotate: max(0deg, calc((10 * var(--pane-visibility) - 9) * 90deg));
+      }
+
+      article > :not(h2) {
+        /* start rotating at 90% visibility */
+        opacity: max(0, calc(-10 * var(--pane-visibility) + 10));
+      }
+    </style>
+  </head>
+  <body>
+    <sliding-pane> </sliding-pane>
+
+    <script type="module">
+      import '@folkjs/labs/standalone/sliding-pane';
+      import { html } from '@folkjs/dom/tags';
+
+      const pane = document.querySelector('sliding-pane');
+      const a = () => {
+        const { frag } = html`<article>
+          <h2>Hello World</h2>
+          <p>
+            <a href="#">Lorem ipsum dolor sit amet</a>, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut
+            labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+            aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum
+            dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia
+            deserunt mollit anim id est laborum.
+          </p>
+        </article> `;
+        return frag.firstElementChild;
+      };
+
+      pane.appendChild(a());
+
+      document.addEventListener('click', (e) => {
+        if (e.target instanceof HTMLAnchorElement) {
+          e.preventDefault();
+          const article = e.target.closest('article');
+
+          let sibling = article.nextElementSibling;
+          while (sibling != null) {
+            const nextSibling = sibling.nextElementSibling;
+            sibling.remove();
+            sibling = nextSibling;
+          }
+
+          const newArticle = a();
+          article.insertAdjacentElement('afterend', newArticle);
+          newArticle.scrollIntoView({ inline: 'end' });
+        }
+      });
+    </script>
+  </body>
+</html>
