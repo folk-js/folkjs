@@ -1,3 +1,5 @@
-import { FolkReorderableAttribute } from '../folk-reorderable-attribute';
+import { FolkReorderableAttribute } from '../folk-reorderable';
 
-FolkReorderableAttribute.define(); 
+FolkReorderableAttribute.define();
+
+export { FolkReorderableAttribute };

@@ -1,5 +1,7 @@
-import { FolkSpreadsheet, FolkSpreadSheetCell, FolkSpreadsheetHeader } from '../folk-spreadsheet';
+import { FolkSpreadsheet, FolkSpreadsheetHeader, FolkSpreadSheetCell } from '../folk-spreadsheet';
 
 FolkSpreadsheet.define();
+FolkSpreadsheetHeader.define();
+FolkSpreadSheetCell.define();
 
-export { FolkSpreadsheet, FolkSpreadSheetCell, FolkSpreadsheetHeader };
+export { FolkSpreadsheet, FolkSpreadsheetHeader, FolkSpreadSheetCell };

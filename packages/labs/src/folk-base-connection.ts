@@ -1,3 +1,4 @@
+// @standalone-ignore
 import { type ClientRectObserverEntry } from '@folkjs/dom/ClientRectObserver';
 import {
   property,

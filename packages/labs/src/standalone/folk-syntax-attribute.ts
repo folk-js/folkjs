@@ -1,4 +1,4 @@
-import { FolkSyntaxAttribute } from '../folk-syntax';
+import { FolkSyntaxAttribute } from '../folk-syntax-attribute';
 
 FolkSyntaxAttribute.define();
 

@@ -20,10 +20,22 @@
   ],
   "scripts": {
     "build": "wireit",
+    "gen-standalone": "wireit",
     "test": "wireit",
     "publish": "wireit"
   },
   "wireit": {
+    "gen-standalone": {
+      "command": "node --experimental-strip-types gen-standalone.ts",
+      "files": [
+        "src/**/*.ts",
+        "!src/standalone/**",
+        "gen-standalone.ts"
+      ],
+      "output": [
+        "src/standalone/**"
+      ]
+    },
     "build": {
       "command": "tsc --build --pretty",
       "clean": "if-file-deleted",
@@ -32,7 +44,8 @@
         "../collab:build",
         "../geometry:build",
         "../canvas:build",
-        "../propagators:build"
+        "../propagators:build",
+        "gen-standalone"
       ],
       "files": [
         "src/**",
