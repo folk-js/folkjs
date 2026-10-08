@@ -256,35 +256,35 @@
     <div id="status"></div>
 
     <canvas id="stage" layoutsubtree>
-      <folk-shape x="140" y="150" width="240" height="150">
+      <folk-shape drawable x="140" y="150" width="240" height="150">
         <div class="card cyan">
           <h3>Glorbifax</h3>
           <p>The tremulous yonk simmers beneath a pale veneer of quonkish ambiguity.</p>
         </div>
       </folk-shape>
 
-      <folk-shape x="500" y="200" width="260" height="160" rotation="-4">
+      <folk-shape drawable x="500" y="200" width="260" height="160" rotation="-4">
         <div class="card pink">
           <h3>Wumble theory</h3>
           <p>Seven zibblecorns cannot traverse the flenning threshold without prior snorkelation.</p>
         </div>
       </folk-shape>
 
-      <folk-shape x="860" y="160" width="220" height="200">
+      <folk-shape drawable x="860" y="160" width="220" height="200">
         <div class="card lime">
           <h3>Plonk</h3>
           <p>A grumbling moof once asked whether drimble could substitute for sprangle in conditions of high voom.</p>
         </div>
       </folk-shape>
 
-      <folk-shape x="200" y="430" width="200" height="150" rotation="6">
+      <folk-shape drawable x="200" y="430" width="200" height="150" rotation="6">
         <div class="card amber">
           <h3>Frendle cascade</h3>
           <p>Quorble density exceeds the borpulent index by a factor of fleem.</p>
         </div>
       </folk-shape>
 
-      <folk-shape x="540" y="470" width="250" height="160">
+      <folk-shape drawable x="540" y="470" width="250" height="160">
         <div class="card violet">
           <h3>Snorb</h3>
           <p>Bliveted at the margin of a hezzled plane, the grumf persists — unclumped, unvomped, thoroughly spligged.</p>
@@ -345,6 +345,7 @@
       const missing = [
         !('layoutSubtree' in HTMLCanvasElement.prototype) && 'layoutSubtree',
         typeof HTMLCanvasElement.prototype.requestPaint !== 'function' && 'requestPaint',
+        typeof HTMLCanvasElement.prototype.updateElementGeometry !== 'function' && 'updateElementGeometry',
       ].filter(Boolean);
       if (missing.length) {
         fail(
@@ -641,9 +642,12 @@
           const w = Math.max(1, Math.round(this.element.width * dpr));
           const h = Math.max(1, Math.round(this.element.height * dpr));
           this.#ensureTexture(w, h);
-          device.queue.copyElementImageToTexture(this.element, w, h, {
-            texture: this.texture,
-          });
+          // Chrome 150+ signature (WICG/html-in-canvas#132): source and
+          // destination dictionaries instead of positional args.
+          device.queue.copyElementImageToTexture(
+            { source: this.element },
+            { destination: { texture: this.texture }, width: w, height: h },
+          );
         }
 
         writeInstance(i, data) {
@@ -1443,6 +1447,29 @@
       // -------------------------------------------------------------------
       let texturesReady = false;
 
+      // Canvas descendants are not hit-testable by default — pointer events
+      // only reach a drawable element after updateElementGeometry registers
+      // a canvasTransform for it (2D contexts get this for free from
+      // drawElementImage; WebGPU must do it manually). The transform maps
+      // the element's border box (0,0 → w,h, before CSS transforms) to its
+      // rendered home parallelogram, in canvas CSS px — so grabbing matches
+      // the warped rendering exactly.
+      function syncElementGeometry(el, axes) {
+        const w = el.width;
+        const h = el.height;
+        canvas.updateElementGeometry(el, {
+          preserveHitTestOrder: true,
+          canvasTransform: new DOMMatrix([
+            axes.axisX.x / w,
+            axes.axisX.y / w,
+            axes.axisY.x / h,
+            axes.axisY.y / h,
+            axes.origin.x - (axes.axisX.x + axes.axisY.x) / 2,
+            axes.origin.y - (axes.axisX.y + axes.axisY.y) / 2,
+          ]),
+        });
+      }
+
       const resizeObserver = new ResizeObserver(([entry]) => {
         const w =
           entry.devicePixelContentBoxSize?.[0]?.inlineSize ??
@@ -1485,6 +1512,7 @@
 
           for (const [el, view] of views) {
             const { homeAxes, homeClips, ghosts } = computeInstances(el);
+            syncElementGeometry(el, homeAxes);
             let slot = 0;
             for (const g of ghosts) {
               view.writeInstance(slot, packUniform(w, h, g.axes, dpr, g.clips[0], g.clips[1]));
