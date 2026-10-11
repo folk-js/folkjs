@@ -411,6 +411,12 @@
         <input id="probe-slider" type="range" min="0" max="26" step="1" value="15" />
         <span class="v" id="probe-value">1024</span>
       </div>
+      <select id="color-select" title="Color resolution (luminance stays at full probe resolution)">
+        <option value="1">color: full</option>
+        <option value="0.5">color: 1/2</option>
+        <option value="0.25">color: 1/4</option>
+        <option value="0.125">color: 1/8</option>
+      </select>
       <label><input id="bounces-toggle" type="checkbox" checked /> bounces</label>
       <label><input id="pp-toggle" type="checkbox" /> 1px</label>
       <select id="debug-select">
@@ -740,7 +746,7 @@
       }
 
       // ── URL state ──
-      const urlDefaults = { scene: 0, sky: 'none', probes: 1024, exposure: 2, bounces: true, debug: 0, fc: false, '1px': false, perf: false };
+      const urlDefaults = { scene: 0, sky: 'none', probes: 1024, exposure: 2, bounces: true, color: 1, debug: 0, fc: false, '1px': false, perf: false };
 
       function loadURL() {
         const p = new URLSearchParams(location.search);
@@ -750,6 +756,7 @@
           probes: Number(p.get('probes') ?? urlDefaults.probes),
           exposure: Number(p.get('exposure') ?? urlDefaults.exposure),
           bounces: p.get('bounces') !== '0',
+          color: Number(p.get('color') ?? urlDefaults.color),
           debug: Number(p.get('debug') ?? urlDefaults.debug),
           fc: p.get('fc') === '1',
           '1px': p.get('1px') === '1',
@@ -764,6 +771,7 @@
         if (hrc.probeCount !== 1024) p.set('probes', hrc.probeCount);
         if (hrc.exposure !== 2) p.set('exposure', hrc.exposure.toFixed(1));
         if (!hrc.bounces) p.set('bounces', '0');
+        if (hrc.colorScale !== 1) p.set('color', hrc.colorScale);
         if (hrc.debugMode > 0) p.set('debug', hrc.debugMode);
         if (hrc.falseColor) p.set('fc', '1');
         if (ppMode) p.set('1px', '1');
@@ -783,6 +791,8 @@
       ppToggle.addEventListener('change', (e) => { setPPMode(e.target.checked); syncURL(); });
       const debugSelect = $('debug-select');
       debugSelect.addEventListener('change', () => { hrc.debugMode = Number(debugSelect.value); syncURL(); });
+      const colorSelect = $('color-select');
+      colorSelect.addEventListener('change', () => { hrc.colorScale = Number(colorSelect.value); syncURL(); });
       const fcToggle = $('fc-toggle');
       fcToggle.addEventListener('change', (e) => { hrc.falseColor = e.target.checked; syncURL(); });
 
@@ -1114,6 +1124,8 @@
       setExposure(initState.exposure);
       hrc.bounces = initState.bounces;
       $('bounces-toggle').checked = initState.bounces;
+      hrc.colorScale = initState.color;
+      colorSelect.value = initState.color;
       hrc.debugMode = initState.debug;
       debugSelect.value = initState.debug;
       hrc.falseColor = initState.fc;

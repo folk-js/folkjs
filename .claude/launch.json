@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "website",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd website && npx vite --port 5173 --strictPort"],
+      "port": 5173,
+      "url": "https://localhost:5173"
+    }
+  ]
+}

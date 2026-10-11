@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flow Field</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        background: #111;
+        font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.6);
+      }
+      folk-flow-field {
+        flex: 1;
+        min-height: 0;
+      }
+      #bar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 5px 12px;
+        background: #0a0a0a;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      #bar select,
+      #bar button {
+        font: inherit;
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+        padding: 2px 6px;
+        cursor: pointer;
+      }
+      #bar button.on {
+        background: rgba(255, 255, 255, 0.22);
+        color: #fff;
+      }
+      #bar label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      #bar input[type='range'] {
+        width: 72px;
+      }
+      .spacer {
+        flex: 1;
+        min-width: 0;
+      }
+      #stats {
+        /* an overlay, not part of the bar: its changing text never reflows the layout */
+        position: fixed;
+        top: 6px;
+        right: 10px;
+        z-index: 10;
+        color: rgba(255, 255, 255, 0.45);
+        white-space: pre;
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <folk-flow-field id="ff"></folk-flow-field>
+    <div id="bar">
+      <button id="t-wall" title="W: draw walls">wall</button>
+      <button id="t-goal" title="G: place goals (or shift-click)">goal</button>
+      <button id="t-erase" title="E: erase (or right-drag)">erase</button>
+      <label>size <input id="brush" type="range" min="1" max="40" value="6" /><span id="brush-v">6</span></label>
+      <select id="preset">
+        <option value="">scene…</option>
+        <option value="goals">open + goals</option>
+        <option value="rooms">rooms</option>
+        <option value="maze">maze</option>
+        <option value="scatter">scatter</option>
+        <option value="spiral">spiral</option>
+      </select>
+      <button id="clear" title="C: clear">clear</button>
+      <label><input id="contours" type="checkbox" checked /> contours</label>
+      <label><input id="borders" type="checkbox" checked /> borders</label>
+      <label><input id="arrows" type="checkbox" /> arrows</label>
+      <label><input id="path" type="checkbox" checked /> path</label>
+      <select id="res">
+        <option value="512">512</option>
+        <option value="1024" selected>1024</option>
+      </select>
+    </div>
+    <span id="stats"></span>
+    <script type="module">
+      import '@folkjs/labs/standalone/folk-flow-field';
+
+      const $ = (id) => document.getElementById(id);
+      const ff = $('ff');
+
+      const tools = ['wall', 'goal', 'erase'];
+      function setTool(t) {
+        ff.tool = t;
+        for (const k of tools) $('t-' + k).classList.toggle('on', k === t);
+      }
+      for (const t of tools) $('t-' + t).onclick = () => setTool(t);
+      setTool('wall');
+
+      $('brush').oninput = (e) => {
+        ff.brush = Number(e.target.value);
+        $('brush-v').textContent = e.target.value;
+      };
+      for (const k of ['contours', 'borders', 'arrows', 'path']) $(k).onchange = (e) => (ff[k] = e.target.checked);
+      $('clear').onclick = () => ff.clear();
+      $('res').onchange = (e) => {
+        ff.size = Number(e.target.value);
+      };
+
+      // ── preset scenes ──
+      function rng(seed) {
+        let s = seed >>> 0;
+        return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+      }
+      function goals(k, r, walls, n) {
+        const out = [];
+        let tries = 0;
+        while (out.length < k && tries++ < 10000) {
+          const x = Math.floor(r() * n), y = Math.floor(r() * n);
+          if (!walls || !walls[y * n + x]) out.push({ x: x + 0.5, y: y + 0.5, r: Math.max(2, n / 340) });
+        }
+        return out;
+      }
+      function maze(n, cell, r) {
+        const w = new Uint8Array(n * n).fill(1);
+        const m = Math.floor(n / cell);
+        const wall = Math.max(1, Math.round(cell / 5));
+        const seen = new Uint8Array(m * m);
+        const carve = (x0, y0, x1, y1) => {
+          for (let y = Math.max(0, y0); y < Math.min(n, y1); y++) for (let x = Math.max(0, x0); x < Math.min(n, x1); x++) w[y * n + x] = 0;
+        };
+        const stack = [[0, 0]];
+        seen[0] = 1;
+        carve(wall, wall, cell, cell);
+        while (stack.length) {
+          const [cx, cy] = stack[stack.length - 1];
+          const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [cx + dx, cy + dy]).filter(([x, y]) => x >= 0 && y >= 0 && x < m && y < m && !seen[y * m + x]);
+          if (!nb.length) { stack.pop(); continue; }
+          const [nx, ny] = nb[Math.floor(r() * nb.length)];
+          seen[ny * m + nx] = 1;
+          carve(nx * cell + wall, ny * cell + wall, nx * cell + cell, ny * cell + cell);
+          carve(Math.min(cx, nx) * cell + wall, Math.min(cy, ny) * cell + wall, Math.max(cx, nx) * cell + cell, Math.max(cy, ny) * cell + cell);
+          stack.push([nx, ny]);
+        }
+        return w;
+      }
+      function rooms(n, room, door, r) {
+        const w = new Uint8Array(n * n);
+        const t = Math.max(2, Math.round(n / 256));
+        for (let k = room; k < n; k += room) {
+          for (let i = 0; i < n; i++) for (let j = 0; j < t; j++) { w[i * n + k + j] = 1; w[(k + j) * n + i] = 1; }
+        }
+        for (let a = 0; a < n; a += room) {
+          for (let k = room; k < n; k += room) {
+            const p = a + Math.floor(r() * (room - door - 2 * t)) + t;
+            for (let i = p; i < p + door; i++) for (let j = 0; j < t; j++) { w[i * n + k + j] = 0; w[(k + j) * n + i] = 0; }
+          }
+        }
+        return w;
+      }
+      function scatter(n, r) {
+        const w = new Uint8Array(n * n);
+        for (let k = 0; k < 160; k++) {
+          const cx = r() * n, cy = r() * n, len = n * (0.03 + r() * 0.12), a = r() * Math.PI, th = Math.max(2, n / 200);
+          for (let s = 0; s < len; s += 0.5) {
+            const x = cx + Math.cos(a) * s, y = cy + Math.sin(a) * s;
+            for (let dy = -th; dy <= th; dy++) for (let dx = -th; dx <= th; dx++) {
+              const X = Math.floor(x + dx), Y = Math.floor(y + dy);
+              if (X >= 0 && Y >= 0 && X < n && Y < n && dx * dx + dy * dy <= th * th) w[Y * n + X] = 1;
+            }
+          }
+        }
+        return w;
+      }
+      function spiral(n) {
+        // one wall winding inward (square spiral): a single corridor of width gap from the outside to the centre
+        const w = new Uint8Array(n * n);
+        const gap = Math.max(12, Math.round(n / 28)), th = Math.max(2, Math.round(n / 300));
+        const seg = (ax, ay, bx, by) => {
+          const x0 = Math.min(ax, bx) - th, x1 = Math.max(ax, bx) + th, y0 = Math.min(ay, by) - th, y1 = Math.max(ay, by) + th;
+          for (let y = Math.max(0, y0); y < Math.min(n, y1); y++) for (let x = Math.max(0, x0); x < Math.min(n, x1); x++) w[y * n + x] = 1;
+        };
+        const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+        let x = gap, y = gap, len = n - 2 * gap;
+        // turtle: lengths L, L, L, L - gap, L - gap, L - 2 gap, L - 2 gap, ...
+        for (let i = 0; len > gap; i++) {
+          const [dx, dy] = dirs[i % 4];
+          seg(x, y, x + dx * len, y + dy * len);
+          x += dx * len; y += dy * len;
+          if (i >= 2 && i % 2 === 0) len -= gap;
+        }
+        return w;
+      }
+      function loadPreset(name, seed = Date.now()) {
+        const n = ff.resolution;
+        const r = rng(seed);
+        if (name === 'goals') ff.setScene(null, goals(12, r, null, n));
+        if (name === 'rooms') { const w = rooms(n, Math.round(n / 6), Math.round(n / 24), r); ff.setScene(w, goals(10, r, w, n)); }
+        if (name === 'maze') { const w = maze(n, Math.round(n / 24), r); ff.setScene(w, goals(6, r, w, n)); }
+        if (name === 'scatter') { const w = scatter(n, r); ff.setScene(w, goals(14, r, w, n)); }
+        if (name === 'spiral') { const w = spiral(n); ff.setScene(w, [{ x: n / 2, y: n / 2, r: 4 }]); }
+      }
+      window.loadPreset = loadPreset; // for benchmarks: loadPreset(name, seed)
+      $('preset').onchange = (e) => {
+        if (e.target.value) loadPreset(e.target.value);
+        e.target.value = '';
+      };
+      ff.addEventListener('ready', () => loadPreset('scatter'));
+
+      document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+        const k = e.key.toLowerCase();
+        if (k === 'w') setTool('wall');
+        if (k === 'g') setTool('goal');
+        if (k === 'e') setTool('erase');
+        if (k === 'c') ff.clear();
+        if (k === 'a') { ff.arrows = !ff.arrows; $('arrows').checked = ff.arrows; }
+      });
+
+      // ── stats ──
+      let last = performance.now(), frames = 0, fps = 0;
+      ff.onstats = (s) => {
+        frames++;
+        const now = performance.now();
+        if (now - last > 500) { fps = (frames * 1000) / (now - last); frames = 0; last = now; }
+        const ms = s.solveMs.toFixed(1).padStart(5, ' ');
+        const rounds = String(s.rounds).padStart(3, ' ');
+        const f = fps.toFixed(0).padStart(3, ' ');
+        $('stats').textContent = `${s.converged ? '✓' : '…'} ${ms} ms GPU · ${rounds} rounds · ${f} fps`;
+        $('stats').title = `${s.tileRuns} tile runs, ${s.meanSweeps.toFixed(1)} sweeps per run`;
+      };
+    </script>
+  </body>
+</html>
